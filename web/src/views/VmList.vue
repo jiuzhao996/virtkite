@@ -59,6 +59,9 @@
             <el-option v-for="p in pools" :key="p" :label="p" :value="p" />
           </el-select>
         </el-form-item>
+        <el-form-item label="ISO 路径">
+          <el-input v-model="form.iso_path" placeholder="可选，如 /home/jiuzhao/data/img/Rocky-10.2-x86_64-minimal.iso" />
+        </el-form-item>
         <el-form-item label="模板">
           <el-input v-model="form.template" placeholder="可选，如 ubuntu-22.04" />
         </el-form-item>
@@ -147,7 +150,7 @@ const xmlDialog = ref(false)
 const xmlText = ref('')
 const xmlSaving = ref(false)
 
-const form = reactive({ name: '', host_id: null, template: '', storage_pool: 'vmops', vcpu: 1, memory_mb: 1024, disk_gb: 20 })
+const form = reactive({ name: '', host_id: null, template: '', storage_pool: 'vmops', iso_path: '', vcpu: 1, memory_mb: 1024, disk_gb: 20 })
 
 function statusText(s) {
   return { running: '运行中', stopped: '已关机', 'shut off': '已关机', paused: '已暂停', error: '异常' }[s] || s
@@ -181,6 +184,7 @@ function openCreate() {
   form.host_id = hosts.value.length ? hosts.value[0].id : null
   form.template = ''
   form.storage_pool = pools.value.includes('vmops') ? 'vmops' : (pools.value[0] || '')
+  form.iso_path = ''
   form.vcpu = 1
   form.memory_mb = 1024
   form.disk_gb = 20

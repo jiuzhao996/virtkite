@@ -53,7 +53,7 @@ func randomUUID() (string, error) {
 	), nil
 }
 
-// domainXMLTmpl libvirt domain 定义模板
+// domainXMLTmpl libvirt domain 定义模板（支持可选 ISO 光驱安装）
 var domainXMLTmpl = template.Must(template.New("domain").Parse(`<domain type='kvm'>
   <name>{{.Name}}</name>
   <uuid>{{.UUID}}</uuid>
@@ -73,6 +73,14 @@ var domainXMLTmpl = template.Must(template.New("domain").Parse(`<domain type='kv
       <source file='{{.DiskPath}}'/>
       <target dev='vda' bus='virtio'/>
     </disk>
+    {{if .ISOPath}}
+    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <source file='{{.ISOPath}}'/>
+      <target dev='hda' bus='ide'/>
+      <readonly/>
+    </disk>
+    {{end}}
     <interface type='network'>
       <mac address='{{.MAC}}'/>
       <source network='default'/>
@@ -84,13 +92,14 @@ var domainXMLTmpl = template.Must(template.New("domain").Parse(`<domain type='kv
 `))
 
 // buildDomainXML 生成 libvirt domain XML
-func buildDomainXML(name, uuid, mac, diskPath string, memoryKiB, vcpu int) (string, error) {
+func buildDomainXML(name, uuid, mac, diskPath, isoPath string, memoryKiB, vcpu int) (string, error) {
 	var buf bytes.Buffer
 	err := domainXMLTmpl.Execute(&buf, map[string]interface{}{
 		"Name":      name,
 		"UUID":      uuid,
 		"MAC":       mac,
 		"DiskPath":  diskPath,
+		"ISOPath":   isoPath,
 		"MemoryKiB": memoryKiB,
 		"VCPU":      vcpu,
 	})
@@ -188,6 +197,7 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 		HostID      uint   `json:"host_id" binding:"required"`
 		Template    string `json:"template"`
 		StoragePool string `json:"storage_pool"`
+		ISOPath     string `json:"iso_path"`
 		VCPU        int    `json:"vcpu"`
 		MemoryMB    int    `json:"memory_mb"`
 		DiskGB      int    `json:"disk_gb"`
@@ -256,7 +266,7 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 	}
 
 	// 真正在 KVM 宿主机上落地：libvirt 存储池建卷 + 定义 domain
-	if err := h.provisionVM(req.Name, uuid, mac, req.StoragePool, req.DiskGB, req.MemoryMB, req.VCPU); err != nil {
+	if err := h.provisionVM(req.Name, uuid, mac, req.StoragePool, req.DiskGB, req.MemoryMB, req.VCPU, req.ISOPath); err != nil {
 		// 回滚 DB 记录，避免残留脏数据
 		h.DB.Delete(&vm)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建虚拟机失败", "detail": err.Error()})
@@ -272,7 +282,7 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 
 // provisionVM 在 KVM 宿主机上创建存储卷并定义（但不自动启动）虚拟机。
 // 建盘通过 libvirt 存储池/存储卷 API（对应 virsh vol-create-as），无需 qemu-img。
-func (h *VMHandler) provisionVM(name, uuid, mac, pool string, diskGB, memoryMB, vcpu int) error {
+func (h *VMHandler) provisionVM(name, uuid, mac, pool string, diskGB, memoryMB, vcpu int, isoPath string) error {
 	// 1. 在指定存储池创建 qcow2 存储卷（对应 virsh vol-create-as --pool xxx --name xxx --capacity xG --format qcow2）
 	if _, err := h.Virt.CreateVolume(pool, name, diskGB); err != nil {
 		return fmt.Errorf("创建存储卷失败: %v", err)
@@ -285,8 +295,8 @@ func (h *VMHandler) provisionVM(name, uuid, mac, pool string, diskGB, memoryMB, 
 	}
 	diskPath := filepath.Join(poolPath, name+".qcow2")
 
-	// 3. 生成 domain XML
-	xml, err := buildDomainXML(name, uuid, mac, diskPath, memoryMB*1024, vcpu)
+	// 3. 生成 domain XML（可选 ISO 光驱）
+	xml, err := buildDomainXML(name, uuid, mac, diskPath, isoPath, memoryMB*1024, vcpu)
 	if err != nil {
 		return fmt.Errorf("生成 domain XML 失败: %v", err)
 	}
