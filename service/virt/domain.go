@@ -1,0 +1,152 @@
+package virt
+
+import (
+	"fmt"
+
+	"github.com/digitalocean/go-libvirt"
+)
+
+// DefineDomain 定义虚拟机域（对应 virsh define，不启动）。
+func (v *Virt) DefineDomain(xml string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	if _, err := l.DomainDefineXML(xml); err != nil {
+		return fmt.Errorf("virsh define 等价调用失败: %v", err)
+	}
+	return nil
+}
+
+// StartDomain 启动虚拟机（对应 virsh start）。
+func (v *Virt) StartDomain(name string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	dom, err := l.DomainLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("虚拟机 %s 不存在: %v", name, err)
+	}
+	if err := l.DomainCreate(dom); err != nil {
+		return fmt.Errorf("启动虚拟机失败: %v", err)
+	}
+	return nil
+}
+
+// ShutdownDomain 优雅关机（对应 virsh shutdown，发送 ACPI 关机信号）。
+func (v *Virt) ShutdownDomain(name string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	dom, err := l.DomainLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("虚拟机 %s 不存在: %v", name, err)
+	}
+	if err := l.DomainShutdown(dom); err != nil {
+		return fmt.Errorf("关机失败: %v", err)
+	}
+	return nil
+}
+
+// RebootDomain 重启虚拟机（对应 virsh reboot，需已运行）。
+func (v *Virt) RebootDomain(name string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	dom, err := l.DomainLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("虚拟机 %s 不存在: %v", name, err)
+	}
+	if err := l.DomainReboot(dom, libvirt.DomainRebootDefault); err != nil {
+		return fmt.Errorf("重启失败: %v", err)
+	}
+	return nil
+}
+
+// DestroyDomain 强制关闭虚拟机（对应 virsh destroy，立即断电）。
+func (v *Virt) DestroyDomain(name string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	dom, err := l.DomainLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("虚拟机 %s 不存在: %v", name, err)
+	}
+	if err := l.DomainDestroy(dom); err != nil {
+		return fmt.Errorf("强制关闭失败: %v", err)
+	}
+	return nil
+}
+
+// UndefineDomain 删除虚拟机定义（对应 virsh undefine，不删除存储卷）。
+// 若域正在运行，先强制销毁（virsh destroy）再删除定义（virsh undefine）。
+func (v *Virt) UndefineDomain(name string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	dom, err := l.DomainLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("虚拟机 %s 不存在: %v", name, err)
+	}
+
+	state, _, err := l.DomainGetState(dom, 0)
+	if err != nil {
+		return fmt.Errorf("获取虚拟机状态失败: %v", err)
+	}
+	if libvirt.DomainState(state) == libvirt.DomainRunning {
+		if err := l.DomainDestroy(dom); err != nil {
+			return fmt.Errorf("强制关闭虚拟机失败: %v", err)
+		}
+	}
+
+	if err := l.DomainUndefine(dom); err != nil {
+		return fmt.Errorf("删除虚拟机定义失败: %v", err)
+	}
+	return nil
+}
+
+// GetDomainState 获取虚拟机实时状态（返回平台 status 字符串）。
+func (v *Virt) GetDomainState(name string) (string, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return "", err
+	}
+	dom, err := l.DomainLookupByName(name)
+	if err != nil {
+		return "", fmt.Errorf("虚拟机 %s 不存在: %v", name, err)
+	}
+	state, _, err := l.DomainGetState(dom, 0)
+	if err != nil {
+		return "", fmt.Errorf("获取虚拟机状态失败: %v", err)
+	}
+	return StateToPlatform(state), nil
+}
+
+// GetAllDomainStates 返回所有域的名称与平台状态映射（对应 virsh list --all + domstate）。
+func (v *Virt) GetAllDomainStates() (map[string]string, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return nil, err
+	}
+
+	flags := libvirt.ConnectListDomainsActive | libvirt.ConnectListDomainsInactive
+	domains, _, err := l.ConnectListAllDomains(1, flags)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]string, len(domains))
+	for _, d := range domains {
+		state, _, err := l.DomainGetState(d, 0)
+		if err != nil {
+			continue
+		}
+		result[d.Name] = StateToPlatform(state)
+	}
+	return result, nil
+}

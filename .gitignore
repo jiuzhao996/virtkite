@@ -1,3 +1,31 @@
+# 二进制与运行产物
+/vmops
+/vmops.log
+/vmops.pid
+/novnc.pid
+*.log
+
+# 环境与配置（含密钥）
+.env
+
+# 数据目录
+/data/
+/data/images/
+
+# 前端依赖与构建产物
+web/node_modules/
+web/dist/
+
+# Go
+*.test
+
+# 系统
+.DS_Store
+
+# IDE
+.idea/
+
+# 编辑器/系统临时文件
 *~
 
 # temporary files which can be created if a process still has a handle open of a deleted file

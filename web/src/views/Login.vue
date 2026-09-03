@@ -1,0 +1,120 @@
+<template>
+  <div class="login-wrap">
+    <el-card class="login-card" shadow="always">
+      <div class="login-brand">
+        <div class="logo">🛡️</div>
+        <h1>vmops</h1>
+        <p>基于 KVM 的轻量级私有云管理平台</p>
+      </div>
+
+      <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="mb" />
+
+      <el-form @submit.prevent="submit" label-position="top">
+        <el-form-item label="用户名">
+          <el-input v-model="form.username" placeholder="请输入用户名" size="large" @keyup.enter="submit" />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input v-model="form.password" type="password" placeholder="请输入密码" size="large" show-password @keyup.enter="submit" />
+        </el-form-item>
+        <el-button type="primary" class="submit-btn" size="large" :loading="submitting" @click="submit">
+          登 录
+        </el-button>
+      </el-form>
+
+      <div class="demo-tip">
+        💡 演示账号：<br />
+        管理员 <code>admin</code> / <code>password</code><br />
+        普通用户 <code>user</code> / <code>123456</code>
+      </div>
+    </el-card>
+  </div>
+</template>
+
+<script setup>
+import { reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { api } from '../api'
+import { useAuth } from '../store/auth'
+
+const router = useRouter()
+const { setToken, setUser } = useAuth()
+
+const form = reactive({ username: '', password: '' })
+const error = ref('')
+const submitting = ref(false)
+
+async function submit() {
+  error.value = ''
+  if (!form.username || !form.password) {
+    error.value = '请输入用户名和密码'
+    return
+  }
+  submitting.value = true
+  try {
+    const res = await api.login(form.username, form.password)
+    if (res.code === 200 && res.data) {
+      setToken(res.data.access_token)
+      setUser(res.data.user)
+      ElMessage.success('登录成功')
+      router.push({ name: 'dashboard' })
+    } else {
+      error.value = res.message || '登录失败'
+    }
+  } catch (e) {
+    error.value = (e.response && e.response.data && e.response.data.message) || '网络错误，请稍后重试'
+  } finally {
+    submitting.value = false
+  }
+}
+</script>
+
+<style scoped>
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #e8f4f8 0%, #c8e3f0 100%);
+  padding: 24px;
+}
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  border-radius: 14px;
+}
+.login-brand {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.logo {
+  font-size: 2.4rem;
+}
+.login-brand h1 {
+  font-size: 1.4rem;
+  color: #2a9da5;
+  margin: 6px 0 2px;
+}
+.login-brand p {
+  font-size: 0.9rem;
+  color: #888;
+  margin: 0;
+}
+.submit-btn {
+  width: 100%;
+  margin-top: 4px;
+}
+.mb {
+  margin-bottom: 16px;
+}
+.demo-tip {
+  margin-top: 18px;
+  padding: 12px 14px;
+  background: rgba(61, 184, 191, 0.08);
+  border: 1px solid rgba(61, 184, 191, 0.2);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #2a9da5;
+  line-height: 1.9;
+}
+</style>
