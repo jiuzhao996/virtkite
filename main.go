@@ -120,6 +120,8 @@ func main() {
 		{
 			vms.GET("", vmHandler.ListVMs)
 			vms.GET("/:id", vmHandler.GetVM)
+			vms.GET("/:id/xml", vmHandler.GetVMXML)
+			vms.PUT("/:id/xml", vmHandler.UpdateVMXML)
 			vms.POST("", vmHandler.CreateVM)
 			vms.POST("/:id/start", vmHandler.StartVM)
 			vms.POST("/:id/stop", vmHandler.StopVM)

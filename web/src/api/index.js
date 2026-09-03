@@ -46,6 +46,8 @@ export const api = {
   // 虚拟机
   listVMs: () => unwrap(http.get('/vms')),
   getVM: (id) => unwrap(http.get('/vms/' + id)),
+  getVMXML: (id) => unwrap(http.get('/vms/' + id + '/xml')),
+  updateVMXML: (id, xml) => unwrap(http.put('/vms/' + id + '/xml', { xml })),
   createVM: (payload) => unwrap(http.post('/vms', payload)),
   startVM: (id) => unwrap(http.post('/vms/' + id + '/start')),
   stopVM: (id) => unwrap(http.post('/vms/' + id + '/stop')),

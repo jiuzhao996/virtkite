@@ -35,6 +35,7 @@
             <el-button size="small" :disabled="busy.has(row.id)" @click="action(row, 'stop')">关机</el-button>
             <el-button size="small" :disabled="busy.has(row.id)" @click="action(row, 'restart')">重启</el-button>
             <el-button size="small" :disabled="busy.has(row.id)" @click="openSnapshots(row)">快照</el-button>
+            <el-button size="small" :disabled="busy.has(row.id)" @click="openXML(row)">XML</el-button>
             <el-button size="small" type="danger" :disabled="busy.has(row.id)" @click="action(row, 'delete')">删除</el-button>
           </template>
         </el-table-column>
@@ -106,6 +107,16 @@
         <el-button type="primary" :loading="snapSaving" @click="createSnap">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- XML 查看/编辑 -->
+    <el-dialog v-model="xmlDialog" :title="'XML 定义 - ' + (curVM || '')" width="720px">
+      <el-input v-model="xmlText" type="textarea" :rows="16" class="xml-area" />
+      <template #footer>
+        <el-button @click="xmlDialog = false">关闭</el-button>
+        <el-button type="warning" @click="reloadXML">重新加载</el-button>
+        <el-button type="primary" :loading="xmlSaving" @click="saveXML">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -130,6 +141,9 @@ const curVM = ref('')
 const curVMId = ref(null)
 const snapshots = ref([])
 const snapForm = ref({ name: '' })
+const xmlDialog = ref(false)
+const xmlText = ref('')
+const xmlSaving = ref(false)
 
 const form = reactive({ name: '', host_id: null, template: '', storage_pool: 'vmops', vcpu: 1, memory_mb: 1024, disk_gb: 20 })
 
@@ -270,6 +284,44 @@ async function removeSnap(snap) {
   }
 }
 
+async function openXML(vm) {
+  curVM.value = vm.name
+  curVMId.value = vm.id
+  xmlDialog.value = true
+  try {
+    const res = await api.getVMXML(vm.id)
+    xmlText.value = (res.data && res.data.xml) || ''
+  } catch (e) {
+    ElMessage.error('获取 XML 失败')
+  }
+}
+
+async function reloadXML() {
+  try {
+    const res = await api.getVMXML(curVMId.value)
+    xmlText.value = (res.data && res.data.xml) || ''
+    ElMessage.success('已重新加载')
+  } catch (e) {
+    ElMessage.error('重新加载失败')
+  }
+}
+
+async function saveXML() {
+  if (!xmlText.value.trim()) {
+    ElMessage.warning('XML 不能为空')
+    return
+  }
+  xmlSaving.value = true
+  try {
+    await api.updateVMXML(curVMId.value, xmlText.value)
+    ElMessage.success('XML 已保存')
+  } catch (e) {
+    ElMessage.error((e.response && e.response.data && e.response.data.error) || '保存失败')
+  } finally {
+    xmlSaving.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -283,5 +335,9 @@ onMounted(load)
 .count {
   color: #888;
   font-size: 0.9rem;
+}
+.xml-area :deep(textarea) {
+  font-family: monospace;
+  font-size: 0.82rem;
 }
 </style>

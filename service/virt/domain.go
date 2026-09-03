@@ -1,6 +1,7 @@
 package virt
 
 import (
+	"encoding/xml"
 	"fmt"
 
 	"github.com/digitalocean/go-libvirt"
@@ -149,4 +150,47 @@ func (v *Virt) GetAllDomainStates() (map[string]string, error) {
 		result[d.Name] = StateToPlatform(state)
 	}
 	return result, nil
+}
+
+// GetDomainXML 返回虚拟机完整 XML 定义（对应 virsh dumpxml）。
+func (v *Virt) GetDomainXML(name string) (string, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return "", err
+	}
+	dom, err := l.DomainLookupByName(name)
+	if err != nil {
+		return "", fmt.Errorf("虚拟机 %s 不存在: %v", name, err)
+	}
+	xmlstr, err := l.DomainGetXMLDesc(dom, 0)
+	if err != nil {
+		return "", fmt.Errorf("获取虚拟机 XML 失败: %v", err)
+	}
+	return xmlstr, nil
+}
+
+// UpdateDomainXML 更新虚拟机 XML 定义（对应 virsh edit）。
+// 通过重新 define 实现：先取旧 XML 比对名称，再 define 新 XML。
+// 注意：若 VM 正在运行，需先关机才能修改大部分配置。
+func (v *Virt) UpdateDomainXML(name, newXML string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+
+	// 校验新 XML 中名称与目标一致
+	var dom struct {
+		Name string `xml:"name"`
+	}
+	if err := xml.Unmarshal([]byte(newXML), &dom); err != nil {
+		return fmt.Errorf("XML 解析失败: %v", err)
+	}
+	if dom.Name != name {
+		return fmt.Errorf("XML 中名称 %s 与目标 %s 不一致", dom.Name, name)
+	}
+
+	if _, err := l.DomainDefineXML(newXML); err != nil {
+		return fmt.Errorf("更新虚拟机定义失败: %v", err)
+	}
+	return nil
 }

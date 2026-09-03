@@ -424,6 +424,49 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 	})
 }
 
+// GetVMXML 获取虚拟机 XML 定义
+func (h *VMHandler) GetVMXML(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		return
+	}
+
+	xml, err := h.Virt.GetDomainXML(vm.Name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	Success(c, gin.H{"name": vm.Name, "xml": xml})
+}
+
+// UpdateVMXML 更新虚拟机 XML 定义（高级功能）
+func (h *VMHandler) UpdateVMXML(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		return
+	}
+
+	var req struct {
+		XML string `json:"xml" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+
+	if err := h.Virt.UpdateDomainXML(vm.Name, req.XML); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	Success(c, gin.H{"name": vm.Name, "message": "XML 已更新"})
+}
+
 // ListSnapshots 获取虚拟机快照列表
 func (h *VMHandler) ListSnapshots(c *gin.Context) {
 	id := c.Param("id")
