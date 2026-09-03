@@ -51,6 +51,10 @@ export const api = {
   stopVM: (id) => unwrap(http.post('/vms/' + id + '/stop')),
   restartVM: (id) => unwrap(http.post('/vms/' + id + '/restart')),
   deleteVM: (id) => unwrap(http.delete('/vms/' + id)),
+  listSnapshots: (id) => unwrap(http.get('/vms/' + id + '/snapshots')),
+  createSnapshot: (id, name) => unwrap(http.post('/vms/' + id + '/snapshots', { name })),
+  deleteSnapshot: (id, snap) => unwrap(http.delete('/vms/' + id + '/snapshots/' + snap)),
+  revertSnapshot: (id, snap) => unwrap(http.post('/vms/' + id + '/snapshots/' + snap + '/revert')),
 
   // 存储池
   listStoragePools: () => unwrap(http.get('/storage/pools')),

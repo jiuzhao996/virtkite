@@ -125,6 +125,10 @@ func main() {
 			vms.POST("/:id/stop", vmHandler.StopVM)
 			vms.POST("/:id/restart", vmHandler.RestartVM)
 			vms.DELETE("/:id", vmHandler.DeleteVM)
+			vms.GET("/:id/snapshots", vmHandler.ListSnapshots)
+			vms.POST("/:id/snapshots", vmHandler.CreateSnapshot)
+			vms.DELETE("/:id/snapshots/:snap", vmHandler.DeleteSnapshot)
+			vms.POST("/:id/snapshots/:snap/revert", vmHandler.RevertSnapshot)
 		}
 
 		// 存储池管理（admin）

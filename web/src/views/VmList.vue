@@ -29,11 +29,12 @@
             <el-tag :type="statusTag(row.status)" effect="light">{{ statusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="260" fixed="right">
+        <el-table-column label="操作" min-width="300" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :disabled="busy.has(row.id)" @click="action(row, 'start')">开机</el-button>
             <el-button size="small" :disabled="busy.has(row.id)" @click="action(row, 'stop')">关机</el-button>
             <el-button size="small" :disabled="busy.has(row.id)" @click="action(row, 'restart')">重启</el-button>
+            <el-button size="small" :disabled="busy.has(row.id)" @click="openSnapshots(row)">快照</el-button>
             <el-button size="small" type="danger" :disabled="busy.has(row.id)" @click="action(row, 'delete')">删除</el-button>
           </template>
         </el-table-column>
@@ -73,6 +74,38 @@
         <el-button type="primary" :loading="creating" @click="create">创建</el-button>
       </template>
     </el-dialog>
+
+    <!-- 快照管理 -->
+    <el-dialog v-model="snapDialog" :title="'快照管理 - ' + (curVM || '')" width="560px">
+      <div class="toolbar">
+        <div>
+          <el-button type="success" size="small" :icon="Plus" @click="openCreateSnap">新建快照</el-button>
+        </div>
+        <span class="count">共 {{ snapshots.length }} 个</span>
+      </div>
+      <el-table :data="snapshots" stripe border size="small" style="width: 100%">
+        <el-table-column prop="name" label="名称" min-width="180" />
+        <el-table-column label="操作" width="160">
+          <template #default="{ row }">
+            <el-button size="small" @click="revertSnap(row)">回滚</el-button>
+            <el-button size="small" type="danger" @click="removeSnap(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <!-- 新建快照 -->
+    <el-dialog v-model="snapCreateDialog" title="新建快照" width="420px">
+      <el-form label-width="80px">
+        <el-form-item label="名称" required>
+          <el-input v-model="snapForm.name" placeholder="如 snap-20260903" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="snapCreateDialog = false">取消</el-button>
+        <el-button type="primary" :loading="snapSaving" @click="createSnap">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -90,6 +123,13 @@ const loading = ref(false)
 const busy = ref(new Set())
 const dialog = ref(false)
 const creating = ref(false)
+const snapDialog = ref(false)
+const snapCreateDialog = ref(false)
+const snapSaving = ref(false)
+const curVM = ref('')
+const curVMId = ref(null)
+const snapshots = ref([])
+const snapForm = ref({ name: '' })
 
 const form = reactive({ name: '', host_id: null, template: '', storage_pool: 'vmops', vcpu: 1, memory_mb: 1024, disk_gb: 20 })
 
@@ -169,6 +209,64 @@ async function action(vm, type) {
   } finally {
     busy.value.delete(vm.id)
     busy.value = new Set(busy.value)
+  }
+}
+
+async function openSnapshots(vm) {
+  curVM.value = vm.name
+  curVMId.value = vm.id
+  snapDialog.value = true
+  try {
+    const res = await api.listSnapshots(vm.id)
+    snapshots.value = (res.data && res.data) || []
+  } catch (e) {
+    ElMessage.error('获取快照列表失败')
+  }
+}
+
+function openCreateSnap() {
+  snapForm.value = { name: '' }
+  snapCreateDialog.value = true
+}
+
+async function createSnap() {
+  if (!snapForm.value.name) {
+    ElMessage.warning('请填写快照名称')
+    return
+  }
+  snapSaving.value = true
+  try {
+    await api.createSnapshot(curVMId.value, snapForm.value.name)
+    ElMessage.success('快照已创建')
+    snapCreateDialog.value = false
+    const res = await api.listSnapshots(curVMId.value)
+    snapshots.value = (res.data && res.data) || []
+  } catch (e) {
+    ElMessage.error((e.response && e.response.data && e.response.data.error) || '创建失败')
+  } finally {
+    snapSaving.value = false
+  }
+}
+
+async function revertSnap(snap) {
+  try {
+    await ElMessageBox.confirm('确定回滚到快照「' + snap.name + '」？此操作会覆盖当前状态。', '确认回滚', { type: 'warning' })
+    await api.revertSnapshot(curVMId.value, snap.name)
+    ElMessage.success('已回滚到快照')
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error((e.response && e.response.data && e.response.data.error) || '回滚失败')
+  }
+}
+
+async function removeSnap(snap) {
+  try {
+    await ElMessageBox.confirm('确定删除快照「' + snap.name + '」？', '确认删除', { type: 'warning' })
+    await api.deleteSnapshot(curVMId.value, snap.name)
+    ElMessage.success('快照已删除')
+    const res = await api.listSnapshots(curVMId.value)
+    snapshots.value = (res.data && res.data) || []
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error((e.response && e.response.data && e.response.data.error) || '删除失败')
   }
 }
 

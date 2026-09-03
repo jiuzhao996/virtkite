@@ -424,6 +424,89 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 	})
 }
 
+// ListSnapshots 获取虚拟机快照列表
+func (h *VMHandler) ListSnapshots(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		return
+	}
+
+	snaps, err := h.Virt.ListSnapshots(vm.Name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	Success(c, snaps)
+}
+
+// CreateSnapshot 创建虚拟机快照
+func (h *VMHandler) CreateSnapshot(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		return
+	}
+
+	var req struct {
+		Name string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	if !validateVMName(req.Name) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "快照名称只允许字母、数字、下划线和连字符"})
+		return
+	}
+
+	if err := h.Virt.CreateSnapshot(vm.Name, req.Name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	Success(c, gin.H{"vm": vm.Name, "snapshot": req.Name})
+}
+
+// DeleteSnapshot 删除虚拟机快照
+func (h *VMHandler) DeleteSnapshot(c *gin.Context) {
+	id := c.Param("id")
+	snapName := c.Param("snap")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		return
+	}
+
+	if err := h.Virt.DeleteSnapshot(vm.Name, snapName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	Success(c, gin.H{"vm": vm.Name, "snapshot": snapName})
+}
+
+// RevertSnapshot 回滚虚拟机到指定快照
+func (h *VMHandler) RevertSnapshot(c *gin.Context) {
+	id := c.Param("id")
+	snapName := c.Param("snap")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		return
+	}
+
+	if err := h.Virt.RevertSnapshot(vm.Name, snapName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	Success(c, gin.H{"vm": vm.Name, "snapshot": snapName})
+}
+
 // GetHostInfo 获取宿主机信息
 func (h *VMHandler) GetHostInfo(c *gin.Context) {
 	hostname, err := exec.Command("hostname").Output()
