@@ -11,9 +11,10 @@
 
       <el-table :data="items" stripe border style="width: 100%">
         <el-table-column prop="name" label="名称" min-width="140" />
-        <el-table-column label="宿主机" min-width="140">
+        <el-table-column label="宿主机" min-width="130">
           <template #default="{ row }">{{ row.host ? row.host.name : ('ID ' + row.host_id) }}</template>
         </el-table-column>
+        <el-table-column prop="storage_pool" label="存储池" width="100" />
         <el-table-column label="vCPU" width="90">
           <template #default="{ row }">{{ row.vcpu }} 核</template>
         </el-table-column>
