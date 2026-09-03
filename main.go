@@ -81,9 +81,13 @@ func main() {
 	dashboardHandler := handler.NewDashboardHandler(db)
 	storageHandler := handler.NewStorageHandler()
 	networkHandler := handler.NewNetworkHandler()
+	vncHandler := handler.NewVNCHandler(db)
 
 	// 公开接口（无需认证）
 	r.POST("/api/auth/login", authHandler.Login)
+
+	// VNC token 解析（供 websockify JSONTokenApi 内网调用）
+	r.GET("/api/vnc/token/:token", vncHandler.ResolveToken)
 
 	// 需要认证的接口
 	api := r.Group("/api")
@@ -131,6 +135,7 @@ func main() {
 			vms.POST("/:id/snapshots", vmHandler.CreateSnapshot)
 			vms.DELETE("/:id/snapshots/:snap", vmHandler.DeleteSnapshot)
 			vms.POST("/:id/snapshots/:snap/revert", vmHandler.RevertSnapshot)
+			vms.POST("/:id/vnc-token", vncHandler.RequestToken)
 		}
 
 		// 存储池管理（admin）

@@ -128,6 +128,50 @@ func (v *Virt) GetDomainState(name string) (string, error) {
 	return StateToPlatform(state), nil
 }
 
+// GetVNCInfo 返回运行中虚拟机的 VNC 端口（解析 graphics XML）。
+// VM 未运行或无 VNC 配置时返回错误。
+func (v *Virt) GetVNCInfo(name string) (int, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return 0, err
+	}
+	dom, err := l.DomainLookupByName(name)
+	if err != nil {
+		return 0, fmt.Errorf("虚拟机 %s 不存在: %v", name, err)
+	}
+
+	state, _, err := l.DomainGetState(dom, 0)
+	if err != nil {
+		return 0, fmt.Errorf("获取虚拟机状态失败: %v", err)
+	}
+	if libvirt.DomainState(state) != libvirt.DomainRunning {
+		return 0, fmt.Errorf("虚拟机 %s 未运行，无法连接控制台", name)
+	}
+
+	xmlstr, err := l.DomainGetXMLDesc(dom, 0)
+	if err != nil {
+		return 0, fmt.Errorf("获取虚拟机 XML 失败: %v", err)
+	}
+
+	var d struct {
+		Devices struct {
+			Graphics []struct {
+				Type string `xml:"type,attr"`
+				Port int    `xml:"port,attr"`
+			} `xml:"graphics"`
+		} `xml:"devices"`
+	}
+	if err := xml.Unmarshal([]byte(xmlstr), &d); err != nil {
+		return 0, fmt.Errorf("解析虚拟机 XML 失败: %v", err)
+	}
+	for _, g := range d.Devices.Graphics {
+		if g.Type == "vnc" && g.Port > 0 {
+			return g.Port, nil
+		}
+	}
+	return 0, fmt.Errorf("虚拟机 %s 未配置 VNC", name)
+}
+
 // GetAllDomainStates 返回所有域的名称与平台状态映射（对应 virsh list --all + domstate）。
 func (v *Virt) GetAllDomainStates() (map[string]string, error) {
 	l, err := v.getConn()

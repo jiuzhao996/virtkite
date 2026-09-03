@@ -29,13 +29,14 @@
             <el-tag :type="statusTag(row.status)" effect="light">{{ statusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="300" fixed="right">
+        <el-table-column label="操作" min-width="360" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :disabled="busy.has(row.id)" @click="action(row, 'start')">开机</el-button>
             <el-button size="small" :disabled="busy.has(row.id)" @click="action(row, 'stop')">关机</el-button>
             <el-button size="small" :disabled="busy.has(row.id)" @click="action(row, 'restart')">重启</el-button>
             <el-button size="small" :disabled="busy.has(row.id)" @click="openSnapshots(row)">快照</el-button>
             <el-button size="small" :disabled="busy.has(row.id)" @click="openXML(row)">XML</el-button>
+            <el-button size="small" :disabled="row.status !== 'running'" @click="openConsole(row)">控制台</el-button>
             <el-button size="small" type="danger" :disabled="busy.has(row.id)" @click="action(row, 'delete')">删除</el-button>
           </template>
         </el-table-column>
@@ -281,6 +282,24 @@ async function removeSnap(snap) {
     snapshots.value = (res.data && res.data) || []
   } catch (e) {
     if (e !== 'cancel') ElMessage.error((e.response && e.response.data && e.response.data.error) || '删除失败')
+  }
+}
+
+async function openConsole(vm) {
+  try {
+    const res = await api.vncToken(vm.id)
+    const d = res.data || {}
+    if (!d.token) {
+      ElMessage.error('获取控制台失败')
+      return
+    }
+    // 新窗口打开 noVNC，连接 websockify :6080
+    const url = window.location.origin.replace(/:8080$/, '')
+    const base = url.includes(':') ? url.split(':')[0] : url
+    const noVncUrl = 'http://' + base + ':6080/vnc.html?path=websockify?token=' + d.token
+    window.open(noVncUrl, '_blank', 'width=1024,height=700')
+  } catch (e) {
+    ElMessage.error((e.response && e.response.data && e.response.data.error) || '无法连接控制台')
   }
 }
 
