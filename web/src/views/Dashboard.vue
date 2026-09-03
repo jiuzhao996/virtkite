@@ -1,7 +1,7 @@
 <template>
   <div v-loading="loading">
     <el-row :gutter="16">
-      <el-col :xs="12" :sm="8" :md="4" v-for="s in stats" :key="s.label">
+      <el-col :xs="12" :sm="8" :md="6" v-for="s in stats" :key="s.label">
         <el-card shadow="hover" class="stat-card">
           <div class="stat-icon">{{ s.icon }}</div>
           <el-statistic :value="s.value" :value-style="{ color: '#2a9da5', fontWeight: 700 }" />
@@ -55,6 +55,8 @@ const stats = computed(() => {
     { label: '宿主机', icon: '🖥', value: o.host_count || 0 },
     { label: '虚拟机', icon: '🖥️', value: o.vm_count || 0 },
     { label: '运行中', icon: '🟢', value: o.running_vm_count || 0 },
+    { label: '存储池', icon: '💾', value: o.pool_count || 0 },
+    { label: '网络', icon: '🌐', value: o.network_count || 0 },
     { label: '镜像', icon: '🖼️', value: o.image_count || 0 },
     { label: '用户', icon: '👤', value: o.user_count || 0 },
     { label: '审计', icon: '📝', value: o.audit_count || 0 }
