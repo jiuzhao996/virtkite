@@ -79,6 +79,7 @@ func main() {
 	imageHandler := handler.NewImageHandler(db)
 	auditHandler := handler.NewAuditHandler(db)
 	dashboardHandler := handler.NewDashboardHandler(db)
+	storageHandler := handler.NewStorageHandler()
 
 	// 公开接口（无需认证）
 	r.POST("/api/auth/login", authHandler.Login)
@@ -125,11 +126,16 @@ func main() {
 			vms.DELETE("/:id", vmHandler.DeleteVM)
 		}
 
-		// 存储池（建盘选择用，admin）
+		// 存储池管理（admin）
 		storage := api.Group("/storage")
 		storage.Use(middleware.AdminMiddleware())
 		{
-			storage.GET("/pools", vmHandler.ListStoragePools)
+			storage.GET("/pools", storageHandler.ListPools)
+			storage.GET("/pools/:name", storageHandler.GetPool)
+			storage.POST("/pools", storageHandler.CreatePool)
+			storage.DELETE("/pools/:name", storageHandler.DeletePool)
+			storage.POST("/pools/:name/volumes", storageHandler.CreateVolume)
+			storage.DELETE("/pools/:name/volumes/:vol", storageHandler.DeleteVolume)
 		}
 
 		// 镜像管理（仅管理员）

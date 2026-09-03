@@ -7,6 +7,7 @@ import VmList from '../views/VmList.vue'
 import HostList from '../views/HostList.vue'
 import ImageList from '../views/ImageList.vue'
 import AuditList from '../views/AuditList.vue'
+import StorageList from '../views/StorageList.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: Login, meta: { public: true } },
@@ -19,6 +20,7 @@ const routes = [
       { path: 'vms', name: 'vms', component: VmList },
       { path: 'hosts', name: 'hosts', component: HostList },
       { path: 'images', name: 'images', component: ImageList },
+      { path: 'storage', name: 'storage', component: StorageList },
       { path: 'audit', name: 'audit', component: AuditList }
     ]
   }

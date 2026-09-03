@@ -111,7 +111,7 @@ async function load() {
     items.value = (vms.data && vms.data.items) || []
     total.value = (vms.data && vms.data.total) || 0
     hosts.value = (hs.data && hs.data.items) || []
-    pools.value = (ps.data && ps.data) || []
+    pools.value = (ps.data && ps.data.items) ? ps.data.items.map((p) => p.name) : (ps.data || [])
     if (!pools.value.includes(form.storage_pool) && pools.value.length) form.storage_pool = pools.value[0]
   } catch (e) {
     ElMessage.error('获取虚拟机列表失败')

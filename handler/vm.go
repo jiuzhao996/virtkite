@@ -424,21 +424,6 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 	})
 }
 
-// ListStoragePools 获取所有存储池列表（建盘时选择存储池用）
-func (h *VMHandler) ListStoragePools(c *gin.Context) {
-	pools, err := h.Virt.ListPools()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取存储池失败", "detail": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "success",
-		"data":    pools,
-	})
-}
-
 // GetHostInfo 获取宿主机信息
 func (h *VMHandler) GetHostInfo(c *gin.Context) {
 	hostname, err := exec.Command("hostname").Output()

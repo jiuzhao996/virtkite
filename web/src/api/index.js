@@ -54,6 +54,11 @@ export const api = {
 
   // 存储池
   listStoragePools: () => unwrap(http.get('/storage/pools')),
+  getStoragePool: (name) => unwrap(http.get('/storage/pools/' + name)),
+  createStoragePool: (payload) => unwrap(http.post('/storage/pools', payload)),
+  deleteStoragePool: (name) => unwrap(http.delete('/storage/pools/' + name)),
+  createVolume: (pool, payload) => unwrap(http.post('/storage/pools/' + pool + '/volumes', payload)),
+  deleteVolume: (pool, vol) => unwrap(http.delete('/storage/pools/' + pool + '/volumes/' + vol)),
 
   // 镜像
   listImages: (params) => unwrap(http.get('/images', { params })),
