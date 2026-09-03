@@ -67,6 +67,15 @@ export const api = {
     unwrap(http.post('/images/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } })),
   deleteImage: (id) => unwrap(http.delete('/images/' + id)),
 
+  // 网络
+  listNetworks: () => unwrap(http.get('/networks')),
+  getNetwork: (name) => unwrap(http.get('/networks/' + name)),
+  createNetwork: (payload) => unwrap(http.post('/networks', payload)),
+  defineNetworkXML: (payload) => unwrap(http.post('/networks/xml', payload)),
+  startNetwork: (name) => unwrap(http.post('/networks/' + name + '/start')),
+  stopNetwork: (name) => unwrap(http.post('/networks/' + name + '/stop')),
+  deleteNetwork: (name) => unwrap(http.delete('/networks/' + name)),
+
   // 仪表盘
   dashboardOverview: () => unwrap(http.get('/dashboard/overview')),
   vmStatus: () => unwrap(http.get('/dashboard/vm-status')),

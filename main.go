@@ -80,6 +80,7 @@ func main() {
 	auditHandler := handler.NewAuditHandler(db)
 	dashboardHandler := handler.NewDashboardHandler(db)
 	storageHandler := handler.NewStorageHandler()
+	networkHandler := handler.NewNetworkHandler()
 
 	// 公开接口（无需认证）
 	r.POST("/api/auth/login", authHandler.Login)
@@ -136,6 +137,19 @@ func main() {
 			storage.DELETE("/pools/:name", storageHandler.DeletePool)
 			storage.POST("/pools/:name/volumes", storageHandler.CreateVolume)
 			storage.DELETE("/pools/:name/volumes/:vol", storageHandler.DeleteVolume)
+		}
+
+		// 网络管理（admin）
+		networks := api.Group("/networks")
+		networks.Use(middleware.AdminMiddleware())
+		{
+			networks.GET("", networkHandler.ListNetworks)
+			networks.GET("/:name", networkHandler.GetNetwork)
+			networks.POST("", networkHandler.CreateNetwork)
+			networks.POST("/xml", networkHandler.DefineNetworkXML)
+			networks.POST("/:name/start", networkHandler.StartNetwork)
+			networks.POST("/:name/stop", networkHandler.StopNetwork)
+			networks.DELETE("/:name", networkHandler.DeleteNetwork)
 		}
 
 		// 镜像管理（仅管理员）

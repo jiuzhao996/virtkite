@@ -1,0 +1,241 @@
+package virt
+
+import (
+	"encoding/xml"
+	"fmt"
+	"strings"
+
+	"github.com/digitalocean/go-libvirt"
+)
+
+// NetworkInfo 网络详情。
+type NetworkInfo struct {
+	Name       string `json:"name"`
+	Active     bool   `json:"active"`
+	Persistent bool   `json:"persistent"`
+	Bridge     string `json:"bridge"`
+	Forward    string `json:"forward"`
+	Gateway    string `json:"gateway"`
+	CIDR       string `json:"cidr"`
+	XML        string `json:"xml,omitempty"`
+}
+
+// ListNetworks 返回所有网络详情（对应 virsh net-list --all）。
+func (v *Virt) ListNetworks() ([]NetworkInfo, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return nil, err
+	}
+
+	flags := libvirt.ConnectListNetworksActive | libvirt.ConnectListNetworksInactive
+	networks, _, err := l.ConnectListAllNetworks(1, flags)
+	if err != nil {
+		return nil, err
+	}
+
+	infos := make([]NetworkInfo, 0, len(networks))
+	for _, n := range networks {
+		info, err := v.getNetworkInfo(l, n)
+		if err != nil {
+			continue
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
+}
+
+// GetNetwork 返回指定网络详情（含 XML）。
+func (v *Virt) GetNetwork(name string) (*NetworkInfo, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return nil, err
+	}
+	n, err := l.NetworkLookupByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("网络 %s 不存在: %v", name, err)
+	}
+	info, err := v.getNetworkInfo(l, n)
+	if err != nil {
+		return nil, err
+	}
+	// 补充完整 XML
+	if xmlstr, err := l.NetworkGetXMLDesc(n, 0); err == nil {
+		info.XML = xmlstr
+	}
+	return &info, nil
+}
+
+// getNetworkInfo 聚合单网络详情，解析 XML 提取 forward/gateway/cidr。
+func (v *Virt) getNetworkInfo(l *libvirt.Libvirt, net libvirt.Network) (NetworkInfo, error) {
+	info := NetworkInfo{Name: net.Name}
+
+	active, err := l.NetworkIsActive(net)
+	if err == nil {
+		info.Active = active == 1
+	}
+	persistent, err := l.NetworkIsPersistent(net)
+	if err == nil {
+		info.Persistent = persistent == 1
+	}
+	bridge, err := l.NetworkGetBridgeName(net)
+	if err == nil {
+		info.Bridge = bridge
+	}
+
+	xmlstr, err := l.NetworkGetXMLDesc(net, 0)
+	if err == nil {
+		var n struct {
+			Forward struct {
+				Mode string `xml:"mode,attr"`
+			} `xml:"forward"`
+			IPs []struct {
+				Address string `xml:"address,attr"`
+				Netmask string `xml:"netmask,attr"`
+			} `xml:"ip"`
+		}
+		if err := xml.Unmarshal([]byte(xmlstr), &n); err == nil {
+			info.Forward = n.Forward.Mode
+			if len(n.IPs) > 0 {
+				info.Gateway = n.IPs[0].Address
+				info.CIDR = n.IPs[0].Netmask
+			}
+		}
+	}
+	return info, nil
+}
+
+// StartNetwork 启动网络（对应 virsh net-start）。
+func (v *Virt) StartNetwork(name string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	n, err := l.NetworkLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("网络 %s 不存在: %v", name, err)
+	}
+	if err := l.NetworkCreate(n); err != nil {
+		return fmt.Errorf("启动网络失败: %v", err)
+	}
+	return nil
+}
+
+// StopNetwork 停止网络（对应 virsh net-destroy）。
+func (v *Virt) StopNetwork(name string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	n, err := l.NetworkLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("网络 %s 不存在: %v", name, err)
+	}
+	if err := l.NetworkDestroy(n); err != nil {
+		return fmt.Errorf("停止网络失败: %v", err)
+	}
+	return nil
+}
+
+// DeleteNetwork 删除网络定义（对应 virsh net-undefine）。运行中的网络先停止再删除。
+func (v *Virt) DeleteNetwork(name string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	n, err := l.NetworkLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("网络 %s 不存在: %v", name, err)
+	}
+
+	active, err := l.NetworkIsActive(n)
+	if err == nil && active == 1 {
+		if err := l.NetworkDestroy(n); err != nil {
+			return fmt.Errorf("停止网络失败: %v", err)
+		}
+	}
+
+	if err := l.NetworkUndefine(n); err != nil {
+		return fmt.Errorf("删除网络失败: %v", err)
+	}
+	return nil
+}
+
+// DefineNetwork 定义网络（对应 virsh net-define + net-start + autostart）。
+func (v *Virt) DefineNetwork(xml string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	n, err := l.NetworkDefineXML(xml)
+	if err != nil {
+		return fmt.Errorf("定义网络失败: %v", err)
+	}
+	if err := l.NetworkCreate(n); err != nil {
+		return fmt.Errorf("启动网络失败: %v", err)
+	}
+	if err := l.NetworkSetAutostart(n, 1); err != nil {
+		return fmt.Errorf("设置自动启动失败: %v", err)
+	}
+	return nil
+}
+
+// DefineNetworkXML 定义网络（含 XML 校验，供编辑用，不自动启动）。
+func (v *Virt) DefineNetworkXML(xml string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	if _, err := l.NetworkDefineXML(xml); err != nil {
+		return fmt.Errorf("定义网络失败: %v", err)
+	}
+	return nil
+}
+
+// NetworkXMLFromParams 根据参数生成 NAT 网络 XML（类似 virsh net-create 的 NAT 模板）。
+func NetworkXMLFromParams(name, cidr, gateway string) string {
+	// cidr 形如 192.168.100.0/24，提取网段
+	ipPart := gateway
+	if ipPart == "" {
+		ipPart = "192.168.100.1"
+	}
+	_ = cidr
+	return fmt.Sprintf(`<network>
+  <name>%s</name>
+  <forward mode='nat'>
+    <nat>
+      <port start='1024' end='65535'/>
+    </nat>
+  </forward>
+  <bridge name='virbr%d' stp='on' delay='0'/>
+  <ip address='%s' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='%s' end='%s'/>
+    </dhcp>
+  </ip>
+</network>`, name, hashNetwork(name), ipPart, dhcpStart(ipPart), dhcpEnd(ipPart))
+}
+
+// hashNetwork 根据名称生成稳定网桥后缀
+func hashNetwork(name string) int {
+	sum := 0
+	for _, r := range name {
+		sum += int(r)
+	}
+	return sum%200 + 10
+}
+
+// dhcpStart / dhcpEnd 基于网关生成 DHCP 范围
+func dhcpStart(gw string) string {
+	return replaceLastOctet(gw, 2)
+}
+func dhcpEnd(gw string) string {
+	return replaceLastOctet(gw, 254)
+}
+
+func replaceLastOctet(ip string, last int) string {
+	idx := strings.LastIndex(ip, ".")
+	if idx < 0 {
+		return ip
+	}
+	return fmt.Sprintf("%s.%d", ip[:idx], last)
+}

@@ -26,6 +26,10 @@
           <el-icon><FolderOpened /></el-icon>
           <span>存储池</span>
         </el-menu-item>
+        <el-menu-item index="/networks">
+          <el-icon><Connection /></el-icon>
+          <span>网络</span>
+        </el-menu-item>
         <el-menu-item index="/audit">
           <el-icon><Document /></el-icon>
           <span>审计日志</span>
@@ -67,6 +71,7 @@ const titleMap = {
   hosts: '宿主机管理',
   images: '镜像管理',
   storage: '存储池管理',
+  networks: '网络管理',
   audit: '审计日志'
 }
 const title = computed(() => titleMap[route.path.split('/')[1]] || 'vmops')

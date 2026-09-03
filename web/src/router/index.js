@@ -8,6 +8,7 @@ import HostList from '../views/HostList.vue'
 import ImageList from '../views/ImageList.vue'
 import AuditList from '../views/AuditList.vue'
 import StorageList from '../views/StorageList.vue'
+import NetworkList from '../views/NetworkList.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: Login, meta: { public: true } },
@@ -21,6 +22,7 @@ const routes = [
       { path: 'hosts', name: 'hosts', component: HostList },
       { path: 'images', name: 'images', component: ImageList },
       { path: 'storage', name: 'storage', component: StorageList },
+      { path: 'networks', name: 'networks', component: NetworkList },
       { path: 'audit', name: 'audit', component: AuditList }
     ]
   }
