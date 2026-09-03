@@ -85,6 +85,7 @@ func (v *Virt) DestroyDomain(name string) error {
 
 // UndefineDomain 删除虚拟机定义（对应 virsh undefine，不删除存储卷）。
 // 若域正在运行，先强制销毁（virsh destroy）再删除定义（virsh undefine）。
+// 使用 DomainUndefineFlags 携带 SNAPSHOTS_METADATA + MANAGED_SAVE，兼容有快照/托管保存的域。
 func (v *Virt) UndefineDomain(name string) error {
 	l, err := v.getConn()
 	if err != nil {
@@ -105,7 +106,8 @@ func (v *Virt) UndefineDomain(name string) error {
 		}
 	}
 
-	if err := l.DomainUndefine(dom); err != nil {
+	flags := libvirt.DomainUndefineSnapshotsMetadata | libvirt.DomainUndefineManagedSave
+	if err := l.DomainUndefineFlags(dom, flags); err != nil {
 		return fmt.Errorf("删除虚拟机定义失败: %v", err)
 	}
 	return nil
