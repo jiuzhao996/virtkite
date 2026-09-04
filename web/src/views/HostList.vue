@@ -1,5 +1,8 @@
 <template>
   <div v-loading="loading">
+    <div class="page-head">
+      <h2 class="page-title">宿主机管理</h2>
+    </div>
     <el-card shadow="never">
       <div class="toolbar">
         <div>
@@ -22,9 +25,9 @@
         </el-table-column>
         <el-table-column label="操作" min-width="220" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" :loading="testBusy.has(row.id)" @click="test(row)">测试连通</el-button>
-            <el-button size="small" @click="showStats(row)">查看状态</el-button>
-            <el-button size="small" type="danger" @click="remove(row)">删除</el-button>
+            <el-button size="small" :icon="Connection" :loading="testBusy.has(row.id)" @click="test(row)">测试连通</el-button>
+            <el-button size="small" :icon="DataLine" @click="showStats(row)">查看状态</el-button>
+            <el-button size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -74,7 +77,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus } from '@element-plus/icons-vue'
+import { Refresh, Plus, Connection, DataLine, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 
 const items = ref([])
@@ -188,18 +191,29 @@ onMounted(load)
 </script>
 
 <style scoped>
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xl);
+}
+.page-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
 .toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-xl);
 }
 .count {
-  color: #888;
+  color: var(--color-muted-foreground);
   font-size: 0.9rem;
 }
 .loading {
-  color: #999;
+  color: var(--color-muted-foreground);
   text-align: center;
   padding: 30px 0;
 }

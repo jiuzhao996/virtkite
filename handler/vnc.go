@@ -39,7 +39,7 @@ func (h *VNCHandler) RequestToken(c *gin.Context) {
 	// 获取 VM VNC 端口
 	port, err := h.Virt.GetVNCInfo(vm.Name)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusBadRequest, err)
 		return
 	}
 

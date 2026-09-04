@@ -1,6 +1,7 @@
 package virt
 
 import (
+	"fmt"
 	"net/url"
 	"sync"
 
@@ -13,6 +14,10 @@ type Virt struct {
 	mu  sync.Mutex
 	uri libvirt.ConnectURI
 	con *libvirt.Libvirt
+
+	// statsMu 保护 statsCache（性能统计差分采样缓存，见 stats.go）。
+	statsMu    sync.Mutex
+	statsCache map[string]*statSample
 }
 
 // New 创建 Virt 实例（惰性连接，首次调用时建立）。
@@ -31,12 +36,12 @@ func (v *Virt) Connect() (*libvirt.Libvirt, error) {
 
 	u, err := url.Parse(string(v.uri))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("解析 libvirt URI 失败: %w", err)
 	}
 
 	l, err := libvirt.ConnectToURI(u)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("连接 libvirt 失败: %w", err)
 	}
 
 	v.con = l
@@ -53,12 +58,20 @@ func (v *Virt) Reset() {
 	}
 }
 
-// getConn 获取可用连接，连接已断开则惰性重建。
+// getConn 获取可用连接，连接已断开则自动重建。
+// 每次调用都做一次廉价 RPC 探活：libvirt 连接断开（如 libvirtd 重启）时，
+// 立即 Reset 并重建连接，避免长期持有失效连接导致所有后续操作失败。
 func (v *Virt) getConn() (*libvirt.Libvirt, error) {
 	l, err := v.Connect()
 	if err != nil {
 		return nil, err
 	}
-	// 简单探活：libvirt 连接断开时，后续调用会返回错误并触发 Reset。
+	if _, err := l.ConnectGetVersion(); err != nil {
+		v.Reset()
+		l, err = v.Connect()
+		if err != nil {
+			return nil, err
+		}
+	}
 	return l, nil
 }

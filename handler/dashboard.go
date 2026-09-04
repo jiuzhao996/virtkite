@@ -1,10 +1,29 @@
 package handler
 
 import (
+	"fmt"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
+)
+
+// hostCPUStat / hostCPUPrev 缓存上一次 /proc/stat 的 cpu 行累加值，用于差分计算 CPU 百分比。
+// 参考 service/virt/stats.go 的滚动采样写法。
+var (
+	hostStatsMu sync.Mutex
+	hostCPUPrev struct {
+		idle  uint64
+		total uint64
+		at    time.Time
+	}
 )
 
 // DashboardHandler 仪表盘统计处理器
@@ -65,4 +84,146 @@ func (h *DashboardHandler) VMStatusDistribution(c *gin.Context) {
 		Scan(&result)
 
 	Success(c, result)
+}
+
+// readProcCpuStat 解析 /proc/stat 首行（cpu 聚合行），返回 idle 与 total 累加值（单位 jiffies）。
+func readProcCpuStat() (idle, total uint64, err error) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		// "cpu " 带空格前缀，区别于 "cpu0"/"cpu1" 单核行
+		if !strings.HasPrefix(line, "cpu ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		// 字段序：user nice system idle iowait irq softirq steal guest guest_nice
+		var vals []uint64
+		for _, f := range fields[1:] {
+			v, perr := strconv.ParseUint(f, 10, 64)
+			if perr != nil {
+				continue
+			}
+			vals = append(vals, v)
+		}
+		if len(vals) < 4 {
+			continue
+		}
+		idle = vals[3]
+		if len(vals) > 4 {
+			idle += vals[4] // idle + iowait
+		}
+		for _, v := range vals {
+			total += v
+		}
+		return idle, total, nil
+	}
+	return 0, 0, fmt.Errorf("/proc/stat 未找到 cpu 聚合行")
+}
+
+// HostStats 返回宿主机实时 CPU/内存（读 /proc/stat 差分 + /proc/meminfo）。
+func (h *DashboardHandler) HostStats(c *gin.Context) {
+	idle, total, err := readProcCpuStat()
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "读取 /proc/stat 失败", err)
+		return
+	}
+
+	cpuPercent := 0.0
+	now := time.Now()
+	hostStatsMu.Lock()
+	if !hostCPUPrev.at.IsZero() {
+		dIdle := idle - hostCPUPrev.idle
+		dTotal := total - hostCPUPrev.total
+		dt := now.Sub(hostCPUPrev.at).Seconds()
+		// 计数器回绕或时间片异常时按 0 处理
+		if dTotal > 0 && dt > 0 {
+			cpuPercent = (1 - float64(dIdle)/float64(dTotal)) * 100
+			if cpuPercent < 0 {
+				cpuPercent = 0
+			}
+			if cpuPercent > 100 {
+				cpuPercent = 100
+			}
+		}
+	}
+	hostCPUPrev.idle = idle
+	hostCPUPrev.total = total
+	hostCPUPrev.at = now
+	hostStatsMu.Unlock()
+
+	// /proc/meminfo：MemTotal / MemAvailable（kB），used = total - available
+	memTotal, memAvailable := uint64(0), uint64(0)
+	if data, err := os.ReadFile("/proc/meminfo"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			switch {
+			case strings.HasPrefix(line, "MemTotal:"):
+				memTotal = parseMeminfoKB(line)
+			case strings.HasPrefix(line, "MemAvailable:"):
+				memAvailable = parseMeminfoKB(line)
+			}
+		}
+	}
+	memUsed := uint64(0)
+	if memTotal > memAvailable {
+		memUsed = memTotal - memAvailable
+	}
+
+	Success(c, gin.H{
+		"cpu_percent":   cpuPercent,
+		"mem_total_kib": memTotal,
+		"mem_used_kib":  memUsed,
+	})
+}
+
+// parseMeminfoKB 解析 /proc/meminfo 行首数值（kB）。
+func parseMeminfoKB(line string) uint64 {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return 0
+	}
+	v, err := strconv.ParseUint(fields[1], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// VmPerf 返回各 VM 实时性能（遍历 DB，仅 running 采样 GetDomainStats）。
+func (h *DashboardHandler) VmPerf(c *gin.Context) {
+	var vms []model.VM
+	if err := h.DB.Find(&vms).Error; err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "查询虚拟机失败", err)
+		return
+	}
+
+	items := make([]gin.H, 0, len(vms))
+	for _, vm := range vms {
+		if vm.Status != "running" {
+			continue
+		}
+		cpuPercent, memPct := 0.0, 0.0
+		if st, err := h.Virt.GetDomainStats(vm.Name); err == nil && st != nil {
+			cpuPercent = st.CpuPercent
+			// 优先 balloon 口径（GuestUsed/GuestTotal），缺失时回退分配内存口径（MemUsed/MemTotal）
+			if st.GuestTotalKiB > 0 {
+				memPct = float64(st.GuestUsedKiB) / float64(st.GuestTotalKiB) * 100
+			} else if st.MemTotalKiB > 0 {
+				memPct = float64(st.MemUsedKiB) / float64(st.MemTotalKiB) * 100
+			}
+		}
+		items = append(items, gin.H{
+			"id":          vm.ID,
+			"name":        vm.Name,
+			"status":      "running",
+			"cpu_percent": cpuPercent,
+			"mem_pct":     memPct,
+		})
+	}
+
+	Success(c, items)
 }

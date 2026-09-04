@@ -71,6 +71,10 @@ func AuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 		// 获取Authorization头
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
+			// WebSocket 无法设置 Header，允许通过 ?token= 传递 JWT
+			authHeader = "Bearer " + c.Query("token")
+		}
+		if authHeader == "Bearer " {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "未提供认证信息"})
 			c.Abort()
 			return

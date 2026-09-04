@@ -82,6 +82,7 @@ func main() {
 	storageHandler := handler.NewStorageHandler()
 	networkHandler := handler.NewNetworkHandler()
 	vncHandler := handler.NewVNCHandler(db)
+	terminalHandler := handler.NewTerminalHandler(db)
 
 	// 公开接口（无需认证）
 	r.POST("/api/auth/login", authHandler.Login)
@@ -123,12 +124,28 @@ func main() {
 		vms.Use(middleware.AdminMiddleware())
 		{
 			vms.GET("", vmHandler.ListVMs)
+			vms.GET("/options", vmHandler.GetVMOptions)
 			vms.GET("/import/scan", vmHandler.ScanImportVMs)
 			vms.POST("/import", vmHandler.ImportVMs)
+			vms.POST("", vmHandler.CreateVM)
 			vms.GET("/:id", vmHandler.GetVM)
+			vms.GET("/:id/detail", vmHandler.GetVMDetail)
+			vms.GET("/:id/spec", vmHandler.GetVMSpec)
+			vms.PUT("/:id/spec", vmHandler.UpdateVMSpec)
+			vms.POST("/:id/clone", vmHandler.CloneVM)
+			vms.POST("/:id/pause", vmHandler.PauseVM)
+			vms.POST("/:id/resume", vmHandler.ResumeVM)
+			vms.GET("/:id/stats", vmHandler.GetVMStats)
+			vms.PUT("/:id/cpu", vmHandler.SetVcpu)
+			vms.PUT("/:id/memory", vmHandler.SetMemory)
+			vms.PUT("/:id/autostart", vmHandler.SetAutostart)
+			vms.PUT("/:id/boot", vmHandler.SetBoot)
+			vms.POST("/:id/devices/disks", vmHandler.AttachDisk)
+			vms.DELETE("/:id/devices/disks/:target", vmHandler.DetachDisk)
+			vms.POST("/:id/devices/interfaces", vmHandler.AttachInterface)
+			vms.DELETE("/:id/devices/interfaces/:mac", vmHandler.DetachInterface)
 			vms.GET("/:id/xml", vmHandler.GetVMXML)
 			vms.PUT("/:id/xml", vmHandler.UpdateVMXML)
-			vms.POST("", vmHandler.CreateVM)
 			vms.POST("/:id/start", vmHandler.StartVM)
 			vms.POST("/:id/stop", vmHandler.StopVM)
 			vms.POST("/:id/restart", vmHandler.RestartVM)
@@ -138,6 +155,8 @@ func main() {
 			vms.DELETE("/:id/snapshots/:snap", vmHandler.DeleteSnapshot)
 			vms.POST("/:id/snapshots/:snap/revert", vmHandler.RevertSnapshot)
 			vms.POST("/:id/vnc-token", vncHandler.RequestToken)
+			vms.GET("/:id/terminal", terminalHandler.Connect)
+			vms.GET("/:id/serial", vmHandler.ConnectSerial)
 		}
 
 		// 存储池管理（admin）
@@ -160,6 +179,7 @@ func main() {
 			networks.GET("/:name", networkHandler.GetNetwork)
 			networks.POST("", networkHandler.CreateNetwork)
 			networks.POST("/xml", networkHandler.DefineNetworkXML)
+			networks.PUT("/:name", networkHandler.UpdateNetwork)
 			networks.POST("/:name/start", networkHandler.StartNetwork)
 			networks.POST("/:name/stop", networkHandler.StopNetwork)
 			networks.DELETE("/:name", networkHandler.DeleteNetwork)
@@ -172,6 +192,8 @@ func main() {
 			images.GET("", imageHandler.ListImages)
 			images.GET("/:id", imageHandler.GetImage)
 			images.POST("/upload", imageHandler.UploadImage)
+			images.POST("/:id/clone", imageHandler.CloneVM)
+			images.PUT("/:id/template", imageHandler.SetImageTemplate)
 			images.DELETE("/:id", imageHandler.DeleteImage)
 		}
 
@@ -184,6 +206,8 @@ func main() {
 		{
 			dashboard.GET("/overview", dashboardHandler.Overview)
 			dashboard.GET("/vm-status", dashboardHandler.VMStatusDistribution)
+			dashboard.GET("/host-stats", dashboardHandler.HostStats)
+			dashboard.GET("/vm-perf", dashboardHandler.VmPerf)
 		}
 
 		// 审计日志查询（仅管理员）
@@ -191,8 +215,9 @@ func main() {
 		audit.Use(middleware.AdminMiddleware())
 		{
 			audit.GET("", auditHandler.ListAuditLogs)
-			audit.GET("/:id", auditHandler.GetAuditLog)
+			audit.GET("/actions", auditHandler.ListAuditActions)
 			audit.GET("/summary", auditHandler.AuditActionSummary)
+			audit.GET("/:id", auditHandler.GetAuditLog)
 		}
 	}
 

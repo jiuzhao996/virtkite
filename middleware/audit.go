@@ -79,7 +79,8 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// determineAction 根据请求方法和路径确定操作类型
+// determineAction 根据请求方法和路径确定操作类型。
+// 说明：gin 路由注册静态段优先于 :id 参数段，此处用前缀 + 后缀匹配区分子路径。
 func determineAction(method, path string) string {
 	// 认证相关
 	if path == "/api/auth/login" {
@@ -90,29 +91,12 @@ func determineAction(method, path string) string {
 	}
 
 	// 虚拟机相关
-	if strings.Contains(path, "/api/vms") {
-		switch method {
-		case "POST":
-			if path == "/api/vms/import" {
-				return "import_vm"
-			}
-			if strings.Contains(path, "/start") {
-				return "start_vm"
-			}
-			if strings.Contains(path, "/stop") {
-				return "stop_vm"
-			}
-			if strings.Contains(path, "/restart") {
-				return "restart_vm"
-			}
-			return "create_vm"
-		case "DELETE":
-			return "delete_vm"
-		}
+	if strings.HasPrefix(path, "/api/vms") {
+		return vmAction(method, path)
 	}
 
 	// 宿主机相关
-	if strings.Contains(path, "/api/hosts") {
+	if strings.HasPrefix(path, "/api/hosts") {
 		switch method {
 		case "POST":
 			return "create_host"
@@ -124,16 +108,109 @@ func determineAction(method, path string) string {
 	}
 
 	// 镜像相关
-	if strings.Contains(path, "/api/images") {
+	if strings.HasPrefix(path, "/api/images") {
 		switch method {
 		case "POST":
-			return "upload_image"
+			if strings.HasSuffix(path, "/upload") {
+				return "upload_image"
+			}
+			if strings.HasSuffix(path, "/clone") {
+				return "clone_image"
+			}
+		case "PUT":
+			if strings.HasSuffix(path, "/template") {
+				return "set_image_template"
+			}
 		case "DELETE":
 			return "delete_image"
 		}
 	}
 
+	// 网络相关
+	if strings.HasPrefix(path, "/api/networks") {
+		switch method {
+		case "POST":
+			return "create_network"
+		case "PUT":
+			return "update_network"
+		case "DELETE":
+			return "delete_network"
+		}
+	}
+
+	// 存储池/卷相关
+	if strings.HasPrefix(path, "/api/storage") {
+		switch method {
+		case "POST":
+			return "create_volume"
+		case "DELETE":
+			return "delete_volume"
+		}
+	}
+
 	// 默认操作
+	return "access"
+}
+
+// vmAction 虚拟机子路径操作映射（含新增的 pause/resume/clone/设备热插拔/配置调整等）。
+func vmAction(method, path string) string {
+	switch method {
+	case "POST":
+		switch {
+		case path == "/api/vms/import":
+			return "import_vm"
+		case strings.HasSuffix(path, "/start"):
+			return "start_vm"
+		case strings.HasSuffix(path, "/stop"):
+			return "stop_vm"
+		case strings.HasSuffix(path, "/restart"):
+			return "restart_vm"
+		case strings.HasSuffix(path, "/pause"):
+			return "pause_vm"
+		case strings.HasSuffix(path, "/resume"):
+			return "resume_vm"
+		case strings.HasSuffix(path, "/clone"):
+			return "clone_vm"
+		case strings.HasSuffix(path, "/revert"):
+			return "revert_snapshot"
+		case strings.HasSuffix(path, "/snapshots"):
+			return "create_snapshot"
+		case strings.HasSuffix(path, "/devices/interfaces"):
+			return "attach_nic"
+		case strings.HasSuffix(path, "/devices/disks"):
+			return "attach_disk"
+		case path == "/api/vms":
+			return "create_vm"
+		}
+	case "DELETE":
+		switch {
+		case strings.Contains(path, "/devices/interfaces/"):
+			return "detach_nic"
+		case strings.Contains(path, "/devices/disks/"):
+			return "detach_disk"
+		case strings.Contains(path, "/snapshots/"):
+			return "delete_snapshot"
+		case strings.HasPrefix(path, "/api/vms/"):
+			return "delete_vm"
+		}
+	case "PUT":
+		switch {
+		case strings.HasSuffix(path, "/spec"):
+			return "update_vm_spec"
+		case strings.HasSuffix(path, "/xml"):
+			return "update_vm_xml"
+		case strings.HasSuffix(path, "/cpu"):
+			return "set_vcpu"
+		case strings.HasSuffix(path, "/memory"):
+			return "set_memory"
+		case strings.HasSuffix(path, "/autostart"):
+			return "set_autostart"
+		case strings.HasSuffix(path, "/boot"):
+			return "set_boot"
+		case strings.HasPrefix(path, "/api/vms/"):
+			return "update_vm"
+		}
+	}
 	return "access"
 }
 

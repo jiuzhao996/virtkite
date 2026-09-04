@@ -30,7 +30,7 @@ func NewStorageHandler() *StorageHandler {
 func (h *StorageHandler) ListPools(c *gin.Context) {
 	pools, err := h.Virt.ListPoolInfos()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取存储池失败", "detail": err.Error()})
+		ErrorWithMessage(c, http.StatusInternalServerError, "获取存储池失败", err)
 		return
 	}
 
@@ -45,7 +45,7 @@ func (h *StorageHandler) GetPool(c *gin.Context) {
 	name := c.Param("name")
 	info, err := h.Virt.GetPoolInfo(name)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusNotFound, err)
 		return
 	}
 
@@ -59,17 +59,17 @@ func (h *StorageHandler) CreatePool(c *gin.Context) {
 		Path string `json:"path" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
 
 	if !validVolName(req.Name) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "存储池名称只允许字母、数字、下划线、连字符和点"})
+		Fail(c, http.StatusBadRequest, "存储池名称只允许字母、数字、下划线、连字符和点")
 		return
 	}
 
 	if err := h.Virt.CreateDirPool(req.Name, req.Path); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -80,7 +80,7 @@ func (h *StorageHandler) CreatePool(c *gin.Context) {
 func (h *StorageHandler) DeletePool(c *gin.Context) {
 	name := c.Param("name")
 	if err := h.Virt.DeleteDirPool(name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -96,11 +96,11 @@ func (h *StorageHandler) CreateVolume(c *gin.Context) {
 		Capacity int    `json:"capacity"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
 	if !validVolName(req.Name) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "卷名称只允许字母、数字、下划线、连字符和点"})
+		Fail(c, http.StatusBadRequest, "卷名称只允许字母、数字、下划线、连字符和点")
 		return
 	}
 	if req.Capacity <= 0 {
@@ -108,7 +108,7 @@ func (h *StorageHandler) CreateVolume(c *gin.Context) {
 	}
 
 	if err := h.Virt.CreateVolumeCustom(poolName, req.Name, req.Format, req.Capacity); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -120,7 +120,7 @@ func (h *StorageHandler) DeleteVolume(c *gin.Context) {
 	poolName := c.Param("name")
 	volName := c.Param("vol")
 	if err := h.Virt.DeleteVolume(poolName, volName); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 

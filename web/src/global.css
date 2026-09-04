@@ -1,0 +1,123 @@
+/* ============ VMOps 设计 Token（浅色管理端 · 品牌青） ============ */
+:root {
+  /* 主色：品牌青（Element Plus 主题变量全覆盖） */
+  --el-color-primary: #2a9da5;
+  --el-color-primary-light-3: #7cc6cb;
+  --el-color-primary-light-5: #a5d8dc;
+  --el-color-primary-light-7: #cde9eb;
+  --el-color-primary-light-8: #dff1f2;
+  --el-color-primary-light-9: #eef8f9;
+  --el-color-primary-dark-2: #217d83;
+
+  /* 语义色 */
+  --color-primary: #2a9da5;
+  --color-on-primary: #ffffff;
+  --color-secondary: #1d8f96;
+  --color-accent: #217d83;          /* CTA */
+  --color-success: #16a34a;         /* 成功/运行 */
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+  --color-info: #64748b;
+
+  --color-background: #f8fafc;      /* 页面底 */
+  --color-foreground: #1e293b;      /* 主文字 */
+  --color-muted: #e9eff8;
+  --color-muted-foreground: #475569;/* 次要文字 */
+  --color-card: #ffffff;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  /* 间距（8px 栅格，高密度） */
+  --space-xs: 2px;
+  --space-sm: 4px;
+  --space-md: 8px;
+  --space-lg: 12px;
+  --space-xl: 16px;
+  --space-2xl: 24px;
+  --space-3xl: 32px;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px rgba(30, 41, 59, 0.05);
+  --shadow-md: 0 4px 10px rgba(30, 41, 59, 0.08);
+  --shadow-lg: 0 10px 24px rgba(30, 41, 59, 0.1);
+  --shadow-xl: 0 20px 40px rgba(30, 41, 59, 0.16);
+
+  /* 字体 */
+  --font-body: 'Poppins', 'Open Sans', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', 'Fira Code', ui-monospace, Consolas, monospace;
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-background);
+  color: var(--color-foreground);
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+}
+
+/* Element Plus 全局质感微调 */
+.el-card {
+  border-radius: var(--radius-md);
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+.el-button {
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+.el-input__wrapper,
+.el-select__wrapper {
+  border-radius: var(--radius-sm);
+}
+.el-table th.el-table__cell {
+  background: #f8fafc;
+  color: var(--color-muted-foreground);
+  font-weight: 600;
+}
+
+/* 全局滚动条（浅色，尽量内敛） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 可点元素统一指针 */
+button,
+[role='button'],
+.clickable {
+  cursor: pointer;
+}
+
+/* 动效偏好：尊重系统减少动效 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

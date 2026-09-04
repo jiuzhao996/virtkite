@@ -9,10 +9,9 @@
       @load="bgOk = true"
       @error="bgOk = false"
     />
-    <div class="login-mask" />
     <el-card class="login-card" shadow="always">
       <div class="login-brand">
-        <div class="logo">🛡️</div>
+        <el-icon class="logo"><Lock /></el-icon>
         <h1>vmops</h1>
         <p>基于 KVM 的轻量级私有云管理平台</p>
       </div>
@@ -41,9 +40,10 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Lock } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import loginBg from '../assets/login-bg.jpg'
@@ -58,7 +58,13 @@ const bgOk = ref(false)
 const bgImg = ref(null)
 
 onMounted(() => {
+  // 登录页禁止页面级滚动（内容居中，不应出现右侧滚动条）
+  document.documentElement.style.overflow = 'hidden'
   if (bgImg.value && bgImg.value.complete && bgImg.value.naturalWidth > 0) bgOk.value = true
+})
+
+onUnmounted(() => {
+  document.documentElement.style.overflow = ''
 })
 
 async function submit() {
@@ -109,18 +115,12 @@ async function submit() {
 .login-bg.on {
   opacity: 1;
 }
-.login-mask {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse at 50% 40%, rgba(10, 20, 38, 0.25) 0%, rgba(7, 14, 26, 0.72) 100%);
-}
 .login-card {
   position: relative;
   width: 100%;
   max-width: 400px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(6px);
+  background: #fff;
   z-index: 2;
 }
 .login-brand {
@@ -129,15 +129,16 @@ async function submit() {
 }
 .logo {
   font-size: 2.4rem;
+  color: var(--color-primary);
 }
 .login-brand h1 {
   font-size: 1.4rem;
-  color: #2a9da5;
+  color: var(--color-primary);
   margin: 6px 0 2px;
 }
 .login-brand p {
   font-size: 0.9rem;
-  color: #888;
+  color: var(--color-muted-foreground);
   margin: 0;
 }
 .submit-btn {
@@ -150,11 +151,11 @@ async function submit() {
 .demo-tip {
   margin-top: 18px;
   padding: 12px 14px;
-  background: rgba(61, 184, 191, 0.08);
-  border: 1px solid rgba(61, 184, 191, 0.2);
+  background: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-5);
   border-radius: 6px;
   font-size: 0.85rem;
-  color: #2a9da5;
+  color: var(--color-primary);
   line-height: 1.9;
 }
 </style>

@@ -24,7 +24,7 @@ func NewHostHandler(db *gorm.DB) *HostHandler {
 func (h *HostHandler) ListHosts(c *gin.Context) {
 	var hosts []model.Host
 	if err := h.DB.Find(&hosts).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "查询宿主机失败")
+		ErrorWithMessage(c, http.StatusInternalServerError, "查询宿主机失败", err)
 		return
 	}
 
@@ -45,7 +45,7 @@ func (h *HostHandler) CreateHost(c *gin.Context) {
 		Description string `json:"description"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
 
@@ -72,7 +72,7 @@ func (h *HostHandler) CreateHost(c *gin.Context) {
 	}
 
 	if err := h.DB.Create(&host).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "添加宿主机失败")
+		ErrorWithMessage(c, http.StatusInternalServerError, "添加宿主机失败", err)
 		return
 	}
 
@@ -85,7 +85,7 @@ func (h *HostHandler) UpdateHost(c *gin.Context) {
 
 	var host model.Host
 	if err := h.DB.First(&host, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "宿主机不存在")
+		ErrorWithMessage(c, http.StatusNotFound, "宿主机不存在", err)
 		return
 	}
 
@@ -98,7 +98,7 @@ func (h *HostHandler) UpdateHost(c *gin.Context) {
 		Description *string `json:"description"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, http.StatusBadRequest, "参数错误")
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
 
@@ -124,7 +124,7 @@ func (h *HostHandler) UpdateHost(c *gin.Context) {
 	}
 
 	if err := h.DB.Model(&host).Updates(updates).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "更新宿主机失败")
+		ErrorWithMessage(c, http.StatusInternalServerError, "更新宿主机失败", err)
 		return
 	}
 
@@ -137,7 +137,7 @@ func (h *HostHandler) DeleteHost(c *gin.Context) {
 
 	var host model.Host
 	if err := h.DB.First(&host, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "宿主机不存在")
+		ErrorWithMessage(c, http.StatusNotFound, "宿主机不存在", err)
 		return
 	}
 
@@ -150,7 +150,7 @@ func (h *HostHandler) DeleteHost(c *gin.Context) {
 	}
 
 	if err := h.DB.Delete(&host).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "删除宿主机失败")
+		ErrorWithMessage(c, http.StatusInternalServerError, "删除宿主机失败", err)
 		return
 	}
 
@@ -163,7 +163,7 @@ func (h *HostHandler) TestHost(c *gin.Context) {
 
 	var host model.Host
 	if err := h.DB.First(&host, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "宿主机不存在")
+		ErrorWithMessage(c, http.StatusNotFound, "宿主机不存在", err)
 		return
 	}
 
@@ -200,7 +200,7 @@ func (h *HostHandler) GetHostStats(c *gin.Context) {
 
 	var host model.Host
 	if err := h.DB.First(&host, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "宿主机不存在")
+		ErrorWithMessage(c, http.StatusNotFound, "宿主机不存在", err)
 		return
 	}
 
@@ -224,11 +224,11 @@ func (h *HostHandler) GetHostStats(c *gin.Context) {
 	}
 
 	Success(c, gin.H{
-		"hostname":      strings.TrimSpace(string(hostname)),
-		"kernel":        strings.TrimSpace(string(kernel)),
-		"cpu_cores":     strings.TrimSpace(string(cpus)),
-		"memory_total":  memTotal,
-		"memory_used":   memUsed,
-		"uptime":        strings.TrimSpace(string(uptime)),
+		"hostname":     strings.TrimSpace(string(hostname)),
+		"kernel":       strings.TrimSpace(string(kernel)),
+		"cpu_cores":    strings.TrimSpace(string(cpus)),
+		"memory_total": memTotal,
+		"memory_used":  memUsed,
+		"uptime":       strings.TrimSpace(string(uptime)),
 	})
 }

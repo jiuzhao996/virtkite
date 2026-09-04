@@ -21,7 +21,8 @@
 - [x] **go-libvirt 直连**（纯 Go RPC 对接 libvirt，存储池/卷 API 建盘，无 CGO）
 - [x] 存储池管理（池/卷 CRUD + 新建池 + 建盘多池选择）
 - [x] 网络管理（网络 CRUD / 启停 / XML 定义 / NAT 模板）
-- [x] 网页控制台（noVNC + websockify token 解析）
+- [x] 网页控制台（noVNC + websockify token 解析，站内选择页：图形控制台 / Web 终端）
+- [x] Web 终端（xterm.js + WebSocket→SSH 桥，手动填连接参数，免 IP 的 VNC 控制台作带外兜底）
 - [x] 快照管理（创建 / 删除 / 回滚 / 列表）
 - [x] VM XML 查看 / 编辑（校验后 define）
 - [x] 镜像管理（上传 / 列表 / 删除，目录穿越防护）
@@ -134,6 +135,8 @@ npm run dev          # 访问 http://localhost:5173
 - `POST /api/vms/import` — 勾选批量导入（仅写 DB，不动 libvirt）
 - `POST /api/vms/:id/start` `POST /api/vms/:id/stop` `POST /api/vms/:id/restart`
 - `DELETE /api/vms/:id`
+- `POST /api/vms/:id/vnc-token` — 获取 noVNC 图形控制台 token
+- `GET  /api/vms/:id/terminal` — Web 终端 WebSocket（SSH 桥，`?token=` 鉴权）
 
 ### 镜像管理（admin）
 

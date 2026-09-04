@@ -19,7 +19,7 @@ type TokenEntry struct {
 // TokenStore 内存令牌存储，管理 VM VNC 访问的一次性 token。
 type TokenStore struct {
 	mu     sync.Mutex
-	byID   map[uint]string   // vmID -> token
+	byID   map[uint]string       // vmID -> token
 	tokens map[string]TokenEntry // token -> entry
 	ttl    time.Duration
 }

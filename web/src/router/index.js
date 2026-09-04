@@ -2,8 +2,11 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuth } from '../store/auth'
 import Login from '../views/Login.vue'
 import MainLayout from '../layout/MainLayout.vue'
+import ConsolePage from '../views/ConsolePage.vue'
 import Dashboard from '../views/Dashboard.vue'
 import VmList from '../views/VmList.vue'
+import VmDetail from '../views/VmDetail.vue'
+import CreateVmWizard from '../views/CreateVmWizard.vue'
 import HostList from '../views/HostList.vue'
 import ImageList from '../views/ImageList.vue'
 import AuditList from '../views/AuditList.vue'
@@ -12,6 +15,7 @@ import NetworkList from '../views/NetworkList.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: Login, meta: { public: true } },
+  { path: '/console/:id', name: 'console', component: ConsolePage },
   {
     path: '/',
     component: MainLayout,
@@ -19,6 +23,8 @@ const routes = [
     children: [
       { path: 'dashboard', name: 'dashboard', component: Dashboard },
       { path: 'vms', name: 'vms', component: VmList },
+      { path: 'vms/new', name: 'vm-create', component: CreateVmWizard },
+      { path: 'vms/:id', name: 'vm-detail', component: VmDetail },
       { path: 'hosts', name: 'hosts', component: HostList },
       { path: 'images', name: 'images', component: ImageList },
       { path: 'storage', name: 'storage', component: StorageList },

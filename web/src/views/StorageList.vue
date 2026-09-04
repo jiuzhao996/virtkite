@@ -1,5 +1,8 @@
 <template>
   <div v-loading="loading">
+    <div class="page-head">
+      <h2 class="page-title">存储管理</h2>
+    </div>
     <el-card shadow="never">
       <div class="toolbar">
         <div>
@@ -31,8 +34,8 @@
         <el-table-column prop="vol_count" label="卷数" width="80" />
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" @click="openVolumes(row)">卷管理</el-button>
-            <el-button size="small" type="danger" @click="removePool(row)">删除</el-button>
+            <el-button size="small" :icon="FolderOpened" @click="openVolumes(row)">卷管理</el-button>
+            <el-button size="small" type="danger" :icon="Delete" @click="removePool(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -69,7 +72,7 @@
         </el-table-column>
         <el-table-column label="操作" width="90">
           <template #default="{ row }">
-            <el-button size="small" type="danger" @click="removeVolume(row)">删除</el-button>
+            <el-button size="small" type="danger" :icon="Delete" @click="removeVolume(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -102,7 +105,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus } from '@element-plus/icons-vue'
+import { Refresh, Plus, FolderOpened, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 
 const pools = ref([])
@@ -220,14 +223,25 @@ onMounted(load)
 </script>
 
 <style scoped>
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xl);
+}
+.page-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
 .toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-xl);
 }
 .count {
-  color: #888;
+  color: var(--color-muted-foreground);
   font-size: 0.9rem;
 }
 </style>

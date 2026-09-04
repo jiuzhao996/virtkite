@@ -1,11 +1,21 @@
 <template>
   <el-container class="layout">
-    <el-aside width="220px" class="aside">
-      <div class="brand">
-        <span class="brand-icon">🛡️</span>
-        <span class="brand-text">vmops</span>
+    <el-aside :width="collapsed ? '64px' : '180px'" class="aside">
+      <div class="brand" :class="{ collapsed }">
+        <template v-if="!collapsed">
+          <el-icon class="brand-icon"><Monitor /></el-icon>
+          <span class="brand-text">vmops</span>
+          <el-icon class="collapse-btn" @click="collapsed = true"><Fold /></el-icon>
+        </template>
+        <el-icon v-else class="collapse-btn center" @click="collapsed = false"><Expand /></el-icon>
       </div>
-      <el-menu :default-active="activeIndex" router class="menu" background-color="transparent">
+      <el-menu
+        v-if="!collapsed"
+        :default-active="activeIndex"
+        router
+        class="menu"
+        background-color="transparent"
+      >
         <el-menu-item index="/dashboard">
           <el-icon><DataLine /></el-icon>
           <span>仪表盘</span>
@@ -35,6 +45,22 @@
           <span>审计日志</span>
         </el-menu-item>
       </el-menu>
+      <div v-else class="collapse-nav">
+        <el-tooltip
+          v-for="item in navItems"
+          :key="item.index"
+          :content="item.label"
+          placement="right"
+        >
+          <div
+            class="collapse-item"
+            :class="{ active: activeIndex === item.index }"
+            @click="$router.push(item.index)"
+          >
+            <el-icon><component :is="item.icon" /></el-icon>
+          </div>
+        </el-tooltip>
+      </div>
     </el-aside>
 
     <el-container>
@@ -56,13 +82,25 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Monitor, Fold, Expand } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 
 const route = useRoute()
 const router = useRouter()
 const { state, isAdmin, logout } = useAuth()
+const collapsed = ref(false)
+
+const navItems = [
+  { index: '/dashboard', label: '仪表盘', icon: 'DataLine' },
+  { index: '/vms', label: '虚拟机', icon: 'Monitor' },
+  { index: '/hosts', label: '宿主机', icon: 'Cpu' },
+  { index: '/images', label: '镜像管理', icon: 'Picture' },
+  { index: '/storage', label: '存储池', icon: 'FolderOpened' },
+  { index: '/networks', label: '网络', icon: 'Connection' },
+  { index: '/audit', label: '审计日志', icon: 'Document' }
+]
 
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard'))
 const titleMap = {
@@ -87,42 +125,119 @@ function onLogout() {
   height: 100vh;
 }
 .aside {
-  background: #ffffff;
-  border-right: 1px solid var(--el-border-color-light);
+  background: linear-gradient(180deg, var(--color-primary) 0%, var(--el-color-primary-dark-2) 100%);
+  border-right: none;
   display: flex;
   flex-direction: column;
+  transition: width 0.2s ease;
+  overflow: hidden;
 }
 .brand {
   height: 56px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--el-border-color-light);
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  flex-shrink: 0;
+}
+.brand.collapsed {
+  justify-content: center;
+  padding: 0;
 }
 .brand-icon {
-  font-size: 1.4rem;
+  font-size: 1.3rem;
+  color: #fff;
 }
 .brand-text {
   font-size: 1.15rem;
   font-weight: 700;
-  color: #2a9da5;
+  color: #fff;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.collapse-btn {
+  margin-left: auto;
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px;
+  transition: all 0.2s ease;
+}
+.collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+.collapse-btn.center {
+  margin: auto;
 }
 .menu {
   border-right: none;
   flex: 1;
+  background: transparent;
+}
+.collapse-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0;
+}
+.collapse-item {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 1.25rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.collapse-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.95);
+}
+.collapse-item.active {
+  background: #fff;
+  color: var(--color-primary);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+.menu :deep(.el-menu-item) {
+  color: rgba(255, 255, 255, 0.72);
+  margin: 2px 8px;
+  border-radius: 10px;
+  transition: all 0.2s ease;
+}
+.menu :deep(.el-menu-item:hover) {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.95);
+}
+.menu :deep(.el-menu-item.is-active) {
+  position: relative;
+  background: #fff; /* 白色胶囊 */
+  color: var(--color-primary); /* 青绿加粗文字 */
+  font-weight: 600;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); /* 轻微阴影 */
 }
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(135deg, #3db8bf 0%, #2a9da5 100%);
-  color: #fff;
+  background: #fff;
+  color: var(--color-foreground);
+  border-bottom: 1px solid var(--color-border);
 }
 .header-title {
   margin: 0;
   font-size: 1.05rem;
-  color: #fff;
+  font-weight: 600;
+  color: var(--color-foreground);
 }
 .header-right {
   display: flex;
@@ -131,13 +246,14 @@ function onLogout() {
 }
 .header-right :deep(.el-tag),
 .username {
-  color: #fff;
+  color: var(--color-muted-foreground);
 }
 .username {
   font-weight: 500;
+  color: var(--color-foreground);
 }
 .main {
-  background: #eef4f7;
+  background: var(--color-background);
   padding: 20px;
 }
 </style>

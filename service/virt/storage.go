@@ -14,14 +14,14 @@ func xmlDecode(data string, v interface{}) error {
 
 // PoolInfo 存储池详情（供前端展示）。
 type PoolInfo struct {
-	Name       string  `json:"name"`
-	Active     bool    `json:"active"`
-	Persistent bool    `json:"persistent"`
-	Path       string  `json:"path"`
-	Capacity   uint64  `json:"capacity"`
-	Allocation uint64  `json:"allocation"`
-	Available  uint64  `json:"available"`
-	VolCount   int     `json:"vol_count"`
+	Name       string    `json:"name"`
+	Active     bool      `json:"active"`
+	Persistent bool      `json:"persistent"`
+	Path       string    `json:"path"`
+	Capacity   uint64    `json:"capacity"`
+	Allocation uint64    `json:"allocation"`
+	Available  uint64    `json:"available"`
+	VolCount   int       `json:"vol_count"`
 	Volumes    []VolInfo `json:"volumes,omitempty"`
 }
 
@@ -57,7 +57,7 @@ func (v *Virt) CreateVolume(poolName, diskName string, capacityGB int) (string, 
 </volume>`, volName, capacityGB)
 
 	if _, err := l.StorageVolCreateXML(pool, xml, 0); err != nil {
-		return "", fmt.Errorf("创建存储卷失败: %v", err)
+		return "", fmt.Errorf("创建存储卷失败: %w", err)
 	}
 
 	return volName, nil
@@ -82,7 +82,7 @@ func (v *Virt) DeleteVolume(poolName, diskName string) error {
 	}
 
 	if err := l.StorageVolDelete(vol, libvirt.StorageVolDeleteNormal); err != nil {
-		return fmt.Errorf("删除存储卷失败: %v", err)
+		return fmt.Errorf("删除存储卷失败: %w", err)
 	}
 	return nil
 }
@@ -101,7 +101,7 @@ func (v *Virt) GetPoolPath(poolName string) (string, error) {
 
 	xml, err := l.StoragePoolGetXMLDesc(pool, 0)
 	if err != nil {
-		return "", fmt.Errorf("获取存储池配置失败: %v", err)
+		return "", fmt.Errorf("获取存储池配置失败: %w", err)
 	}
 
 	// 解析 <target><path>xxx</path></target>
@@ -111,7 +111,7 @@ func (v *Virt) GetPoolPath(poolName string) (string, error) {
 		} `xml:"target"`
 	}
 	if err := xmlDecode(xml, &p); err != nil {
-		return "", fmt.Errorf("解析存储池路径失败: %v", err)
+		return "", fmt.Errorf("解析存储池路径失败: %w", err)
 	}
 	if p.Target.Path == "" {
 		return "", fmt.Errorf("存储池 %s 无 target path", poolName)
@@ -254,13 +254,13 @@ func (v *Virt) CreateDirPool(name, path string) error {
 
 	pool, err := l.StoragePoolDefineXML(xml, 0)
 	if err != nil {
-		return fmt.Errorf("定义存储池失败: %v", err)
+		return fmt.Errorf("定义存储池失败: %w", err)
 	}
 	if err := l.StoragePoolCreate(pool, 0); err != nil {
-		return fmt.Errorf("启动存储池失败: %v", err)
+		return fmt.Errorf("启动存储池失败: %w", err)
 	}
 	if err := l.StoragePoolSetAutostart(pool, 1); err != nil {
-		return fmt.Errorf("设置自动启动失败: %v", err)
+		return fmt.Errorf("设置自动启动失败: %w", err)
 	}
 	return nil
 }
@@ -278,10 +278,10 @@ func (v *Virt) DeleteDirPool(name string) error {
 	}
 
 	if err := l.StoragePoolDestroy(pool); err != nil {
-		return fmt.Errorf("停止存储池失败: %v", err)
+		return fmt.Errorf("停止存储池失败: %w", err)
 	}
 	if err := l.StoragePoolUndefine(pool); err != nil {
-		return fmt.Errorf("删除存储池定义失败: %v", err)
+		return fmt.Errorf("删除存储池定义失败: %w", err)
 	}
 	return nil
 }
@@ -309,7 +309,7 @@ func (v *Virt) CreateVolumeCustom(poolName, volName, format string, capacityGB i
 </volume>`, volName, capacityGB, format)
 
 	if _, err := l.StorageVolCreateXML(pool, xml, 0); err != nil {
-		return fmt.Errorf("创建存储卷失败: %v", err)
+		return fmt.Errorf("创建存储卷失败: %w", err)
 	}
 	return nil
 }

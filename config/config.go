@@ -14,12 +14,12 @@ type Config struct {
 	DBName     string
 
 	// JWT配置
-	JWTSecretKey      string
-	JWTExpireMinutes  int
+	JWTSecretKey     string
+	JWTExpireMinutes int
 
 	// 服务器配置
-	ServerPort  string
-	ServerMode  string
+	ServerPort string
+	ServerMode string
 
 	// CORS配置
 	CORSOrigins string

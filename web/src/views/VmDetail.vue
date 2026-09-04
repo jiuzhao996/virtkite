@@ -1,0 +1,1218 @@
+<template>
+  <div class="vm-detail" v-loading="loading">
+    <!-- 顶部工具栏：返回 / 名称 / 状态 / IP / 操作 -->
+    <div class="toolbar">
+      <div class="tb-left">
+        <el-button text :icon="ArrowLeft" @click="back">返回</el-button>
+        <span class="tb-name">{{ vmName }}</span>
+        <el-tag v-if="vm" :type="statusTag(vm.status)" effect="dark" size="small">{{ statusText(vm.status) }}</el-tag>
+        <span v-if="vm && vm.ip" class="tb-ip">{{ vm.ip }}</span>
+      </div>
+      <div class="tb-actions">
+        <el-button size="small" type="primary" :icon="Monitor" :disabled="!isRunning" @click="goConsole">控制台</el-button>
+        <el-button v-if="vm" size="small" :icon="VideoPlay" :loading="busy === 'start'" :disabled="isRunning || isPaused" @click="act('start')">开机</el-button>
+        <el-button v-if="vm" size="small" :icon="VideoPause" :loading="busy === 'pause'" :disabled="!isRunning" @click="act('pause')">暂停</el-button>
+        <el-button v-if="vm" size="small" :icon="VideoPlay" :loading="busy === 'resume'" :disabled="!isPaused" @click="act('resume')">恢复</el-button>
+        <el-button v-if="vm" size="small" :icon="SwitchButton" :loading="busy === 'stop'" :disabled="!isRunning" @click="act('stop')">关机</el-button>
+        <el-button v-if="vm" size="small" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" @click="act('restart')">重启</el-button>
+        <el-button size="small" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
+      </div>
+    </div>
+
+    <el-container class="body">
+      <!-- 左侧导航 -->
+      <el-aside width="216px" class="side">
+        <el-menu :default-active="activeMenu" @select="onMenuSelect" class="side-menu">
+          <el-menu-item index="overview">
+            <el-icon><Odometer /></el-icon>
+            <span>概览</span>
+          </el-menu-item>
+          <el-menu-item index="perf">
+            <el-icon><TrendCharts /></el-icon>
+            <span>性能</span>
+          </el-menu-item>
+          <el-menu-item index="cpu">
+            <el-icon><Cpu /></el-icon>
+            <span>处理器</span>
+          </el-menu-item>
+          <el-menu-item index="memory">
+            <el-icon><Coin /></el-icon>
+            <span>内存</span>
+          </el-menu-item>
+          <el-menu-item index="boot">
+            <el-icon><Sort /></el-icon>
+            <span>引导顺序</span>
+          </el-menu-item>
+          <el-menu-item-group title="磁盘">
+            <el-menu-item v-for="item in diskMenuItems" :key="item.index" :index="item.index">
+              <el-icon><FolderOpened /></el-icon>
+              <span class="mono">{{ item.target }}</span>
+            </el-menu-item>
+          </el-menu-item-group>
+          <el-menu-item-group title="网卡">
+            <el-menu-item v-for="item in nicMenuItems" :key="item.index" :index="item.index">
+              <el-icon><Connection /></el-icon>
+              <span>{{ item.label }}</span>
+            </el-menu-item>
+          </el-menu-item-group>
+          <el-menu-item index="snapshots">
+            <el-icon><CameraFilled /></el-icon>
+            <span>快照</span>
+          </el-menu-item>
+          <el-menu-item index="xml">
+            <el-icon><Document /></el-icon>
+            <span>XML 定义</span>
+          </el-menu-item>
+        </el-menu>
+      </el-aside>
+
+      <!-- 右侧内容区 -->
+      <el-main class="content">
+        <!-- 概览 -->
+        <section v-show="activeView === 'overview'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">概览</h3>
+          </div>
+          <el-card shadow="never">
+            <el-descriptions :column="2" border size="small">
+              <el-descriptions-item label="名称">{{ spec ? spec.name : '—' }}</el-descriptions-item>
+              <el-descriptions-item label="UUID">{{ spec ? spec.uuid : '—' }}</el-descriptions-item>
+              <el-descriptions-item label="状态">
+                <el-tag :type="statusTag(vm ? vm.status : '')" size="small" effect="light">{{ statusText(vm ? vm.status : '') }}</el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="宿主机">{{ hostName }}</el-descriptions-item>
+              <el-descriptions-item label="存储池">{{ vm ? vm.storage_pool || '—' : '—' }}</el-descriptions-item>
+              <el-descriptions-item label="IP">{{ vm ? vm.ip || '—' : '—' }}</el-descriptions-item>
+              <el-descriptions-item label="vCPU">{{ spec ? spec.vcpu + ' 核' : '—' }}</el-descriptions-item>
+              <el-descriptions-item label="内存">{{ spec ? spec.memory_mb + ' MB' : '—' }}</el-descriptions-item>
+              <el-descriptions-item label="系统类型">{{ spec ? spec.os_type : (vm && vm.os_type) || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="架构">{{ spec ? spec.arch : '—' }}</el-descriptions-item>
+              <el-descriptions-item label="机器类型">{{ spec ? spec.machine : '—' }}</el-descriptions-item>
+              <el-descriptions-item label="创建时间">{{ createdText }}</el-descriptions-item>
+              <el-descriptions-item label="MAC 地址">{{ macText }}</el-descriptions-item>
+              <el-descriptions-item label="开机自启">
+                <el-switch
+                  :model-value="!!(spec && spec.autostart)"
+                  :loading="busy === 'autostart'"
+                  :disabled="!spec"
+                  @change="onAutostartChange"
+                />
+              </el-descriptions-item>
+            </el-descriptions>
+          </el-card>
+        </section>
+
+        <!-- 性能 -->
+        <section v-show="activeView === 'perf'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">性能</h3>
+          </div>
+          <div v-if="!isRunning" class="panel-empty">
+            <el-empty description="虚拟机未运行，无实时性能指标" :image-size="90" />
+          </div>
+          <template v-else>
+            <div class="metric-grid">
+              <el-card shadow="never" class="metric">
+                <div class="metric-label">CPU 使用率</div>
+                <el-progress :percentage="Math.round(cpuPct)" :color="usageColor(cpuPct)" :format="() => cpuPct.toFixed(1) + '%'" />
+              </el-card>
+              <el-card shadow="never" class="metric">
+                <div class="metric-label">内存使用率{{ hasGuestMem ? '（客户机）' : '（分配）' }}</div>
+                <el-progress :percentage="Math.round(memPct)" :color="usageColor(memPct)" :format="() => memText()" />
+              </el-card>
+            </div>
+            <div class="metric-grid metric-grid-4">
+              <el-card shadow="never" class="metric">
+                <div class="metric-label">磁盘读取</div>
+                <div class="metric-val mono">{{ fmtBytes(stats && stats.disk_read_bps) }}</div>
+              </el-card>
+              <el-card shadow="never" class="metric">
+                <div class="metric-label">磁盘写入</div>
+                <div class="metric-val mono">{{ fmtBytes(stats && stats.disk_write_bps) }}</div>
+              </el-card>
+              <el-card shadow="never" class="metric">
+                <div class="metric-label">网络接收</div>
+                <div class="metric-val mono">{{ fmtBytes(stats && stats.net_rx_bps) }}</div>
+              </el-card>
+              <el-card shadow="never" class="metric">
+                <div class="metric-label">网络发送</div>
+                <div class="metric-val mono">{{ fmtBytes(stats && stats.net_tx_bps) }}</div>
+              </el-card>
+            </div>
+            <el-card shadow="never" class="chart-card">
+              <template #header><span class="card-title">实时曲线（近 60 次采样，每 2s）</span></template>
+              <div ref="perfChartEl" class="perf-chart"></div>
+            </el-card>
+          </template>
+        </section>
+
+        <!-- 处理器 -->
+        <section v-show="activeView === 'cpu'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">处理器</h3>
+          </div>
+          <el-card shadow="never" class="edit-card">
+            <div class="field-row">
+              <span class="field-label">当前 vCPU</span>
+              <el-input-number v-model="vcpuInput" :min="1" :max="256" size="small" controls-position="right" />
+              <el-button size="small" type="primary" :loading="busy === 'vcpu'" :disabled="!spec" @click="applyVcpu">应用</el-button>
+            </div>
+            <p class="field-tip">热调整：live + config 双生效，运行中即可在线增减 CPU 核数。</p>
+          </el-card>
+        </section>
+
+        <!-- 内存 -->
+        <section v-show="activeView === 'memory'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">内存</h3>
+          </div>
+          <el-card shadow="never" class="edit-card">
+            <div class="field-row">
+              <span class="field-label">内存大小（MB）</span>
+              <el-input-number v-model="memInput" :min="256" :step="256" size="small" controls-position="right" />
+              <el-button size="small" type="primary" :loading="busy === 'memory'" :disabled="!spec" @click="applyMemory">应用</el-button>
+            </div>
+            <p class="field-tip">热调整：需 ≥ 当前占用，运行中可在线调整（live + config）。</p>
+          </el-card>
+        </section>
+
+        <!-- 引导顺序 -->
+        <section v-show="activeView === 'boot'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">引导顺序</h3>
+          </div>
+          <el-card shadow="never" class="edit-card">
+            <div class="field-row">
+              <span class="field-label">引导设备</span>
+              <el-select v-model="bootInput" multiple placeholder="选择引导设备" size="small" style="width: 300px">
+                <el-option label="硬盘 (hd)" value="hd" />
+                <el-option label="光盘 (cdrom)" value="cdrom" />
+                <el-option label="网络 (network)" value="network" />
+              </el-select>
+              <el-button size="small" type="primary" :loading="busy === 'boot'" :disabled="!spec" @click="applyBoot">应用</el-button>
+            </div>
+            <p class="field-tip">列表顺序即启动优先级，先选择者优先引导；列表不能为空。</p>
+          </el-card>
+        </section>
+
+        <!-- 磁盘 -->
+        <section v-show="activeView === 'disk'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">磁盘</h3>
+          </div>
+          <el-empty v-if="!(spec && spec.disks && spec.disks.length)" description="暂无磁盘设备" :image-size="80" />
+          <template v-else>
+            <div
+              v-for="(disk, i) in spec.disks"
+              :key="(disk.target || 'disk') + i"
+              class="dev-card"
+              :class="{ selected: i === activeDisk }"
+              @click="activeDisk = i"
+            >
+              <div class="dev-card-head">
+                <span class="dev-name mono">{{ disk.target || '—' }}</span>
+                <el-tag :type="disk.device === 'cdrom' ? 'warning' : 'info'" size="small" effect="light">{{ disk.device }}</el-tag>
+                <el-popconfirm :title="'确定移除磁盘「' + (disk.target || '') + '」？'" width="220" @confirm="removeDisk(disk)">
+                  <template #reference>
+                    <el-button size="small" type="danger" text :icon="Delete">移除</el-button>
+                  </template>
+                </el-popconfirm>
+              </div>
+              <el-descriptions :column="2" size="small" class="dev-desc">
+                <el-descriptions-item label="目标">{{ disk.target || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="总线">{{ disk.bus || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="驱动">{{ disk.driver || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="只读">{{ disk.read_only ? '是' : '否' }}</el-descriptions-item>
+                <el-descriptions-item label="类型">{{ disk.type || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="设备">{{ disk.device || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="源路径" :span="2">{{ disk.source || '—' }}</el-descriptions-item>
+                <el-descriptions-item v-if="disk.backing_file" label="父卷" :span="2">{{ disk.backing_file }}</el-descriptions-item>
+              </el-descriptions>
+            </div>
+          </template>
+          <div class="panel-actions">
+            <el-button type="primary" :icon="Plus" @click="openDiskDialog">添加磁盘</el-button>
+          </div>
+        </section>
+
+        <!-- 网卡 -->
+        <section v-show="activeView === 'nic'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">网卡</h3>
+          </div>
+          <el-empty v-if="!(spec && spec.interfaces && spec.interfaces.length)" description="暂无网卡设备" :image-size="80" />
+          <template v-else>
+            <div
+              v-for="(nic, i) in spec.interfaces"
+              :key="(nic.mac || 'nic') + i"
+              class="dev-card"
+              :class="{ selected: i === activeNic }"
+              @click="activeNic = i"
+            >
+              <div class="dev-card-head">
+                <span class="dev-name mono">{{ nic.mac || '—' }}</span>
+                <el-tag type="info" size="small" effect="light">{{ nic.model }}</el-tag>
+                <el-popconfirm :title="'确定移除网卡「' + (nic.mac || '') + '」？'" width="220" @confirm="removeNic(nic)">
+                  <template #reference>
+                    <el-button size="small" type="danger" text :icon="Delete">移除</el-button>
+                  </template>
+                </el-popconfirm>
+              </div>
+              <el-descriptions :column="2" size="small" class="dev-desc">
+                <el-descriptions-item label="MAC">{{ nic.mac || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="型号">{{ nic.model || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="类型">{{ nic.type || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="网络">{{ nic.source || '—' }}</el-descriptions-item>
+              </el-descriptions>
+            </div>
+          </template>
+          <div class="panel-actions">
+            <el-button type="primary" :icon="Plus" @click="openNicDialog">添加网卡</el-button>
+          </div>
+        </section>
+
+        <!-- 快照 -->
+        <section v-show="activeView === 'snapshots'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">快照</h3>
+            <el-button size="small" type="primary" :icon="Plus" @click="openSnapCreate">新建快照</el-button>
+          </div>
+          <el-card shadow="never">
+            <el-table :data="snapshots" size="small" border style="width: 100%" v-loading="snapLoading">
+              <template #empty><el-empty description="暂无快照" :image-size="70" /></template>
+              <el-table-column prop="name" label="名称" min-width="160" />
+              <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
+              <el-table-column label="创建时间" min-width="170">
+                <template #default="{ row }">{{ row.timeText }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="row.stateTag" size="small" effect="light">{{ row.stateText }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="150" fixed="right">
+                <template #default="{ row }">
+                  <el-button size="small" :icon="RefreshLeft" @click="revertSnap(row)">回滚</el-button>
+                  <el-button size="small" type="danger" :icon="Delete" @click="removeSnap(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+        </section>
+
+        <!-- XML 定义 -->
+        <section v-show="activeView === 'xml'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">XML 定义</h3>
+          </div>
+          <el-alert
+            type="info"
+            :closable="false"
+            class="xml-alert"
+            title="双通道编辑：左侧各结构化页面为推荐方式；此处可直接编辑原始 XML（getVMXML / updateVMXML）。"
+          />
+          <el-card shadow="never">
+            <div class="xml-toolbar">
+              <el-button size="small" :icon="Refresh" @click="loadXML">重新加载</el-button>
+              <el-button size="small" type="primary" :loading="xmlSaving" @click="saveXML">保存</el-button>
+            </div>
+            <el-input v-model="xmlText" type="textarea" :rows="18" class="xml-area" placeholder="加载中…" />
+          </el-card>
+        </section>
+      </el-main>
+    </el-container>
+
+    <!-- 添加磁盘 -->
+    <el-dialog v-model="diskDialog" title="添加磁盘" width="460px">
+      <el-form ref="diskFormRef" :model="diskForm" :rules="diskRules" label-width="96px">
+        <el-form-item label="设备类型" prop="device">
+          <el-select v-model="diskForm.device" style="width: 100%">
+            <el-option label="磁盘 (disk)" value="disk" />
+            <el-option label="光盘 (cdrom)" value="cdrom" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="总线" prop="bus">
+          <el-select v-model="diskForm.bus" style="width: 100%">
+            <el-option v-for="b in ['virtio', 'ide', 'sata', 'scsi']" :key="b" :label="b" :value="b" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="驱动" prop="driver">
+          <el-select v-model="diskForm.driver" style="width: 100%">
+            <el-option v-for="d in ['qcow2', 'raw', 'iso']" :key="d" :label="d" :value="d" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="源路径" prop="source">
+          <el-input v-model="diskForm.source" placeholder="/var/lib/libvirt/images/xxx.qcow2" />
+        </el-form-item>
+        <el-form-item label="只读">
+          <el-switch v-model="diskForm.read_only" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="diskDialog = false">取消</el-button>
+        <el-button type="primary" :loading="diskSaving" @click="submitDisk">添加</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 添加网卡 -->
+    <el-dialog v-model="nicDialog" title="添加网卡" width="460px">
+      <el-form ref="nicFormRef" :model="nicForm" :rules="nicRules" label-width="96px">
+        <el-form-item label="网络" prop="source">
+          <el-select v-model="nicForm.source" filterable allow-create default-first-option placeholder="选择或输入网络名" style="width: 100%">
+            <el-option v-for="n in networks" :key="n" :label="n" :value="n" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="型号" prop="model">
+          <el-select v-model="nicForm.model" style="width: 100%">
+            <el-option v-for="m in ['virtio', 'e1000', 'rtl8139']" :key="m" :label="m" :value="m" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="nicDialog = false">取消</el-button>
+        <el-button type="primary" :loading="nicSaving" @click="submitNic">添加</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 新建快照 -->
+    <el-dialog v-model="snapDialog" title="新建快照" width="440px">
+      <el-form label-width="72px">
+        <el-form-item label="名称" required>
+          <el-input v-model="snapForm.name" placeholder="如 snap-20260904" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="snapForm.description" type="textarea" :rows="3" placeholder="快照用途说明（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="snapDialog = false">取消</el-button>
+        <el-button type="primary" :loading="snapSaving" @click="submitSnapshot">创建</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import * as echarts from 'echarts'
+import {
+  ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Plus, Refresh,
+  RefreshLeft, Odometer, TrendCharts, Cpu, Coin, Sort, FolderOpened, Connection, CameraFilled, Document
+} from '@element-plus/icons-vue'
+import { api } from '../api'
+
+const route = useRoute()
+const router = useRouter()
+const id = route.params.id
+
+/* ---------- 基础状态 ---------- */
+const vm = ref(null)
+const spec = ref(null)
+const loading = ref(true)
+const busy = ref('')
+
+const activeView = ref('overview')
+const activeDisk = ref(0)
+const activeNic = ref(0)
+
+/* ---------- 性能（2s 轮询，独立于 spec） ---------- */
+const stats = ref(null)
+const cpuHistory = ref([])
+const memHistory = ref([])
+const perfChartEl = ref(null)
+let statsTimer = null
+let perfChart = null
+
+/* ---------- 快照 / XML ---------- */
+const snapshots = ref([])
+const snapLoading = ref(false)
+const xmlText = ref('')
+const xmlSaving = ref(false)
+
+/* ---------- 添加磁盘 / 网卡 / 快照 弹窗 ---------- */
+const diskDialog = ref(false)
+const diskFormRef = ref(null)
+const diskForm = reactive({ device: 'disk', bus: 'virtio', driver: 'qcow2', source: '', read_only: false })
+const diskSaving = ref(false)
+
+const nicDialog = ref(false)
+const nicFormRef = ref(null)
+const nicForm = reactive({ source: '', model: 'virtio' })
+const nicSaving = ref(false)
+const networks = ref([])
+
+const snapDialog = ref(false)
+const snapForm = reactive({ name: '', description: '' })
+const snapSaving = ref(false)
+
+const diskRules = {
+  source: [{ required: true, message: '请输入磁盘路径', trigger: 'blur' }]
+}
+const nicRules = {
+  source: [{ required: true, message: '请输入或选择网络名', trigger: 'blur' }]
+}
+
+/* ---------- 派生 ---------- */
+const isRunning = computed(() => !!(vm.value && vm.value.status === 'running'))
+const isPaused = computed(() => !!(vm.value && vm.value.status === 'paused'))
+const vmName = computed(() => (spec.value && spec.value.name) || (vm.value && vm.value.name) || '…')
+const hostName = computed(() => (vm.value && vm.value.host && vm.value.host.name) || '—')
+const createdText = computed(() =>
+  vm.value && vm.value.created_at ? new Date(vm.value.created_at).toLocaleString() : '—'
+)
+const macText = computed(() => {
+  if (spec.value && spec.value.interfaces && spec.value.interfaces.length) {
+    const macs = spec.value.interfaces.map((i) => i.mac).filter(Boolean)
+    return macs.length ? macs.join(' / ') : '—'
+  }
+  return (vm.value && vm.value.mac_address) || '—'
+})
+
+function statusText(s) {
+  return { running: '运行中', paused: '已暂停', 'shut off': '已关机', error: '异常' }[s] || s || '—'
+}
+function statusTag(s) {
+  if (s === 'running') return 'success'
+  if (s === 'paused') return 'warning'
+  if (s === 'error') return 'danger'
+  return 'info'
+}
+
+const diskMenuItems = computed(() =>
+  (spec.value && spec.value.disks
+    ? spec.value.disks.map((d, i) => ({ index: `disk-${i}`, target: d.target || `disk${i + 1}` }))
+    : [])
+)
+const nicMenuItems = computed(() =>
+  (spec.value && spec.value.interfaces
+    ? spec.value.interfaces.map((n, i) => ({ index: `nic-${i}`, label: `eth${i + 1} ${n.mac || ''}`.trim() }))
+    : [])
+)
+const activeMenu = computed(() => {
+  if (activeView.value === 'disk') return `disk-${activeDisk.value}`
+  if (activeView.value === 'nic') return `nic-${activeNic.value}`
+  return activeView.value
+})
+
+function onMenuSelect(index) {
+  if (index.startsWith('disk-')) {
+    activeView.value = 'disk'
+    activeDisk.value = Number(index.slice(5))
+    return
+  }
+  if (index.startsWith('nic-')) {
+    activeView.value = 'nic'
+    activeNic.value = Number(index.slice(4))
+    return
+  }
+  activeView.value = index
+}
+
+/* ---------- 数据加载 ---------- */
+function errMsg(e, fb) {
+  return (e && e.response && e.response.data && e.response.data.message) || fb
+}
+
+async function loadSpec() {
+  loading.value = true
+  try {
+    const res = await api.getVMSpec(id)
+    vm.value = (res.data && res.data.vm) || null
+    spec.value = (res.data && res.data.spec) || null
+    if (spec.value && spec.value.disks && activeDisk.value >= spec.value.disks.length) {
+      activeDisk.value = Math.max(0, spec.value.disks.length - 1)
+    }
+    if (spec.value && spec.value.interfaces && activeNic.value >= spec.value.interfaces.length) {
+      activeNic.value = Math.max(0, spec.value.interfaces.length - 1)
+    }
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取虚拟机配置失败'))
+  } finally {
+    loading.value = false
+  }
+}
+
+const vcpuInput = ref(1)
+const memInput = ref(1024)
+const bootInput = ref([])
+
+watch(
+  () => spec.value,
+  (s) => {
+    if (s) {
+      vcpuInput.value = s.vcpu
+      memInput.value = s.memory_mb
+    }
+  },
+  { immediate: true }
+)
+watch(
+  () => (spec.value && spec.value.boot && spec.value.boot.devices) || null,
+  (devs) => {
+    if (Array.isArray(devs)) bootInput.value = [...devs]
+  },
+  { immediate: true }
+)
+
+/* ---------- 顶部操作 ---------- */
+async function act(type) {
+  busy.value = type
+  try {
+    await api[type + 'VM'](id)
+    ElMessage.success({ start: '已开机', stop: '已关机', restart: '已重启', pause: '已暂停', resume: '已恢复' }[type])
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '操作失败'))
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function doDelete() {
+  if (!vm.value) return
+  try {
+    await ElMessageBox.prompt('此操作不可撤销。请输入虚拟机名称「' + vm.value.name + '」以确认删除：', '确认删除', {
+      type: 'warning',
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      inputPlaceholder: vm.value.name,
+      inputValidator: (v) => (v && v.trim() === vm.value.name) || '请输入正确的虚拟机名称'
+    })
+    busy.value = 'delete'
+    await api.deleteVM(id)
+    ElMessage.success('虚拟机已删除')
+    router.push('/vms')
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(errMsg(e, '删除失败'))
+  } finally {
+    busy.value = ''
+  }
+}
+
+function goConsole() {
+  router.push({ name: 'console', params: { id } })
+}
+function back() {
+  router.push('/vms')
+}
+
+/* ---------- 性能轮询 + echarts ---------- */
+function fmtBytes(v) {
+  if (!v || v <= 0) return '0 B/s'
+  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
+  let n = v
+  let i = 0
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024
+    i++
+  }
+  return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i]
+}
+
+const memUsedMB = computed(() => ((stats.value && stats.value.mem_used_kib) || 0) / 1024)
+const memTotalMB = computed(() => ((stats.value && stats.value.mem_total_kib) || 0) / 1024)
+const guestUsedMB = computed(() => ((stats.value && stats.value.guest_used_kib) || 0) / 1024)
+const guestTotalMB = computed(() => ((stats.value && stats.value.guest_total_kib) || 0) / 1024)
+const hasGuestMem = computed(() => guestTotalMB.value > 0)
+const memPct = computed(() => {
+  if (hasGuestMem.value) return Math.min(100, (guestUsedMB.value / guestTotalMB.value) * 100)
+  if (memTotalMB.value > 0) return Math.min(100, (memUsedMB.value / memTotalMB.value) * 100)
+  return 0
+})
+const cpuPct = computed(() => Math.max(0, Math.min(100, Number((stats.value && stats.value.cpu_percent) || 0))))
+
+function memText() {
+  if (hasGuestMem.value) return guestUsedMB.value.toFixed(0) + ' / ' + guestTotalMB.value.toFixed(0) + ' MB'
+  return memUsedMB.value.toFixed(0) + ' / ' + memTotalMB.value.toFixed(0) + ' MB'
+}
+function usageColor(p) {
+  if (p >= 80) return '#dc2626'
+  if (p >= 60) return '#d97706'
+  return '#16a34a'
+}
+
+function pushHistory() {
+  const t = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  cpuHistory.value.push({ t, v: Number(cpuPct.value.toFixed(1)) })
+  memHistory.value.push({ t, v: Number(memPct.value.toFixed(1)) })
+  if (cpuHistory.value.length > 60) cpuHistory.value.shift()
+  if (memHistory.value.length > 60) memHistory.value.shift()
+}
+
+function pollStats() {
+  if (!vm.value || vm.value.status !== 'running') return
+  api
+    .getVMStats(id)
+    .then((res) => {
+      stats.value = res.data || null
+      if (stats.value) pushHistory()
+      if (activeView.value === 'perf') renderPerfChart()
+    })
+    .catch(() => {})
+}
+
+function initPerfChart() {
+  if (perfChart || !perfChartEl.value) return
+  perfChart = echarts.init(perfChartEl.value)
+  window.addEventListener('resize', onWinResize)
+}
+function onWinResize() {
+  if (perfChart) perfChart.resize()
+}
+function renderPerfChart() {
+  if (!perfChart || !perfChartEl.value) return
+  perfChart.resize()
+  perfChart.setOption(
+    {
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['CPU %', '内存 %'], bottom: 0, itemWidth: 14, itemHeight: 8, textStyle: { fontSize: 11 } },
+      grid: { left: 8, right: 12, top: 28, bottom: 30, containLabel: true },
+      xAxis: {
+        type: 'category',
+        boundaryGap: false,
+        data: cpuHistory.value.map((p) => p.t),
+        axisLabel: { fontSize: 10, color: '#64748b' }
+      },
+      yAxis: { type: 'value', min: 0, max: 100, axisLabel: { fontSize: 10, color: '#64748b' } },
+      series: [
+        {
+          name: 'CPU %',
+          type: 'line',
+          smooth: true,
+          showSymbol: false,
+          data: cpuHistory.value.map((p) => p.v),
+          lineStyle: { width: 2, color: '#2a9da5' },
+          itemStyle: { color: '#2a9da5' },
+          areaStyle: { opacity: 0.06, color: '#2a9da5' }
+        },
+        {
+          name: '内存 %',
+          type: 'line',
+          smooth: true,
+          showSymbol: false,
+          data: memHistory.value.map((p) => p.v),
+          lineStyle: { width: 2, color: '#d97706' },
+          itemStyle: { color: '#d97706' },
+          areaStyle: { opacity: 0.06, color: '#d97706' }
+        }
+      ]
+    },
+    true
+  )
+}
+
+watch(activeView, (v) => {
+  if (v === 'perf') nextTick(() => {
+    initPerfChart()
+    renderPerfChart()
+  })
+})
+watch(isRunning, (r) => {
+  if (r && activeView.value === 'perf') nextTick(() => {
+    initPerfChart()
+    renderPerfChart()
+  })
+})
+
+/* ---------- 处理器 / 内存 / 引导 ---------- */
+async function applyVcpu() {
+  const n = vcpuInput.value
+  if (!n || n <= 0) {
+    ElMessage.warning('vCPU 数量必须大于 0')
+    return
+  }
+  busy.value = 'vcpu'
+  try {
+    await api.setVcpu(id, n)
+    ElMessage.success('vCPU 已调整为 ' + n + ' 核（live + config）')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '调整失败'))
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function applyMemory() {
+  const m = memInput.value
+  if (!m || m <= 0) {
+    ElMessage.warning('内存大小必须大于 0')
+    return
+  }
+  busy.value = 'memory'
+  try {
+    await api.setMemory(id, m)
+    ElMessage.success('内存已调整为 ' + m + ' MB（live + config）')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '调整失败'))
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function applyBoot() {
+  if (!bootInput.value.length) {
+    ElMessage.warning('引导设备列表不能为空')
+    return
+  }
+  busy.value = 'boot'
+  try {
+    await api.setBoot(id, [...bootInput.value])
+    ElMessage.success('引导顺序已更新')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存失败'))
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function onAutostartChange(val) {
+  busy.value = 'autostart'
+  try {
+    await api.setAutostart(id, val)
+    ElMessage.success(val ? '已开启开机自启' : '已关闭开机自启')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '设置自启失败'))
+    await loadSpec()
+  } finally {
+    busy.value = ''
+  }
+}
+
+/* ---------- 磁盘 / 网卡 ---------- */
+async function removeDisk(disk) {
+  if (!disk || !disk.target) return
+  try {
+    await api.detachDisk(id, disk.target)
+    ElMessage.success('磁盘已移除')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '移除磁盘失败'))
+  }
+}
+
+function openDiskDialog() {
+  diskForm.device = 'disk'
+  diskForm.bus = 'virtio'
+  diskForm.driver = 'qcow2'
+  diskForm.source = ''
+  diskForm.read_only = false
+  if (diskFormRef.value) diskFormRef.value.clearValidate()
+  diskDialog.value = true
+}
+
+async function submitDisk() {
+  if (!diskFormRef.value) return
+  try {
+    await diskFormRef.value.validate()
+  } catch (_) {
+    return
+  }
+  diskSaving.value = true
+  try {
+    const disk = {
+      device: diskForm.device,
+      bus: diskForm.bus,
+      driver: diskForm.driver,
+      source: diskForm.source.trim(),
+      read_only: diskForm.read_only
+    }
+    await api.attachDisk(id, disk)
+    ElMessage.success('磁盘已添加')
+    diskDialog.value = false
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '添加磁盘失败'))
+  } finally {
+    diskSaving.value = false
+  }
+}
+
+async function removeNic(nic) {
+  if (!nic || !nic.mac) return
+  try {
+    await api.detachInterface(id, nic.mac)
+    ElMessage.success('网卡已移除')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '移除网卡失败'))
+  }
+}
+
+async function openNicDialog() {
+  nicForm.source = ''
+  nicForm.model = 'virtio'
+  if (nicFormRef.value) nicFormRef.value.clearValidate()
+  if (!networks.value.length) {
+    try {
+      const res = await api.vmOptions()
+      networks.value = (res.data && res.data.networks) || []
+    } catch (e) {}
+  }
+  nicDialog.value = true
+}
+
+async function submitNic() {
+  if (!nicFormRef.value) return
+  try {
+    await nicFormRef.value.validate()
+  } catch (_) {
+    return
+  }
+  nicSaving.value = true
+  try {
+    const iface = { type: 'network', source: nicForm.source.trim(), model: nicForm.model }
+    await api.attachInterface(id, iface)
+    ElMessage.success('网卡已添加')
+    nicDialog.value = false
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '添加网卡失败'))
+  } finally {
+    nicSaving.value = false
+  }
+}
+
+/* ---------- 快照 ---------- */
+async function loadSnapshots() {
+  snapLoading.value = true
+  try {
+    const res = await api.listSnapshots(id)
+    const raw = (res.data && (res.data.items || res.data)) || []
+    snapshots.value = raw.map((s) => ({
+      ...s,
+      timeText: s.creation_time ? new Date(s.creation_time * 1000).toLocaleString() : '—',
+      stateText: statusText(s.state),
+      stateTag: statusTag(s.state)
+    }))
+  } catch (e) {
+    snapshots.value = []
+  } finally {
+    snapLoading.value = false
+  }
+}
+
+function openSnapCreate() {
+  snapForm.name = ''
+  snapForm.description = ''
+  snapDialog.value = true
+}
+
+async function submitSnapshot() {
+  if (!snapForm.name.trim()) {
+    ElMessage.warning('快照名称不能为空')
+    return
+  }
+  snapSaving.value = true
+  try {
+    await api.createSnapshot(id, snapForm.name.trim(), snapForm.description.trim())
+    ElMessage.success('快照已创建')
+    snapDialog.value = false
+    await loadSnapshots()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '创建快照失败'))
+  } finally {
+    snapSaving.value = false
+  }
+}
+
+async function revertSnap(snap) {
+  try {
+    await ElMessageBox.confirm('确定回滚到快照「' + snap.name + '」？此操作会覆盖当前状态。', '确认回滚', { type: 'warning' })
+    await api.revertSnapshot(id, snap.name)
+    ElMessage.success('已回滚')
+    await loadSnapshots()
+    await loadSpec()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(errMsg(e, '回滚失败'))
+  }
+}
+
+async function removeSnap(snap) {
+  try {
+    await ElMessageBox.confirm('确定删除快照「' + snap.name + '」？', '确认删除', { type: 'warning' })
+    await api.deleteSnapshot(id, snap.name)
+    ElMessage.success('快照已删除')
+    await loadSnapshots()
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error(errMsg(e, '删除失败'))
+  }
+}
+
+/* ---------- XML ---------- */
+async function loadXML() {
+  try {
+    const res = await api.getVMXML(id)
+    xmlText.value = (res.data && res.data.xml) || (spec.value && spec.value.raw_xml) || ''
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取 XML 失败'))
+  }
+}
+
+async function saveXML() {
+  if (!xmlText.value.trim()) {
+    ElMessage.warning('XML 不能为空')
+    return
+  }
+  xmlSaving.value = true
+  try {
+    await api.updateVMXML(id, xmlText.value)
+    ElMessage.success('XML 已保存')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存失败'))
+  } finally {
+    xmlSaving.value = false
+  }
+}
+
+/* ---------- 生命周期 ---------- */
+onMounted(async () => {
+  await loadSpec()
+  await loadSnapshots()
+  await loadXML()
+  statsTimer = setInterval(pollStats, 2000)
+})
+
+onUnmounted(() => {
+  if (statsTimer) {
+    clearInterval(statsTimer)
+    statsTimer = null
+  }
+  window.removeEventListener('resize', onWinResize)
+  if (perfChart) {
+    perfChart.dispose()
+    perfChart = null
+  }
+})
+</script>
+
+<style scoped>
+.vm-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* 顶部工具栏 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 16px;
+}
+.tb-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tb-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-foreground);
+}
+.tb-ip {
+  color: var(--color-muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+.tb-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 主体：左侧导航 + 右侧内容 */
+.body {
+  flex: 1;
+  align-items: stretch;
+}
+.side {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow-y: auto;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  max-height: calc(100vh - 140px);
+}
+.side-menu {
+  border-right: none;
+  height: 100%;
+  padding: 8px;
+}
+.side-menu :deep(.el-menu-item) {
+  border-radius: var(--radius-sm);
+  margin-bottom: 2px;
+}
+.side-menu :deep(.el-menu-item.is-active) {
+  background: var(--el-color-primary-light-9);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.content {
+  padding: 0 0 0 16px;
+}
+
+/* 面板 */
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.panel-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+.panel-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 32px 0;
+}
+.card-title {
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+
+/* 性能 */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.metric-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+.metric-label {
+  font-size: 0.85rem;
+  color: var(--color-muted-foreground);
+  margin-bottom: 8px;
+}
+.metric-val {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+.chart-card {
+  margin-bottom: 12px;
+}
+.perf-chart {
+  height: 260px;
+}
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* 编辑页 */
+.edit-card {
+  max-width: 640px;
+}
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.field-label {
+  width: 120px;
+  color: var(--color-muted-foreground);
+  flex-shrink: 0;
+}
+.field-tip {
+  margin: 12px 0 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.82rem;
+}
+
+/* 磁盘 / 网卡卡片 */
+.dev-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.dev-card:hover {
+  border-color: var(--color-border-strong);
+}
+.dev-card.selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+.dev-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.dev-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--color-foreground);
+}
+.dev-card-head :deep(.el-popconfirm) {
+  margin-left: auto;
+}
+.panel-actions {
+  margin-top: 8px;
+}
+
+/* 快照 / XML */
+.xml-alert {
+  margin-bottom: 12px;
+}
+.xml-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.xml-area :deep(textarea) {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+@media (max-width: 1200px) {
+  .metric-grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 900px) {
+  .body {
+    flex-direction: column;
+  }
+  .side {
+    width: 100% !important;
+    position: static;
+    max-height: none;
+    margin-bottom: 16px;
+  }
+  .content {
+    padding: 0;
+  }
+}
+</style>

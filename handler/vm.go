@@ -1,16 +1,15 @@
 package handler
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -53,62 +52,6 @@ func randomUUID() (string, error) {
 	), nil
 }
 
-// domainXMLTmpl libvirt domain 定义模板（支持可选 ISO 光驱安装）
-var domainXMLTmpl = template.Must(template.New("domain").Parse(`<domain type='kvm'>
-  <name>{{.Name}}</name>
-  <uuid>{{.UUID}}</uuid>
-  <memory unit='KiB'>{{.MemoryKiB}}</memory>
-  <vcpu placement='static'>{{.VCPU}}</vcpu>
-  <os>
-    <type arch='x86_64' machine='pc'>hvm</type>
-    <boot dev='hd'/>
-  </os>
-  <features>
-    <acpi/>
-    <apic/>
-  </features>
-  <devices>
-    <disk type='file' device='disk'>
-      <driver name='qemu' type='qcow2'/>
-      <source file='{{.DiskPath}}'/>
-      <target dev='vda' bus='virtio'/>
-    </disk>
-    {{if .ISOPath}}
-    <disk type='file' device='cdrom'>
-      <driver name='qemu' type='raw'/>
-      <source file='{{.ISOPath}}'/>
-      <target dev='hda' bus='ide'/>
-      <readonly/>
-    </disk>
-    {{end}}
-    <interface type='network'>
-      <mac address='{{.MAC}}'/>
-      <source network='default'/>
-      <model type='virtio'/>
-    </interface>
-    <graphics type='vnc' port='-1' autoport='yes'/>
-  </devices>
-</domain>
-`))
-
-// buildDomainXML 生成 libvirt domain XML
-func buildDomainXML(name, uuid, mac, diskPath, isoPath string, memoryKiB, vcpu int) (string, error) {
-	var buf bytes.Buffer
-	err := domainXMLTmpl.Execute(&buf, map[string]interface{}{
-		"Name":      name,
-		"UUID":      uuid,
-		"MAC":       mac,
-		"DiskPath":  diskPath,
-		"ISOPath":   isoPath,
-		"MemoryKiB": memoryKiB,
-		"VCPU":      vcpu,
-	})
-	if err != nil {
-		return "", err
-	}
-	return buf.String(), nil
-}
-
 // VMHandler 虚拟机处理器
 type VMHandler struct {
 	DB   *gorm.DB
@@ -142,7 +85,7 @@ func (h *VMHandler) ListVMs(c *gin.Context) {
 	// 从数据库查询虚拟机
 	var vms []model.VM
 	if err := h.DB.Preload("Host").Find(&vms).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询虚拟机失败"})
+		ErrorWithMessage(c, http.StatusInternalServerError, "查询虚拟机失败", err)
 		return
 	}
 
@@ -173,7 +116,7 @@ func (h *VMHandler) GetVM(c *gin.Context) {
 
 	var vm model.VM
 	if err := h.DB.Preload("Host").First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
@@ -190,37 +133,123 @@ func (h *VMHandler) GetVM(c *gin.Context) {
 	})
 }
 
-// CreateVM 创建虚拟机
+// GetVMDetail 返回 VM 详情（基础信息 + 磁盘/网卡 + 运行使用率），供详情页展示。
+func (h *VMHandler) GetVMDetail(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.Preload("Host").First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+
+	// 同步 libvirt 状态
+	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != "" {
+		vm.Status = state
+		h.DB.Model(&vm).Update("status", state)
+	}
+
+	// 磁盘/网卡（XML 解析，停机亦可读）
+	disks, nics, err := h.Virt.ListDomainDevices(vm.Name)
+	if err != nil {
+		disks, nics = []virt.Device{}, []virt.Device{}
+	}
+
+	// 运行使用率（仅 running 有意义；CPU% 由前端按 cputime 差值计算）
+	usage := gin.H{"running": false, "mem_used_mb": 0, "mem_total_mb": 0, "guest_used_mb": 0, "guest_total_mb": 0, "vcpus": 0, "cpu_time_ns": 0, "host_cpus": 0}
+	if vm.Status == "running" {
+		if info, err := h.Virt.GetDomainInfo(vm.Name); err == nil {
+			hostCpus := 0
+			if out, cerr := exec.Command("nproc").Output(); cerr == nil {
+				_, _ = fmt.Sscanf(string(out), "%d", &hostCpus)
+			}
+			// 客户机真实内存（balloon memory_stats，KvmDash 同款口径）；无 balloon 时为 0，前端回退分配口径
+			guestUsed, guestTotal := 0, 0
+			if ms := h.Virt.GetMemoryStats(vm.Name); len(ms) > 0 {
+				if actual, ok := ms["actual"]; ok && actual > 0 {
+					guestTotal = int(actual / 1024)
+					if unused, ok := ms["unused"]; ok && unused <= actual {
+						guestUsed = int((actual - unused) / 1024)
+					} else if rss, ok := ms["rss"]; ok {
+						guestUsed = int(rss / 1024)
+					}
+				}
+			}
+			usage = gin.H{
+				"running":        true,
+				"mem_used_mb":    int(info.MemKiB / 1024),
+				"mem_total_mb":   int(info.MaxMemKiB / 1024),
+				"guest_used_mb":  guestUsed,
+				"guest_total_mb": guestTotal,
+				"vcpus":          info.VCPUs,
+				"cpu_time_ns":    info.CPUTimeNS,
+				"host_cpus":      hostCpus,
+			}
+		}
+	}
+
+	Success(c, gin.H{
+		"vm":    vm,
+		"disks": disks,
+		"nics":  nics,
+		"usage": usage,
+	})
+}
+
+// createDiskReq 创建 VM 时的磁盘描述：三选一
+// (1) create_gb 新建卷；(2) source 直接引用现有卷/镜像路径；(3) source_image_id 引用云镜像（DB images.id）。
+type createDiskReq struct {
+	CreateGB      int                 `json:"create_gb"`       // 新建卷容量（GB）
+	Source        string              `json:"source"`          // 直接引用现有卷/镜像路径
+	SourceImageID uint                `json:"source_image_id"` // 引用云镜像，直接引用不拷贝
+	CloudInit     *virt.CloudInitSpec `json:"cloud_init,omitempty"`
+}
+
+// CreateVM 创建虚拟机（向导/克隆模板入口，对应 virsh vol-create-as + virsh define）。
+// 磁盘支持三种来源；cloud_init 非空时生成 seed ISO 并挂为只读 cdrom；可选 iso_path 挂安装光驱。
+// 镜像引用方式：source_image_id 直接引用云镜像文件（VM 与镜像共用文件，删除镜像前需先删引用 VM）。
 func (h *VMHandler) CreateVM(c *gin.Context) {
 	var req struct {
-		Name        string `json:"name" binding:"required"`
-		HostID      uint   `json:"host_id" binding:"required"`
-		Template    string `json:"template"`
-		StoragePool string `json:"storage_pool"`
-		ISOPath     string `json:"iso_path"`
-		VCPU        int    `json:"vcpu"`
-		MemoryMB    int    `json:"memory_mb"`
-		DiskGB      int    `json:"disk_gb"`
+		Name        string               `json:"name" binding:"required"`
+		HostID      uint                 `json:"host_id"`
+		Template    string               `json:"template"`
+		StoragePool string               `json:"storage_pool"`
+		VCPU        int                  `json:"vcpu"`
+		MemoryMB    int                  `json:"memory_mb"`
+		DiskGB      int                  `json:"disk_gb"` // 旧字段：未提供 disks 时默认建盘容量
+		Disks       []createDiskReq      `json:"disks"`
+		Interfaces  []virt.InterfaceSpec `json:"interfaces"`
+		Network     string               `json:"network"`  // 便捷字段：未提供 interfaces 时使用
+		ISOPath     string               `json:"iso_path"` // 兼容旧字段：生成 cdrom 安装盘
+		CloudInit   *virt.CloudInitSpec  `json:"cloud_init,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
 
 	// 校验名称合法性
 	if !validateVMName(req.Name) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "虚拟机名称只允许字母、数字、下划线和连字符"})
+		Fail(c, http.StatusBadRequest, "虚拟机名称只允许字母、数字、下划线和连字符")
 		return
 	}
 
-	// 检查宿主机是否存在
+	// 查宿主机：未指定时取平台登记的首台
 	var host model.Host
-	if err := h.DB.First(&host, req.HostID).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "宿主机不存在"})
-		return
+	if req.HostID != 0 {
+		if err := h.DB.First(&host, req.HostID).Error; err != nil {
+			ErrorWithMessage(c, http.StatusBadRequest, "宿主机不存在", err)
+			return
+		}
+	} else {
+		hst, err := h.firstHost()
+		if err != nil {
+			ErrorWithMessage(c, http.StatusBadRequest, "请先在宿主机管理中登记宿主机", err)
+			return
+		}
+		host = *hst
 	}
 
-	// 设置默认值
+	// 默认值
 	if req.StoragePool == "" {
 		req.StoragePool = "vmops"
 	}
@@ -230,83 +259,661 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 	if req.MemoryMB == 0 {
 		req.MemoryMB = 1024
 	}
-	if req.DiskGB == 0 {
-		req.DiskGB = 20
+	if req.Network == "" && len(req.Interfaces) == 0 {
+		req.Network = "default"
+	}
+	// 旧调用兼容：未提供 disks 时按 disk_gb 建默认盘
+	if len(req.Disks) == 0 {
+		gb := req.DiskGB
+		if gb == 0 {
+			gb = 20
+		}
+		req.Disks = []createDiskReq{{CreateGB: gb}}
 	}
 
-	// 生成 UUID 与 MAC，供 libvirt 与 DB 记录使用
+	// 生成 UUID 与首个网卡 MAC
 	uuid, err := randomUUID()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成虚拟机 UUID 失败"})
+		ErrorWithMessage(c, http.StatusInternalServerError, "生成虚拟机 UUID 失败", err)
 		return
 	}
-	mac, err := randomMAC()
+	firstMAC, err := randomMAC()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成虚拟机 MAC 失败"})
+		ErrorWithMessage(c, http.StatusInternalServerError, "生成虚拟机 MAC 失败", err)
 		return
 	}
 
-	// 创建虚拟机记录
+	// 组装 DomainSpec
+	spec := &virt.DomainSpec{
+		Name:     req.Name,
+		UUID:     uuid,
+		VCPU:     req.VCPU,
+		MemoryMB: req.MemoryMB,
+		OSType:   "hvm",
+		Arch:     "x86_64",
+		Boot:     virt.BootSpec{Devices: []string{"hd"}},
+		Graphics: virt.GraphicsSpec{Type: "vnc", Port: -1},
+	}
+
+	// 记录已建卷（pool:volName），失败时回滚清理
+	var createdVols []string
+	diskGB := 0
+	seedPath := ""
+	cleanup := func() {
+		for _, cv := range createdVols {
+			parts := strings.SplitN(cv, ":", 2)
+			if len(parts) == 2 {
+				_ = h.Virt.DeleteVolume(parts[0], parts[1])
+			}
+		}
+		if seedPath != "" {
+			_ = os.Remove(seedPath)
+		}
+	}
+
+	// 逐磁盘落地：create_gb → 建卷；source → 直接引用；source_image_id → 引用云镜像文件
+	poolPath := ""
+	for i, d := range req.Disks {
+		var source string
+		switch {
+		case d.CreateGB > 0:
+			volName := req.Name
+			if i > 0 {
+				volName = fmt.Sprintf("%s-d%d", req.Name, i+1)
+			}
+			if _, err := h.Virt.CreateVolume(req.StoragePool, volName, d.CreateGB); err != nil {
+				cleanup()
+				ErrorResponse(c, http.StatusInternalServerError, err)
+				return
+			}
+			createdVols = append(createdVols, req.StoragePool+":"+volName+".qcow2")
+			if poolPath == "" {
+				if poolPath, err = h.Virt.GetPoolPath(req.StoragePool); err != nil {
+					cleanup()
+					ErrorResponse(c, http.StatusInternalServerError, err)
+					return
+				}
+			}
+			source = filepath.Join(poolPath, volName+".qcow2")
+			diskGB += d.CreateGB
+		case d.Source != "":
+			source = d.Source
+		case d.SourceImageID > 0:
+			var img model.Image
+			if err := h.DB.First(&img, d.SourceImageID).Error; err != nil {
+				cleanup()
+				ErrorWithMessage(c, http.StatusBadRequest, "云镜像不存在", err)
+				return
+			}
+			// 云镜像直接引用，不拷贝：VM 与镜像共用文件，镜像删除前需先删引用 VM
+			source = img.Path
+		default:
+			cleanup()
+			Fail(c, http.StatusBadRequest, "磁盘参数不完整（create_gb / source / source_image_id 三选一）")
+			return
+		}
+		spec.Disks = append(spec.Disks, virt.DiskSpec{
+			Type:   "file",
+			Device: "disk",
+			Driver: "qcow2",
+			Bus:    "virtio",
+			Source: source,
+			Target: virt.NextDiskTarget(spec, "virtio"),
+		})
+	}
+
+	// 兼容旧 iso_path：挂只读 cdrom 安装盘，引导优先光驱
+	if req.ISOPath != "" {
+		spec.Disks = append(spec.Disks, virt.DiskSpec{
+			Type: "file", Device: "cdrom", Driver: "raw", Bus: "ide",
+			Source: req.ISOPath, ReadOnly: true,
+			Target: virt.NextDiskTarget(spec, "ide"),
+		})
+		spec.Boot.Devices = []string{"cdrom", "hd"}
+	}
+
+	// cloud-init：生成 seed ISO 落到存储池路径，挂为只读 cdrom
+	cfg := req.CloudInit
+	if cfg == nil {
+		for i := range req.Disks {
+			if req.Disks[i].CloudInit != nil {
+				cfg = req.Disks[i].CloudInit
+				break
+			}
+		}
+	}
+	if cfg != nil {
+		if poolPath == "" {
+			var err error
+			if poolPath, err = h.Virt.GetPoolPath(req.StoragePool); err != nil {
+				cleanup()
+				ErrorResponse(c, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if cfg.Hostname == "" {
+			cfg.Hostname = req.Name
+		}
+		seedBytes, err := virt.GenerateSeedISO(cfg)
+		if err != nil {
+			cleanup()
+			ErrorResponse(c, http.StatusInternalServerError, err)
+			return
+		}
+		seedPath = filepath.Join(poolPath, req.Name+"-seed.iso")
+		if err := os.WriteFile(seedPath, seedBytes, 0644); err != nil {
+			cleanup()
+			ErrorWithMessage(c, http.StatusInternalServerError, "写入 cloud-init seed 镜像失败", err)
+			return
+		}
+		spec.Disks = append(spec.Disks, virt.DiskSpec{
+			Type: "file", Device: "cdrom", Driver: "raw", Bus: "ide",
+			Source: seedPath, ReadOnly: true,
+			Target: virt.NextDiskTarget(spec, "ide"),
+		})
+		spec.Boot.Devices = []string{"cdrom", "hd"}
+	}
+
+	// 网卡：未显式提供 interfaces 时按 network 便捷字段生成
+	nicMAC := firstMAC
+	if len(req.Interfaces) > 0 {
+		for i := range req.Interfaces {
+			if req.Interfaces[i].Type == "" {
+				req.Interfaces[i].Type = "network"
+			}
+			if req.Interfaces[i].Source == "" {
+				req.Interfaces[i].Source = req.Network
+				if req.Interfaces[i].Source == "" {
+					req.Interfaces[i].Source = "default"
+				}
+			}
+			if req.Interfaces[i].MAC == "" {
+				m, err := randomMAC()
+				if err != nil {
+					cleanup()
+					ErrorWithMessage(c, http.StatusInternalServerError, "生成网卡 MAC 失败", err)
+					return
+				}
+				req.Interfaces[i].MAC = m
+			}
+			if req.Interfaces[i].Model == "" {
+				req.Interfaces[i].Model = "virtio"
+			}
+			if i == 0 {
+				nicMAC = req.Interfaces[i].MAC
+			}
+			spec.Interfaces = append(spec.Interfaces, req.Interfaces[i])
+		}
+	} else {
+		spec.Interfaces = append(spec.Interfaces, virt.InterfaceSpec{
+			Type: "network", Source: req.Network, MAC: firstMAC, Model: "virtio",
+		})
+	}
+
+	// BuildDomainXML 生成完整定义（纯函数），再写 DB 记录与 define
+	xmlstr, err := virt.BuildDomainXML(spec)
+	if err != nil {
+		cleanup()
+		ErrorWithMessage(c, http.StatusBadRequest, "虚拟机配置不合法", err)
+		return
+	}
+
 	vm := model.VM{
-		UUID:       uuid,
-		Name:       req.Name,
-		HostID:     req.HostID,
-		Template:   req.Template,
+		UUID:        uuid,
+		Name:        req.Name,
+		HostID:      host.ID,
+		Template:    req.Template,
 		StoragePool: req.StoragePool,
-		VCPU:       req.VCPU,
-		MemoryMB:   req.MemoryMB,
-		DiskGB:     req.DiskGB,
-		MACAddress: mac,
-		Status:     "shut off",
+		VCPU:        req.VCPU,
+		MemoryMB:    req.MemoryMB,
+		DiskGB:      diskGB,
+		MACAddress:  nicMAC,
+		Status:      "shut off",
 	}
-
 	if err := h.DB.Create(&vm).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建虚拟机失败"})
+		cleanup()
+		ErrorWithMessage(c, http.StatusInternalServerError, "创建虚拟机失败", err)
 		return
 	}
-
-	// 真正在 KVM 宿主机上落地：libvirt 存储池建卷 + 定义 domain
-	if err := h.provisionVM(req.Name, uuid, mac, req.StoragePool, req.DiskGB, req.MemoryMB, req.VCPU, req.ISOPath); err != nil {
-		// 回滚 DB 记录，避免残留脏数据
+	if err := h.Virt.DefineDomain(xmlstr); err != nil {
 		h.DB.Delete(&vm)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建虚拟机失败", "detail": err.Error()})
+		cleanup()
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "创建成功",
-		"data":    vm,
-	})
+	Success(c, vm)
 }
 
-// provisionVM 在 KVM 宿主机上创建存储卷并定义（但不自动启动）虚拟机。
-// 建盘通过 libvirt 存储池/存储卷 API（对应 virsh vol-create-as），无需 qemu-img。
-func (h *VMHandler) provisionVM(name, uuid, mac, pool string, diskGB, memoryMB, vcpu int, isoPath string) error {
-	// 1. 在指定存储池创建 qcow2 存储卷（对应 virsh vol-create-as --pool xxx --name xxx --capacity xG --format qcow2）
-	if _, err := h.Virt.CreateVolume(pool, name, diskGB); err != nil {
-		return fmt.Errorf("创建存储卷失败: %v", err)
+// GetVMSpec 返回虚拟机完整配置（DB 记录 + DomainSpec，spec 含 raw_xml 回显）。
+func (h *VMHandler) GetVMSpec(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.Preload("Host").First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+	// 同步 libvirt 状态
+	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != "" {
+		vm.Status = state
+		h.DB.Model(&vm).Update("status", state)
 	}
 
-	// 2. 查询卷路径（卷路径来自存储池 target path）
-	poolPath, err := h.Virt.GetPoolPath(pool)
+	spec, err := h.Virt.GetDomainSpec(vm.Name)
 	if err != nil {
-		return fmt.Errorf("获取存储池路径失败: %v", err)
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
 	}
-	diskPath := filepath.Join(poolPath, name+".qcow2")
 
-	// 3. 生成 domain XML（可选 ISO 光驱）
-	xml, err := buildDomainXML(name, uuid, mac, diskPath, isoPath, memoryMB*1024, vcpu)
+	Success(c, gin.H{"vm": vm, "spec": spec})
+}
+
+// UpdateVMSpec 整体重 define 虚拟机配置（对应 virsh edit 后 define）。
+// 请求体为完整 DomainSpec（raw_xml 忽略）；VM 运行中禁止修改，须先关机。
+// 同步回写 DB 的 vcpu / memory_mb / disk_gb（首个磁盘容量近似）/ mac_address（首个网卡）。
+func (h *VMHandler) UpdateVMSpec(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+
+	var spec virt.DomainSpec
+	if err := c.ShouldBindJSON(&spec); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+
+	// 运行时禁止整体重定义，提示先关机
+	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state == "running" {
+		Fail(c, http.StatusBadRequest, "虚拟机运行中，请先关机后再修改配置")
+		return
+	}
+
+	// 名称/UUID 以 DB 为准，防止定义错位；raw_xml 由 BuildDomainXML 重建，忽略回显原文
+	spec.Name = vm.Name
+	if spec.UUID == "" {
+		spec.UUID = vm.UUID
+	}
+	spec.CloudInit = nil
+	spec.RawXML = ""
+
+	xmlstr, err := virt.BuildDomainXML(&spec)
 	if err != nil {
-		return fmt.Errorf("生成 domain XML 失败: %v", err)
+		ErrorWithMessage(c, http.StatusBadRequest, "虚拟机配置不合法", err)
+		return
+	}
+	if err := h.Virt.UpdateDomainXML(vm.Name, xmlstr); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
 	}
 
-	// 4. 定义 domain（对应 virsh define，保持 shut off 不自动启动）
-	if err := h.Virt.DefineDomain(xml); err != nil {
-		return fmt.Errorf("定义虚拟机失败: %v", err)
+	// 同步 DB 摘要字段
+	updates := map[string]interface{}{"vcpu": spec.VCPU, "memory_mb": spec.MemoryMB}
+	if len(spec.Disks) > 0 {
+		if gb := h.Virt.DiskSizeGB(spec.Disks[0].Source); gb > 0 {
+			updates["disk_gb"] = gb
+		}
+	}
+	if len(spec.Interfaces) > 0 && spec.Interfaces[0].MAC != "" {
+		updates["mac_address"] = spec.Interfaces[0].MAC
+	}
+	h.DB.Model(&vm).Updates(updates)
+
+	Success(c, gin.H{"vm": vm.Name, "message": "配置已更新"})
+}
+
+// PauseVM 暂停虚拟机（对应 virsh suspend）。
+func (h *VMHandler) PauseVM(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+	if err := h.Virt.PauseDomain(vm.Name); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	h.DB.Model(&vm).Update("status", "paused")
+	Success(c, gin.H{"vm": vm.Name, "message": "虚拟机已暂停"})
+}
+
+// ResumeVM 恢复已暂停的虚拟机（对应 virsh resume）。
+func (h *VMHandler) ResumeVM(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+	if err := h.Virt.ResumeDomain(vm.Name); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	h.DB.Model(&vm).Update("status", "running")
+	Success(c, gin.H{"vm": vm.Name, "message": "虚拟机已恢复"})
+}
+
+// AttachDisk 热插拔磁盘（对应 virsh attach-device，运行中生效并落配置）。
+// body: {disk: DiskSpec}；disk.Target 为空时按 bus 自动分配（NextDiskTarget）。
+func (h *VMHandler) AttachDisk(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
 	}
 
-	return nil
+	var req struct {
+		Disk virt.DiskSpec `json:"disk"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Disk.Source == "" {
+		ErrorWithMessage(c, http.StatusBadRequest, "磁盘参数错误（需提供 source）", err)
+		return
+	}
+	if req.Disk.Bus == "" {
+		req.Disk.Bus = "virtio"
+	}
+	if req.Disk.Device == "" {
+		req.Disk.Device = "disk"
+	}
+	if req.Disk.Target == "" {
+		spec, err := h.Virt.GetDomainSpec(vm.Name)
+		if err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, err)
+			return
+		}
+		req.Disk.Target = virt.NextDiskTarget(spec, req.Disk.Bus)
+	}
+
+	if err := h.Virt.AttachDisk(vm.Name, req.Disk); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"vm": vm.Name, "disk": req.Disk})
+}
+
+// DetachDisk 移除磁盘（对应 virsh detach-device，按 target dev 匹配）。
+func (h *VMHandler) DetachDisk(c *gin.Context) {
+	id := c.Param("id")
+	target := c.Param("target")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+	if err := h.Virt.DetachDisk(vm.Name, target); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"vm": vm.Name, "target": target})
+}
+
+// AttachInterface 添加网卡（对应 virsh attach-interface，运行中生效并落配置）。
+// body: {interface: InterfaceSpec}；mac 为空自动生成。
+func (h *VMHandler) AttachInterface(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+
+	var req struct {
+		Interface virt.InterfaceSpec `json:"interface"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	if req.Interface.Type == "" {
+		req.Interface.Type = "network"
+	}
+	if req.Interface.Source == "" {
+		req.Interface.Source = "default"
+	}
+	if req.Interface.MAC == "" {
+		mac, err := randomMAC()
+		if err != nil {
+			ErrorWithMessage(c, http.StatusInternalServerError, "生成网卡 MAC 失败", err)
+			return
+		}
+		req.Interface.MAC = mac
+	}
+
+	if err := h.Virt.AttachInterface(vm.Name, req.Interface); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"vm": vm.Name, "interface": req.Interface})
+}
+
+// DetachInterface 移除网卡（对应 virsh detach-interface，按 MAC 地址匹配）。
+func (h *VMHandler) DetachInterface(c *gin.Context) {
+	id := c.Param("id")
+	mac := c.Param("mac")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+	if err := h.Virt.DetachInterface(vm.Name, mac); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"vm": vm.Name, "mac": mac})
+}
+
+// SetVcpu 调整 CPU 核数（对应 virsh setvcpus，live+config），同步 DB。
+func (h *VMHandler) SetVcpu(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+
+	var req struct {
+		VCPU int `json:"vcpu"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.VCPU <= 0 {
+		ErrorWithMessage(c, http.StatusBadRequest, "vCPU 数量必须大于 0", err)
+		return
+	}
+	if err := h.Virt.SetVcpus(vm.Name, req.VCPU); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	h.DB.Model(&vm).Update("vcpu", req.VCPU)
+	Success(c, gin.H{"vm": vm.Name, "vcpu": req.VCPU})
+}
+
+// SetMemory 调整内存（对应 virsh setmem，live+config），同步 DB。
+func (h *VMHandler) SetMemory(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+
+	var req struct {
+		MemoryMB int `json:"memory_mb"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.MemoryMB <= 0 {
+		ErrorWithMessage(c, http.StatusBadRequest, "内存大小必须大于 0", err)
+		return
+	}
+	if err := h.Virt.SetMemory(vm.Name, req.MemoryMB); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	h.DB.Model(&vm).Update("memory_mb", req.MemoryMB)
+	Success(c, gin.H{"vm": vm.Name, "memory_mb": req.MemoryMB})
+}
+
+// SetAutostart 设置开机自启（对应 virsh autostart）。
+func (h *VMHandler) SetAutostart(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	if err := h.Virt.SetAutostart(vm.Name, req.Enabled); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"vm": vm.Name, "autostart": req.Enabled})
+}
+
+// SetBoot 修改引导顺序（body {devices: []}，如 ["cdrom","hd"]）。停机状态下整体重 define。
+func (h *VMHandler) SetBoot(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+
+	var req struct {
+		Devices []string `json:"devices"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Devices) == 0 {
+		ErrorWithMessage(c, http.StatusBadRequest, "引导设备列表不能为空", err)
+		return
+	}
+
+	spec, err := h.Virt.GetDomainSpec(vm.Name)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	spec.Boot.Devices = req.Devices
+	spec.RawXML = ""
+
+	xmlstr, err := virt.BuildDomainXML(spec)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "引导配置不合法", err)
+		return
+	}
+	if err := h.Virt.UpdateDomainXML(vm.Name, xmlstr); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"vm": vm.Name, "devices": req.Devices})
+}
+
+// GetVMStats 返回虚拟机实时性能统计（服务端差分计算 CPU/IO 速率）。
+func (h *VMHandler) GetVMStats(c *gin.Context) {
+	id := c.Param("id")
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+	stats, err := h.Virt.GetDomainStats(vm.Name)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, stats)
+}
+
+// CloneVM 克隆虚拟机（对应 virsh vol-clone + virsh define）。
+// body: {name, storage_pool?, vcpu?, memory_mb?, network?}；系统盘 linked clone（父盘保留）。
+// 注意：克隆卷落在源系统盘所在存储池，storage_pool 仅写入 DB 记录（virt 层按源池克隆）。
+func (h *VMHandler) CloneVM(c *gin.Context) {
+	id := c.Param("id")
+	var src model.VM
+	if err := h.DB.Preload("Host").First(&src, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+
+	var req struct {
+		Name        string `json:"name" binding:"required"`
+		StoragePool string `json:"storage_pool"`
+		VCPU        int    `json:"vcpu"`
+		MemoryMB    int    `json:"memory_mb"`
+		Network     string `json:"network"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	if !validateVMName(req.Name) {
+		Fail(c, http.StatusBadRequest, "虚拟机名称只允许字母、数字、下划线和连字符")
+		return
+	}
+
+	// 源 spec：可按需覆盖 vcpu/memory_mb/network（network 替换首个网卡 source）
+	source, err := h.Virt.GetDomainSpec(src.Name)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	if req.VCPU > 0 {
+		source.VCPU = req.VCPU
+	}
+	if req.MemoryMB > 0 {
+		source.MemoryMB = req.MemoryMB
+	}
+	if req.Network != "" && len(source.Interfaces) > 0 {
+		source.Interfaces[0].Source = req.Network
+		source.Interfaces[0].Type = "network"
+	}
+
+	if _, err := h.Virt.CloneVMFromSpec(source, req.Name); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	// 新域 UUID 与首个网卡 MAC 从 libvirt 查询（克隆后重新生成）
+	uuid := ""
+	nicMAC := ""
+	if ns, err := h.Virt.GetDomainSpec(req.Name); err == nil {
+		uuid = ns.UUID
+		if len(ns.Interfaces) > 0 {
+			nicMAC = ns.Interfaces[0].MAC
+		}
+	}
+	if uuid == "" {
+		uuid, _ = randomUUID()
+	}
+
+	pool := req.StoragePool
+	if pool == "" {
+		pool = src.StoragePool
+	}
+	clone := model.VM{
+		UUID:        uuid,
+		Name:        req.Name,
+		HostID:      src.HostID,
+		Template:    "clone",
+		StoragePool: pool,
+		VCPU:        source.VCPU,
+		MemoryMB:    source.MemoryMB,
+		DiskGB:      src.DiskGB,
+		MACAddress:  nicMAC,
+		Status:      "shut off",
+	}
+	if err := h.DB.Create(&clone).Error; err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "记录克隆虚拟机失败", err)
+		return
+	}
+
+	Success(c, gin.H{"vm": clone.Name, "id": clone.ID})
 }
 
 // StartVM 启动虚拟机
@@ -315,13 +922,13 @@ func (h *VMHandler) StartVM(c *gin.Context) {
 
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
 	// 调用 libvirt 启动
 	if err := h.Virt.StartDomain(vm.Name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -340,7 +947,7 @@ func (h *VMHandler) StopVM(c *gin.Context) {
 
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
@@ -349,7 +956,7 @@ func (h *VMHandler) StopVM(c *gin.Context) {
 	if shutdownErr != nil {
 		// 优雅关机调用失败（如域不存在），直接强制
 		if ferr := h.Virt.DestroyDomain(vm.Name); ferr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": ferr.Error()})
+			ErrorResponse(c, http.StatusInternalServerError, ferr)
 			return
 		}
 	} else {
@@ -383,13 +990,13 @@ func (h *VMHandler) RestartVM(c *gin.Context) {
 
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
 	// 调用 libvirt 重启
 	if err := h.Virt.RebootDomain(vm.Name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -405,13 +1012,13 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
 	// 1. 调用 libvirt 删除域定义
 	if err := h.Virt.UndefineDomain(vm.Name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -439,13 +1046,13 @@ func (h *VMHandler) GetVMXML(c *gin.Context) {
 	id := c.Param("id")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
 	xml, err := h.Virt.GetDomainXML(vm.Name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -457,7 +1064,7 @@ func (h *VMHandler) UpdateVMXML(c *gin.Context) {
 	id := c.Param("id")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
@@ -465,59 +1072,60 @@ func (h *VMHandler) UpdateVMXML(c *gin.Context) {
 		XML string `json:"xml" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
 
 	if err := h.Virt.UpdateDomainXML(vm.Name, req.XML); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
 	Success(c, gin.H{"name": vm.Name, "message": "XML 已更新"})
 }
 
-// ListSnapshots 获取虚拟机快照列表
+// ListSnapshots 获取虚拟机快照列表（返回 SnapshotInfo 详情数组，含 description/creation_time/state）。
 func (h *VMHandler) ListSnapshots(c *gin.Context) {
 	id := c.Param("id")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
 	snaps, err := h.Virt.ListSnapshots(vm.Name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
 	Success(c, snaps)
 }
 
-// CreateSnapshot 创建虚拟机快照
+// CreateSnapshot 创建虚拟机快照（body: {name, description?}）。
 func (h *VMHandler) CreateSnapshot(c *gin.Context) {
 	id := c.Param("id")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
 	var req struct {
-		Name string `json:"name" binding:"required"`
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
 	if !validateVMName(req.Name) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "快照名称只允许字母、数字、下划线和连字符"})
+		Fail(c, http.StatusBadRequest, "快照名称只允许字母、数字、下划线和连字符")
 		return
 	}
 
-	if err := h.Virt.CreateSnapshot(vm.Name, req.Name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := h.Virt.CreateSnapshot(vm.Name, req.Name, req.Description); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -530,12 +1138,12 @@ func (h *VMHandler) DeleteSnapshot(c *gin.Context) {
 	snapName := c.Param("snap")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
 	if err := h.Virt.DeleteSnapshot(vm.Name, snapName); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -548,12 +1156,12 @@ func (h *VMHandler) RevertSnapshot(c *gin.Context) {
 	snapName := c.Param("snap")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
 
 	if err := h.Virt.RevertSnapshot(vm.Name, snapName); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -564,27 +1172,27 @@ func (h *VMHandler) RevertSnapshot(c *gin.Context) {
 func (h *VMHandler) GetHostInfo(c *gin.Context) {
 	hostname, err := exec.Command("hostname").Output()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取主机名失败", "detail": err.Error()})
+		ErrorWithMessage(c, http.StatusInternalServerError, "获取主机名失败", err)
 		return
 	}
 	kernel, err := exec.Command("uname", "-r").Output()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取内核版本失败", "detail": err.Error()})
+		ErrorWithMessage(c, http.StatusInternalServerError, "获取内核版本失败", err)
 		return
 	}
 	cpus, err := exec.Command("nproc").Output()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取 CPU 数量失败", "detail": err.Error()})
+		ErrorWithMessage(c, http.StatusInternalServerError, "获取 CPU 数量失败", err)
 		return
 	}
 	free, err := exec.Command("free", "-h").Output()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取内存信息失败", "detail": err.Error()})
+		ErrorWithMessage(c, http.StatusInternalServerError, "获取内存信息失败", err)
 		return
 	}
 	uptime, err := exec.Command("uptime", "-p").Output()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取运行时长失败", "detail": err.Error()})
+		ErrorWithMessage(c, http.StatusInternalServerError, "获取运行时长失败", err)
 		return
 	}
 
@@ -615,19 +1223,19 @@ func (h *VMHandler) GetHostInfo(c *gin.Context) {
 func (h *VMHandler) ScanImportVMs(c *gin.Context) {
 	host, err := h.firstHost()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请先在宿主机管理中登记宿主机"})
+		ErrorWithMessage(c, http.StatusBadRequest, "请先在宿主机管理中登记宿主机", err)
 		return
 	}
 
 	details, err := h.Virt.ListDomainsWithDetail()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "扫描宿主机虚拟机失败", "detail": err.Error()})
+		ErrorWithMessage(c, http.StatusInternalServerError, "扫描宿主机虚拟机失败", err)
 		return
 	}
 
 	uuids, err := h.trackedUUIDs()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询已纳管虚拟机失败"})
+		ErrorWithMessage(c, http.StatusInternalServerError, "查询已纳管虚拟机失败", err)
 		return
 	}
 
@@ -661,7 +1269,7 @@ func (h *VMHandler) ImportVMs(c *gin.Context) {
 		Names  []string `json:"names"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.Names) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要导入的虚拟机"})
+		ErrorWithMessage(c, http.StatusBadRequest, "请选择要导入的虚拟机", err)
 		return
 	}
 
@@ -669,13 +1277,13 @@ func (h *VMHandler) ImportVMs(c *gin.Context) {
 	if req.HostID != 0 {
 		err := h.DB.First(&host, req.HostID).Error
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "宿主机不存在"})
+			ErrorWithMessage(c, http.StatusBadRequest, "宿主机不存在", err)
 			return
 		}
 	} else {
 		hst, err := h.firstHost()
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "请先在宿主机管理中登记宿主机"})
+			ErrorWithMessage(c, http.StatusBadRequest, "请先在宿主机管理中登记宿主机", err)
 			return
 		}
 		host = *hst
@@ -683,7 +1291,7 @@ func (h *VMHandler) ImportVMs(c *gin.Context) {
 
 	details, err := h.Virt.ListDomainsWithDetail()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "扫描宿主机虚拟机失败", "detail": err.Error()})
+		ErrorWithMessage(c, http.StatusInternalServerError, "扫描宿主机虚拟机失败", err)
 		return
 	}
 	byName := make(map[string]virt.DomainDetail, len(details))
@@ -768,6 +1376,52 @@ func (h *VMHandler) trackedUUIDs() (map[string]bool, error) {
 	return set, nil
 }
 
+// VMCreateOptions 创建虚拟机向导所需的静态选项（对应契约 GET /api/vms/options）。
+type VMCreateOptions struct {
+	Pools        []string           `json:"pools"`
+	Networks     []string           `json:"networks"`
+	CloudImages  []model.Image      `json:"cloud_images"`
+	OSList       []virt.OSItem      `json:"os_list"`
+	StoragePools []virt.PoolInfo    `json:"storage_pools,omitempty"`
+	NetInfo      []virt.NetworkInfo `json:"network_info,omitempty"`
+}
+
+// GetVMOptions 返回创建虚拟机向导的选项（存储池、网络、云镜像、OS 列表）。
+// 供前端创建向导选择使用（对应 virsh 环境的资源枚举）。
+func (h *VMHandler) GetVMOptions(c *gin.Context) {
+	// 存储池（名称 + 详情）
+	pools, err := h.Virt.ListPools()
+	if err != nil {
+		pools = []string{}
+	}
+	poolInfos, _ := h.Virt.ListPoolInfos()
+
+	// 网络（名称 + 详情）
+	networks := []string{}
+	netInfos := []virt.NetworkInfo{}
+	if nws, err := h.Virt.ListNetworks(); err == nil {
+		netInfos = nws
+		for _, n := range nws {
+			networks = append(networks, n.Name)
+		}
+	}
+
+	// 云镜像：镜像管理中标记为模板的（含普通镜像，便于导入安装盘）
+	var images []model.Image
+	if err := h.DB.Order("created_at desc").Find(&images).Error; err != nil {
+		images = []model.Image{}
+	}
+
+	Success(c, gin.H{
+		"pools":         pools,
+		"storage_pools": poolInfos,
+		"networks":      networks,
+		"network_info":  netInfos,
+		"cloud_images":  images,
+		"os_list":       virt.OSList,
+	})
+}
+
 // poolPathMap 返回 存储池名 → 目标路径 的映射（供磁盘归属推断）。
 func (h *VMHandler) poolPathMap() (map[string]string, error) {
 	names, err := h.Virt.ListPools()
@@ -782,5 +1436,3 @@ func (h *VMHandler) poolPathMap() (map[string]string, error) {
 	}
 	return m, nil
 }
-
-// randomMACStr 供 provisionVM 内部生成临时 MAC。

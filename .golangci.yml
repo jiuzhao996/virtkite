@@ -1,0 +1,30 @@
+# vmops golangci-lint 配置
+# 运行：golangci-lint run ./...
+run:
+  timeout: 3m
+  go: "1.21"
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+    - gofmt
+    - revive
+  disable:
+    - gosimple
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+
+issues:
+  exclude-rules:
+    # 交互式控制台 WS 错误保留细节属故意（见 AGENTS.md）
+    - path: handler/terminal\.go|handler/serial\.go
+      linters:
+        - revive

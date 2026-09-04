@@ -13,10 +13,13 @@ type NetworkInfo struct {
 	Name       string `json:"name"`
 	Active     bool   `json:"active"`
 	Persistent bool   `json:"persistent"`
+	Autostart  bool   `json:"autostart"`
 	Bridge     string `json:"bridge"`
 	Forward    string `json:"forward"`
 	Gateway    string `json:"gateway"`
 	CIDR       string `json:"cidr"`
+	DhcpStart  string `json:"dhcp_start"`
+	DhcpEnd    string `json:"dhcp_end"`
 	XML        string `json:"xml,omitempty"`
 }
 
@@ -77,6 +80,11 @@ func (v *Virt) getNetworkInfo(l *libvirt.Libvirt, net libvirt.Network) (NetworkI
 	if err == nil {
 		info.Persistent = persistent == 1
 	}
+	// 自动启动（对应 virsh net-autostart），解析失败忽略
+	autostart, err := l.NetworkGetAutostart(net)
+	if err == nil {
+		info.Autostart = autostart == 1
+	}
 	bridge, err := l.NetworkGetBridgeName(net)
 	if err == nil {
 		info.Bridge = bridge
@@ -91,6 +99,12 @@ func (v *Virt) getNetworkInfo(l *libvirt.Libvirt, net libvirt.Network) (NetworkI
 			IPs []struct {
 				Address string `xml:"address,attr"`
 				Netmask string `xml:"netmask,attr"`
+				DHCP    struct {
+					Ranges []struct {
+						Start string `xml:"start,attr"`
+						End   string `xml:"end,attr"`
+					} `xml:"range"`
+				} `xml:"dhcp"`
 			} `xml:"ip"`
 		}
 		if err := xml.Unmarshal([]byte(xmlstr), &n); err == nil {
@@ -98,6 +112,11 @@ func (v *Virt) getNetworkInfo(l *libvirt.Libvirt, net libvirt.Network) (NetworkI
 			if len(n.IPs) > 0 {
 				info.Gateway = n.IPs[0].Address
 				info.CIDR = n.IPs[0].Netmask
+				// 解析 DHCP 范围（对应 virsh net-dumpxml 的 <dhcp><range>）
+				if len(n.IPs[0].DHCP.Ranges) > 0 {
+					info.DhcpStart = n.IPs[0].DHCP.Ranges[0].Start
+					info.DhcpEnd = n.IPs[0].DHCP.Ranges[0].End
+				}
 			}
 		}
 	}
@@ -112,10 +131,10 @@ func (v *Virt) StartNetwork(name string) error {
 	}
 	n, err := l.NetworkLookupByName(name)
 	if err != nil {
-		return fmt.Errorf("网络 %s 不存在: %v", name, err)
+		return fmt.Errorf("网络 %s 不存在: %w", name, err)
 	}
 	if err := l.NetworkCreate(n); err != nil {
-		return fmt.Errorf("启动网络失败: %v", err)
+		return fmt.Errorf("启动网络失败: %w", err)
 	}
 	return nil
 }
@@ -128,10 +147,10 @@ func (v *Virt) StopNetwork(name string) error {
 	}
 	n, err := l.NetworkLookupByName(name)
 	if err != nil {
-		return fmt.Errorf("网络 %s 不存在: %v", name, err)
+		return fmt.Errorf("网络 %s 不存在: %w", name, err)
 	}
 	if err := l.NetworkDestroy(n); err != nil {
-		return fmt.Errorf("停止网络失败: %v", err)
+		return fmt.Errorf("停止网络失败: %w", err)
 	}
 	return nil
 }
@@ -144,18 +163,18 @@ func (v *Virt) DeleteNetwork(name string) error {
 	}
 	n, err := l.NetworkLookupByName(name)
 	if err != nil {
-		return fmt.Errorf("网络 %s 不存在: %v", name, err)
+		return fmt.Errorf("网络 %s 不存在: %w", name, err)
 	}
 
 	active, err := l.NetworkIsActive(n)
 	if err == nil && active == 1 {
 		if err := l.NetworkDestroy(n); err != nil {
-			return fmt.Errorf("停止网络失败: %v", err)
+			return fmt.Errorf("停止网络失败: %w", err)
 		}
 	}
 
 	if err := l.NetworkUndefine(n); err != nil {
-		return fmt.Errorf("删除网络失败: %v", err)
+		return fmt.Errorf("删除网络失败: %w", err)
 	}
 	return nil
 }
@@ -168,13 +187,13 @@ func (v *Virt) DefineNetwork(xml string) error {
 	}
 	n, err := l.NetworkDefineXML(xml)
 	if err != nil {
-		return fmt.Errorf("定义网络失败: %v", err)
+		return fmt.Errorf("定义网络失败: %w", err)
 	}
 	if err := l.NetworkCreate(n); err != nil {
-		return fmt.Errorf("启动网络失败: %v", err)
+		return fmt.Errorf("启动网络失败: %w", err)
 	}
 	if err := l.NetworkSetAutostart(n, 1); err != nil {
-		return fmt.Errorf("设置自动启动失败: %v", err)
+		return fmt.Errorf("设置自动启动失败: %w", err)
 	}
 	return nil
 }
@@ -186,7 +205,51 @@ func (v *Virt) DefineNetworkXML(xml string) error {
 		return err
 	}
 	if _, err := l.NetworkDefineXML(xml); err != nil {
-		return fmt.Errorf("定义网络失败: %v", err)
+		return fmt.Errorf("定义网络失败: %w", err)
+	}
+	return nil
+}
+
+// UpdateNetwork 编辑网络（对应 virsh net-destroy + net-undefine + net-define + net-start）。
+// 运行中的网络先停止再重建，并保留原 autostart 设置。
+func (v *Virt) UpdateNetwork(name, xml string) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	n, err := l.NetworkLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("网络 %s 不存在: %w", name, err)
+	}
+
+	// 记录原 autostart，重建后恢复
+	autostart := int32(0)
+	if a, err := l.NetworkGetAutostart(n); err == nil {
+		autostart = a
+	}
+
+	// 运行中先停止（对应 virsh net-destroy）
+	active, err := l.NetworkIsActive(n)
+	if err == nil && active == 1 {
+		if err := l.NetworkDestroy(n); err != nil {
+			return fmt.Errorf("停止网络失败: %w", err)
+		}
+	}
+	// 删除旧定义（对应 virsh net-undefine）
+	if err := l.NetworkUndefine(n); err != nil {
+		return fmt.Errorf("删除网络定义失败: %w", err)
+	}
+	// 按新 XML 重新定义并启动（对应 virsh net-define + net-start）
+	nn, err := l.NetworkDefineXML(xml)
+	if err != nil {
+		return fmt.Errorf("定义网络失败: %w", err)
+	}
+	if err := l.NetworkCreate(nn); err != nil {
+		return fmt.Errorf("启动网络失败: %w", err)
+	}
+	// 恢复原 autostart 设置
+	if err := l.NetworkSetAutostart(nn, autostart); err != nil {
+		return fmt.Errorf("恢复自动启动设置失败: %w", err)
 	}
 	return nil
 }

@@ -21,7 +21,7 @@ func NewNetworkHandler() *NetworkHandler {
 func (h *NetworkHandler) ListNetworks(c *gin.Context) {
 	networks, err := h.Virt.ListNetworks()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取网络列表失败", "detail": err.Error()})
+		ErrorWithMessage(c, http.StatusInternalServerError, "获取网络列表失败", err)
 		return
 	}
 
@@ -36,7 +36,7 @@ func (h *NetworkHandler) GetNetwork(c *gin.Context) {
 	name := c.Param("name")
 	info, err := h.Virt.GetNetwork(name)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusNotFound, err)
 		return
 	}
 
@@ -50,17 +50,17 @@ func (h *NetworkHandler) CreateNetwork(c *gin.Context) {
 		Gateway string `json:"gateway"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
 	if !validateVMName(req.Name) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "网络名称只允许字母、数字、下划线和连字符"})
+		Fail(c, http.StatusBadRequest, "网络名称只允许字母、数字、下划线和连字符")
 		return
 	}
 
 	xml := virt.NetworkXMLFromParams(req.Name, "", req.Gateway)
 	if err := h.Virt.DefineNetwork(xml); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -73,23 +73,42 @@ func (h *NetworkHandler) DefineNetworkXML(c *gin.Context) {
 		XML string `json:"xml" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
 
 	if err := h.Virt.DefineNetwork(req.XML); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
 	Success(c, gin.H{"message": "网络已定义"})
 }
 
+// UpdateNetwork 编辑网络（body: {xml}，对应 virsh net-destroy + net-undefine + net-define + net-start）。
+func (h *NetworkHandler) UpdateNetwork(c *gin.Context) {
+	name := c.Param("name")
+	var req struct {
+		XML string `json:"xml" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+
+	if err := h.Virt.UpdateNetwork(name, req.XML); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+
+	Success(c, gin.H{"name": name, "message": "网络已更新"})
+}
+
 // StartNetwork 启动网络
 func (h *NetworkHandler) StartNetwork(c *gin.Context) {
 	name := c.Param("name")
 	if err := h.Virt.StartNetwork(name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -100,7 +119,7 @@ func (h *NetworkHandler) StartNetwork(c *gin.Context) {
 func (h *NetworkHandler) StopNetwork(c *gin.Context) {
 	name := c.Param("name")
 	if err := h.Virt.StopNetwork(name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -111,7 +130,7 @@ func (h *NetworkHandler) StopNetwork(c *gin.Context) {
 func (h *NetworkHandler) DeleteNetwork(c *gin.Context) {
 	name := c.Param("name")
 	if err := h.Virt.DeleteNetwork(name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 

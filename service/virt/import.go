@@ -63,7 +63,7 @@ func (v *Virt) ListDomainsWithDetail() ([]DomainDetail, error) {
 	flags := libvirt.ConnectListDomainsActive | libvirt.ConnectListDomainsInactive
 	domains, _, err := l.ConnectListAllDomains(1, flags)
 	if err != nil {
-		return nil, fmt.Errorf("枚举域失败: %v", err)
+		return nil, fmt.Errorf("枚举域失败: %w", err)
 	}
 
 	details := make([]DomainDetail, 0, len(domains))
@@ -89,12 +89,12 @@ func (v *Virt) domainDetail(l *libvirt.Libvirt, dom libvirt.Domain) (DomainDetai
 
 	xmlstr, err := l.DomainGetXMLDesc(dom, 0)
 	if err != nil {
-		return dd, fmt.Errorf("域 %s 获取 XML 失败: %v", dom.Name, err)
+		return dd, fmt.Errorf("域 %s 获取 XML 失败: %w", dom.Name, err)
 	}
 
 	var dx domainXML
 	if err := xml.Unmarshal([]byte(xmlstr), &dx); err != nil {
-		return dd, fmt.Errorf("域 %s XML 解析失败: %v", dom.Name, err)
+		return dd, fmt.Errorf("域 %s XML 解析失败: %w", dom.Name, err)
 	}
 	dd.UUID = dx.UUID
 	dd.VCPU = int(dx.VCPU.Value)

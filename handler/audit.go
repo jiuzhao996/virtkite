@@ -75,10 +75,10 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 	}
 
 	Success(c, gin.H{
-		"total":    total,
-		"page":     page,
+		"total":     total,
+		"page":      page,
 		"page_size": pageSize,
-		"items":    logs,
+		"items":     logs,
 	})
 }
 
@@ -93,6 +93,40 @@ func (h *AuditHandler) GetAuditLog(c *gin.Context) {
 	}
 
 	Success(c, log)
+}
+
+// ActionLabels 审计操作类型 → 中文文案映射（供审计页筛选/展示、仪表盘统计标签使用）。
+// 与 middleware.AuditMiddleware 的 determineAction 产物保持一致。
+var ActionLabels = map[string]string{
+	"login": "登录", "logout": "登出",
+
+	"create_vm": "创建虚拟机", "delete_vm": "删除虚拟机", "start_vm": "开机",
+	"stop_vm": "关机", "restart_vm": "重启", "import_vm": "导入虚拟机",
+	"pause_vm": "暂停虚拟机", "resume_vm": "恢复虚拟机", "clone_vm": "克隆虚拟机",
+
+	"attach_disk": "挂载磁盘", "detach_disk": "移除磁盘",
+	"attach_nic": "添加网卡", "detach_nic": "移除网卡",
+	"create_snapshot": "创建快照", "delete_snapshot": "删除快照", "revert_snapshot": "回滚快照",
+
+	"update_vm_spec": "更新虚拟机配置", "update_vm_xml": "更新虚拟机XML", "update_vm": "更新虚拟机",
+	"set_vcpu": "调整CPU核数", "set_memory": "调整内存",
+	"set_autostart": "设置开机自启", "set_boot": "设置引导顺序",
+
+	"create_host": "添加宿主机", "update_host": "更新宿主机", "delete_host": "删除宿主机",
+
+	"upload_image": "上传镜像", "delete_image": "删除镜像",
+	"set_image_template": "设置镜像模板", "clone_image": "镜像创建虚拟机",
+
+	"create_network": "创建网络", "update_network": "更新网络", "delete_network": "删除网络",
+
+	"create_volume": "创建存储卷", "delete_volume": "删除存储卷",
+
+	"access": "访问",
+}
+
+// ListAuditActions 返回操作类型 → 中文文案映射（前端下拉/标签展示）。
+func (h *AuditHandler) ListAuditActions(c *gin.Context) {
+	Success(c, ActionLabels)
 }
 
 // AuditActionSummary 操作类型分布统计（用于仪表盘/论文图表）

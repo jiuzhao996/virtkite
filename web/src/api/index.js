@@ -46,6 +46,7 @@ export const api = {
   // 虚拟机
   listVMs: () => unwrap(http.get('/vms')),
   getVM: (id) => unwrap(http.get('/vms/' + id)),
+  getVMDetail: (id) => unwrap(http.get('/vms/' + id + '/detail')),
   getVMXML: (id) => unwrap(http.get('/vms/' + id + '/xml')),
   updateVMXML: (id, xml) => unwrap(http.put('/vms/' + id + '/xml', { xml })),
   createVM: (payload) => unwrap(http.post('/vms', payload)),
@@ -53,8 +54,26 @@ export const api = {
   stopVM: (id) => unwrap(http.post('/vms/' + id + '/stop')),
   restartVM: (id) => unwrap(http.post('/vms/' + id + '/restart')),
   deleteVM: (id) => unwrap(http.delete('/vms/' + id)),
+
+  // 虚拟机 - 配置模型 / 硬件管理 / 动作（virt-manager 对齐）
+  getVMSpec: (id) => unwrap(http.get('/vms/' + id + '/spec')),
+  updateVMSpec: (id, spec) => unwrap(http.put('/vms/' + id + '/spec', spec)),
+  pauseVM: (id) => unwrap(http.post('/vms/' + id + '/pause')),
+  resumeVM: (id) => unwrap(http.post('/vms/' + id + '/resume')),
+  getVMStats: (id) => unwrap(http.get('/vms/' + id + '/stats')),
+  setVcpu: (id, vcpu) => unwrap(http.put('/vms/' + id + '/cpu', { vcpu })),
+  setMemory: (id, memory_mb) => unwrap(http.put('/vms/' + id + '/memory', { memory_mb })),
+  setAutostart: (id, enabled) => unwrap(http.put('/vms/' + id + '/autostart', { enabled })),
+  setBoot: (id, devices) => unwrap(http.put('/vms/' + id + '/boot', { devices })),
+  attachDisk: (id, disk) => unwrap(http.post('/vms/' + id + '/devices/disks', { disk })),
+  detachDisk: (id, target) => unwrap(http.delete('/vms/' + id + '/devices/disks/' + target)),
+  attachInterface: (id, iface) => unwrap(http.post('/vms/' + id + '/devices/interfaces', { interface: iface })),
+  detachInterface: (id, mac) => unwrap(http.delete('/vms/' + id + '/devices/interfaces/' + mac)),
+  cloneVM: (id, payload) => unwrap(http.post('/vms/' + id + '/clone', payload)),
+  vmOptions: () => unwrap(http.get('/vms/options')),
+
   listSnapshots: (id) => unwrap(http.get('/vms/' + id + '/snapshots')),
-  createSnapshot: (id, name) => unwrap(http.post('/vms/' + id + '/snapshots', { name })),
+  createSnapshot: (id, name, description) => unwrap(http.post('/vms/' + id + '/snapshots', { name, description })),
   deleteSnapshot: (id, snap) => unwrap(http.delete('/vms/' + id + '/snapshots/' + snap)),
   revertSnapshot: (id, snap) => unwrap(http.post('/vms/' + id + '/snapshots/' + snap + '/revert')),
   vncToken: (id) => unwrap(http.post('/vms/' + id + '/vnc-token')),
@@ -75,12 +94,15 @@ export const api = {
   uploadImage: (formData) =>
     unwrap(http.post('/images/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } })),
   deleteImage: (id) => unwrap(http.delete('/images/' + id)),
+  setImageTemplate: (id, is_template) => unwrap(http.put('/images/' + id + '/template', { is_template })),
+  cloneImage: (id, payload) => unwrap(http.post('/images/' + id + '/clone', payload)),
 
   // 网络
   listNetworks: () => unwrap(http.get('/networks')),
   getNetwork: (name) => unwrap(http.get('/networks/' + name)),
   createNetwork: (payload) => unwrap(http.post('/networks', payload)),
   defineNetworkXML: (payload) => unwrap(http.post('/networks/xml', payload)),
+  updateNetwork: (name, xml) => unwrap(http.put('/networks/' + name, { xml })),
   startNetwork: (name) => unwrap(http.post('/networks/' + name + '/start')),
   stopNetwork: (name) => unwrap(http.post('/networks/' + name + '/stop')),
   deleteNetwork: (name) => unwrap(http.delete('/networks/' + name)),
@@ -88,10 +110,13 @@ export const api = {
   // 仪表盘
   dashboardOverview: () => unwrap(http.get('/dashboard/overview')),
   vmStatus: () => unwrap(http.get('/dashboard/vm-status')),
+  hostStats: () => unwrap(http.get('/dashboard/host-stats')),
+  vmPerf: () => unwrap(http.get('/dashboard/vm-perf')),
 
   // 审计
   listAudit: (params) => unwrap(http.get('/audit', { params })),
-  auditSummary: () => unwrap(http.get('/audit/summary'))
+  auditSummary: () => unwrap(http.get('/audit/summary')),
+  auditActions: () => unwrap(http.get('/audit/actions'))
 }
 
 export { TOKEN_KEY }
