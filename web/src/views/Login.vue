@@ -1,5 +1,15 @@
 <template>
   <div class="login-wrap">
+    <img
+      ref="bgImg"
+      :src="loginBg"
+      class="login-bg"
+      :class="{ on: bgOk }"
+      alt=""
+      @load="bgOk = true"
+      @error="bgOk = false"
+    />
+    <div class="login-mask" />
     <el-card class="login-card" shadow="always">
       <div class="login-brand">
         <div class="logo">🛡️</div>
@@ -31,11 +41,12 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
+import loginBg from '../assets/login-bg.jpg'
 
 const router = useRouter()
 const { setToken, setUser } = useAuth()
@@ -43,6 +54,12 @@ const { setToken, setUser } = useAuth()
 const form = reactive({ username: '', password: '' })
 const error = ref('')
 const submitting = ref(false)
+const bgOk = ref(false)
+const bgImg = ref(null)
+
+onMounted(() => {
+  if (bgImg.value && bgImg.value.complete && bgImg.value.naturalWidth > 0) bgOk.value = true
+})
 
 async function submit() {
   error.value = ''
@@ -71,17 +88,40 @@ async function submit() {
 
 <style scoped>
 .login-wrap {
+  position: relative;
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(180deg, #e8f4f8 0%, #c8e3f0 100%);
+  background: linear-gradient(160deg, #0f1b2d 0%, #16283f 45%, #1d3a52 100%);
   padding: 24px;
+  overflow: hidden;
+}
+.login-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.8s ease;
+}
+.login-bg.on {
+  opacity: 1;
+}
+.login-mask {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 40%, rgba(10, 20, 38, 0.25) 0%, rgba(7, 14, 26, 0.72) 100%);
 }
 .login-card {
+  position: relative;
   width: 100%;
   max-width: 400px;
   border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(6px);
+  z-index: 2;
 }
 .login-brand {
   text-align: center;
