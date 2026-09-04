@@ -58,6 +58,8 @@ export const api = {
   deleteSnapshot: (id, snap) => unwrap(http.delete('/vms/' + id + '/snapshots/' + snap)),
   revertSnapshot: (id, snap) => unwrap(http.post('/vms/' + id + '/snapshots/' + snap + '/revert')),
   vncToken: (id) => unwrap(http.post('/vms/' + id + '/vnc-token')),
+  scanImportVMs: () => unwrap(http.get('/vms/import/scan')),
+  importVMs: (hostId, names) => unwrap(http.post('/vms/import', { host_id: hostId, names })),
 
   // 存储池
   listStoragePools: () => unwrap(http.get('/storage/pools')),

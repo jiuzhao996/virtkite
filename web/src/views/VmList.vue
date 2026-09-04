@@ -5,6 +5,7 @@
         <div>
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-button type="success" :icon="Plus" @click="openCreate">新建虚拟机</el-button>
+          <el-button type="warning" :icon="Upload" @click="openImport">导入存量 VM</el-button>
         </div>
         <span class="count">共 {{ total }} 台</span>
       </div>
@@ -81,6 +82,49 @@
       </template>
     </el-dialog>
 
+    <!-- 导入存量 VM（纳管 virsh 已有域） -->
+    <el-dialog v-model="importDialog" title="导入存量 VM" width="780px">
+      <div v-loading="importScanning" class="import-body">
+        <el-alert
+          v-if="importHostName"
+          type="info"
+          :closable="false"
+          show-icon
+          :title="`宿主机「${importHostName}」共检测到 ${importTotal} 台域：已纳管 ${importManaged} 台，未纳管 ${importUnmanaged} 台`"
+          style="margin-bottom: 12px"
+        />
+        <el-empty v-if="!importScanning && !unmanaged.length" description="暂无未纳管的存量 VM" />
+        <el-table
+          v-else
+          :data="unmanaged"
+          stripe
+          border
+          size="small"
+          style="width: 100%"
+          @selection-change="selected = $event"
+        >
+          <el-table-column type="selection" width="44" />
+          <el-table-column prop="name" label="名称" min-width="130" />
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag :type="statusTag(row.state)" effect="light">{{ statusText(row.state) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="规格" width="150">
+            <template #default="{ row }">{{ row.vcpu }}核 / {{ (row.memory_mb / 1024).toFixed(0) }}GB / {{ row.disk_gb }}GB</template>
+          </el-table-column>
+          <el-table-column prop="mac_address" label="MAC" width="150" />
+          <el-table-column prop="disk_path" label="磁盘路径" min-width="220" show-overflow-tooltip />
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="importDialog = false">取消</el-button>
+        <el-button type="primary" :disabled="!selected.length" :loading="importing" @click="doImport">
+          导入所选（{{ selected.length }} 台）
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 快照管理 -->
     <el-dialog v-model="snapDialog" :title="'快照管理 - ' + (curVM || '')" width="560px">
       <div class="toolbar">
@@ -128,7 +172,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus } from '@element-plus/icons-vue'
+import { Refresh, Plus, Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
 
 const items = ref([])
@@ -149,6 +193,17 @@ const snapForm = ref({ name: '' })
 const xmlDialog = ref(false)
 const xmlText = ref('')
 const xmlSaving = ref(false)
+
+const importDialog = ref(false)
+const importScanning = ref(false)
+const importing = ref(false)
+const importHostId = ref(null)
+const importHostName = ref('')
+const importTotal = ref(0)
+const importManaged = ref(0)
+const importUnmanaged = ref(0)
+const unmanaged = ref([])
+const selected = ref([])
 
 const form = reactive({ name: '', host_id: null, template: '', storage_pool: 'vmops', iso_path: '', vcpu: 1, memory_mb: 1024, disk_gb: 20 })
 
@@ -206,6 +261,48 @@ async function create() {
     ElMessage.error((e.response && e.response.data && e.response.data.message) || e.response?.data?.detail || '创建失败')
   } finally {
     creating.value = false
+  }
+}
+
+async function openImport() {
+  importDialog.value = true
+  importScanning.value = true
+  importHostName.value = ''
+  importUnmanaged.value = 0
+  unmanaged.value = []
+  selected.value = []
+  try {
+    const res = await api.scanImportVMs()
+    const data = (res && res.data) || {}
+    importHostId.value = data.host_id || null
+    importHostName.value = data.host_name || ''
+    importTotal.value = data.total || 0
+    importManaged.value = data.managed || 0
+    importUnmanaged.value = data.unmanaged || 0
+    unmanaged.value = ((data.items || []).filter((i) => !i.managed))
+  } catch (e) {
+    ElMessage.error((e.response && e.response.data && e.response.data.detail) || '扫描失败，无法连接 libvirt')
+  } finally {
+    importScanning.value = false
+  }
+}
+
+async function doImport() {
+  if (!selected.value.length) {
+    ElMessage.warning('请先勾选要导入的虚拟机')
+    return
+  }
+  importing.value = true
+  try {
+    const res = await api.importVMs(importHostId.value, selected.value.map((i) => i.name))
+    const d = (res && res.data) || {}
+    ElMessage.success(`导入完成：成功 ${d.imported} 台${d.skipped ? '，跳过(已纳管) ' + d.skipped + ' 台' : ''}${d.failed ? '，失败 ' + d.failed + ' 台' : ''}`)
+    importDialog.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error((e.response && e.response.data && e.response.data.message) || '导入失败')
+  } finally {
+    importing.value = false
   }
 }
 
@@ -299,9 +396,7 @@ async function openConsole(vm) {
       return
     }
     // 新窗口打开 noVNC，连接 websockify :6080
-    const url = window.location.origin.replace(/:8080$/, '')
-    const base = url.includes(':') ? url.split(':')[0] : url
-    const noVncUrl = 'http://' + base + ':6080/vnc.html?path=websockify?token=' + d.token
+    const noVncUrl = 'http://' + window.location.hostname + ':6080/vnc.html?path=websockify?token=' + d.token
     window.open(noVncUrl, '_blank', 'width=1024,height=700')
   } catch (e) {
     ElMessage.error((e.response && e.response.data && e.response.data.error) || '无法连接控制台')

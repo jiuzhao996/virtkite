@@ -123,6 +123,8 @@ func main() {
 		vms.Use(middleware.AdminMiddleware())
 		{
 			vms.GET("", vmHandler.ListVMs)
+			vms.GET("/import/scan", vmHandler.ScanImportVMs)
+			vms.POST("/import", vmHandler.ImportVMs)
 			vms.GET("/:id", vmHandler.GetVM)
 			vms.GET("/:id/xml", vmHandler.GetVMXML)
 			vms.PUT("/:id/xml", vmHandler.UpdateVMXML)

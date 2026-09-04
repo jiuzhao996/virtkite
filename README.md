@@ -27,6 +27,7 @@
 - [x] 镜像管理（上传 / 列表 / 删除，目录穿越防护）
 - [x] 审计日志（中间件自动写入 + 查询 / 详情 / 操作类型分布）
 - [x] 仪表盘统计（总览计数 + 状态分布 + 存储池/网络计数）
+- [x] 存量 VM 导入 / 纳管（扫描 virsh 既有域，勾选导入，与宿主机状态对齐）
 - [x] 前端（Vite 标准工程，八大页面）
 - [ ] Prometheus 监控集成（P2，规划中）
 
@@ -129,6 +130,8 @@ npm run dev          # 访问 http://localhost:5173
 ### 虚拟机管理（admin）
 
 - `GET /api/vms` `GET /api/vms/:id` `POST /api/vms`
+- `GET  /api/vms/import/scan` — 扫描宿主机上未纳管的存量 VM（virsh 已有域）
+- `POST /api/vms/import` — 勾选批量导入（仅写 DB，不动 libvirt）
 - `POST /api/vms/:id/start` `POST /api/vms/:id/stop` `POST /api/vms/:id/restart`
 - `DELETE /api/vms/:id`
 

@@ -93,6 +93,9 @@ func determineAction(method, path string) string {
 	if strings.Contains(path, "/api/vms") {
 		switch method {
 		case "POST":
+			if path == "/api/vms/import" {
+				return "import_vm"
+			}
 			if strings.Contains(path, "/start") {
 				return "start_vm"
 			}
