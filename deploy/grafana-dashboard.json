@@ -1,0 +1,65 @@
+{
+  "title": "vmops 私有云监控",
+  "uid": "vmops-overview",
+  "timezone": "browser",
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "运行中 VM",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "sum(vmops_vm_running)", "refId": "A" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "宿主机 CPU %",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "vmops_host_cpu_percent", "refId": "A" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "任务堆积",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "vmops_tasks_pending + vmops_tasks_running", "refId": "A" }]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "VM CPU 使用率 %",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 7 },
+      "targets": [{ "expr": "vmops_vm_cpu_percent", "refId": "A", "legendFormat": "{{vm}}" }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "VM 内存占用 %",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 7 },
+      "targets": [{ "expr": "100 * vmops_vm_mem_used_kib / vmops_vm_mem_total_kib", "refId": "A", "legendFormat": "{{vm}}" }]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "宿主机 CPU / 内存",
+      "gridPos": { "x": 0, "y": 11, "w": 12, "h": 7 },
+      "targets": [
+        { "expr": "vmops_host_cpu_percent", "refId": "A", "legendFormat": "CPU %" },
+        { "expr": "100 * vmops_host_mem_used_kib / vmops_host_mem_total_kib", "refId": "B", "legendFormat": "内存 %" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "存储池使用率 %",
+      "gridPos": { "x": 12, "y": 11, "w": 12, "h": 7 },
+      "targets": [{ "expr": "100 * (1 - vmops_pool_available_bytes / vmops_pool_capacity_bytes)", "refId": "A", "legendFormat": "{{pool}}" }]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "VM 磁盘 IO B/s",
+      "gridPos": { "x": 0, "y": 18, "w": 12, "h": 7 },
+      "targets": [
+        { "expr": "vmops_vm_disk_read_bps", "refId": "A", "legendFormat": "{{vm}} 读" },
+        { "expr": "vmops_vm_disk_write_bps", "refId": "B", "legendFormat": "{{vm}} 写" }
+      ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "VM 网络 IO B/s",
+      "gridPos": { "x": 12, "y": 18, "w": 12, "h": 7 },
+      "targets": [
+        { "expr": "vmops_vm_net_rx_bps", "refId": "A", "legendFormat": "{{vm}} 收" },
+        { "expr": "vmops_vm_net_tx_bps", "refId": "B", "legendFormat": "{{vm}} 发" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

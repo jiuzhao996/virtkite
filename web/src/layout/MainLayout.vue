@@ -48,6 +48,10 @@
           <el-icon><Link /></el-icon>
           <span>会话管理</span>
         </el-menu-item>
+        <el-menu-item v-if="isAdmin" index="/settings">
+          <el-icon><Setting /></el-icon>
+          <span>系统设置</span>
+        </el-menu-item>
         <el-menu-item v-if="isAdmin" index="/audit">
           <el-icon><Document /></el-icon>
           <span>审计日志</span>
@@ -110,6 +114,7 @@ const navItems = [
   { index: '/networks', label: '网络', icon: 'Connection' },
   { index: '/tasks', label: '任务中心', icon: 'List' },
   { index: '/sessions', label: '会话管理', icon: 'Link' },
+  { index: '/settings', label: '系统设置', icon: 'Setting', adminOnly: true },
   { index: '/audit', label: '审计日志', icon: 'Document', adminOnly: true }
 ]
 
@@ -123,6 +128,7 @@ const titleMap = {
   networks: '网络管理',
   tasks: '任务中心',
   sessions: '会话管理',
+  settings: '系统设置',
   audit: '审计日志'
 }
 const title = computed(() => titleMap[route.path.split('/')[1]] || 'vmops')

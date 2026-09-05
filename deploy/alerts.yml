@@ -1,0 +1,49 @@
+groups:
+  - name: vmops
+    interval: 30s
+    rules:
+      # VM 宕机：DB 仍有记录但 libvirt 不见（running 序列消失且总数对不上时人工排查；
+      # 此处按"运行中 VM 数骤降"告警，需按实际规模调阈值）
+      - alert: VMRunningDrop
+        expr: sum(vmops_vm_running) < 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "运行中虚拟机数为 0（当前值 {{ $value }}）"
+
+      # 宿主机 CPU 持续高位
+      - alert: HostCpuHigh
+        expr: vmops_host_cpu_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "宿主机 CPU {{ $value | printf \"%.1f\" }}% 持续 5 分钟超 85%"
+
+      # 存储池空间不足（任一池可用比 < 10%）
+      - alert: PoolSpaceLow
+        expr: vmops_pool_available_bytes / vmops_pool_capacity_bytes < 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "存储池 {{ $labels.pool }} 可用空间不足 10%"
+
+      # 任务堆积（等待+执行超过 10 个，可能 worker 阻塞）
+      - alert: TaskBacklog
+        expr: vmops_tasks_pending + vmops_tasks_running > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "任务堆积 {{ $value }} 个，检查 worker 是否阻塞"
+
+      # 单 VM CPU 持续跑满（排除刚启动预热）
+      - alert: VMCpuHot
+        expr: vmops_vm_cpu_percent > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "虚拟机 {{ $labels.vm }} CPU {{ $value | printf \"%.1f\" }}% 持续 10 分钟超 90%"

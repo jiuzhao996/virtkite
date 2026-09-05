@@ -1,0 +1,14 @@
+# Prometheus 抓取配置：vmops 内建 exporter（GET /metrics，15s 间隔）。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: vmops
+    static_configs:
+      # docker-compose 内服务名；宿主机直跑后端时改为宿主机 IP:8080
+      - targets: ["app:8080"]
+    metrics_path: /metrics

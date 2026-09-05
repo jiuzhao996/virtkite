@@ -73,6 +73,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 
 const { isAdmin } = useAuth()
@@ -137,7 +138,7 @@ onMounted(() => {
   load()
   pollTimer = setInterval(() => {
     if (!loading.value) load()
-  }, 5000)
+  }, getPollInterval('sessions', POLL_DEFAULTS.sessions))
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)

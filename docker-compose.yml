@@ -40,6 +40,45 @@ services:
       - "8080:8080"
     volumes:
       - ./static:/app/static
+      # 直通宿主机 libvirtd（监控与纳管需真实 KVM；无 KVM 的机器请注释掉，指标将为空但服务可启动）
+      - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
+
+  # Prometheus：抓取 app:8080/metrics（内建 exporter，15s）
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: vmops-prometheus
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+  # Grafana：预置数据源 + vmops 看板（admin/admin，首次登录后改密）
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: vmops-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./deploy/grafana-datasource.yml:/etc/grafana/provisioning/datasources/vmops.yml:ro
+      - ./deploy/grafana-dashboard-provider.yml:/etc/grafana/provisioning/dashboards/vmops.yml:ro
+      - ./deploy/grafana-dashboard.json:/etc/grafana/provisioning/dashboards/vmops-overview.json:ro
+      - grafana-data:/var/lib/grafana
 
 volumes:
   mysql-data:
+  prometheus-data:
+  grafana-data:

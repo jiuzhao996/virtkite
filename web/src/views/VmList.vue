@@ -170,6 +170,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
 import { Refresh, Plus, Upload, VideoPlay, SwitchButton, RefreshRight, Monitor, Delete, Search, ArrowDown, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
@@ -549,7 +550,7 @@ async function openConsole(vm) {
 
 onMounted(() => {
   load()
-  pollTimer = setInterval(silentRefresh, 5000)
+  pollTimer = setInterval(silentRefresh, getPollInterval('vmlist', POLL_DEFAULTS.vmlist))
   window.addEventListener('resize', onWinResize)
 })
 onUnmounted(() => {

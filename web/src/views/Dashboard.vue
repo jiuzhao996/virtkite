@@ -188,6 +188,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { Refresh, Cpu, Monitor, VideoPlay, FolderOpened, Connection, Picture, User, Document } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 
 const { state } = useAuth()
@@ -215,7 +216,6 @@ const FALLBACK_ACTION_LABELS = {
 const actionLabelMap = ref({ ...FALLBACK_ACTION_LABELS })
 
 const HOST_POINTS = 60
-const POLL_MS = 3000
 
 const cssVar = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 const primaryColor = cssVar('--el-color-primary', '#2a9da5')
@@ -455,8 +455,9 @@ onMounted(async () => {
   await loadAll()
   await nextTick()
   initChart()
-  hostTimer = setInterval(pollHost, POLL_MS)
-  vmTimer = setInterval(pollVms, POLL_MS)
+  const ms = getPollInterval('dashboard', POLL_DEFAULTS.dashboard)
+  hostTimer = setInterval(pollHost, ms)
+  vmTimer = setInterval(pollVms, ms)
   window.addEventListener('resize', onResize)
 })
 

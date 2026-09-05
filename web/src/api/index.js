@@ -125,7 +125,10 @@ export const api = {
 
   // 控制台会话（谁连了哪台 VM、可强制断开 SSH/串口）
   listSessions: (params) => unwrap(http.get('/sessions', { params })),
-  disconnectSession: (id) => unwrap(http.post('/sessions/' + id + '/disconnect'))
+  disconnectSession: (id) => unwrap(http.post('/sessions/' + id + '/disconnect')),
+
+  // 系统设置快照（仅管理员）
+  getSettings: () => unwrap(http.get('/settings'))
 }
 
 export { TOKEN_KEY }

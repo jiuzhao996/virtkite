@@ -92,18 +92,23 @@ func main() {
 	imageHandler := handler.NewImageHandler(db, taskMgr)
 	taskHandler := handler.NewTaskHandler(db, taskMgr)
 	sessionHandler := handler.NewSessionHandler(db, consoleRegistry)
+	settingsHandler := handler.NewSettingsHandler(db)
 	auditHandler := handler.NewAuditHandler(db)
 	dashboardHandler := handler.NewDashboardHandler(db)
 	storageHandler := handler.NewStorageHandler()
 	networkHandler := handler.NewNetworkHandler()
 	vncHandler := handler.NewVNCHandler(db, consoleRegistry)
 	terminalHandler := handler.NewTerminalHandler(db, consoleRegistry)
+	metricsHandler := handler.NewMetricsHandler(db)
 
 	// 公开接口（无需认证）
 	r.POST("/api/auth/login", authHandler.Login)
 
 	// VNC token 解析（供 websockify JSONTokenApi 内网调用）
 	r.GET("/api/vnc/token/:token", vncHandler.ResolveToken)
+
+	// Prometheus 指标（公开，供 Prometheus scrape；生产环境建议防火墙限制来源）
+	r.GET("/metrics", metricsHandler.Handler)
 
 	// 需要认证的接口
 	api := r.Group("/api")
@@ -233,6 +238,13 @@ func main() {
 			audit.GET("/actions", auditHandler.ListAuditActions)
 			audit.GET("/summary", auditHandler.AuditActionSummary)
 			audit.GET("/:id", auditHandler.GetAuditLog)
+		}
+
+		// 系统设置快照（仅管理员）
+		settings := api.Group("/settings")
+		settings.Use(middleware.AdminMiddleware())
+		{
+			settings.GET("", settingsHandler.GetSettings)
 		}
 
 		// 异步任务查询（仅管理员）

@@ -14,6 +14,7 @@ import StorageList from '../views/StorageList.vue'
 import NetworkList from '../views/NetworkList.vue'
 import TaskList from '../views/TaskList.vue'
 import SessionList from '../views/SessionList.vue'
+import Settings from '../views/Settings.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: Login, meta: { public: true } },
@@ -33,6 +34,7 @@ const routes = [
       { path: 'networks', name: 'networks', component: NetworkList },
       { path: 'tasks', name: 'tasks', component: TaskList },
       { path: 'sessions', name: 'sessions', component: SessionList },
+      { path: 'settings', name: 'settings', component: Settings, meta: { requiresAdmin: true } },
       { path: 'audit', name: 'audit', component: AuditList, meta: { requiresAdmin: true } }
     ]
   }

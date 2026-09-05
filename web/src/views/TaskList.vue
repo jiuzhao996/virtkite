@@ -81,6 +81,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 
 const { isAdmin } = useAuth()
@@ -176,7 +177,7 @@ async function clearFinished() {
 
 onMounted(() => {
   load()
-  pollTimer = setInterval(tick, 3000)
+  pollTimer = setInterval(tick, getPollInterval('tasks', POLL_DEFAULTS.tasks))
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
