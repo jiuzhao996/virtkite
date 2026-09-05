@@ -19,7 +19,7 @@
         </div>
       </div>
 
-      <el-table :data="networks" stripe border style="width: 100%">
+      <el-table :data="networks" stripe border style="width: 100%" empty-text="暂无网络数据">
         <el-table-column prop="name" label="名称" min-width="130">
           <template #default="{ row }">
             <span class="mono">{{ row.name }}</span>
@@ -62,7 +62,7 @@
             <span v-else class="muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column label="操作" width="370" fixed="right">
           <template #default="{ row }">
             <el-button v-if="isAdmin" size="small" type="success" :icon="VideoPlay" :disabled="row.active" @click="act(row, 'start')">启动</el-button>
             <el-button v-if="isAdmin" size="small" :icon="VideoPause" :disabled="!row.active" @click="act(row, 'stop')">停止</el-button>
@@ -91,7 +91,7 @@
 
     <!-- 从 XML 定义 -->
     <el-dialog v-model="xmlDialog" title="从 XML 定义网络" width="640px">
-      <el-input v-model="xmlForm.xml" type="textarea" :rows="14" placeholder="<network>...</network>" />
+      <el-input v-model="xmlForm.xml" type="textarea" :rows="14" class="edit-input" placeholder="<network>...</network>" />
       <template #footer>
         <el-button @click="xmlDialog = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="defineXML">定义</el-button>
@@ -136,6 +136,11 @@ const autostartCount = computed(() => networks.value.filter((n) => n.autostart).
 
 function errMsg(e, fallback) {
   return (e.response && e.response.data && e.response.data.message) || fallback
+}
+
+// 确认框点取消/点 X 关闭都视为取消，不弹错误提示
+function isCancel(e) {
+  return e === 'cancel' || e === 'close' || e?.message === 'cancel' || e?.message === 'close'
 }
 
 async function load() {
@@ -246,9 +251,7 @@ async function remove(row) {
     ElMessage.success('网络已删除')
     await load()
   } catch (e) {
-    if (e !== 'cancel' && e?.message !== 'cancel') {
-      ElMessage.error(errMsg(e, '删除失败'))
-    }
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '删除失败'))
   }
 }
 

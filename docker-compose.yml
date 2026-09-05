@@ -59,6 +59,23 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+      - "--alertmanager.url=http://alertmanager:9093"
+
+  # Alertmanager：告警分组去重（UI :9093，通知通道见 deploy/alertmanager.yml 注释）
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: vmops-alertmanager
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./deploy/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
 
   # Grafana：预置数据源 + vmops 看板（admin/admin，首次登录后改密）
   grafana:
@@ -82,3 +99,4 @@ volumes:
   mysql-data:
   prometheus-data:
   grafana-data:
+  alertmanager-data:

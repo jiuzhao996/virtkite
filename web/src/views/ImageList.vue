@@ -21,7 +21,7 @@
         </div>
       </div>
 
-      <el-table :data="items" stripe border style="width: 100%">
+      <el-table :data="items" stripe border style="width: 100%" empty-text="暂无镜像，可点击上传镜像添加">
         <el-table-column prop="name" label="名称" min-width="150" />
         <el-table-column prop="os_version" label="OS 版本" min-width="130" />
         <el-table-column label="大小(GB)" width="110">

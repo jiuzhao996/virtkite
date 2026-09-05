@@ -12,7 +12,7 @@
         <span class="count">共 {{ pools.length }} 个存储池</span>
       </div>
 
-      <el-table :data="pools" stripe border style="width: 100%">
+      <el-table :data="pools" stripe border style="width: 100%" empty-text="暂无存储池数据">
         <el-table-column prop="name" label="名称" min-width="120" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
@@ -32,7 +32,7 @@
           <template #default="{ row }">{{ fmtSize(row.available) }}</template>
         </el-table-column>
         <el-table-column prop="vol_count" label="卷数" width="80" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :icon="FolderOpened" @click="openVolumes(row)">卷管理</el-button>
             <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="removePool(row)">删除</el-button>
@@ -64,7 +64,7 @@
           <el-button v-if="isAdmin" type="success" size="small" :icon="Plus" @click="openCreateVol">新建卷</el-button>
         </div>
       </div>
-      <el-table :data="volumes" stripe border size="small" style="width: 100%">
+      <el-table :data="volumes" stripe border size="small" style="width: 100%" max-height="380" empty-text="该存储池暂无卷">
         <el-table-column prop="name" label="名称" min-width="160" />
         <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
         <el-table-column label="容量" width="100">
@@ -124,9 +124,19 @@ const poolForm = ref({ name: '', path: '' })
 const volForm = ref({ name: '', format: 'qcow2', capacity: 20 })
 
 function fmtSize(n) {
-  if (!n) return '—'
+  if (n === null || n === undefined || n === '') return '—'
   const gb = n / 1024 / 1024 / 1024
   return gb >= 1024 ? (gb / 1024).toFixed(1) + ' TB' : gb.toFixed(1) + ' GB'
+}
+
+// 后端统一返回 {code, message, data}，错误提示取 message 字段
+function errMsg(e, fallback) {
+  return (e.response && e.response.data && e.response.data.message) || fallback
+}
+
+// 确认框点取消/点 X 关闭都视为取消，不弹错误提示
+function isCancel(e) {
+  return e === 'cancel' || e === 'close' || e?.message === 'cancel' || e?.message === 'close'
 }
 
 async function load() {
@@ -135,7 +145,7 @@ async function load() {
     const res = await api.listStoragePools()
     pools.value = (res.data && res.data.items) || []
   } catch (e) {
-    ElMessage.error('获取存储池失败')
+    ElMessage.error(errMsg(e, '获取存储池失败'))
   } finally {
     loading.value = false
   }
@@ -158,7 +168,7 @@ async function createPool() {
     poolDialog.value = false
     await load()
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.error) || '创建失败')
+    ElMessage.error(errMsg(e, '创建失败'))
   } finally {
     saving.value = false
   }
@@ -171,7 +181,7 @@ async function removePool(row) {
     ElMessage.success('存储池已删除')
     await load()
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error((e.response && e.response.data && e.response.data.error) || '删除失败')
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '删除失败'))
   }
 }
 
@@ -182,7 +192,7 @@ async function openVolumes(row) {
     const res = await api.getStoragePool(row.name)
     volumes.value = (res.data && res.data.volumes) || []
   } catch (e) {
-    ElMessage.error('获取卷列表失败')
+    ElMessage.error(errMsg(e, '获取卷列表失败'))
   }
 }
 
@@ -204,7 +214,7 @@ async function createVolume() {
     const res = await api.getStoragePool(curPool.value)
     volumes.value = (res.data && res.data.volumes) || []
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.error) || '创建失败')
+    ElMessage.error(errMsg(e, '创建失败'))
   } finally {
     saving.value = false
   }
@@ -218,7 +228,7 @@ async function removeVolume(row) {
     const res = await api.getStoragePool(curPool.value)
     volumes.value = (res.data && res.data.volumes) || []
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error((e.response && e.response.data && e.response.data.error) || '删除失败')
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '删除失败'))
   }
 }
 

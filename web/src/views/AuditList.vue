@@ -31,13 +31,17 @@
         <el-button :icon="RefreshLeft" @click="reset">重置</el-button>
       </div>
 
-      <el-table :data="items" stripe border style="width: 100%">
+      <el-table :data="items" stripe border style="width: 100%" empty-text="暂无审计记录">
         <el-table-column label="时间" min-width="172">
           <template #default="{ row }">
             <span class="mono">{{ fmtTime(row.created_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="username" label="操作人" width="120" />
+        <el-table-column label="操作人" width="120">
+          <template #default="{ row }">
+            <span>{{ row.username || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="160">
           <template #default="{ row }">
             <el-tag effect="plain">{{ actionLabel(row.action) }}</el-tag>
@@ -64,6 +68,7 @@
               placement="top"
               :show-after="300"
               :enterable="false"
+              popper-class="audit-detail-popper"
             >
               <span class="detail-cell mono" @click="openDetail(row)">{{ row.detail }}</span>
             </el-tooltip>
@@ -303,6 +308,10 @@ onMounted(() => {
   flex-direction: column;
   gap: var(--space-sm);
 }
+/* flex 列默认 stretch 会把 el-tag 拉成整列宽：tag 保持内容宽度 */
+.d-item .el-tag {
+  align-self: flex-start;
+}
 .d-full {
   grid-column: 1 / -1;
 }
@@ -322,5 +331,9 @@ onMounted(() => {
   word-break: break-all;
   max-height: 320px;
   overflow: auto;
+}
+/* tooltip 内容 teleport 到 body，scoped 下用 :deep 穿透；超长 detail 不把 tooltip 撑出视口 */
+:deep(.audit-detail-popper) {
+  max-width: 480px;
 }
 </style>

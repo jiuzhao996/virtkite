@@ -104,7 +104,7 @@
             <span class="card-title">VM 实时性能</span>
             <span class="update-time">运行中虚拟机展示 CPU / 内存占用</span>
           </template>
-          <el-table :data="vmPerf" size="small" class="perf-table">
+          <el-table :data="vmPerf" size="small" class="perf-table" empty-text="暂无运行中虚拟机">
             <el-table-column label="名称" min-width="220" show-overflow-tooltip>
               <template #default="{ row }">
                 <span class="vm-name">
@@ -222,9 +222,9 @@ const primaryColor = cssVar('--el-color-primary', '#2a9da5')
 const memChartColor = cssVar('--color-success', '#16a34a')
 
 const host = ref({ cpu: 0, memPct: 0, memUsed: '0', memTotal: '0' })
-const cpuSeries = ref(Array(HOST_POINTS).fill(0))
-const memSeries = ref(Array(HOST_POINTS).fill(0))
-const timeLabels = ref(Array(HOST_POINTS).fill(''))
+const cpuSeries = ref([])
+const memSeries = ref([])
+const timeLabels = ref([])
 const lastUpdate = ref('')
 
 const hostChartRef = ref(null)
@@ -349,7 +349,7 @@ async function loadAll() {
 // 主机资源轮询：3s 推入 60 点环形数组
 async function pollHost() {
   try {
-    const res = await api.hostStats()
+    const res = await api.dashboardHostStats()
     const d = res.data || {}
     const cpu = Math.round(d.cpu_percent ?? 0)
     const totalKib = d.mem_total_kib || 0
@@ -362,11 +362,13 @@ async function pollHost() {
       memTotal: (totalKib / 1048576).toFixed(1)
     }
     cpuSeries.value.push(cpu)
-    cpuSeries.value.shift()
     memSeries.value.push(memPct)
-    memSeries.value.shift()
     timeLabels.value.push(fmtTime())
-    timeLabels.value.shift()
+    if (cpuSeries.value.length > HOST_POINTS) {
+      cpuSeries.value.shift()
+      memSeries.value.shift()
+      timeLabels.value.shift()
+    }
     lastUpdate.value = fmtTime()
     updateChart()
   } catch (e) {

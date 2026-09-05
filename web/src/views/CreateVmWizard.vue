@@ -23,7 +23,7 @@
 
         <el-radio-group v-model="installMode" class="mode-grid" @change="onModeChange">
           <el-radio v-for="m in installModes" :key="m.value" :value="m.value" border class="mode-card">
-            <span class="mode-icon">{{ m.icon }}</span>
+            <span class="mode-icon"><el-icon><component :is="m.icon" /></el-icon></span>
             <span class="mode-label">{{ m.label }}</span>
             <span class="mode-desc">{{ m.desc }}</span>
           </el-radio>
@@ -371,6 +371,7 @@
         <el-form-item v-if="diskForm.kind === 'image'" label="云镜像" required>
           <el-select v-model="diskForm.imageId" filterable placeholder="选择云镜像" style="width: 100%">
             <el-option v-for="img in cloudImageList" :key="img.id" :label="img.name" :value="img.id" />
+            <template #empty><span class="opt-hint">镜像库暂无云镜像</span></template>
           </el-select>
         </el-form-item>
       </el-form>
@@ -386,7 +387,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, ArrowRight, Check, Plus, Delete } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Check, Plus, Delete, Monitor, Files, Cloudy, CopyDocument } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
@@ -431,10 +432,10 @@ const diskDialog = ref(false)
 const diskForm = reactive({ kind: 'create', createGb: 20, source: '', imageId: null })
 
 const installModes = [
-  { value: 'iso', icon: '🖥', label: '本地安装介质 (ISO)', desc: '从 ISO 镜像安装系统到新建磁盘' },
-  { value: 'import', icon: '💿', label: '导入现有磁盘', desc: '直接使用现有磁盘镜像启动' },
-  { value: 'cloudimage', icon: '☁', label: '云镜像 + cloud-init', desc: '基于云镜像 / 模板，支持 cloud-init 初始化' },
-  { value: 'clone', icon: '📋', label: '克隆现有 VM', desc: '从现有虚拟机创建链接克隆' }
+  { value: 'iso', icon: Monitor, label: '本地安装介质 (ISO)', desc: '从 ISO 镜像安装系统到新建磁盘' },
+  { value: 'import', icon: Files, label: '导入现有磁盘', desc: '直接使用现有磁盘镜像启动' },
+  { value: 'cloudimage', icon: Cloudy, label: '云镜像 + cloud-init', desc: '基于云镜像 / 模板，支持 cloud-init 初始化' },
+  { value: 'clone', icon: CopyDocument, label: '克隆现有 VM', desc: '从现有虚拟机创建链接克隆' }
 ]
 
 const isoImages = computed(() => options.cloudImages.filter((i) => (i.format || '').toLowerCase() === 'iso'))

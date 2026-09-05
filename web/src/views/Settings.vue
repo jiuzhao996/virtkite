@@ -34,7 +34,7 @@
           <el-descriptions :column="1" size="small" border>
             <el-descriptions-item label="镜像目录">{{ g('storage.image_dir') }}</el-descriptions-item>
             <el-descriptions-item label="seed 目录">{{ g('storage.seed_dir') }}</el-descriptions-item>
-            <el-descriptions-item label="存储池">{{ (g('storage.pools') || []).join('、') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="存储池">{{ arr('storage.pools').join('、') || '—' }}</el-descriptions-item>
           </el-descriptions>
         </el-card>
       </el-col>
@@ -43,7 +43,7 @@
         <el-card shadow="never">
           <template #header><span class="card-title">网络</span></template>
           <el-descriptions :column="1" size="small" border>
-            <el-descriptions-item label="虚拟网络">{{ (g('network.networks') || []).join('、') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="虚拟网络">{{ arr('network.networks').join('、') || '—' }}</el-descriptions-item>
           </el-descriptions>
         </el-card>
       </el-col>
@@ -92,6 +92,11 @@ const data = ref({})
 
 function g(path) {
   return path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : null), data.value) ?? '—'
+}
+// 数组安全取值（数据未到时 g() 回 '—'，直接 .join 会抛 TypeError）
+function arr(path) {
+  const v = path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : null), data.value)
+  return Array.isArray(v) ? v : []
 }
 
 const pollForm = reactive({})

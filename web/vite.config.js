@@ -10,7 +10,9 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
-        changeOrigin: true
+        changeOrigin: true,
+        // 控制台串口/终端走 WebSocket，必须透传 ws 升级，否则 dev 模式 WS 黑洞
+        ws: true
       }
     }
   },

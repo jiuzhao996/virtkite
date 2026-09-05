@@ -12,7 +12,7 @@
         <span class="count">共 {{ total }} 台</span>
       </div>
 
-      <el-table :data="items" stripe border style="width: 100%">
+      <el-table :data="items" stripe border style="width: 100%" empty-text="暂无宿主机数据">
         <el-table-column prop="name" label="名称" min-width="140" />
         <el-table-column prop="ssh_ip" label="SSH IP" min-width="140" />
         <el-table-column prop="ssh_user" label="SSH 用户" width="110" />
@@ -37,11 +37,11 @@
       <div v-if="!statsData" class="loading">加载中...</div>
       <el-alert v-else-if="statsData.error" :title="statsData.error" type="error" :closable="false" />
       <el-descriptions v-else :column="1" border>
-        <el-descriptions-item label="主机名">{{ statsData.hostname }}</el-descriptions-item>
-        <el-descriptions-item label="内核">{{ statsData.kernel }}</el-descriptions-item>
-        <el-descriptions-item label="CPU">{{ statsData.cpu_cores }} 核</el-descriptions-item>
-        <el-descriptions-item label="内存">{{ statsData.memory_used }} / {{ statsData.memory_total }}</el-descriptions-item>
-        <el-descriptions-item label="运行时长">{{ statsData.uptime }}</el-descriptions-item>
+        <el-descriptions-item label="主机名">{{ statsData.hostname || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="内核">{{ statsData.kernel || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="CPU">{{ statsData.cpu_cores || '—' }} 核</el-descriptions-item>
+        <el-descriptions-item label="内存">{{ statsData.memory_used || '—' }} / {{ statsData.memory_total || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="运行时长">{{ statsData.uptime || '—' }}</el-descriptions-item>
       </el-descriptions>
     </el-dialog>
 
@@ -125,7 +125,7 @@ async function test(h) {
   try {
     const res = await api.testHost(h.id)
     const d = res.data || {}
-    if (d.reachable) ElMessage.success('连通 ✓ 延迟 ' + (d.latency_ms || '—') + ' ms')
+    if (d.reachable) ElMessage.success('连通，延迟 ' + (d.latency_ms || '—') + ' ms')
     else ElMessage.warning('无法连通该宿主机')
   } catch (e) {
     ElMessage.error((e.response && e.response.data && e.response.data.message) || '连通性测试失败')
@@ -154,9 +154,9 @@ async function remove(h) {
     ElMessage.success('已删除')
     await load()
   } catch (e) {
-    if (e !== 'cancel' && e?.message !== 'cancel') {
-      ElMessage.error((e.response && e.response.data && e.response.data.message) || '删除失败')
-    }
+    // 点右上角 X 关闭返回 'close'，同样视为取消，不弹错误提示
+    if (e === 'cancel' || e === 'close' || e?.message === 'cancel' || e?.message === 'close') return
+    ElMessage.error((e.response && e.response.data && e.response.data.message) || '删除失败')
   }
 }
 

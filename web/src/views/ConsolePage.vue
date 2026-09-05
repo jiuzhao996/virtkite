@@ -74,7 +74,7 @@
               title="VM 未运行，无法连接图形控制台（VNC 需运行中）。可在此直接开机，开机后自动连接。" />
             <div class="vnc-placeholder-btns">
               <el-button type="primary" size="large" :loading="powerLoading" @click="powerOnAndConnect">一键开机并连接</el-button>
-              <el-button class="mt" @click="$router.push('/vms')">去虚拟机列表</el-button>
+              <el-button @click="$router.push('/vms')">去虚拟机列表</el-button>
             </div>
           </div>
           <div v-else-if="!vncUrl" class="vnc-placeholder">
@@ -83,7 +83,7 @@
           </div>
           <div v-else class="vnc-frame">
             <div v-if="vncFrameLoading" class="vnc-loading" v-loading="true" element-loading-text="图形桌面加载中…" />
-            <iframe :src="vncUrl" class="vnc" @load="vncFrameLoading = false" />
+            <iframe :src="vncUrl" class="vnc" @load="onVncLoad" />
             <div class="vnc-bar">
               <span>🖥️ 图形控制台已连接</span>
               <div class="vnc-bar-btns">
@@ -237,10 +237,15 @@ let timeTimer = null
 let resizeHandler = null
 let probeMode = false
 let probeTimer = null
+let vncTimer = null
+let powerCancelled = false
 
 const currentUser = computed(() => auth.state.user?.username || 'admin')
 const hostLabel = computed(() => {
-  if (view.value === 'ssh') return `${sshForm.value.user}@${sshForm.value.host}:${sshForm.value.port}`
+  if (view.value === 'ssh') {
+    if (!sshForm.value.host) return '-'
+    return `${sshForm.value.user}@${sshForm.value.host}:${sshForm.value.port}`
+  }
   if (view.value === 'serial') return vm.value ? vm.value.name : '-'
   return '-'
 })
@@ -337,6 +342,8 @@ function autoEnterSerial() {
 function cleanupConnection() {
   stopClock()
   clearProbe()
+  powerCancelled = true
+  if (vncTimer) { clearTimeout(vncTimer); vncTimer = null }
   if (ws) {
     ws.onopen = null; ws.onmessage = null; ws.onerror = null; ws.onclose = null
     try { ws.close() } catch (e) {}
@@ -373,6 +380,11 @@ function disconnectFromTerminal() {
   ElMessage.info('已断开连接')
 }
 
+function onVncLoad() {
+  if (vncTimer) { clearTimeout(vncTimer); vncTimer = null }
+  vncFrameLoading.value = false
+}
+
 async function connectVNC() {
   vncLoading.value = true
   try {
@@ -382,8 +394,9 @@ async function connectVNC() {
     const host = window.location.hostname
     vncFrameLoading.value = true
     vncUrl.value = `http://${host}:6080/vnc.html?autoconnect=1&resize=scale&path=websockify?token=${token}`
-    // 兜底：iframe onload 失败时 15s 后关闭 loading，避免无限转圈
-    setTimeout(() => { vncFrameLoading.value = false }, 15000)
+    // 兜底：iframe onload 失败时 15s 后关闭 loading，避免无限转圈（onVncLoad 会清掉）
+    if (vncTimer) clearTimeout(vncTimer)
+    vncTimer = setTimeout(() => { vncFrameLoading.value = false; vncTimer = null }, 15000)
   } catch (e) {
     ElMessage.error((e.response && e.response.data && (e.response.data.message || e.response.data.error)) || '获取控制台失败')
   } finally {
@@ -398,12 +411,15 @@ function openVncNewWindow() {
 // 页内一键开机并自动连接 VNC：开机指令 → 轮询状态至 running（最长 ~60s）→ 自动 connectVNC
 async function powerOnAndConnect() {
   powerLoading.value = true
+  powerCancelled = false
   try {
     await api.startVM(id)
     ElMessage.success('开机指令已发送，等待虚拟机启动…')
     const deadline = Date.now() + 60000
     while (Date.now() < deadline) {
+      if (powerCancelled) return // 中途切走/卸载：停止轮询
       await new Promise((r) => setTimeout(r, 2000))
+      if (powerCancelled) return
       try {
         const res = await api.getVM(id)
         vm.value = res.data || vm.value
@@ -416,6 +432,7 @@ async function powerOnAndConnect() {
         // 轮询失败继续
       }
     }
+    if (powerCancelled) return
     ElMessage.warning('等待超时，请确认虚拟机状态后手动连接')
     await load()
   } catch (e) {
@@ -431,6 +448,20 @@ function openWs(path) {
   return new WebSocket(`${proto}//${location.host}/api/vms/${id}/${path}?token=${encodeURIComponent(token)}`)
 }
 
+// 建连超时兜底：代理/网络黑洞导致 WS open 挂起时，避免“连接中…”无限转圈
+function openWsWithTimeout(path, ms = 10000) {
+  return new Promise((resolve, reject) => {
+    const socket = openWs(path)
+    socket.binaryType = 'arraybuffer'
+    const timer = setTimeout(() => {
+      try { socket.close() } catch (e) {}
+      reject(new Error('WebSocket 连接超时'))
+    }, ms)
+    socket.onopen = () => { clearTimeout(timer); resolve(socket) }
+    socket.onerror = () => { clearTimeout(timer); reject(new Error('WebSocket 连接失败')) }
+  })
+}
+
 async function connectSSH() {
   if (!sshForm.value.host || !sshForm.value.user || !sshForm.value.password) {
     ElMessage.warning('请填写主机、用户名和密码')
@@ -440,12 +471,7 @@ async function connectSSH() {
   connecting.value = true
   startClock()
   try {
-    ws = openWs('terminal')
-    ws.binaryType = 'arraybuffer'
-    await new Promise((resolve, reject) => {
-      ws.onopen = resolve
-      ws.onerror = () => reject(new Error('WebSocket 连接失败'))
-    })
+    ws = await openWsWithTimeout('terminal')
     connected.value = true
     await nextTick()
     initTerminal()
@@ -473,12 +499,7 @@ async function connectSerial() {
   connecting.value = true
   startClock()
   try {
-    ws = openWs('serial')
-    ws.binaryType = 'arraybuffer'
-    await new Promise((resolve, reject) => {
-      ws.onopen = resolve
-      ws.onerror = () => reject(new Error('WebSocket 连接失败'))
-    })
+    ws = await openWsWithTimeout('serial')
     connected.value = true
     await nextTick()
     initTerminal()
@@ -489,7 +510,7 @@ async function connectSerial() {
     termError.value = e.message || '连接失败'
     connected.value = false
     if (ws) { ws.close(); ws = null }
-    if (probeMode) failProbe('WebSocket 连接失败')
+    if (probeMode) failProbe(e.message || 'WebSocket 连接失败')
   } finally {
     connecting.value = false
   }
@@ -501,8 +522,16 @@ function reconnect() {
 }
 
 function onWsClose() {
+  const wasConnecting = connecting.value
   connected.value = false
   connecting.value = false
+  // 探测期静默断开也算失败：回到选择页并标注原因（勿回退智能默认约定）
+  if (probeMode) {
+    failProbe('连接已断开')
+    return
+  }
+  // 建连中途断开（非主动清理）：给出提示，避免静默停留在未连接态
+  if (wasConnecting && view.value) termError.value = '连接已断开，请重试'
 }
 
 async function initTerminal() {
@@ -591,7 +620,11 @@ function handleMsg(ev) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  // 窄屏默认收起侧边栏，给终端/表单让出宽度
+  if (window.innerWidth < 720) collapsed.value = true
+  load()
+})
 onUnmounted(() => cleanupConnection())
 </script>
 
@@ -753,7 +786,6 @@ onUnmounted(() => cleanupConnection())
   min-height: 0;
 }
 .vnc-placeholder { text-align: center; color: #374151; }
-.vnc-placeholder .mt { margin-top: 16px; }
 .vnc-placeholder-btns {
   display: flex;
   align-items: center;
@@ -840,15 +872,23 @@ onUnmounted(() => cleanupConnection())
   align-items: center;
   gap: 10px;
   flex: 1;
+  min-width: 0;
 }
 .term-header-center { justify-content: center; }
-.term-header-right { justify-content: flex-end; }
-.term-logo { font-weight: 700; color: #58a6ff; font-size: 1rem; letter-spacing: 0.5px; }
+.term-header-right { justify-content: flex-end; flex-shrink: 0; }
+.term-logo { font-weight: 700; color: #58a6ff; font-size: 1rem; letter-spacing: 0.5px; white-space: nowrap; }
+.term-status { white-space: nowrap; }
 .term-divider { color: rgba(88, 166, 255, 0.2); }
 .term-status.online { color: #3fb950; font-weight: 600; }
 .term-status.offline { color: #8b949e; }
 .term-user { color: #c9d1d9; }
 .term-host { color: #8faac7; }
+.term-user, .term-host {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .term-clock {
   font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
   color: #79c0ff;
@@ -896,7 +936,12 @@ onUnmounted(() => cleanupConnection())
 }
 .ssh-form :deep(.el-input__inner) { color: #e6edf3; }
 .ssh-form :deep(.el-input-number__decrease),
-.ssh-form :deep(.el-input-number__increase) { color: #c6d4e4; }
+.ssh-form :deep(.el-input-number__increase) {
+  color: #c6d4e4;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: none !important;
+}
 .form-btn { width: 100%; margin-top: 4px; }
 
 /* ---------- 串口连接面板 ---------- */
@@ -1005,5 +1050,35 @@ onUnmounted(() => cleanupConnection())
   color: #a0d8ff;
   border-color: rgba(88, 166, 255, 0.5);
   background: rgba(88, 166, 255, 0.08);
+}
+
+/* ---------- 窄屏适配（≤640px）：header 三段换行、footer 换行保操作区 ---------- */
+@media (max-width: 640px) {
+  .term-header {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    font-size: 0.8rem;
+    padding: 8px 12px;
+  }
+  .term-header-left { flex: 1 1 auto; }
+  .term-header-right { flex: 0 0 auto; }
+  .term-header-center {
+    order: 3;
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+  .term-footer {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 8px 12px;
+  }
+  .term-footer-right { flex-wrap: wrap; row-gap: 4px; }
+  .term-footer .text-muted { display: none; }
+  .pick-panel { padding: 16px; }
+  /* 窄屏卡片单列：minmax(230px,290px) 在 390px 下会横向溢出 */
+  .cards { grid-template-columns: 1fr; max-width: 340px; width: 100%; }
+  .card .card-desc { min-height: 0; }
+  .ssh-form { padding: 20px 18px; }
+  .topbar-tip { display: none; }
 }
 </style>

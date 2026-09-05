@@ -23,8 +23,9 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 		path := c.Request.URL.Path
 		sourceIP := c.ClientIP()
 
-		// 静态资源与健康检查不写审计，避免刷屏
-		if strings.HasPrefix(path, "/static") || path == "/api/health" {
+		// 静态资源、健康检查与指标抓取不写审计，避免刷屏
+		// （/metrics 会被 Prometheus 每 15s 抓取，不排除将淹没审计表）
+		if strings.HasPrefix(path, "/static") || path == "/api/health" || path == "/metrics" {
 			c.Next()
 			return
 		}

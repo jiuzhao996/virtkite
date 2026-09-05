@@ -110,7 +110,7 @@ export const api = {
   // 仪表盘
   dashboardOverview: () => unwrap(http.get('/dashboard/overview')),
   vmStatus: () => unwrap(http.get('/dashboard/vm-status')),
-  hostStats: () => unwrap(http.get('/dashboard/host-stats')),
+  dashboardHostStats: () => unwrap(http.get('/dashboard/host-stats')),
   vmPerf: () => unwrap(http.get('/dashboard/vm-perf')),
 
   // 审计
