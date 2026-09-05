@@ -151,7 +151,7 @@
 
     <!-- Row 4: 操作分布 + 平台信息 -->
     <el-row :gutter="16" class="mt">
-      <el-col :md="12">
+      <el-col v-if="isAdmin" :md="12">
         <el-card shadow="hover">
           <template #header>
             <span class="card-title">操作类型分布</span>
@@ -191,7 +191,7 @@ import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 
-const { state } = useAuth()
+const { state, isAdmin } = useAuth()
 const loading = ref(false)
 const overview = ref(null)
 const vmStatus = ref([])
@@ -328,21 +328,27 @@ function actionColor(a) {
 async function loadAll() {
   loading.value = true
   try {
-    const [ov, vs, au, al] = await Promise.all([
+    // 分开请求：审计接口 viewer 无权限（403），不能拖死概览（Promise.all 一挂全挂）
+    const [ov, vs] = await Promise.all([
       api.dashboardOverview(),
-      api.vmStatus(),
-      api.auditSummary(),
-      api.auditActions()
+      api.vmStatus()
     ])
     overview.value = ov.data
     vmStatus.value = vs.data || []
-    auditActions.value = au.data || []
-    actionLabelMap.value = { ...FALLBACK_ACTION_LABELS, ...(al.data || {}) }
   } catch (e) {
     // 静默降级，卡片保持 0
-  } finally {
-    loading.value = false
   }
+  // 审计分布仅管理员可见，失败静默（viewer 直接跳过请求）
+  if (isAdmin.value) {
+    try {
+      const [au, al] = await Promise.all([api.auditSummary(), api.auditActions()])
+      auditActions.value = au.data || []
+      actionLabelMap.value = { ...FALLBACK_ACTION_LABELS, ...(al.data || {}) }
+    } catch (e) {
+      // 忽略
+    }
+  }
+  loading.value = false
   await Promise.all([pollHost(), pollVms()])
 }
 
