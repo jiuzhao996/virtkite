@@ -4,6 +4,7 @@
 /vmops.pid
 /novnc.pid
 *.log
+*.pid
 
 # 环境与配置（含密钥）
 .env

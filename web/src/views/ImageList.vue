@@ -132,6 +132,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
 
 const items = ref([])
 const total = ref(0)
@@ -278,16 +279,18 @@ async function cloneVm() {
   }
   cloning.value = true
   try {
-    await api.cloneImage(cloneImg.value.id, {
+    const res = await api.cloneImage(cloneImg.value.id, {
       name: cloneForm.name,
       vcpu: cloneForm.vcpu,
       memory_mb: cloneForm.memory_mb,
       network: cloneForm.network
     })
+    ElMessage.info('克隆任务已提交，正在后台执行…')
+    await pollTask(extractTaskId(res))
     ElMessage.success('虚拟机已创建，可在虚拟机列表查看')
     cloneDialog.value = false
   } catch (e) {
-    ElMessage.error(errMsg(e, '创建虚拟机失败'))
+    ElMessage.error(taskErrorMessage(e, '创建虚拟机失败'))
   } finally {
     cloning.value = false
   }

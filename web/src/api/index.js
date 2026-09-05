@@ -116,7 +116,11 @@ export const api = {
   // 审计
   listAudit: (params) => unwrap(http.get('/audit', { params })),
   auditSummary: () => unwrap(http.get('/audit/summary')),
-  auditActions: () => unwrap(http.get('/audit/actions'))
+  auditActions: () => unwrap(http.get('/audit/actions')),
+
+  // 异步任务（耗时操作转后台：createVM/deleteVM/cloneVM/cloneImage/stopVM 返回 202 {task_id}，再轮询任务）
+  getTask: (id) => unwrap(http.get('/tasks/' + id)),
+  listTasks: (params) => unwrap(http.get('/tasks', { params }))
 }
 
 export { TOKEN_KEY }

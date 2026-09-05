@@ -303,6 +303,11 @@
           <p class="step-desc">核对配置后点击「创建虚拟机」，可随时返回上一步修改。</p>
         </div>
 
+        <el-card v-if="submitting" shadow="never" class="creating-bar">
+          <div class="creating-text">{{ submitText }}，请稍候…</div>
+          <el-progress :percentage="createProgress" :stroke-width="8" />
+        </el-card>
+
         <div class="summary-grid">
           <el-card shadow="never" class="summary-col">
             <template #header><span class="col-title">硬件清单</span></template>
@@ -344,7 +349,7 @@
       <el-button v-if="step > 0" @click="step--">上一步</el-button>
       <div class="footer-right">
         <el-button v-if="step < 4" type="primary" :icon="ArrowRight" @click="next">下一步</el-button>
-        <el-button v-else type="primary" :icon="Check" :loading="submitting" @click="submit">创建虚拟机</el-button>
+        <el-button v-else type="primary" :icon="Check" :loading="submitting" :disabled="submitting" @click="submit">{{ submitText }}</el-button>
       </div>
     </div>
 
@@ -383,12 +388,18 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, Check, Plus, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
 const router = useRouter()
 
 const step = ref(0)
 const loading = ref(false)
 const submitting = ref(false)
+// 后台创建任务进度（0-100），驱动按钮文字与汇总页进度条
+const createProgress = ref(0)
+const submitText = computed(() =>
+  !submitting.value ? '创建虚拟机' : createProgress.value > 0 ? `创建中 ${createProgress.value}%` : '创建中...'
+)
 const installMode = ref('iso')
 const ciPanels = ref([])
 
@@ -734,23 +745,28 @@ function next() {
 
 async function submit() {
   submitting.value = true
+  createProgress.value = 0
   try {
-    if (installMode.value === 'clone') {
-      await api.cloneVM(cloneVm.sourceVmId, {
-        name: form.name,
-        storage_pool: form.storagePool,
-        vcpu: form.vcpu,
-        memory_mb: form.memoryMb,
-        network: primaryNet.value
-      })
-      ElMessage.success('克隆创建成功')
-    } else {
-      await api.createVM(buildPayload())
-      ElMessage.success('虚拟机创建成功')
-    }
+    const isClone = installMode.value === 'clone'
+    const res = isClone
+      ? await api.cloneVM(cloneVm.sourceVmId, {
+          name: form.name,
+          storage_pool: form.storagePool,
+          vcpu: form.vcpu,
+          memory_mb: form.memoryMb,
+          network: primaryNet.value
+        })
+      : await api.createVM(buildPayload())
+    // 后端返回 202 {task_id}，轮询到终态：成功跳转列表，失败留在汇总页展示 error
+    await pollTask(extractTaskId(res), {
+      onProgress: (t) => {
+        createProgress.value = Math.max(0, Math.min(100, Number(t.progress) || 0))
+      }
+    })
+    ElMessage.success(isClone ? '克隆创建成功' : '虚拟机创建成功')
     router.push({ name: 'vms' })
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.message) || '创建失败')
+    ElMessage.error(taskErrorMessage(e, '创建失败'))
   } finally {
     submitting.value = false
   }
@@ -1028,6 +1044,15 @@ onMounted(async () => {
   margin-top: var(--space-xl);
 }
 
+.creating-bar {
+  margin-bottom: var(--space-xl);
+}
+
+.creating-text {
+  margin-bottom: var(--space-lg);
+  font-weight: 600;
+  color: var(--color-foreground);
+}
 .summary-bottom :deep(.el-card__body) {
   display: flex;
   flex-wrap: wrap;

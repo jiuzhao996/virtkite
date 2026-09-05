@@ -166,6 +166,7 @@ func (v *Virt) UpdateNetwork(name, xml string) error        // 停→net-undefin
 ### VM 详情 / 硬件管理
 | Method | Path | 说明 |
 |---|---|---|
+| GET | `/api/vms` | 列表 `{total, items, perf}`（perf 按 VM id 聚合实时 CPU/内存，列表页单请求渲染，无需再调 vm-perf） |
 | GET | `/api/vms/:id/spec` | 返回 `{vm, spec}`（spec 含 raw_xml） |
 | PUT | `/api/vms/:id/spec` | 整体重 define（body 为完整 DomainSpec，运行时提示关机） |
 | POST | `/api/vms/:id/pause` | 暂停 |

@@ -50,6 +50,7 @@ func Init() {
 		&model.VM{},
 		&model.Image{},
 		&model.AuditLog{},
+		&model.Task{},
 	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)

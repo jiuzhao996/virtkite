@@ -12,19 +12,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
 )
 
 // ImageHandler 镜像处理器
 type ImageHandler struct {
-	DB   *gorm.DB
-	Virt *virt.Virt
+	DB    *gorm.DB
+	Virt  *virt.Virt
+	Tasks *tasks.Manager
 }
 
 // NewImageHandler 创建镜像处理器
-func NewImageHandler(db *gorm.DB) *ImageHandler {
-	return &ImageHandler{DB: db, Virt: virt.New()}
+func NewImageHandler(db *gorm.DB, taskMgr *tasks.Manager) *ImageHandler {
+	return &ImageHandler{DB: db, Virt: virt.New(), Tasks: taskMgr}
 }
 
 // imagePool 镜像统一存储池名：上传文件落在该池目录下，即可被 libvirt 池识别。
@@ -272,16 +274,19 @@ func (h *ImageHandler) SetImageTemplate(c *gin.Context) {
 	Success(c, img)
 }
 
-// CloneVM 基于镜像/模板创建虚拟机（body: {name, storage_pool?, vcpu?, memory_mb?, network?, cloud_init?}）。
-// 云镜像直接引用文件作为磁盘 source（不拷贝，与镜像共用文件；删除镜像前需先删引用 VM）。
+// CloneVM 基于镜像/模板创建虚拟机（异步：校验后 Submit clone_image_vm，后台执行 linked clone）。
+// HTTP 202 返回 {task_id}，前端轮询 GET /api/tasks/:id。
 func (h *ImageHandler) CloneVM(c *gin.Context) {
+	if h.Tasks == nil {
+		Fail(c, http.StatusInternalServerError, "任务系统未初始化")
+		return
+	}
 	id := c.Param("id")
 	var img model.Image
 	if err := h.DB.First(&img, id).Error; err != nil {
 		Fail(c, http.StatusNotFound, "镜像不存在")
 		return
 	}
-
 	var req struct {
 		Name        string              `json:"name" binding:"required"`
 		StoragePool string              `json:"storage_pool"`
@@ -298,147 +303,28 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "虚拟机名称只允许字母、数字、下划线和连字符")
 		return
 	}
-
-	host, err := h.firstImageHost()
-	if err != nil {
-		ErrorWithMessage(c, http.StatusBadRequest, "请先在宿主机管理中登记宿主机", err)
-		return
+	payload := map[string]interface{}{
+		"image_id":     img.ID,
+		"name":         req.Name,
+		"storage_pool": req.StoragePool,
+		"vcpu":         req.VCPU,
+		"memory_mb":    req.MemoryMB,
+		"network":      req.Network,
 	}
-	if req.VCPU == 0 {
-		req.VCPU = 1
-	}
-	if req.MemoryMB == 0 {
-		req.MemoryMB = 1024
-	}
-	if req.Network == "" {
-		req.Network = "default"
-	}
-	if req.StoragePool == "" {
-		req.StoragePool = "vmops"
-	}
-
-	uuid, err := randomUUID()
-	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "生成虚拟机 UUID 失败", err)
-		return
-	}
-	mac, err := randomMAC()
-	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "生成虚拟机 MAC 失败", err)
-		return
-	}
-
-	// 基于云镜像做 linked clone：子卷带 backing file（对应 virsh vol-clone），
-	// 保护基镜像不被 VM 写入破坏（PVE 式模板克隆语义）。
-	poolName, volName, err := h.Virt.LookupVolByPath(img.Path)
-	if err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-	newDiskName := req.Name + "-sys"
-	diskPath, err := h.Virt.CloneVolumeFromVol(poolName, volName, newDiskName)
-	if err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-	// 失败清理：删克隆卷 + seed 文件 + 未定义域
-	cloneCleaned := false
-	seedPath := ""
-	cleanup := func() {
-		if !cloneCleaned {
-			_ = h.Virt.DeleteVolume(poolName, newDiskName+".qcow2")
-		}
-		if seedPath != "" {
-			_ = os.Remove(seedPath)
-		}
-		_ = h.Virt.UndefineDomain(req.Name)
-	}
-
-	spec := &virt.DomainSpec{
-		Name:     req.Name,
-		UUID:     uuid,
-		VCPU:     req.VCPU,
-		MemoryMB: req.MemoryMB,
-		OSType:   "hvm",
-		Arch:     "x86_64",
-		Boot:     virt.BootSpec{Devices: []string{"hd"}},
-		Graphics: virt.GraphicsSpec{Type: "vnc", Port: -1},
-	}
-	spec.Disks = append(spec.Disks, virt.DiskSpec{
-		Type: "file", Device: "disk", Driver: "qcow2", Bus: "virtio",
-		Source: diskPath, Target: "vda",
-	})
-	spec.Interfaces = append(spec.Interfaces, virt.InterfaceSpec{
-		Type: "network", Source: req.Network, MAC: mac, Model: "virtio",
-	})
-
-	// cloud-init：生成 seed ISO 落到克隆卷所在池路径，挂只读 cdrom
 	if req.CloudInit != nil {
-		if req.CloudInit.Hostname == "" {
-			req.CloudInit.Hostname = req.Name
-		}
-		seedBytes, err := virt.GenerateSeedISO(req.CloudInit)
-		if err != nil {
-			cleanup()
-			ErrorResponse(c, http.StatusInternalServerError, err)
-			return
-		}
-		// seed 写到独立 seed 目录（web 可写、qemu 可读），不依赖池目录权限
-		seedDir := config.GlobalConfig.SeedDir
-		if seedDir == "" {
-			seedDir = "/home/jiuzhao/vmops/data/seed"
-		}
-		if err := os.MkdirAll(seedDir, 0755); err != nil {
-			cleanup()
-			ErrorWithMessage(c, http.StatusInternalServerError, "创建 cloud-init seed 目录失败", err)
-			return
-		}
-		seedPath = filepath.Join(seedDir, req.Name+"-seed.iso")
-		if err := os.WriteFile(seedPath, seedBytes, 0644); err != nil {
-			cleanup()
-			ErrorWithMessage(c, http.StatusInternalServerError, "写入 cloud-init seed 镜像失败", err)
-			return
-		}
-		spec.Disks = append(spec.Disks, virt.DiskSpec{
-			Type: "file", Device: "cdrom", Driver: "raw", Bus: "ide",
-			Source: seedPath, ReadOnly: true, Target: "hda",
-		})
-		spec.Boot.Devices = []string{"cdrom", "hd"}
+		payload["cloud_init"] = req.CloudInit
 	}
-
-	xmlstr, err := virt.BuildDomainXML(spec)
+	userID, username := taskUserFromContext(c)
+	task, err := h.Tasks.Submit("clone_image_vm", "从镜像创建虚拟机 "+req.Name, payload, userID, username, req.Name, nil)
 	if err != nil {
-		cleanup()
-		ErrorWithMessage(c, http.StatusBadRequest, "虚拟机配置不合法", err)
+		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
 		return
 	}
-	if err := h.Virt.DefineDomain(xmlstr); err != nil {
-		cleanup()
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-
-	vm := model.VM{
-		UUID:        uuid,
-		Name:        req.Name,
-		HostID:      host.ID,
-		Template:    "image",
-		StoragePool: poolName, // 实际克隆卷落在镜像所在池
-		VCPU:        req.VCPU,
-		MemoryMB:    req.MemoryMB,
-		DiskGB:      int(img.SizeGB + 0.5),
-		MACAddress:  mac,
-		Status:      "shut off",
-	}
-	if err := h.DB.Create(&vm).Error; err != nil {
-		cleanup()
-		cloneCleaned = true // 域未定义成功，卷已由 cleanup 删除
-		ErrorWithMessage(c, http.StatusInternalServerError, "记录虚拟机失败", err)
-		return
-	}
-	cloneCleaned = true // 创建成功，保留克隆卷
-
-	Success(c, vm)
+	c.JSON(http.StatusAccepted, gin.H{
+		"code":    http.StatusAccepted,
+		"message": "任务已提交",
+		"data":    gin.H{"task_id": task.ID},
+	})
 }
 
 // firstImageHost 返回平台登记的首台宿主机（镜像建 VM 的默认纳管目标）。

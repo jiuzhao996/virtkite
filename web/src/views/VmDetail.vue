@@ -402,6 +402,7 @@ import {
   RefreshLeft, Odometer, TrendCharts, Cpu, Coin, Sort, FolderOpened, Connection, CameraFilled, Document
 } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -512,7 +513,7 @@ function onMenuSelect(index) {
 
 /* ---------- 数据加载 ---------- */
 function errMsg(e, fb) {
-  return (e && e.response && e.response.data && e.response.data.message) || fb
+  return taskErrorMessage(e, fb)
 }
 
 async function loadSpec() {
@@ -560,8 +561,16 @@ watch(
 async function act(type) {
   busy.value = type
   try {
-    await api[type + 'VM'](id)
-    ElMessage.success({ start: '已开机', stop: '已关机', restart: '已重启', pause: '已暂停', resume: '已恢复' }[type])
+    if (type === 'stop') {
+      // 优雅关机走后台任务：提交即返 202，轮询等终态，根治 15s 超时误报
+      ElMessage.info('关机任务已提交，正在执行…')
+      await pollTask(extractTaskId(await api.stopVM(id)))
+      ElMessage.success('已关机')
+    } else {
+      // start / restart / pause / resume 为快接口，保持同步直调
+      await api[type + 'VM'](id)
+      ElMessage.success({ start: '已开机', restart: '已重启', pause: '已暂停', resume: '已恢复' }[type])
+    }
     await loadSpec()
   } catch (e) {
     ElMessage.error(errMsg(e, '操作失败'))
@@ -581,7 +590,8 @@ async function doDelete() {
       inputValidator: (v) => (v && v.trim() === vm.value.name) || '请输入正确的虚拟机名称'
     })
     busy.value = 'delete'
-    await api.deleteVM(id)
+    ElMessage.info('删除任务已提交，正在执行…')
+    await pollTask(extractTaskId(await api.deleteVM(id)))
     ElMessage.success('虚拟机已删除')
     router.push('/vms')
   } catch (e) {

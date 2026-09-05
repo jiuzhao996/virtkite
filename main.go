@@ -12,6 +12,7 @@ import (
 	"github.com/jiuzhao/vmops/handler"
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
 )
@@ -75,8 +76,12 @@ func main() {
 	authHandler := handler.NewAuthHandler(db)
 	userHandler := handler.NewUserHandler(db)
 	hostHandler := handler.NewHostHandler(db)
-	vmHandler := handler.NewVMHandler(db)
-	imageHandler := handler.NewImageHandler(db)
+	// 异步任务管理器单例：耗时操作（创建/删除/克隆/优雅关机）走后台 worker
+	taskMgr := tasks.NewManager(db)
+	tasks.RegisterVMTasks(taskMgr)
+	vmHandler := handler.NewVMHandler(db, taskMgr)
+	imageHandler := handler.NewImageHandler(db, taskMgr)
+	taskHandler := handler.NewTaskHandler(db, taskMgr)
 	auditHandler := handler.NewAuditHandler(db)
 	dashboardHandler := handler.NewDashboardHandler(db)
 	storageHandler := handler.NewStorageHandler()
@@ -218,6 +223,15 @@ func main() {
 			audit.GET("/actions", auditHandler.ListAuditActions)
 			audit.GET("/summary", auditHandler.AuditActionSummary)
 			audit.GET("/:id", auditHandler.GetAuditLog)
+		}
+
+		// 异步任务查询（仅管理员）
+		taskRoutes := api.Group("/tasks")
+		taskRoutes.Use(middleware.AdminMiddleware())
+		{
+			taskRoutes.GET("", taskHandler.ListTasks)
+			taskRoutes.GET("/:id", taskHandler.GetTask)
+			taskRoutes.DELETE("/:id", taskHandler.DeleteTask)
 		}
 	}
 

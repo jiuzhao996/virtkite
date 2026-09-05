@@ -3,18 +3,16 @@ package handler
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
 )
@@ -55,13 +53,41 @@ func randomUUID() (string, error) {
 
 // VMHandler 虚拟机处理器
 type VMHandler struct {
-	DB   *gorm.DB
-	Virt *virt.Virt
+	DB    *gorm.DB
+	Virt  *virt.Virt
+	Tasks *tasks.Manager
 }
 
 // NewVMHandler 创建虚拟机处理器
-func NewVMHandler(db *gorm.DB) *VMHandler {
-	return &VMHandler{DB: db, Virt: virt.New()}
+func NewVMHandler(db *gorm.DB, taskMgr *tasks.Manager) *VMHandler {
+	return &VMHandler{DB: db, Virt: virt.New(), Tasks: taskMgr}
+}
+
+// taskUserFromContext 从 gin 上下文安全取 user_id/username（取不到传 nil/""）。
+func taskUserFromContext(c *gin.Context) (*uint, string) {
+	var userID *uint
+	username := ""
+	if v, ok := c.Get("user_id"); ok && v != nil {
+		if id, ok := v.(uint); ok {
+			copied := id
+			userID = &copied
+		}
+	}
+	if v, ok := c.Get("username"); ok && v != nil {
+		if s, ok := v.(string); ok {
+			username = s
+		}
+	}
+	return userID, username
+}
+
+// submitTaskGuard 校验任务管理器已注入。
+func (h *VMHandler) submitTaskGuard(c *gin.Context) bool {
+	if h.Tasks == nil {
+		Fail(c, http.StatusInternalServerError, "任务系统未初始化")
+		return false
+	}
+	return true
 }
 
 // VMInfo virsh返回的虚拟机信息
@@ -81,7 +107,7 @@ type HostInfo struct {
 	Uptime   string `json:"uptime"`
 }
 
-// ListVMs 获取虚拟机列表
+// ListVMs 获取虚拟机列表（含运行中 VM 的实时性能，合并 vm-perf，列表页一次请求即可渲染指标）。
 func (h *VMHandler) ListVMs(c *gin.Context) {
 	// 从数据库查询虚拟机
 	var vms []model.VM
@@ -101,12 +127,30 @@ func (h *VMHandler) ListVMs(c *gin.Context) {
 		}
 	}
 
+	// 实时性能：仅 running 采样，key 为 VM id（与 /dashboard/vm-perf 同口径，供列表页合并请求）
+	perf := make(map[uint]gin.H, len(vms))
+	for _, vm := range vms {
+		if vm.Status != "running" {
+			continue
+		}
+		if st, err := h.Virt.GetDomainStats(vm.Name); err == nil && st != nil {
+			memPct := 0.0
+			if st.GuestTotalKiB > 0 {
+				memPct = float64(st.GuestUsedKiB) / float64(st.GuestTotalKiB) * 100
+			} else if st.MemTotalKiB > 0 {
+				memPct = float64(st.MemUsedKiB) / float64(st.MemTotalKiB) * 100
+			}
+			perf[vm.ID] = gin.H{"cpu_percent": st.CpuPercent, "mem_pct": memPct}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "success",
 		"data": gin.H{
 			"total": len(vms),
 			"items": vms,
+			"perf":  perf,
 		},
 	})
 }
@@ -196,296 +240,76 @@ func (h *VMHandler) GetVMDetail(c *gin.Context) {
 	})
 }
 
-// createDiskReq 创建 VM 时的磁盘描述：三选一
-// (1) create_gb 新建卷；(2) source 直接引用现有卷/镜像路径；(3) source_image_id 引用云镜像（DB images.id）。
-type createDiskReq struct {
-	CreateGB      int                 `json:"create_gb"`       // 新建卷容量（GB）
-	Source        string              `json:"source"`          // 直接引用现有卷/镜像路径
-	SourceImageID uint                `json:"source_image_id"` // 引用云镜像，直接引用不拷贝
-	CloudInit     *virt.CloudInitSpec `json:"cloud_init,omitempty"`
-}
-
-// CreateVM 创建虚拟机（向导/克隆模板入口，对应 virsh vol-create-as + virsh define）。
-// 磁盘支持三种来源；cloud_init 非空时生成 seed ISO 并挂为只读 cdrom；可选 iso_path 挂安装光驱。
-// 镜像引用方式：source_image_id 直接引用云镜像文件（VM 与镜像共用文件，删除镜像前需先删引用 VM）。
+// CreateVM 创建虚拟机（异步：校验基础参数后 Submit create_vm，后台执行 provision）。
+// 对应 virsh vol-create-as + virsh define，耗时逻辑已搬运至 service/tasks executor。
+// HTTP 202 返回 {task_id}，前端轮询 GET /api/tasks/:id。
 func (h *VMHandler) CreateVM(c *gin.Context) {
-	var req struct {
-		Name        string               `json:"name" binding:"required"`
-		HostID      uint                 `json:"host_id"`
-		Template    string               `json:"template"`
-		StoragePool string               `json:"storage_pool"`
-		VCPU        int                  `json:"vcpu"`
-		MemoryMB    int                  `json:"memory_mb"`
-		DiskGB      int                  `json:"disk_gb"` // 旧字段：未提供 disks 时默认建盘容量
-		Disks       []createDiskReq      `json:"disks"`
-		Interfaces  []virt.InterfaceSpec `json:"interfaces"`
-		Network     string               `json:"network"`  // 便捷字段：未提供 interfaces 时使用
-		ISOPath     string               `json:"iso_path"` // 兼容旧字段：生成 cdrom 安装盘
-		CloudInit   *virt.CloudInitSpec  `json:"cloud_init,omitempty"`
+	if !h.submitTaskGuard(c) {
+		return
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// 原样透传请求体：先读原始字节，再分别做校验与 payload 透传。
+	body, err := c.GetRawData()
+	if err != nil {
 		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
 		return
 	}
-
+	var req struct {
+		Name        string                   `json:"name"`
+		HostID      uint                     `json:"host_id"`
+		StoragePool string                   `json:"storage_pool"`
+		VCPU        int                      `json:"vcpu"`
+		MemoryMB    int                      `json:"memory_mb"`
+		Disks       []map[string]interface{} `json:"disks"`
+		Interfaces  []virt.InterfaceSpec     `json:"interfaces"`
+		Network     string                   `json:"network"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	if req.Name == "" {
+		Fail(c, http.StatusBadRequest, "虚拟机名称不能为空")
+		return
+	}
 	// 校验名称合法性
 	if !validateVMName(req.Name) {
 		Fail(c, http.StatusBadRequest, "虚拟机名称只允许字母、数字、下划线和连字符")
 		return
 	}
-
-	// 查宿主机：未指定时取平台登记的首台
-	var host model.Host
+	// 轻量校验宿主机存在性：未指定时确认平台已登记首台
 	if req.HostID != 0 {
+		var host model.Host
 		if err := h.DB.First(&host, req.HostID).Error; err != nil {
 			ErrorWithMessage(c, http.StatusBadRequest, "宿主机不存在", err)
 			return
 		}
 	} else {
-		hst, err := h.firstHost()
-		if err != nil {
+		if _, err := h.firstHost(); err != nil {
 			ErrorWithMessage(c, http.StatusBadRequest, "请先在宿主机管理中登记宿主机", err)
 			return
 		}
-		host = *hst
 	}
-
-	// 默认值
-	if req.StoragePool == "" {
-		req.StoragePool = "vmops"
-	}
-	if req.VCPU == 0 {
-		req.VCPU = 1
-	}
-	if req.MemoryMB == 0 {
-		req.MemoryMB = 1024
-	}
-	if req.Network == "" && len(req.Interfaces) == 0 {
-		req.Network = "default"
-	}
-	// 旧调用兼容：未提供 disks 时按 disk_gb 建默认盘
-	if len(req.Disks) == 0 {
-		gb := req.DiskGB
-		if gb == 0 {
-			gb = 20
+	payload := map[string]interface{}{}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &payload); err != nil {
+			ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+			return
 		}
-		req.Disks = []createDiskReq{{CreateGB: gb}}
 	}
-
-	// 生成 UUID 与首个网卡 MAC
-	uuid, err := randomUUID()
+	if payload == nil {
+		payload = map[string]interface{}{}
+	}
+	userID, username := taskUserFromContext(c)
+	task, err := h.Tasks.Submit("create_vm", "创建虚拟机 "+req.Name, payload, userID, username, req.Name, nil)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "生成虚拟机 UUID 失败", err)
+		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
 		return
 	}
-	firstMAC, err := randomMAC()
-	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "生成虚拟机 MAC 失败", err)
-		return
-	}
-
-	// 组装 DomainSpec
-	spec := &virt.DomainSpec{
-		Name:     req.Name,
-		UUID:     uuid,
-		VCPU:     req.VCPU,
-		MemoryMB: req.MemoryMB,
-		OSType:   "hvm",
-		Arch:     "x86_64",
-		Boot:     virt.BootSpec{Devices: []string{"hd"}},
-		Graphics: virt.GraphicsSpec{Type: "vnc", Port: -1},
-	}
-
-	// 记录已建卷（pool:volName），失败时回滚清理
-	var createdVols []string
-	diskGB := 0
-	seedPath := ""
-	cleanup := func() {
-		for _, cv := range createdVols {
-			parts := strings.SplitN(cv, ":", 2)
-			if len(parts) == 2 {
-				_ = h.Virt.DeleteVolume(parts[0], parts[1])
-			}
-		}
-		if seedPath != "" {
-			_ = os.Remove(seedPath)
-		}
-	}
-
-	// 逐磁盘落地：create_gb → 建卷；source → 直接引用；source_image_id → 引用云镜像文件
-	poolPath := ""
-	for i, d := range req.Disks {
-		var source string
-		switch {
-		case d.CreateGB > 0:
-			volName := req.Name
-			if i > 0 {
-				volName = fmt.Sprintf("%s-d%d", req.Name, i+1)
-			}
-			if _, err := h.Virt.CreateVolume(req.StoragePool, volName, d.CreateGB); err != nil {
-				cleanup()
-				ErrorResponse(c, http.StatusInternalServerError, err)
-				return
-			}
-			createdVols = append(createdVols, req.StoragePool+":"+volName+".qcow2")
-			if poolPath == "" {
-				if poolPath, err = h.Virt.GetPoolPath(req.StoragePool); err != nil {
-					cleanup()
-					ErrorResponse(c, http.StatusInternalServerError, err)
-					return
-				}
-			}
-			source = filepath.Join(poolPath, volName+".qcow2")
-			diskGB += d.CreateGB
-		case d.Source != "":
-			source = d.Source
-		case d.SourceImageID > 0:
-			var img model.Image
-			if err := h.DB.First(&img, d.SourceImageID).Error; err != nil {
-				cleanup()
-				ErrorWithMessage(c, http.StatusBadRequest, "云镜像不存在", err)
-				return
-			}
-			// 云镜像直接引用，不拷贝：VM 与镜像共用文件，镜像删除前需先删引用 VM
-			source = img.Path
-		default:
-			cleanup()
-			Fail(c, http.StatusBadRequest, "磁盘参数不完整（create_gb / source / source_image_id 三选一）")
-			return
-		}
-		spec.Disks = append(spec.Disks, virt.DiskSpec{
-			Type:   "file",
-			Device: "disk",
-			Driver: "qcow2",
-			Bus:    "virtio",
-			Source: source,
-			Target: virt.NextDiskTarget(spec, "virtio"),
-		})
-	}
-
-	// 兼容旧 iso_path：挂只读 cdrom 安装盘，引导优先光驱
-	if req.ISOPath != "" {
-		spec.Disks = append(spec.Disks, virt.DiskSpec{
-			Type: "file", Device: "cdrom", Driver: "raw", Bus: "ide",
-			Source: req.ISOPath, ReadOnly: true,
-			Target: virt.NextDiskTarget(spec, "ide"),
-		})
-		spec.Boot.Devices = []string{"cdrom", "hd"}
-	}
-
-	// cloud-init：生成 seed ISO 落到存储池路径，挂为只读 cdrom
-	cfg := req.CloudInit
-	if cfg == nil {
-		for i := range req.Disks {
-			if req.Disks[i].CloudInit != nil {
-				cfg = req.Disks[i].CloudInit
-				break
-			}
-		}
-	}
-	if cfg != nil {
-		if cfg.Hostname == "" {
-			cfg.Hostname = req.Name
-		}
-		seedBytes, err := virt.GenerateSeedISO(cfg)
-		if err != nil {
-			cleanup()
-			ErrorResponse(c, http.StatusInternalServerError, err)
-			return
-		}
-		// seed 写到独立 seed 目录（web 可写、qemu 可读），避免依赖存储池目录权限
-		seedDir := config.GlobalConfig.SeedDir
-		if seedDir == "" {
-			seedDir = "/home/jiuzhao/vmops/data/seed"
-		}
-		if err := os.MkdirAll(seedDir, 0755); err != nil {
-			cleanup()
-			ErrorWithMessage(c, http.StatusInternalServerError, "创建 cloud-init seed 目录失败", err)
-			return
-		}
-		seedPath = filepath.Join(seedDir, req.Name+"-seed.iso")
-		if err := os.WriteFile(seedPath, seedBytes, 0644); err != nil {
-			cleanup()
-			ErrorWithMessage(c, http.StatusInternalServerError, "写入 cloud-init seed 镜像失败", err)
-			return
-		}
-		spec.Disks = append(spec.Disks, virt.DiskSpec{
-			Type: "file", Device: "cdrom", Driver: "raw", Bus: "ide",
-			Source: seedPath, ReadOnly: true,
-			Target: virt.NextDiskTarget(spec, "ide"),
-		})
-		spec.Boot.Devices = []string{"cdrom", "hd"}
-	}
-
-	// 网卡：未显式提供 interfaces 时按 network 便捷字段生成
-	nicMAC := firstMAC
-	if len(req.Interfaces) > 0 {
-		for i := range req.Interfaces {
-			if req.Interfaces[i].Type == "" {
-				req.Interfaces[i].Type = "network"
-			}
-			if req.Interfaces[i].Source == "" {
-				req.Interfaces[i].Source = req.Network
-				if req.Interfaces[i].Source == "" {
-					req.Interfaces[i].Source = "default"
-				}
-			}
-			if req.Interfaces[i].MAC == "" {
-				m, err := randomMAC()
-				if err != nil {
-					cleanup()
-					ErrorWithMessage(c, http.StatusInternalServerError, "生成网卡 MAC 失败", err)
-					return
-				}
-				req.Interfaces[i].MAC = m
-			}
-			if req.Interfaces[i].Model == "" {
-				req.Interfaces[i].Model = "virtio"
-			}
-			if i == 0 {
-				nicMAC = req.Interfaces[i].MAC
-			}
-			spec.Interfaces = append(spec.Interfaces, req.Interfaces[i])
-		}
-	} else {
-		spec.Interfaces = append(spec.Interfaces, virt.InterfaceSpec{
-			Type: "network", Source: req.Network, MAC: firstMAC, Model: "virtio",
-		})
-	}
-
-	// BuildDomainXML 生成完整定义（纯函数），再写 DB 记录与 define
-	xmlstr, err := virt.BuildDomainXML(spec)
-	if err != nil {
-		cleanup()
-		ErrorWithMessage(c, http.StatusBadRequest, "虚拟机配置不合法", err)
-		return
-	}
-
-	vm := model.VM{
-		UUID:        uuid,
-		Name:        req.Name,
-		HostID:      host.ID,
-		Template:    req.Template,
-		StoragePool: req.StoragePool,
-		VCPU:        req.VCPU,
-		MemoryMB:    req.MemoryMB,
-		DiskGB:      diskGB,
-		MACAddress:  nicMAC,
-		Status:      "shut off",
-	}
-	if err := h.DB.Create(&vm).Error; err != nil {
-		cleanup()
-		ErrorWithMessage(c, http.StatusInternalServerError, "创建虚拟机失败", err)
-		return
-	}
-	if err := h.Virt.DefineDomain(xmlstr); err != nil {
-		h.DB.Delete(&vm)
-		cleanup()
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-
-	Success(c, vm)
+	c.JSON(http.StatusAccepted, gin.H{
+		"code":    http.StatusAccepted,
+		"message": "任务已提交",
+		"data":    gin.H{"task_id": task.ID},
+	})
 }
 
 // GetVMSpec 返回虚拟机完整配置（DB 记录 + DomainSpec，spec 含 raw_xml 回显）。
@@ -878,17 +702,18 @@ func (h *VMHandler) GetVMStats(c *gin.Context) {
 	Success(c, stats)
 }
 
-// CloneVM 克隆虚拟机（对应 virsh vol-clone + virsh define）。
-// body: {name, storage_pool?, vcpu?, memory_mb?, network?}；系统盘 linked clone（父盘保留）。
-// 注意：克隆卷落在源系统盘所在存储池，storage_pool 仅写入 DB 记录（virt 层按源池克隆）。
+// CloneVM 克隆虚拟机（异步：校验后 Submit clone_vm，后台执行 vol-clone + define）。
+// HTTP 202 返回 {task_id}，前端轮询 GET /api/tasks/:id。
 func (h *VMHandler) CloneVM(c *gin.Context) {
+	if !h.submitTaskGuard(c) {
+		return
+	}
 	id := c.Param("id")
 	var src model.VM
 	if err := h.DB.Preload("Host").First(&src, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
-
 	var req struct {
 		Name        string `json:"name" binding:"required"`
 		StoragePool string `json:"storage_pool"`
@@ -904,64 +729,26 @@ func (h *VMHandler) CloneVM(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "虚拟机名称只允许字母、数字、下划线和连字符")
 		return
 	}
-
-	// 源 spec：可按需覆盖 vcpu/memory_mb/network（network 替换首个网卡 source）
-	source, err := h.Virt.GetDomainSpec(src.Name)
+	payload := map[string]interface{}{
+		"source_id":    src.ID,
+		"name":         req.Name,
+		"storage_pool": req.StoragePool,
+		"vcpu":         req.VCPU,
+		"memory_mb":    req.MemoryMB,
+		"network":      req.Network,
+	}
+	userID, username := taskUserFromContext(c)
+	srcID := src.ID
+	task, err := h.Tasks.Submit("clone_vm", "克隆虚拟机 "+req.Name, payload, userID, username, req.Name, &srcID)
 	if err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
+		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
 		return
 	}
-	if req.VCPU > 0 {
-		source.VCPU = req.VCPU
-	}
-	if req.MemoryMB > 0 {
-		source.MemoryMB = req.MemoryMB
-	}
-	if req.Network != "" && len(source.Interfaces) > 0 {
-		source.Interfaces[0].Source = req.Network
-		source.Interfaces[0].Type = "network"
-	}
-
-	if _, err := h.Virt.CloneVMFromSpec(source, req.Name); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-
-	// 新域 UUID 与首个网卡 MAC 从 libvirt 查询（克隆后重新生成）
-	uuid := ""
-	nicMAC := ""
-	if ns, err := h.Virt.GetDomainSpec(req.Name); err == nil {
-		uuid = ns.UUID
-		if len(ns.Interfaces) > 0 {
-			nicMAC = ns.Interfaces[0].MAC
-		}
-	}
-	if uuid == "" {
-		uuid, _ = randomUUID()
-	}
-
-	pool := req.StoragePool
-	if pool == "" {
-		pool = src.StoragePool
-	}
-	clone := model.VM{
-		UUID:        uuid,
-		Name:        req.Name,
-		HostID:      src.HostID,
-		Template:    "clone",
-		StoragePool: pool,
-		VCPU:        source.VCPU,
-		MemoryMB:    source.MemoryMB,
-		DiskGB:      src.DiskGB,
-		MACAddress:  nicMAC,
-		Status:      "shut off",
-	}
-	if err := h.DB.Create(&clone).Error; err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "记录克隆虚拟机失败", err)
-		return
-	}
-
-	Success(c, gin.H{"vm": clone.Name, "id": clone.ID})
+	c.JSON(http.StatusAccepted, gin.H{
+		"code":    http.StatusAccepted,
+		"message": "任务已提交",
+		"data":    gin.H{"task_id": task.ID},
+	})
 }
 
 // StartVM 启动虚拟机
@@ -989,46 +776,30 @@ func (h *VMHandler) StartVM(c *gin.Context) {
 	})
 }
 
-// StopVM 停止虚拟机
+// StopVM 停止虚拟机（异步：Submit stop_vm，后台执行优雅关机轮询，根治 15s 超时）。
+// HTTP 202 返回 {task_id}，前端轮询 GET /api/tasks/:id。
 func (h *VMHandler) StopVM(c *gin.Context) {
+	if !h.submitTaskGuard(c) {
+		return
+	}
 	id := c.Param("id")
-
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
-
-	// 调用 libvirt 关机：先优雅关机，轮询等待其真正关闭，超时后强制断电。
-	shutdownErr := h.Virt.ShutdownDomain(vm.Name)
-	if shutdownErr != nil {
-		// 优雅关机调用失败（如域不存在），直接强制
-		if ferr := h.Virt.DestroyDomain(vm.Name); ferr != nil {
-			ErrorResponse(c, http.StatusInternalServerError, ferr)
-			return
-		}
-	} else {
-		// 轮询等待优雅关机生效（最多 ~15s），超时仍运行则强制
-		shutOff := false
-		for i := 0; i < 15; i++ {
-			time.Sleep(1 * time.Second)
-			state, err := h.Virt.GetDomainState(vm.Name)
-			if err == nil && state == "shut off" {
-				shutOff = true
-				break
-			}
-		}
-		if !shutOff {
-			_ = h.Virt.DestroyDomain(vm.Name)
-		}
+	payload := map[string]interface{}{"vm_id": vm.ID}
+	userID, username := taskUserFromContext(c)
+	vmID := vm.ID
+	task, err := h.Tasks.Submit("stop_vm", "停止虚拟机 "+vm.Name, payload, userID, username, vm.Name, &vmID)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		return
 	}
-
-	// 更新状态
-	h.DB.Model(&vm).Update("status", "shut off")
-
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "虚拟机已停止",
+	c.JSON(http.StatusAccepted, gin.H{
+		"code":    http.StatusAccepted,
+		"message": "任务已提交",
+		"data":    gin.H{"task_id": task.ID},
 	})
 }
 
@@ -1054,81 +825,31 @@ func (h *VMHandler) RestartVM(c *gin.Context) {
 	})
 }
 
-// DeleteVM 删除虚拟机
+// DeleteVM 删除虚拟机（异步：Submit delete_vm，后台执行 undefine + 卷清理 + 软删除）。
+// HTTP 202 返回 {task_id}，前端轮询 GET /api/tasks/:id。
 func (h *VMHandler) DeleteVM(c *gin.Context) {
+	if !h.submitTaskGuard(c) {
+		return
+	}
 	id := c.Param("id")
-
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
 		return
 	}
-
-	// 1. 先取完整磁盘清单（含多盘/克隆卷/seed 盘），再删除域定义
-	//    （spec 解析失败不阻断删除，域仍按既有流程清理）
-	var diskSources []string
-	if spec, err := h.Virt.GetDomainSpec(vm.Name); err == nil {
-		for _, d := range spec.Disks {
-			if d.Source != "" {
-				diskSources = append(diskSources, d.Source)
-			}
-		}
-	}
-
-	// 2. 调用 libvirt 删除域定义
-	if err := h.Virt.UndefineDomain(vm.Name); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
+	payload := map[string]interface{}{"vm_id": vm.ID}
+	userID, username := taskUserFromContext(c)
+	vmID := vm.ID
+	task, err := h.Tasks.Submit("delete_vm", "删除虚拟机 "+vm.Name, payload, userID, username, vm.Name, &vmID)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
 		return
 	}
-
-	// 3. 删除存储卷（对应 virsh vol-delete）：枚举的磁盘源 + 默认系统盘兜底。
-	//    仅删除位于平台托管池路径下的卷，避免误删共享基镜像（如克隆子卷的父盘）。
-	pool := vm.StoragePool
-	if pool == "" {
-		pool = "vmops"
-	}
-	// 池路径前缀（用于判定卷是否属于平台托管，避免删共享镜像）
-	poolPath, _ := h.Virt.GetPoolPath(pool)
-	volNameFor := func(src string) (string, bool) {
-		if src == "" {
-			return "", false
-		}
-		if poolPath != "" && !strings.HasPrefix(src, poolPath+"/") {
-			return "", false
-		}
-		return filepath.Base(src), true
-	}
-	seen := map[string]bool{}
-	cleaned := 0
-	tryDeleteVol := func(src string) {
-		if src == "" {
-			return
-		}
-		volName, ok := volNameFor(src)
-		if !ok || seen[volName] {
-			return
-		}
-		seen[volName] = true
-		// libvirt 卷（克隆卷等 root 属主）走 vol-delete；seed 等直接落盘文件 libvirt 不认作卷，os 兜底删文件
-		_ = h.Virt.DeleteVolume(pool, volName)
-		if poolPath != "" && os.Remove(filepath.Join(poolPath, volName)) == nil {
-			cleaned++
-		}
-	}
-	for _, src := range diskSources {
-		tryDeleteVol(src)
-	}
-	tryDeleteVol(filepath.Join(poolPath, vm.Name+".qcow2"))
-
-	// 4. 清理 cloud-init seed 镜像（独立 seed 目录，非池卷）
-	if seedDir := config.GlobalConfig.SeedDir; seedDir != "" {
-		_ = os.Remove(filepath.Join(seedDir, vm.Name+"-seed.iso"))
-	}
-
-	// 5. 软删除数据库记录
-	h.DB.Delete(&vm)
-
-	Success(c, gin.H{"message": "虚拟机已删除", "cleaned_vols": cleaned})
+	c.JSON(http.StatusAccepted, gin.H{
+		"code":    http.StatusAccepted,
+		"message": "任务已提交",
+		"data":    gin.H{"task_id": task.ID},
+	})
 }
 
 // GetVMXML 获取虚拟机 XML 定义
