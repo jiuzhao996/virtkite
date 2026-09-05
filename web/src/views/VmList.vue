@@ -19,11 +19,29 @@
           <span class="count">共 {{ total }} 台<span v-if="runningCount" class="running-hint"> · 运行中 {{ runningCount }} 台</span></span>
         </div>
 
+        <!-- 筛选栏（JumpServer 式：关键词 + 状态） -->
+        <div class="filter-bar">
+          <el-input
+            v-model="q.keyword"
+            placeholder="搜索虚拟机名称"
+            clearable
+            :prefix-icon="Search"
+            style="width: 240px"
+          />
+          <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 140px">
+            <el-option label="运行中" value="running" />
+            <el-option label="已关机" value="shut off" />
+            <el-option label="已暂停" value="paused" />
+            <el-option label="异常" value="error" />
+          </el-select>
+          <span v-if="isFiltered" class="filter-count">筛选出 {{ filteredItems.length }} 台</span>
+        </div>
+
         <!-- 卡片网格（替代 el-table，对齐 KvmDash 卡片 + virt-manager 实时条） -->
-        <el-empty v-if="!items.length && !loading" description="暂无虚拟机" :image-size="80" />
+        <el-empty v-if="!filteredItems.length && !loading" description="暂无虚拟机" :image-size="80" />
         <div v-else class="vm-grid">
           <el-card
-            v-for="vm in items"
+            v-for="vm in filteredItems"
             :key="vm.id"
             shadow="hover"
             class="vm-card"
@@ -146,7 +164,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
@@ -185,6 +203,18 @@ const unmanaged = ref([])
 const selected = ref([])
 
 const runningCount = computed(() => items.value.filter((i) => i.status === 'running').length)
+
+// 筛选：关键词（名称）+ 状态（客户端即时过滤）
+const q = reactive({ keyword: '', status: '' })
+const isFiltered = computed(() => !!(q.keyword.trim() || q.status))
+const filteredItems = computed(() => {
+  const kw = q.keyword.trim().toLowerCase()
+  return items.value.filter((vm) => {
+    if (q.status && vm.status !== q.status) return false
+    if (kw && !(vm.name || '').toLowerCase().includes(kw)) return false
+    return true
+  })
+})
 
 function perfOf(row) {
   return perfMap.value[row.id] || null
@@ -562,6 +592,17 @@ onUnmounted(() => {
 }
 .running-hint {
   color: var(--color-accent);
+}
+/* 筛选栏 */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.filter-count {
+  font-size: 0.85rem;
+  color: var(--color-muted-foreground);
 }
 /* VM 卡片网格 */
 .vm-grid {

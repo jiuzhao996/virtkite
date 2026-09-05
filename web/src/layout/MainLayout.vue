@@ -40,6 +40,10 @@
           <el-icon><Connection /></el-icon>
           <span>网络</span>
         </el-menu-item>
+        <el-menu-item index="/tasks">
+          <el-icon><List /></el-icon>
+          <span>任务中心</span>
+        </el-menu-item>
         <el-menu-item index="/audit">
           <el-icon><Document /></el-icon>
           <span>审计日志</span>
@@ -99,6 +103,7 @@ const navItems = [
   { index: '/images', label: '镜像管理', icon: 'Picture' },
   { index: '/storage', label: '存储池', icon: 'FolderOpened' },
   { index: '/networks', label: '网络', icon: 'Connection' },
+  { index: '/tasks', label: '任务中心', icon: 'List' },
   { index: '/audit', label: '审计日志', icon: 'Document' }
 ]
 
@@ -110,6 +115,7 @@ const titleMap = {
   images: '镜像管理',
   storage: '存储池管理',
   networks: '网络管理',
+  tasks: '任务中心',
   audit: '审计日志'
 }
 const title = computed(() => titleMap[route.path.split('/')[1]] || 'vmops')

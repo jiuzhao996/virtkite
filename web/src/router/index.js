@@ -12,6 +12,7 @@ import ImageList from '../views/ImageList.vue'
 import AuditList from '../views/AuditList.vue'
 import StorageList from '../views/StorageList.vue'
 import NetworkList from '../views/NetworkList.vue'
+import TaskList from '../views/TaskList.vue'
 
 const routes = [
   { path: '/login', name: 'login', component: Login, meta: { public: true } },
@@ -29,6 +30,7 @@ const routes = [
       { path: 'images', name: 'images', component: ImageList },
       { path: 'storage', name: 'storage', component: StorageList },
       { path: 'networks', name: 'networks', component: NetworkList },
+      { path: 'tasks', name: 'tasks', component: TaskList },
       { path: 'audit', name: 'audit', component: AuditList }
     ]
   }
