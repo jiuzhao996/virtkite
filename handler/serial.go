@@ -2,6 +2,7 @@ package handler
 
 import (
 	"io"
+	"strconv"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,10 @@ func (h *VMHandler) ConnectSerial(c *gin.Context) {
 		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "虚拟机不存在"})
 		return
 	}
+	var vmID uint
+	if n, perr := strconv.ParseUint(c.Param("id"), 10, 32); perr == nil {
+		vmID = uint(n)
+	}
 
 	// guest 输出：libvirt 写入 inW，我们从 inR 读到后转发给浏览器
 	inR, inW := io.Pipe()
@@ -35,6 +40,14 @@ func (h *VMHandler) ConnectSerial(c *gin.Context) {
 		errCh <- h.Virt.OpenConsole(name, "", outR, inW)
 	}()
 	_ = conn.WriteJSON(gin.H{"type": "connected", "dev": name})
+
+	// 记录串口会话并持有 WS 连接（退出时关闭；管理员可强制断开）
+	if h.Sessions != nil {
+		uid, uname := taskUserFromContext(c)
+		if s := h.Sessions.Open(vmID, name, "serial", uname, uid, c.ClientIP(), conn); s != nil {
+			defer h.Sessions.Close(s.ID)
+		}
+	}
 	select {
 	case err := <-errCh:
 		if err != nil {

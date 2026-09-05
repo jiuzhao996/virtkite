@@ -9,7 +9,7 @@
       <div class="toolbar">
         <div class="toolbar-left">
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-button type="success" :icon="Upload" @click="openUpload">上传镜像</el-button>
+          <el-button v-if="isAdmin" type="success" :icon="Upload" @click="openUpload">上传镜像</el-button>
           <el-select v-model="filter" placeholder="筛选" clearable style="width: 150px" @change="load">
             <el-option label="全部镜像" value="" />
             <el-option label="仅模板" value="true" />
@@ -46,10 +46,10 @@
         <el-table-column label="操作" min-width="300" fixed="right">
           <template #default="{ row }">
             <div class="ops">
-              <el-button v-if="row.is_template" size="small" type="primary" :icon="Cpu" @click="openClone(row)">基于此创建 VM</el-button>
-              <el-button v-if="row.is_template" size="small" :icon="StarFilled" @click="toggleTemplate(row)">取消模板</el-button>
-              <el-button v-else size="small" :icon="Star" @click="toggleTemplate(row)">标记为模板</el-button>
-              <el-button size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+              <el-button v-if="isAdmin && row.is_template" size="small" type="primary" :icon="Cpu" @click="openClone(row)">基于此创建 VM</el-button>
+              <el-button v-if="isAdmin && row.is_template" size="small" :icon="StarFilled" @click="toggleTemplate(row)">取消模板</el-button>
+              <el-button v-if="isAdmin && !row.is_template" size="small" :icon="Star" @click="toggleTemplate(row)">标记为模板</el-button>
+              <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
             </div>
           </template>
         </el-table-column>
@@ -132,7 +132,10 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
+
+const { isAdmin } = useAuth()
 
 const items = ref([])
 const total = ref(0)

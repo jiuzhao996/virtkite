@@ -121,7 +121,11 @@ export const api = {
   // 异步任务（耗时操作转后台：createVM/deleteVM/cloneVM/cloneImage/stopVM 返回 202 {task_id}，再轮询任务）
   getTask: (id) => unwrap(http.get('/tasks/' + id)),
   listTasks: (params) => unwrap(http.get('/tasks', { params })),
-  deleteTask: (id) => unwrap(http.delete('/tasks/' + id))
+  deleteTask: (id) => unwrap(http.delete('/tasks/' + id)),
+
+  // 控制台会话（谁连了哪台 VM、可强制断开 SSH/串口）
+  listSessions: (params) => unwrap(http.get('/sessions', { params })),
+  disconnectSession: (id) => unwrap(http.post('/sessions/' + id + '/disconnect'))
 }
 
 export { TOKEN_KEY }

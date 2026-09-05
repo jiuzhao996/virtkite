@@ -9,8 +9,8 @@
       <div class="toolbar">
         <div class="toolbar-left">
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-button type="success" :icon="Plus" @click="openCreate">新建 NAT 网络</el-button>
-          <el-button :icon="Document" @click="openXML">从 XML 定义</el-button>
+          <el-button v-if="isAdmin" type="success" :icon="Plus" @click="openCreate">新建 NAT 网络</el-button>
+          <el-button v-if="isAdmin" :icon="Document" @click="openXML">从 XML 定义</el-button>
         </div>
         <div class="toolbar-right">
           <el-tag type="success" effect="plain" size="small">运行 {{ activeCount }}</el-tag>
@@ -64,10 +64,10 @@
         </el-table-column>
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="success" :icon="VideoPlay" :disabled="row.active" @click="act(row, 'start')">启动</el-button>
-            <el-button size="small" :icon="VideoPause" :disabled="!row.active" @click="act(row, 'stop')">停止</el-button>
-            <el-button size="small" :icon="Edit" @click="openEdit(row)">编辑 XML</el-button>
-            <el-button size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+            <el-button v-if="isAdmin" size="small" type="success" :icon="VideoPlay" :disabled="row.active" @click="act(row, 'start')">启动</el-button>
+            <el-button v-if="isAdmin" size="small" :icon="VideoPause" :disabled="!row.active" @click="act(row, 'stop')">停止</el-button>
+            <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openEdit(row)">编辑 XML</el-button>
+            <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -115,6 +115,9 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Document, VideoPlay, VideoPause, Delete, Edit } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
+
+const { isAdmin } = useAuth()
 
 const networks = ref([])
 const loading = ref(false)

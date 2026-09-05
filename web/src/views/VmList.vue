@@ -7,10 +7,10 @@
         <div class="toolbar">
           <div class="toolbar-left">
             <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-            <el-button type="success" :icon="Plus" @click="router.push({ name: 'vm-create' })">新建虚拟机</el-button>
-            <el-button type="warning" :icon="Upload" @click="openImport">导入存量 VM</el-button>
-            <el-divider v-if="checked.length" direction="vertical" />
-            <template v-if="checked.length">
+            <el-button v-if="isAdmin" type="success" :icon="Plus" @click="router.push({ name: 'vm-create' })">新建虚拟机</el-button>
+            <el-button v-if="isAdmin" type="warning" :icon="Upload" @click="openImport">导入存量 VM</el-button>
+            <el-divider v-if="isAdmin && checked.length" direction="vertical" />
+            <template v-if="isAdmin && checked.length">
               <el-button size="default" type="success" :icon="VideoPlay" :loading="bulkBusy" @click="bulkAction('start')">批量开机 ({{ checked.length }})</el-button>
               <el-button size="default" type="warning" :icon="SwitchButton" :loading="bulkBusy" @click="bulkAction('stop')">批量关机 ({{ checked.length }})</el-button>
               <el-button size="default" type="danger" :icon="Delete" :loading="bulkBusy" @click="bulkAction('delete')">批量删除 ({{ checked.length }})</el-button>
@@ -87,21 +87,21 @@
             <div class="vm-actions">
               <el-button size="small" :icon="Search" @click="router.push({ name: 'vm-detail', params: { id: vm.id } })">详情</el-button>
               <el-button
-                v-if="vm.status !== 'running'"
+                v-if="isAdmin && vm.status !== 'running'"
                 size="small"
                 :icon="VideoPlay"
                 :disabled="busy.has(vm.id)"
                 @click="action(vm, 'start')"
               >开机</el-button>
               <el-button
-                v-else
+                v-else-if="isAdmin"
                 size="small"
                 :icon="SwitchButton"
                 :disabled="busy.has(vm.id)"
                 @click="action(vm, 'stop')"
               >关机</el-button>
               <el-button size="small" :icon="Monitor" :disabled="vm.status !== 'running'" @click="openConsole(vm)">控制台</el-button>
-              <el-dropdown trigger="click" @command="(cmd) => moreAction(vm, cmd)">
+              <el-dropdown v-if="isAdmin" trigger="click" @command="(cmd) => moreAction(vm, cmd)">
                 <el-button size="small">
                   更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
                 </el-button>
@@ -170,9 +170,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
 import { Refresh, Plus, Upload, VideoPlay, SwitchButton, RefreshRight, Monitor, Delete, Search, ArrowDown, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
 const router = useRouter()
+const { isAdmin } = useAuth()
 
 const items = ref([])
 const total = ref(0)

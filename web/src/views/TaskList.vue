@@ -13,6 +13,7 @@
             <el-option label="失败" value="failed" />
           </el-select>
           <el-button
+            v-if="isAdmin"
             type="danger"
             :icon="Delete"
             :disabled="!finishedCount"
@@ -61,6 +62,7 @@
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
             <el-button
+              v-if="isAdmin"
               size="small"
               type="danger"
               :icon="Delete"
@@ -79,6 +81,9 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
+
+const { isAdmin } = useAuth()
 
 const items = ref([])
 const total = ref(0)

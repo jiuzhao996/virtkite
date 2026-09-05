@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/console"
 	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
 )
@@ -19,12 +20,13 @@ import (
 // TerminalHandler Web 终端（WebSocket ↔ SSH 桥）处理器。
 // 前端 xterm.js 通过 WS 连接，首个消息携带 SSH 连接参数，后端用 x/crypto/ssh 桥接目标主机。
 type TerminalHandler struct {
-	DB *gorm.DB
+	DB       *gorm.DB
+	Sessions *console.Registry
 }
 
 // NewTerminalHandler 创建 Web 终端处理器。
-func NewTerminalHandler(db *gorm.DB) *TerminalHandler {
-	return &TerminalHandler{DB: db}
+func NewTerminalHandler(db *gorm.DB, sessions *console.Registry) *TerminalHandler {
+	return &TerminalHandler{DB: db, Sessions: sessions}
 }
 
 // wsUpgrader 不限制来源，由 JWT 中间件保证鉴权。
@@ -132,6 +134,14 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 	}
 
 	_ = conn.WriteJSON(gin.H{"type": "connected", "host": auth.Host})
+
+	// 记录 SSH 会话并持有 WS 连接（退出时关闭会话；管理员可服务端强制断开）
+	if h.Sessions != nil {
+		uid, uname := taskUserFromContext(c)
+		if s := h.Sessions.Open(vm.ID, vm.Name, "ssh", uname, uid, c.ClientIP(), conn); s != nil {
+			defer h.Sessions.Close(s.ID)
+		}
+	}
 
 	var wg sync.WaitGroup
 

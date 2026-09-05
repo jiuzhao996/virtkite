@@ -10,12 +10,12 @@
       </div>
       <div class="tb-actions">
         <el-button size="small" type="primary" :icon="Monitor" :disabled="!isRunning" @click="goConsole">控制台</el-button>
-        <el-button v-if="vm" size="small" :icon="VideoPlay" :loading="busy === 'start'" :disabled="isRunning || isPaused" @click="act('start')">开机</el-button>
-        <el-button v-if="vm" size="small" :icon="VideoPause" :loading="busy === 'pause'" :disabled="!isRunning" @click="act('pause')">暂停</el-button>
-        <el-button v-if="vm" size="small" :icon="VideoPlay" :loading="busy === 'resume'" :disabled="!isPaused" @click="act('resume')">恢复</el-button>
-        <el-button v-if="vm" size="small" :icon="SwitchButton" :loading="busy === 'stop'" :disabled="!isRunning" @click="act('stop')">关机</el-button>
-        <el-button v-if="vm" size="small" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" @click="act('restart')">重启</el-button>
-        <el-button size="small" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
+        <el-button v-if="isAdmin && vm" size="small" :icon="VideoPlay" :loading="busy === 'start'" :disabled="isRunning || isPaused" @click="act('start')">开机</el-button>
+        <el-button v-if="isAdmin && vm" size="small" :icon="VideoPause" :loading="busy === 'pause'" :disabled="!isRunning" @click="act('pause')">暂停</el-button>
+        <el-button v-if="isAdmin && vm" size="small" :icon="VideoPlay" :loading="busy === 'resume'" :disabled="!isPaused" @click="act('resume')">恢复</el-button>
+        <el-button v-if="isAdmin && vm" size="small" :icon="SwitchButton" :loading="busy === 'stop'" :disabled="!isRunning" @click="act('stop')">关机</el-button>
+        <el-button v-if="isAdmin && vm" size="small" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" @click="act('restart')">重启</el-button>
+        <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
       </div>
     </div>
 
@@ -94,7 +94,7 @@
                 <el-switch
                   :model-value="!!(spec && spec.autostart)"
                   :loading="busy === 'autostart'"
-                  :disabled="!spec"
+                  :disabled="!spec || !isAdmin"
                   @change="onAutostartChange"
                 />
               </el-descriptions-item>
@@ -154,8 +154,8 @@
           <el-card shadow="never" class="edit-card">
             <div class="field-row">
               <span class="field-label">当前 vCPU</span>
-              <el-input-number v-model="vcpuInput" :min="1" :max="256" size="small" controls-position="right" />
-              <el-button size="small" type="primary" :loading="busy === 'vcpu'" :disabled="!spec" @click="applyVcpu">应用</el-button>
+              <el-input-number v-model="vcpuInput" :min="1" :max="256" size="small" controls-position="right" :disabled="!isAdmin" />
+              <el-button v-if="isAdmin" size="small" type="primary" :loading="busy === 'vcpu'" :disabled="!spec" @click="applyVcpu">应用</el-button>
             </div>
             <p class="field-tip">热调整：live + config 双生效，运行中即可在线增减 CPU 核数。</p>
           </el-card>
@@ -169,8 +169,8 @@
           <el-card shadow="never" class="edit-card">
             <div class="field-row">
               <span class="field-label">内存大小（MB）</span>
-              <el-input-number v-model="memInput" :min="256" :step="256" size="small" controls-position="right" />
-              <el-button size="small" type="primary" :loading="busy === 'memory'" :disabled="!spec" @click="applyMemory">应用</el-button>
+              <el-input-number v-model="memInput" :min="256" :step="256" size="small" controls-position="right" :disabled="!isAdmin" />
+              <el-button v-if="isAdmin" size="small" type="primary" :loading="busy === 'memory'" :disabled="!spec" @click="applyMemory">应用</el-button>
             </div>
             <p class="field-tip">热调整：需 ≥ 当前占用，运行中可在线调整（live + config）。</p>
           </el-card>
@@ -184,12 +184,12 @@
           <el-card shadow="never" class="edit-card">
             <div class="field-row">
               <span class="field-label">引导设备</span>
-              <el-select v-model="bootInput" multiple placeholder="选择引导设备" size="small" style="width: 300px">
+              <el-select v-model="bootInput" multiple placeholder="选择引导设备" size="small" style="width: 300px" :disabled="!isAdmin">
                 <el-option label="硬盘 (hd)" value="hd" />
                 <el-option label="光盘 (cdrom)" value="cdrom" />
                 <el-option label="网络 (network)" value="network" />
               </el-select>
-              <el-button size="small" type="primary" :loading="busy === 'boot'" :disabled="!spec" @click="applyBoot">应用</el-button>
+              <el-button v-if="isAdmin" size="small" type="primary" :loading="busy === 'boot'" :disabled="!spec" @click="applyBoot">应用</el-button>
             </div>
             <p class="field-tip">列表顺序即启动优先级，先选择者优先引导；列表不能为空。</p>
           </el-card>
@@ -212,7 +212,7 @@
               <div class="dev-card-head">
                 <span class="dev-name mono">{{ disk.target || '—' }}</span>
                 <el-tag :type="disk.device === 'cdrom' ? 'warning' : 'info'" size="small" effect="light">{{ disk.device }}</el-tag>
-                <el-popconfirm :title="'确定移除磁盘「' + (disk.target || '') + '」？'" width="220" @confirm="removeDisk(disk)">
+                <el-popconfirm v-if="isAdmin" :title="'确定移除磁盘「' + (disk.target || '') + '」？'" width="220" @confirm="removeDisk(disk)">
                   <template #reference>
                     <el-button size="small" type="danger" text :icon="Delete">移除</el-button>
                   </template>
@@ -231,7 +231,7 @@
             </div>
           </template>
           <div class="panel-actions">
-            <el-button type="primary" :icon="Plus" @click="openDiskDialog">添加磁盘</el-button>
+            <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openDiskDialog">添加磁盘</el-button>
           </div>
         </section>
 
@@ -252,7 +252,7 @@
               <div class="dev-card-head">
                 <span class="dev-name mono">{{ nic.mac || '—' }}</span>
                 <el-tag type="info" size="small" effect="light">{{ nic.model }}</el-tag>
-                <el-popconfirm :title="'确定移除网卡「' + (nic.mac || '') + '」？'" width="220" @confirm="removeNic(nic)">
+                <el-popconfirm v-if="isAdmin" :title="'确定移除网卡「' + (nic.mac || '') + '」？'" width="220" @confirm="removeNic(nic)">
                   <template #reference>
                     <el-button size="small" type="danger" text :icon="Delete">移除</el-button>
                   </template>
@@ -267,7 +267,7 @@
             </div>
           </template>
           <div class="panel-actions">
-            <el-button type="primary" :icon="Plus" @click="openNicDialog">添加网卡</el-button>
+            <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openNicDialog">添加网卡</el-button>
           </div>
         </section>
 
@@ -275,7 +275,7 @@
         <section v-show="activeView === 'snapshots'" class="panel">
           <div class="panel-head">
             <h3 class="panel-title">快照</h3>
-            <el-button size="small" type="primary" :icon="Plus" @click="openSnapCreate">新建快照</el-button>
+            <el-button v-if="isAdmin" size="small" type="primary" :icon="Plus" @click="openSnapCreate">新建快照</el-button>
           </div>
           <el-card shadow="never">
             <el-table :data="snapshots" size="small" border style="width: 100%" v-loading="snapLoading">
@@ -292,8 +292,8 @@
               </el-table-column>
               <el-table-column label="操作" width="150" fixed="right">
                 <template #default="{ row }">
-                  <el-button size="small" :icon="RefreshLeft" @click="revertSnap(row)">回滚</el-button>
-                  <el-button size="small" type="danger" :icon="Delete" @click="removeSnap(row)">删除</el-button>
+                  <el-button v-if="isAdmin" size="small" :icon="RefreshLeft" @click="revertSnap(row)">回滚</el-button>
+                  <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="removeSnap(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -314,7 +314,7 @@
           <el-card shadow="never">
             <div class="xml-toolbar">
               <el-button size="small" :icon="Refresh" @click="loadXML">重新加载</el-button>
-              <el-button size="small" type="primary" :loading="xmlSaving" @click="saveXML">保存</el-button>
+              <el-button v-if="isAdmin" size="small" type="primary" :loading="xmlSaving" @click="saveXML">保存</el-button>
             </div>
             <el-input v-model="xmlText" type="textarea" :rows="18" class="xml-area" placeholder="加载中…" />
           </el-card>
@@ -402,10 +402,12 @@ import {
   RefreshLeft, Odometer, TrendCharts, Cpu, Coin, Sort, FolderOpened, Connection, CameraFilled, Document
 } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
 const route = useRoute()
 const router = useRouter()
+const { isAdmin } = useAuth()
 const id = route.params.id
 
 /* ---------- 基础状态 ---------- */

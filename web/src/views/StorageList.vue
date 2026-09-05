@@ -7,7 +7,7 @@
       <div class="toolbar">
         <div>
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-button type="success" :icon="Plus" @click="openCreatePool">新建存储池</el-button>
+          <el-button v-if="isAdmin" type="success" :icon="Plus" @click="openCreatePool">新建存储池</el-button>
         </div>
         <span class="count">共 {{ pools.length }} 个存储池</span>
       </div>
@@ -35,7 +35,7 @@
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :icon="FolderOpened" @click="openVolumes(row)">卷管理</el-button>
-            <el-button size="small" type="danger" :icon="Delete" @click="removePool(row)">删除</el-button>
+            <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="removePool(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -61,7 +61,7 @@
     <el-dialog v-model="volDialog" :title="'卷管理 - ' + (curPool || '')" width="680px">
       <div class="toolbar">
         <div>
-          <el-button type="success" size="small" :icon="Plus" @click="openCreateVol">新建卷</el-button>
+          <el-button v-if="isAdmin" type="success" size="small" :icon="Plus" @click="openCreateVol">新建卷</el-button>
         </div>
       </div>
       <el-table :data="volumes" stripe border size="small" style="width: 100%">
@@ -72,7 +72,7 @@
         </el-table-column>
         <el-table-column label="操作" width="90">
           <template #default="{ row }">
-            <el-button size="small" type="danger" :icon="Delete" @click="removeVolume(row)">删除</el-button>
+            <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="removeVolume(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -107,6 +107,9 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, FolderOpened, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
+
+const { isAdmin } = useAuth()
 
 const pools = ref([])
 const volumes = ref([])

@@ -44,15 +44,19 @@
           <el-icon><List /></el-icon>
           <span>任务中心</span>
         </el-menu-item>
-        <el-menu-item index="/audit">
+        <el-menu-item index="/sessions">
+          <el-icon><Link /></el-icon>
+          <span>会话管理</span>
+        </el-menu-item>
+        <el-menu-item v-if="isAdmin" index="/audit">
           <el-icon><Document /></el-icon>
           <span>审计日志</span>
         </el-menu-item>
       </el-menu>
       <div v-else class="collapse-nav">
+        <template v-for="item in navItems" :key="item.index">
         <el-tooltip
-          v-for="item in navItems"
-          :key="item.index"
+          v-if="!item.adminOnly || isAdmin"
           :content="item.label"
           placement="right"
         >
@@ -64,6 +68,7 @@
             <el-icon><component :is="item.icon" /></el-icon>
           </div>
         </el-tooltip>
+        </template>
       </div>
     </el-aside>
 
@@ -104,7 +109,8 @@ const navItems = [
   { index: '/storage', label: '存储池', icon: 'FolderOpened' },
   { index: '/networks', label: '网络', icon: 'Connection' },
   { index: '/tasks', label: '任务中心', icon: 'List' },
-  { index: '/audit', label: '审计日志', icon: 'Document' }
+  { index: '/sessions', label: '会话管理', icon: 'Link' },
+  { index: '/audit', label: '审计日志', icon: 'Document', adminOnly: true }
 ]
 
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard'))
@@ -116,6 +122,7 @@ const titleMap = {
   storage: '存储池管理',
   networks: '网络管理',
   tasks: '任务中心',
+  sessions: '会话管理',
   audit: '审计日志'
 }
 const title = computed(() => titleMap[route.path.split('/')[1]] || 'vmops')

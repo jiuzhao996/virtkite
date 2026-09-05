@@ -71,18 +71,25 @@
         <div v-else-if="view === 'vnc'" class="vnc-view">
           <div v-if="!vm || vm.status !== 'running'" class="vnc-placeholder">
             <el-alert type="warning" :closable="false" show-icon
-              title="VM 未运行，无法连接图形控制台（VNC 需运行中）。可先启动 VM 再连接。" />
-            <el-button class="mt" @click="$router.push('/vms')">去虚拟机列表启动</el-button>
+              title="VM 未运行，无法连接图形控制台（VNC 需运行中）。可在此直接开机，开机后自动连接。" />
+            <div class="vnc-placeholder-btns">
+              <el-button type="primary" size="large" :loading="powerLoading" @click="powerOnAndConnect">一键开机并连接</el-button>
+              <el-button class="mt" @click="$router.push('/vms')">去虚拟机列表</el-button>
+            </div>
           </div>
           <div v-else-if="!vncUrl" class="vnc-placeholder">
             <el-button type="primary" size="large" :loading="vncLoading" @click="connectVNC">连接图形控制台</el-button>
             <p class="hint">noVNC 直连虚拟机虚拟显示，无需知道 IP。</p>
           </div>
           <div v-else class="vnc-frame">
-            <iframe :src="vncUrl" class="vnc" />
+            <div v-if="vncFrameLoading" class="vnc-loading" v-loading="true" element-loading-text="图形桌面加载中…" />
+            <iframe :src="vncUrl" class="vnc" @load="vncFrameLoading = false" />
             <div class="vnc-bar">
               <span>🖥️ 图形控制台已连接</span>
-              <el-button size="small" text @click="vncUrl = ''">重新连接</el-button>
+              <div class="vnc-bar-btns">
+                <el-button size="small" text @click="openVncNewWindow">新窗口打开</el-button>
+                <el-button size="small" text @click="vncUrl = ''">重新连接</el-button>
+              </div>
             </div>
           </div>
         </div>
@@ -206,6 +213,9 @@ const view = ref(null)         // 'vnc' | 'ssh' | 'serial' | null(选择页)
 // VNC
 const vncLoading = ref(false)
 const vncUrl = ref('')
+const vncFrameLoading = ref(false)
+// 页内开机（VNC 未运行时闭环，不跳走）
+const powerLoading = ref(false)
 
 // SSH 表单
 const sshForm = ref({ host: '', port: 22, user: 'root', password: '' })
@@ -256,6 +266,8 @@ async function load() {
     const res = await api.getVM(id)
     vm.value = res.data || null
     if (vm.value && vm.value.ip) sshForm.value.host = vm.value.ip
+    // 恢复上次成功的 SSH 参数（只记 host/port/user，不记密码）
+    restoreSshForm()
     // 智能默认：VM 运行中先自动尝试串口 Console（免 IP 最轻），失败再回到选择页
     if (vm.value && vm.value.status === 'running') autoEnterSerial()
     else if (vm.value) {
@@ -266,6 +278,34 @@ async function load() {
     ElMessage.error('虚拟机不存在')
   } finally {
     loading.value = false
+  }
+}
+
+function sshMemoryKey() {
+  return `vmops-ssh-${id}`
+}
+function restoreSshForm() {
+  try {
+    const raw = localStorage.getItem(sshMemoryKey())
+    if (!raw) return
+    const saved = JSON.parse(raw)
+    if (saved.host) sshForm.value.host = saved.host
+    if (saved.port) sshForm.value.port = saved.port
+    if (saved.user) sshForm.value.user = saved.user
+  } catch (e) {
+    // 忽略损坏的缓存
+  }
+}
+// 连接成功后记忆参数（密码永不落盘）
+function rememberSshForm() {
+  try {
+    localStorage.setItem(sshMemoryKey(), JSON.stringify({
+      host: sshForm.value.host,
+      port: sshForm.value.port,
+      user: sshForm.value.user
+    }))
+  } catch (e) {
+    // 配额不足等忽略
   }
 }
 
@@ -340,11 +380,48 @@ async function connectVNC() {
     const token = (res.data && res.data.token) || ''
     if (!token) throw new Error('token 为空')
     const host = window.location.hostname
+    vncFrameLoading.value = true
     vncUrl.value = `http://${host}:6080/vnc.html?autoconnect=1&resize=scale&path=websockify?token=${token}`
+    // 兜底：iframe onload 失败时 15s 后关闭 loading，避免无限转圈
+    setTimeout(() => { vncFrameLoading.value = false }, 15000)
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.error) || '获取控制台失败')
+    ElMessage.error((e.response && e.response.data && (e.response.data.message || e.response.data.error)) || '获取控制台失败')
   } finally {
     vncLoading.value = false
+  }
+}
+
+function openVncNewWindow() {
+  if (vncUrl.value) window.open(vncUrl.value, '_blank')
+}
+
+// 页内一键开机并自动连接 VNC：开机指令 → 轮询状态至 running（最长 ~60s）→ 自动 connectVNC
+async function powerOnAndConnect() {
+  powerLoading.value = true
+  try {
+    await api.startVM(id)
+    ElMessage.success('开机指令已发送，等待虚拟机启动…')
+    const deadline = Date.now() + 60000
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000))
+      try {
+        const res = await api.getVM(id)
+        vm.value = res.data || vm.value
+        if (vm.value && vm.value.status === 'running') {
+          ElMessage.success('虚拟机已启动，正在连接图形控制台…')
+          await connectVNC()
+          return
+        }
+      } catch (e) {
+        // 轮询失败继续
+      }
+    }
+    ElMessage.warning('等待超时，请确认虚拟机状态后手动连接')
+    await load()
+  } catch (e) {
+    ElMessage.error((e.response && e.response.data && e.response.data.message) || '开机失败')
+  } finally {
+    powerLoading.value = false
   }
 }
 
@@ -504,6 +581,8 @@ function handleMsg(ev) {
       clearProbe()
       serialUnavailable.value = false
       serialReason.value = ''
+      // SSH 连通成功后记忆参数（下次自动填，密码不记）
+      if (view.value === 'ssh') rememberSshForm()
       onResize()
     }
   } catch {
@@ -675,8 +754,22 @@ onUnmounted(() => cleanupConnection())
 }
 .vnc-placeholder { text-align: center; color: #374151; }
 .vnc-placeholder .mt { margin-top: 16px; }
+.vnc-placeholder-btns {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+}
 .vnc-placeholder .hint { margin-top: 14px; font-size: 0.85rem; color: #7f92ab; }
-.vnc-frame { width: 100%; height: 100%; display: flex; flex-direction: column; }
+.vnc-frame { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; }
+.vnc-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 8px;
+  background: #f5f7fa;
+}
 .vnc {
   flex: 1;
   width: 100%;
@@ -691,6 +784,11 @@ onUnmounted(() => cleanupConnection())
   padding: 8px 4px 0;
   color: #374151;
   font-size: 0.85rem;
+}
+.vnc-bar-btns {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* ---------- 终端视图（深色 + 背景图） ---------- */

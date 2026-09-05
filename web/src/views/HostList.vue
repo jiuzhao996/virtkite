@@ -7,7 +7,7 @@
       <div class="toolbar">
         <div>
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-button type="success" :icon="Plus" @click="openCreate">添加宿主机</el-button>
+          <el-button v-if="isAdmin" type="success" :icon="Plus" @click="openCreate">添加宿主机</el-button>
         </div>
         <span class="count">共 {{ total }} 台</span>
       </div>
@@ -27,7 +27,7 @@
           <template #default="{ row }">
             <el-button size="small" :icon="Connection" :loading="testBusy.has(row.id)" @click="test(row)">测试连通</el-button>
             <el-button size="small" :icon="DataLine" @click="showStats(row)">查看状态</el-button>
-            <el-button size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+            <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -79,6 +79,9 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Connection, DataLine, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
+
+const { isAdmin } = useAuth()
 
 const items = ref([])
 const total = ref(0)

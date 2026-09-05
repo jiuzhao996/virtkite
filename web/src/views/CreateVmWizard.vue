@@ -388,9 +388,12 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, Check, Plus, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
 const router = useRouter()
+const { isAdmin } = useAuth()
+if (!isAdmin.value) router.replace({ name: 'vms' })
 
 const step = ref(0)
 const loading = ref(false)

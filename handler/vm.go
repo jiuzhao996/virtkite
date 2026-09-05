@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/console"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
@@ -53,14 +54,15 @@ func randomUUID() (string, error) {
 
 // VMHandler 虚拟机处理器
 type VMHandler struct {
-	DB    *gorm.DB
-	Virt  *virt.Virt
-	Tasks *tasks.Manager
+	DB       *gorm.DB
+	Virt     *virt.Virt
+	Tasks    *tasks.Manager
+	Sessions *console.Registry
 }
 
 // NewVMHandler 创建虚拟机处理器
-func NewVMHandler(db *gorm.DB, taskMgr *tasks.Manager) *VMHandler {
-	return &VMHandler{DB: db, Virt: virt.New(), Tasks: taskMgr}
+func NewVMHandler(db *gorm.DB, taskMgr *tasks.Manager, sessions *console.Registry) *VMHandler {
+	return &VMHandler{DB: db, Virt: virt.New(), Tasks: taskMgr, Sessions: sessions}
 }
 
 // taskUserFromContext 从 gin 上下文安全取 user_id/username（取不到传 nil/""）。

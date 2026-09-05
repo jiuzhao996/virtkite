@@ -154,3 +154,34 @@ func AdminMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// OperatorMiddleware 运维权限中间件（RBAC 第一阶段：只读 viewer）。
+// admin 放行全部；viewer 仅放行读操作（GET）与控制台只看通道（VNC token 签发，
+// WS 终端/串口本身就是 GET），其余变更操作（POST/PUT/DELETE）一律 403。
+// /users 与 /audit 组继续用 AdminMiddleware（用户哈希与审计敏感）。
+func OperatorMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role, _ := c.Get("role")
+		if roleStr, ok := role.(string); ok && roleStr == "admin" {
+			c.Next()
+			return
+		}
+		// viewer 只读 + 控制台
+		if c.Request.Method == http.MethodGet {
+			c.Next()
+			return
+		}
+		// POST /api/vms/:id/vnc-token（图形控制台查看）
+		if c.Request.Method == http.MethodPost && isVNCTokenPath(c.FullPath()) {
+			c.Next()
+			return
+		}
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
+		c.Abort()
+	}
+}
+
+// isVNCTokenPath 判断是否为 VNC token 签发路径（gin FullPath 模板，如 /api/vms/:id/vnc-token）。
+func isVNCTokenPath(fullPath string) bool {
+	return strings.HasSuffix(fullPath, "/vnc-token")
+}

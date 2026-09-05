@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/config"
@@ -12,6 +13,7 @@ import (
 	"github.com/jiuzhao/vmops/handler"
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/console"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
@@ -34,6 +36,10 @@ func main() {
 	// 初始化数据库
 	database.Init()
 	db := database.GetDB()
+
+	// 启动收敛：内存队列/连接随进程消失，DB 里残留的 pending/running 任务与 ssh/serial 会话
+	// 置终态，避免重启后幽灵任务与幽灵会话（VNC 靠 last_seen 过期清扫收敛，无需处理）
+	sweepStaleRecords(db)
 
 	// 初始化Gin
 	if config.GlobalConfig.ServerMode == "release" {
@@ -79,15 +85,19 @@ func main() {
 	// 异步任务管理器单例：耗时操作（创建/删除/克隆/优雅关机）走后台 worker
 	taskMgr := tasks.NewManager(db)
 	tasks.RegisterVMTasks(taskMgr)
-	vmHandler := handler.NewVMHandler(db, taskMgr)
+	// 控制台会话注册表单例：VNC/SSH/串口连接跟踪 + 服务端强制断开 + VNC 过期清扫
+	consoleRegistry := console.NewRegistry(db)
+	consoleRegistry.StartSweeper()
+	vmHandler := handler.NewVMHandler(db, taskMgr, consoleRegistry)
 	imageHandler := handler.NewImageHandler(db, taskMgr)
 	taskHandler := handler.NewTaskHandler(db, taskMgr)
+	sessionHandler := handler.NewSessionHandler(db, consoleRegistry)
 	auditHandler := handler.NewAuditHandler(db)
 	dashboardHandler := handler.NewDashboardHandler(db)
 	storageHandler := handler.NewStorageHandler()
 	networkHandler := handler.NewNetworkHandler()
-	vncHandler := handler.NewVNCHandler(db)
-	terminalHandler := handler.NewTerminalHandler(db)
+	vncHandler := handler.NewVNCHandler(db, consoleRegistry)
+	terminalHandler := handler.NewTerminalHandler(db, consoleRegistry)
 
 	// 公开接口（无需认证）
 	r.POST("/api/auth/login", authHandler.Login)
@@ -114,7 +124,7 @@ func main() {
 
 		// 宿主机管理（仅管理员）
 		hosts := api.Group("/hosts")
-		hosts.Use(middleware.AdminMiddleware())
+		hosts.Use(middleware.OperatorMiddleware())
 		{
 			hosts.GET("", hostHandler.ListHosts)
 			hosts.POST("", hostHandler.CreateHost)
@@ -126,7 +136,7 @@ func main() {
 
 		// 虚拟机管理（仅管理员）
 		vms := api.Group("/vms")
-		vms.Use(middleware.AdminMiddleware())
+		vms.Use(middleware.OperatorMiddleware())
 		{
 			vms.GET("", vmHandler.ListVMs)
 			vms.GET("/options", vmHandler.GetVMOptions)
@@ -166,7 +176,7 @@ func main() {
 
 		// 存储池管理（admin）
 		storage := api.Group("/storage")
-		storage.Use(middleware.AdminMiddleware())
+		storage.Use(middleware.OperatorMiddleware())
 		{
 			storage.GET("/pools", storageHandler.ListPools)
 			storage.GET("/pools/:name", storageHandler.GetPool)
@@ -178,7 +188,7 @@ func main() {
 
 		// 网络管理（admin）
 		networks := api.Group("/networks")
-		networks.Use(middleware.AdminMiddleware())
+		networks.Use(middleware.OperatorMiddleware())
 		{
 			networks.GET("", networkHandler.ListNetworks)
 			networks.GET("/:name", networkHandler.GetNetwork)
@@ -192,7 +202,7 @@ func main() {
 
 		// 镜像管理（仅管理员）
 		images := api.Group("/images")
-		images.Use(middleware.AdminMiddleware())
+		images.Use(middleware.OperatorMiddleware())
 		{
 			images.GET("", imageHandler.ListImages)
 			images.GET("/:id", imageHandler.GetImage)
@@ -207,7 +217,7 @@ func main() {
 
 		// 仪表盘（仅管理员）
 		dashboard := api.Group("/dashboard")
-		dashboard.Use(middleware.AdminMiddleware())
+		dashboard.Use(middleware.OperatorMiddleware())
 		{
 			dashboard.GET("/overview", dashboardHandler.Overview)
 			dashboard.GET("/vm-status", dashboardHandler.VMStatusDistribution)
@@ -227,11 +237,19 @@ func main() {
 
 		// 异步任务查询（仅管理员）
 		taskRoutes := api.Group("/tasks")
-		taskRoutes.Use(middleware.AdminMiddleware())
+		taskRoutes.Use(middleware.OperatorMiddleware())
 		{
 			taskRoutes.GET("", taskHandler.ListTasks)
 			taskRoutes.GET("/:id", taskHandler.GetTask)
 			taskRoutes.DELETE("/:id", taskHandler.DeleteTask)
+		}
+
+		// 控制台会话（仅管理员）：谁连了哪台 VM、强制断开
+		sessRoutes := api.Group("/sessions")
+		sessRoutes.Use(middleware.OperatorMiddleware())
+		{
+			sessRoutes.GET("", sessionHandler.ListSessions)
+			sessRoutes.POST("/:id/disconnect", sessionHandler.DisconnectSession)
 		}
 	}
 
@@ -251,6 +269,25 @@ func main() {
 	log.Printf("🚀 vmops 启动成功 → http://localhost%s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("启动服务器失败: %v", err)
+	}
+}
+
+// sweepStaleRecords 启动收敛：进程重启导致内存态丢失，DB 残留的中间态需置终态。
+//   - tasks: pending/running 的任务队列已丢，不可重入（executor 非幂等，重跑会重复建盘），标记 failed 并写明原因
+//   - console_sessions: ssh/serial 的 WS 随进程死亡，标记 closed；VNC 靠 last_seen 过期清扫，不动
+func sweepStaleRecords(db *gorm.DB) {
+	now := time.Now()
+	r1 := db.Model(&model.Task{}).
+		Where("status IN ?", []string{"pending", "running"}).
+		Updates(map[string]interface{}{"status": "failed", "error": "服务重启，未完成任务已终止，请重新提交"})
+	if r1.Error == nil && r1.RowsAffected > 0 {
+		log.Printf("🧹 收敛残留任务 %d 个", r1.RowsAffected)
+	}
+	r2 := db.Model(&model.ConsoleSession{}).
+		Where("status = ? AND type IN ?", "active", []string{"ssh", "serial"}).
+		Updates(map[string]interface{}{"status": "closed", "ended_at": now})
+	if r2.Error == nil && r2.RowsAffected > 0 {
+		log.Printf("🧹 收敛残留控制台会话 %d 个", r2.RowsAffected)
 	}
 }
 
