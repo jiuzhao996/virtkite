@@ -328,6 +328,32 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 		return
 	}
 
+	// 基于云镜像做 linked clone：子卷带 backing file（对应 virsh vol-clone），
+	// 保护基镜像不被 VM 写入破坏（PVE 式模板克隆语义）。
+	poolName, volName, err := h.Virt.LookupVolByPath(img.Path)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	newDiskName := req.Name + "-sys"
+	diskPath, err := h.Virt.CloneVolumeFromVol(poolName, volName, newDiskName)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	// 失败清理：删克隆卷 + seed 文件 + 未定义域
+	cloneCleaned := false
+	seedPath := ""
+	cleanup := func() {
+		if !cloneCleaned {
+			_ = h.Virt.DeleteVolume(poolName, newDiskName+".qcow2")
+		}
+		if seedPath != "" {
+			_ = os.Remove(seedPath)
+		}
+		_ = h.Virt.UndefineDomain(req.Name)
+	}
+
 	spec := &virt.DomainSpec{
 		Name:     req.Name,
 		UUID:     uuid,
@@ -338,32 +364,38 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 		Boot:     virt.BootSpec{Devices: []string{"hd"}},
 		Graphics: virt.GraphicsSpec{Type: "vnc", Port: -1},
 	}
-	// 镜像文件直接作为系统盘 source（只读引用，不拷贝）
 	spec.Disks = append(spec.Disks, virt.DiskSpec{
 		Type: "file", Device: "disk", Driver: "qcow2", Bus: "virtio",
-		Source: img.Path, Target: "vda",
+		Source: diskPath, Target: "vda",
 	})
 	spec.Interfaces = append(spec.Interfaces, virt.InterfaceSpec{
 		Type: "network", Source: req.Network, MAC: mac, Model: "virtio",
 	})
 
-	// cloud-init：生成 seed ISO 落到镜像池路径，挂只读 cdrom
+	// cloud-init：生成 seed ISO 落到克隆卷所在池路径，挂只读 cdrom
 	if req.CloudInit != nil {
 		if req.CloudInit.Hostname == "" {
 			req.CloudInit.Hostname = req.Name
 		}
 		seedBytes, err := virt.GenerateSeedISO(req.CloudInit)
 		if err != nil {
+			cleanup()
 			ErrorResponse(c, http.StatusInternalServerError, err)
 			return
 		}
-		poolPath, err := h.Virt.GetPoolPath(imagePool)
-		if err != nil {
-			ErrorResponse(c, http.StatusInternalServerError, err)
+		// seed 写到独立 seed 目录（web 可写、qemu 可读），不依赖池目录权限
+		seedDir := config.GlobalConfig.SeedDir
+		if seedDir == "" {
+			seedDir = "/home/jiuzhao/vmops/data/seed"
+		}
+		if err := os.MkdirAll(seedDir, 0755); err != nil {
+			cleanup()
+			ErrorWithMessage(c, http.StatusInternalServerError, "创建 cloud-init seed 目录失败", err)
 			return
 		}
-		seedPath := filepath.Join(poolPath, req.Name+"-seed.iso")
+		seedPath = filepath.Join(seedDir, req.Name+"-seed.iso")
 		if err := os.WriteFile(seedPath, seedBytes, 0644); err != nil {
+			cleanup()
 			ErrorWithMessage(c, http.StatusInternalServerError, "写入 cloud-init seed 镜像失败", err)
 			return
 		}
@@ -376,10 +408,12 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 
 	xmlstr, err := virt.BuildDomainXML(spec)
 	if err != nil {
+		cleanup()
 		ErrorWithMessage(c, http.StatusBadRequest, "虚拟机配置不合法", err)
 		return
 	}
 	if err := h.Virt.DefineDomain(xmlstr); err != nil {
+		cleanup()
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
@@ -389,7 +423,7 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 		Name:        req.Name,
 		HostID:      host.ID,
 		Template:    "image",
-		StoragePool: req.StoragePool,
+		StoragePool: poolName, // 实际克隆卷落在镜像所在池
 		VCPU:        req.VCPU,
 		MemoryMB:    req.MemoryMB,
 		DiskGB:      int(img.SizeGB + 0.5),
@@ -397,10 +431,12 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 		Status:      "shut off",
 	}
 	if err := h.DB.Create(&vm).Error; err != nil {
-		h.Virt.UndefineDomain(req.Name)
+		cleanup()
+		cloneCleaned = true // 域未定义成功，卷已由 cleanup 删除
 		ErrorWithMessage(c, http.StatusInternalServerError, "记录虚拟机失败", err)
 		return
 	}
+	cloneCleaned = true // 创建成功，保留克隆卷
 
 	Success(c, vm)
 }

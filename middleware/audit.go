@@ -29,7 +29,8 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 获取用户信息
+		// 获取用户信息：审计中间件注册在全局（早于 JWT 中间件），
+		// 因此需要自行解析 Bearer token 补齐 username/user_id。
 		var userID *uint
 		var username string
 		if uid, exists := c.Get("user_id"); exists {
@@ -38,6 +39,13 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 		}
 		if uname, exists := c.Get("username"); exists {
 			username = uname.(string)
+		}
+		if userID == nil || username == "" {
+			if claims, err := claimsFromRequest(c.Request); err == nil {
+				uidUint := claims.UserID
+				userID = &uidUint
+				username = claims.Username
+			}
 		}
 
 		// 读取请求体（用于审计）

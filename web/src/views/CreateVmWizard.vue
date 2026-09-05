@@ -552,6 +552,19 @@ function findImage(id) {
   return options.cloudImages.find((i) => i.id === id) || null
 }
 
+// 默认存储池：优先选后端可写的池（路径不在 /var/lib 系统目录下，web 进程可写 seed ISO）
+function pickDefaultPool(d) {
+  const names = d.pools || []
+  const infos = d.storage_pools || []
+  const byName = {}
+  for (const p of infos) byName[p.name] = p
+  const writable = names.filter((n) => {
+    const p = byName[n]
+    return p && p.path && !p.path.startsWith('/var/lib')
+  })
+  return writable[0] || names[0] || 'vmops'
+}
+
 function kindLabel(k) {
   return { create: '新建卷', source: '引用路径', image: '云镜像' }[k] || k
 }
@@ -754,7 +767,7 @@ onMounted(async () => {
     options.networkInfo = d.network_info || []
     options.cloudImages = d.cloud_images || []
     options.osList = d.os_list || []
-    form.storagePool = options.pools.includes('vmops') ? 'vmops' : options.pools[0] || 'vmops'
+    form.storagePool = pickDefaultPool(d)
     nics[0].source = options.networks.includes('default') ? 'default' : options.networks[0] || 'default'
     vms.value = (vmsRes.data && vmsRes.data.items) || []
   } catch (e) {

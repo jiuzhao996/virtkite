@@ -3,8 +3,12 @@ package virt
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"path"
+	"strings"
+
+	"github.com/digitalocean/go-libvirt"
 )
 
 // CloneVolumeFromVol 基于父卷创建子卷（对应 virsh vol-clone；libvirt 自动写 qcow2 backing file）。
@@ -50,25 +54,67 @@ func (v *Virt) CloneVolumeFromVol(poolName, srcVolName, newVolName string) (stri
 	return p, nil
 }
 
+// LookupVolByPath 根据卷路径反查所属存储池名与卷名（对应 virsh vol-key + pool-name）。
+// 导出供 handler 层在镜像/磁盘路径基础上做 linked clone 时反查父卷。
+func (v *Virt) LookupVolByPath(volPath string) (poolName, volName string, err error) {
+	return v.lookupVolPool(volPath)
+}
+
 // lookupVolPool 根据卷路径反查所属存储池名与卷名（对应 virsh vol-key + pool-name）。
+// 镜像文件可能是直接落盘的（未走 StorageVolCreateXML），libvirt 卷缓存里查不到，
+// 因此先按池路径前缀定位池并 refresh，再按文件名反查，保证直接落盘文件也可见。
 func (v *Virt) lookupVolPool(volPath string) (poolName, volName string, err error) {
 	l, err := v.getConn()
 	if err != nil {
 		return "", "", err
 	}
-	vol, err := l.StorageVolLookupByPath(volPath)
+
+	// 先直接尝试 libvirt 已知卷
+	if vol, err := l.StorageVolLookupByPath(volPath); err == nil {
+		pool, err := l.StoragePoolLookupByVolume(vol)
+		if err != nil {
+			return "", "", fmt.Errorf("查找卷 %s 所属存储池失败: %w", volPath, err)
+		}
+		name := vol.Name
+		if name == "" {
+			name = path.Base(volPath)
+		}
+		return pool.Name, name, nil
+	}
+
+	// 直接落盘文件：按池路径前缀定位并 refresh 后再查
+	base := path.Base(volPath)
+	pools, _, err := l.ConnectListAllStoragePools(1, libvirt.ConnectListStoragePoolsActive|libvirt.ConnectListStoragePoolsInactive)
 	if err != nil {
-		return "", "", fmt.Errorf("按路径查找卷 %s 失败: %w", volPath, err)
+		return "", "", fmt.Errorf("枚举存储池失败: %w", err)
 	}
-	pool, err := l.StoragePoolLookupByVolume(vol)
-	if err != nil {
-		return "", "", fmt.Errorf("查找卷 %s 所属存储池失败: %w", volPath, err)
+	for _, p := range pools {
+		xmlstr, err := l.StoragePoolGetXMLDesc(p, 0)
+		if err != nil {
+			continue
+		}
+		var px struct {
+			Target struct {
+				Path string `xml:"path"`
+			} `xml:"target"`
+		}
+		if err := xml.Unmarshal([]byte(xmlstr), &px); err != nil || px.Target.Path == "" {
+			continue
+		}
+		if !strings.HasPrefix(volPath, px.Target.Path+"/") {
+			continue
+		}
+		// 刷新池使落盘文件进入卷列表
+		if active, _ := l.StoragePoolIsActive(p); active == 1 {
+			_ = l.StoragePoolRefresh(p, 0)
+		}
+		if vol, err := l.StorageVolLookupByName(p, base); err == nil {
+			_ = vol
+			return p.Name, base, nil
+		}
+		return "", "", fmt.Errorf("池 %s 中未找到卷 %s（需先在存储管理中刷新）", p.Name, base)
 	}
-	name := vol.Name
-	if name == "" {
-		name = path.Base(volPath)
-	}
-	return pool.Name, name, nil
+	return "", "", fmt.Errorf("未找到卷 %s 所属存储池", volPath)
 }
 
 // randomUUIDV4 生成一个符合 RFC 4122 的 v4 UUID 字符串。

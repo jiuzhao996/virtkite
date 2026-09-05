@@ -29,6 +29,9 @@ type Config struct {
 
 	// 镜像存储目录
 	ImageDir string
+
+	// cloud-init seed 镜像目录（需当前用户可写、qemu 进程可读；不依赖存储池目录权限）
+	SeedDir string
 }
 
 var GlobalConfig *Config
@@ -58,6 +61,9 @@ func Init() {
 
 		// 镜像存储目录
 		ImageDir: getEnv("IMAGE_DIR", "/var/lib/libvirt/images"),
+
+		// cloud-init seed 镜像目录
+		SeedDir: getEnv("SEED_DIR", "/home/jiuzhao/vmops/data/seed"),
 	}
 }
 

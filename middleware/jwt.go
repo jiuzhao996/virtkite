@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -51,6 +52,20 @@ func ParseToken(tokenString string) (*Claims, error) {
 	}
 
 	return nil, jwt.ErrSignatureInvalid
+}
+
+// claimsFromRequest 从 HTTP 请求的 Authorization 头（或 ?token= 查询参数）解析 JWT Claims。
+// 供全局注册的审计中间件使用（其执行时机早于 AuthMiddleware，需自行补全用户身份）。
+func claimsFromRequest(req *http.Request) (*Claims, error) {
+	authHeader := req.Header.Get("Authorization")
+	if authHeader == "" {
+		authHeader = "Bearer " + req.URL.Query().Get("token")
+	}
+	parts := strings.SplitN(authHeader, " ", 2)
+	if !(len(parts) == 2 && parts[0] == "Bearer") || parts[1] == "" {
+		return nil, fmt.Errorf("无有效认证信息")
+	}
+	return ParseToken(parts[1])
 }
 
 // HashPassword 哈希密码

@@ -212,17 +212,17 @@ func (v *Virt) getPoolInfo(l *libvirt.Libvirt, pool libvirt.StoragePool) (PoolIn
 		}
 	}
 
-	// 卷列表
-	names, err := l.StoragePoolListVolumes(pool, 0)
+	// 卷列表：先刷新池（对应 virsh pool-refresh），再用 ListAllVolumes
+	// （StoragePoolListVolumes 第二参数是 maxnames，传 0 会返回空列表——历史坑）
+	if active == 1 {
+		_ = l.StoragePoolRefresh(pool, 0)
+	}
+	vols, _, err := l.StoragePoolListAllVolumes(pool, 1, 0)
 	if err == nil {
-		info.VolCount = len(names)
-		info.Volumes = make([]VolInfo, 0, len(names))
-		for _, n := range names {
-			vol, err := l.StorageVolLookupByName(pool, n)
-			if err != nil {
-				continue
-			}
-			vi := VolInfo{Name: n}
+		info.VolCount = len(vols)
+		info.Volumes = make([]VolInfo, 0, len(vols))
+		for _, vol := range vols {
+			vi := VolInfo{Name: vol.Name}
 			if path, err := l.StorageVolGetPath(vol); err == nil {
 				vi.Path = path
 			}

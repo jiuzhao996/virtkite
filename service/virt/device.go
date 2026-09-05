@@ -2,14 +2,28 @@ package virt
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/digitalocean/go-libvirt"
 )
 
-// attachDetachFlags 热插拔/修改设备的 flags：同时影响运行实例与持久配置。
-// 对应 libvirt VIR_DOMAIN_DEVICE_MODIFY_LIVE | VIR_DOMAIN_DEVICE_MODIFY_CONFIG。
-func attachDetachFlags() uint32 {
-	return uint32(libvirt.DomainDeviceModifyLive | libvirt.DomainDeviceModifyConfig)
+// domainRunning 判断域当前是否运行（供 attach/detach 选择 LIVE/CONFIG flags）。
+// libvirt 对停机域使用 LIVE flags 会报"域没有在运行"。
+func domainRunning(l *libvirt.Libvirt, dom libvirt.Domain) bool {
+	state, _, err := l.DomainGetState(dom, 0)
+	if err != nil {
+		return false
+	}
+	return libvirt.DomainState(state) == libvirt.DomainRunning
+}
+
+// deviceFlags 按运行状态返回设备修改 flags：运行中 LIVE|CONFIG（热插拔并落配置），停机仅 CONFIG。
+// 对应 libvirt VIR_DOMAIN_DEVICE_MODIFY_LIVE / VIR_DOMAIN_DEVICE_MODIFY_CONFIG。
+func deviceFlags(running bool) uint32 {
+	if running {
+		return uint32(libvirt.DomainDeviceModifyLive | libvirt.DomainDeviceModifyConfig)
+	}
+	return uint32(libvirt.DomainDeviceModifyConfig)
 }
 
 // buildDiskXML 生成单磁盘设备 XML 片段（供 DomainAttachDeviceFlags 使用）。
@@ -34,19 +48,31 @@ func buildInterfaceXML(i InterfaceSpec) (string, error) {
 	return xmlMarshal(interfaceXMLFromSpec(i))
 }
 
-// detachInterfaceXML 生成最小网卡 XML 用于移除（libvirt 按 MAC 地址匹配，对应 virsh detach-device）。
-func detachInterfaceXML(mac string) string {
+// detachInterfaceXML 生成移除网卡的最小 XML（对应 virsh detach-device）。
+// libvirt 移除时要求接口带 <source> 元素，否则报"接口类型='network' 需要 'source' 元素"，
+// 因此需按 MAC 先从域 XML 取回完整网卡配置再拼装。
+func (v *Virt) detachInterfaceXML(domain, mac string) (string, error) {
+	xmlstr, err := v.GetDomainXML(domain)
+	if err != nil {
+		return "", err
+	}
+	spec, err := ParseDomainXML(xmlstr)
+	if err != nil {
+		return "", err
+	}
+	for _, i := range spec.Interfaces {
+		if strings.EqualFold(i.MAC, mac) {
+			return xmlMarshal(interfaceXMLFromSpec(i))
+		}
+	}
+	// 域里没有该 MAC：按调用方意图生成（类型与 source 交给调用方保证）
 	ifx := interfaceXML{Type: "network"}
 	ifx.MAC = &interfaceMacXML{Address: mac}
-	out, err := xmlMarshal(ifx)
-	if err != nil {
-		return ""
-	}
-	return out
+	return xmlMarshal(ifx)
 }
 
 // AttachDisk 向虚拟机挂载磁盘设备（对应 virsh attach-device）。
-// 使用 LIVE|CONFIG flags：运行中热插拔，关机时配置同样落盘；VM 未运行时仅落配置。
+// 运行中热插拔（LIVE|CONFIG），停机时仅落配置（CONFIG）。
 func (v *Virt) AttachDisk(domain string, d DiskSpec) error {
 	l, err := v.getConn()
 	if err != nil {
@@ -60,8 +86,8 @@ func (v *Virt) AttachDisk(domain string, d DiskSpec) error {
 	if err != nil {
 		return fmt.Errorf("生成磁盘 XML 失败: %w", err)
 	}
-	if err := l.DomainAttachDeviceFlags(dom, devXML, attachDetachFlags()); err != nil {
-		return fmt.Errorf("挂载磁盘失败（对应 virsh attach-device，运行中热插拔、关机时落配置）: %w", err)
+	if err := l.DomainAttachDeviceFlags(dom, devXML, deviceFlags(domainRunning(l, dom))); err != nil {
+		return fmt.Errorf("挂载磁盘失败（对应 virsh attach-device）: %w", err)
 	}
 	return nil
 }
@@ -76,13 +102,13 @@ func (v *Virt) DetachDisk(domain, target string) error {
 	if err != nil {
 		return fmt.Errorf("虚拟机 %s 不存在: %w", domain, err)
 	}
-	if err := l.DomainDetachDeviceFlags(dom, detachDiskXML(target), attachDetachFlags()); err != nil {
+	if err := l.DomainDetachDeviceFlags(dom, detachDiskXML(target), deviceFlags(domainRunning(l, dom))); err != nil {
 		return fmt.Errorf("移除磁盘失败（对应 virsh detach-device）: %w", err)
 	}
 	return nil
 }
 
-// AttachInterface 向虚拟机添加网卡（对应 virsh attach-interface，运行中热插拔、关机时落配置）。
+// AttachInterface 向虚拟机添加网卡（对应 virsh attach-interface，运行中热插拔、停机落配置）。
 func (v *Virt) AttachInterface(domain string, i InterfaceSpec) error {
 	l, err := v.getConn()
 	if err != nil {
@@ -96,7 +122,7 @@ func (v *Virt) AttachInterface(domain string, i InterfaceSpec) error {
 	if err != nil {
 		return fmt.Errorf("生成网卡 XML 失败: %w", err)
 	}
-	if err := l.DomainAttachDeviceFlags(dom, devXML, attachDetachFlags()); err != nil {
+	if err := l.DomainAttachDeviceFlags(dom, devXML, deviceFlags(domainRunning(l, dom))); err != nil {
 		return fmt.Errorf("添加网卡失败（对应 virsh attach-interface）: %w", err)
 	}
 	return nil
@@ -112,13 +138,18 @@ func (v *Virt) DetachInterface(domain, mac string) error {
 	if err != nil {
 		return fmt.Errorf("虚拟机 %s 不存在: %w", domain, err)
 	}
-	if err := l.DomainDetachDeviceFlags(dom, detachInterfaceXML(mac), attachDetachFlags()); err != nil {
+	devXML, err := v.detachInterfaceXML(domain, mac)
+	if err != nil {
+		return err
+	}
+	if err := l.DomainDetachDeviceFlags(dom, devXML, deviceFlags(domainRunning(l, dom))); err != nil {
 		return fmt.Errorf("移除网卡失败（对应 virsh detach-interface）: %w", err)
 	}
 	return nil
 }
 
-// SetVcpus 调整虚拟机 CPU 核数（对应 virsh setvcpus，live+config flags）。
+// SetVcpus 调整虚拟机 CPU 核数（对应 virsh setvcpus）。
+// 运行中用 LIVE|CONFIG（可热调至启动时最大核数以内）；停机仅 CONFIG 落配置。
 func (v *Virt) SetVcpus(domain string, n int) error {
 	l, err := v.getConn()
 	if err != nil {
@@ -128,15 +159,19 @@ func (v *Virt) SetVcpus(domain string, n int) error {
 	if err != nil {
 		return fmt.Errorf("虚拟机 %s 不存在: %w", domain, err)
 	}
-	flags := uint32(libvirt.DomainAffectLive | libvirt.DomainAffectConfig)
+	flags := uint32(libvirt.DomainAffectConfig)
+	if domainRunning(l, dom) {
+		flags |= uint32(libvirt.DomainAffectLive)
+	}
 	if err := l.DomainSetVcpusFlags(dom, uint32(n), flags); err != nil {
-		return fmt.Errorf("设置 CPU 核数失败（对应 virsh setvcpus）: %w", err)
+		return fmt.Errorf("设置 CPU 核数失败（对应 virsh setvcpus，运行中热增受上限限制、热减需关机）: %w", err)
 	}
 	return nil
 }
 
-// SetMemory 调整虚拟机内存（对应 virsh setmem，live+config flags）。
-// 优先使用 flags 版本，旧驱动不支持时回退到基础 DomainSetMemory。
+// SetMemory 调整虚拟机内存（对应 virsh setmem）。
+// 运行中用 LIVE|CONFIG（可热调至启动时最大内存以内）；停机仅 CONFIG 落配置。
+// 旧驱动不支持 flags 时回退到基础 DomainSetMemory。
 func (v *Virt) SetMemory(domain string, mb int) error {
 	l, err := v.getConn()
 	if err != nil {
@@ -147,10 +182,14 @@ func (v *Virt) SetMemory(domain string, mb int) error {
 		return fmt.Errorf("虚拟机 %s 不存在: %w", domain, err)
 	}
 	memKiB := uint64(mb) * 1024
-	flags := uint32(libvirt.DomainMemLive | libvirt.DomainMemConfig)
+	flags := uint32(libvirt.DomainMemConfig)
+	if domainRunning(l, dom) {
+		flags |= uint32(libvirt.DomainMemLive)
+	}
 	if err := l.DomainSetMemoryFlags(dom, memKiB, flags); err != nil {
+		// 运行中增大内存不能超过开机时大小（超出需 QEMU 内存热插，本平台未启用 NUMA），回退基础调用
 		if err2 := l.DomainSetMemory(dom, memKiB); err2 != nil {
-			return fmt.Errorf("设置内存失败（对应 virsh setmem）: %w", err2)
+			return fmt.Errorf("设置内存失败（对应 virsh setmem，运行中增大不能超过开机时大小，超出请关机后调整）: %w", err2)
 		}
 	}
 	return nil

@@ -197,6 +197,23 @@ const vmStatus = ref([])
 const auditActions = ref([])
 const vmPerf = ref([])
 
+// 操作类型 → 中文兜底映射（后端 /audit/actions 优先覆盖）
+const FALLBACK_ACTION_LABELS = {
+  login: '登录', logout: '登出',
+  create_vm: '创建虚拟机', delete_vm: '删除虚拟机', start_vm: '开机', stop_vm: '关机',
+  restart_vm: '重启', import_vm: '导入虚拟机', pause_vm: '暂停虚拟机', resume_vm: '恢复虚拟机',
+  clone_vm: '克隆虚拟机',
+  attach_disk: '挂载磁盘', detach_disk: '移除磁盘', attach_nic: '添加网卡', detach_nic: '移除网卡',
+  create_snapshot: '创建快照', delete_snapshot: '删除快照', revert_snapshot: '回滚快照',
+  update_vm_spec: '更新虚拟机配置', update_vm_xml: '更新虚拟机XML', update_vm: '更新虚拟机',
+  set_vcpu: '调整CPU核数', set_memory: '调整内存', set_autostart: '设置开机自启', set_boot: '设置引导顺序',
+  create_host: '添加宿主机', update_host: '更新宿主机', delete_host: '删除宿主机',
+  upload_image: '上传镜像', delete_image: '删除镜像', set_image_template: '设置镜像模板', clone_image: '镜像创建虚拟机',
+  create_network: '创建网络', update_network: '更新网络', delete_network: '删除网络',
+  create_volume: '创建存储卷', delete_volume: '删除存储卷', access: '访问'
+}
+const actionLabelMap = ref({ ...FALLBACK_ACTION_LABELS })
+
 const HOST_POINTS = 60
 const POLL_MS = 3000
 
@@ -298,13 +315,7 @@ function actionPct(c) {
   return Math.max(3, Math.round((c / maxAction.value) * 100))
 }
 function actionLabel(a) {
-  return {
-    access: '访问', login: '登录', logout: '登出',
-    create_vm: '创建VM', delete_vm: '删除VM', start_vm: '开机',
-    stop_vm: '关机', restart_vm: '重启', import_vm: '导入VM',
-    create_host: '建宿主机', update_host: '改宿主机', delete_host: '删宿主机',
-    upload_image: '上传镜像', delete_image: '删除镜像'
-  }[a] || a
+  return actionLabelMap.value[a] || a
 }
 function actionColor(a) {
   if (a.includes('delete')) return '#dc2626'
@@ -317,10 +328,16 @@ function actionColor(a) {
 async function loadAll() {
   loading.value = true
   try {
-    const [ov, vs, au] = await Promise.all([api.dashboardOverview(), api.vmStatus(), api.auditSummary()])
+    const [ov, vs, au, al] = await Promise.all([
+      api.dashboardOverview(),
+      api.vmStatus(),
+      api.auditSummary(),
+      api.auditActions()
+    ])
     overview.value = ov.data
     vmStatus.value = vs.data || []
     auditActions.value = au.data || []
+    actionLabelMap.value = { ...FALLBACK_ACTION_LABELS, ...(al.data || {}) }
   } catch (e) {
     // 静默降级，卡片保持 0
   } finally {

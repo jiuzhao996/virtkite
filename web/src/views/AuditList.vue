@@ -7,14 +7,14 @@
 
     <el-card shadow="never">
       <div class="filters">
-        <el-select v-model="q.action" placeholder="操作类型" clearable filterable style="width: 180px" @change="load">
+        <el-select v-model="q.action" placeholder="操作类型" clearable filterable style="width: 180px" @change="search">
           <el-option v-for="a in actionOptions" :key="a.value" :label="a.label" :value="a.value" />
         </el-select>
-        <el-select v-model="q.object_type" placeholder="对象类型" clearable style="width: 130px" @change="load">
+        <el-select v-model="q.object_type" placeholder="对象类型" clearable style="width: 130px" @change="search">
           <el-option v-for="o in objectOptions" :key="o" :label="o" :value="o" />
         </el-select>
-        <el-input v-model="q.username" placeholder="操作人" clearable style="width: 140px" @keyup.enter="load" @clear="load" />
-        <el-select v-model="q.status" placeholder="状态" clearable style="width: 110px" @change="load">
+        <el-input v-model="q.username" placeholder="操作人" clearable style="width: 140px" @keyup.enter="search" @clear="search" />
+        <el-select v-model="q.status" placeholder="状态" clearable style="width: 110px" @change="search">
           <el-option label="成功" value="success" />
           <el-option label="失败" value="failed" />
         </el-select>
@@ -27,7 +27,7 @@
           value-format="YYYY-MM-DD"
           @change="onRange"
         />
-        <el-button type="primary" :icon="Search" :loading="loading" @click="load">查询</el-button>
+        <el-button type="primary" :icon="Search" :loading="loading" @click="search">查询</el-button>
         <el-button :icon="RefreshLeft" @click="reset">重置</el-button>
       </div>
 
@@ -190,6 +190,12 @@ function onRange(val) {
     q.start = ''
     q.end = ''
   }
+  search()
+}
+
+// 筛选条件变更：重置到第 1 页再查询
+function search() {
+  q.page = 1
   load()
 }
 

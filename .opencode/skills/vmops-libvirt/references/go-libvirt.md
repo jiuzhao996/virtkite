@@ -33,7 +33,7 @@
 | 信息 | `StoragePoolGetInfo(pool) (state, capacity, allocation, available, err)` |
 | 活性/持久 | `StoragePoolIsActive(pool)` / `StoragePoolIsPersistent(pool)`（返回 1 为真） |
 | XML | `StoragePoolGetXMLDesc(pool, 0)` |
-| 卷列表 | `StoragePoolListVolumes(pool, 0)` |
+| 卷列表 | `StoragePoolListAllVolumes(pool, 1, 0)` | ⚠️ 勿用 `StoragePoolListVolumes(pool, 0)`——第二参数是 **maxnames**，传 0 返回空列表（历史坑） |
 
 ## 存储卷（StorageVol）
 

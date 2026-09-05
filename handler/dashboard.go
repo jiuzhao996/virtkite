@@ -136,7 +136,8 @@ func (h *DashboardHandler) HostStats(c *gin.Context) {
 	cpuPercent := 0.0
 	now := time.Now()
 	hostStatsMu.Lock()
-	if !hostCPUPrev.at.IsZero() {
+	first := hostCPUPrev.at.IsZero()
+	if !first {
 		dIdle := idle - hostCPUPrev.idle
 		dTotal := total - hostCPUPrev.total
 		dt := now.Sub(hostCPUPrev.at).Seconds()
@@ -155,6 +156,24 @@ func (h *DashboardHandler) HostStats(c *gin.Context) {
 	hostCPUPrev.total = total
 	hostCPUPrev.at = now
 	hostStatsMu.Unlock()
+
+	// 首次调用无历史样本，无法差分：短暂等待后再采一次，避免首屏 CPU 曲线恒 0
+	if first {
+		time.Sleep(200 * time.Millisecond)
+		if idle2, total2, err := readProcCpuStat(); err == nil {
+			dTotal := total2 - total
+			dIdle := idle2 - idle
+			if dTotal > 0 {
+				cpuPercent = (1 - float64(dIdle)/float64(dTotal)) * 100
+				if cpuPercent < 0 {
+					cpuPercent = 0
+				}
+				if cpuPercent > 100 {
+					cpuPercent = 100
+				}
+			}
+		}
+	}
 
 	// /proc/meminfo：MemTotal / MemAvailable（kB），used = total - available
 	memTotal, memAvailable := uint64(0), uint64(0)

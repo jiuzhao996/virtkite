@@ -82,6 +82,7 @@
         </el-form-item>
         <el-form-item label="文件" required>
           <el-upload
+            ref="uploadRef"
             drag
             :auto-upload="false"
             :show-file-list="true"
@@ -139,6 +140,7 @@ const filter = ref('')
 const dialog = ref(false)
 const uploading = ref(false)
 const file = ref(null)
+const uploadRef = ref(null)
 const poolOptions = ref(['img'])
 const cloneDialog = ref(false)
 const cloneImg = ref({})
@@ -203,6 +205,8 @@ async function loadPools() {
 function openUpload() {
   Object.assign(form, { name: '', os_version: '', is_template: false, pool: 'img' })
   file.value = null
+  // 清空上传组件遗留的文件列表，避免上次上传的文件残留（limit=1 下无法再选新文件）
+  if (uploadRef.value) uploadRef.value.clearFiles()
   dialog.value = true
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
@@ -383,14 +384,6 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 		}
 	}
 	if cfg != nil {
-		if poolPath == "" {
-			var err error
-			if poolPath, err = h.Virt.GetPoolPath(req.StoragePool); err != nil {
-				cleanup()
-				ErrorResponse(c, http.StatusInternalServerError, err)
-				return
-			}
-		}
 		if cfg.Hostname == "" {
 			cfg.Hostname = req.Name
 		}
@@ -400,7 +393,17 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 			ErrorResponse(c, http.StatusInternalServerError, err)
 			return
 		}
-		seedPath = filepath.Join(poolPath, req.Name+"-seed.iso")
+		// seed 写到独立 seed 目录（web 可写、qemu 可读），避免依赖存储池目录权限
+		seedDir := config.GlobalConfig.SeedDir
+		if seedDir == "" {
+			seedDir = "/home/jiuzhao/vmops/data/seed"
+		}
+		if err := os.MkdirAll(seedDir, 0755); err != nil {
+			cleanup()
+			ErrorWithMessage(c, http.StatusInternalServerError, "创建 cloud-init seed 目录失败", err)
+			return
+		}
+		seedPath = filepath.Join(seedDir, req.Name+"-seed.iso")
 		if err := os.WriteFile(seedPath, seedBytes, 0644); err != nil {
 			cleanup()
 			ErrorWithMessage(c, http.StatusInternalServerError, "写入 cloud-init seed 镜像失败", err)
@@ -706,7 +709,9 @@ func (h *VMHandler) DetachInterface(c *gin.Context) {
 	Success(c, gin.H{"vm": vm.Name, "mac": mac})
 }
 
-// SetVcpu 调整 CPU 核数（对应 virsh setvcpus，live+config），同步 DB。
+// SetVcpu 调整 CPU 核数（对应 virsh setvcpus），同步 DB。
+// 停机态通过重 define 修改持久配置（setvcpus CONFIG 无法超 <vcpu> 上限）；
+// 运行态走 live API（仅可调至启动时最大核数以内，超出提示关机）。
 func (h *VMHandler) SetVcpu(c *gin.Context) {
 	id := c.Param("id")
 	var vm model.VM
@@ -722,15 +727,38 @@ func (h *VMHandler) SetVcpu(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusBadRequest, "vCPU 数量必须大于 0", err)
 		return
 	}
-	if err := h.Virt.SetVcpus(vm.Name, req.VCPU); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
+
+	// 停机态：读取 spec → 改 vcpu → 重建 XML → 重 define
+	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != "running" {
+		spec, err := h.Virt.GetDomainSpec(vm.Name)
+		if err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, err)
+			return
+		}
+		spec.VCPU = req.VCPU
+		spec.RawXML = ""
+		xmlstr, err := virt.BuildDomainXML(spec)
+		if err != nil {
+			ErrorWithMessage(c, http.StatusBadRequest, "虚拟机配置不合法", err)
+			return
+		}
+		if err := h.Virt.UpdateDomainXML(vm.Name, xmlstr); err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, err)
+			return
+		}
+	} else {
+		// 运行态：live+config 热调（超出启动时最大核数由 libvirt 报错，翻译提示）
+		if err := h.Virt.SetVcpus(vm.Name, req.VCPU); err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	h.DB.Model(&vm).Update("vcpu", req.VCPU)
 	Success(c, gin.H{"vm": vm.Name, "vcpu": req.VCPU})
 }
 
-// SetMemory 调整内存（对应 virsh setmem，live+config），同步 DB。
+// SetMemory 调整内存（对应 virsh setmem），同步 DB。
+// 停机态通过重 define 修改持久配置；运行态走 live API（仅可调至启动时最大内存以内）。
 func (h *VMHandler) SetMemory(c *gin.Context) {
 	id := c.Param("id")
 	var vm model.VM
@@ -746,9 +774,29 @@ func (h *VMHandler) SetMemory(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusBadRequest, "内存大小必须大于 0", err)
 		return
 	}
-	if err := h.Virt.SetMemory(vm.Name, req.MemoryMB); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
+
+	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != "running" {
+		spec, err := h.Virt.GetDomainSpec(vm.Name)
+		if err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, err)
+			return
+		}
+		spec.MemoryMB = req.MemoryMB
+		spec.RawXML = ""
+		xmlstr, err := virt.BuildDomainXML(spec)
+		if err != nil {
+			ErrorWithMessage(c, http.StatusBadRequest, "虚拟机配置不合法", err)
+			return
+		}
+		if err := h.Virt.UpdateDomainXML(vm.Name, xmlstr); err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, err)
+			return
+		}
+	} else {
+		if err := h.Virt.SetMemory(vm.Name, req.MemoryMB); err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	h.DB.Model(&vm).Update("memory_mb", req.MemoryMB)
 	Success(c, gin.H{"vm": vm.Name, "memory_mb": req.MemoryMB})
@@ -1016,29 +1064,71 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 		return
 	}
 
-	// 1. 调用 libvirt 删除域定义
+	// 1. 先取完整磁盘清单（含多盘/克隆卷/seed 盘），再删除域定义
+	//    （spec 解析失败不阻断删除，域仍按既有流程清理）
+	var diskSources []string
+	if spec, err := h.Virt.GetDomainSpec(vm.Name); err == nil {
+		for _, d := range spec.Disks {
+			if d.Source != "" {
+				diskSources = append(diskSources, d.Source)
+			}
+		}
+	}
+
+	// 2. 调用 libvirt 删除域定义
 	if err := h.Virt.UndefineDomain(vm.Name); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	// 2. 删除对应存储卷（对应 virsh vol-delete）
+	// 3. 删除存储卷（对应 virsh vol-delete）：枚举的磁盘源 + 默认系统盘兜底。
+	//    仅删除位于平台托管池路径下的卷，避免误删共享基镜像（如克隆子卷的父盘）。
 	pool := vm.StoragePool
 	if pool == "" {
 		pool = "vmops"
 	}
-	if err := h.Virt.DeleteVolume(pool, vm.Name+".qcow2"); err != nil {
-		// 卷删除失败不阻断，域已删
-		_ = err
+	// 池路径前缀（用于判定卷是否属于平台托管，避免删共享镜像）
+	poolPath, _ := h.Virt.GetPoolPath(pool)
+	volNameFor := func(src string) (string, bool) {
+		if src == "" {
+			return "", false
+		}
+		if poolPath != "" && !strings.HasPrefix(src, poolPath+"/") {
+			return "", false
+		}
+		return filepath.Base(src), true
+	}
+	seen := map[string]bool{}
+	cleaned := 0
+	tryDeleteVol := func(src string) {
+		if src == "" {
+			return
+		}
+		volName, ok := volNameFor(src)
+		if !ok || seen[volName] {
+			return
+		}
+		seen[volName] = true
+		// libvirt 卷（克隆卷等 root 属主）走 vol-delete；seed 等直接落盘文件 libvirt 不认作卷，os 兜底删文件
+		_ = h.Virt.DeleteVolume(pool, volName)
+		if poolPath != "" && os.Remove(filepath.Join(poolPath, volName)) == nil {
+			cleaned++
+		}
+	}
+	for _, src := range diskSources {
+		tryDeleteVol(src)
+	}
+	tryDeleteVol(filepath.Join(poolPath, vm.Name+".qcow2"))
+
+	// 4. 清理 cloud-init seed 镜像（独立 seed 目录，非池卷）
+	if seedDir := config.GlobalConfig.SeedDir; seedDir != "" {
+		_ = os.Remove(filepath.Join(seedDir, vm.Name+"-seed.iso"))
 	}
 
-	// 3. 软删除数据库记录
+	// 5. 软删除数据库记录
 	h.DB.Delete(&vm)
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "虚拟机已删除",
-	})
+	Success(c, gin.H{"message": "虚拟机已删除", "cleaned_vols": cleaned})
 }
 
 // GetVMXML 获取虚拟机 XML 定义

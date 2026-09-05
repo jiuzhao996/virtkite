@@ -116,7 +116,13 @@ type memoryXML struct {
 
 type vcpuXML struct {
 	Placement string `xml:"placement,attr"`
+	Current   int    `xml:"current,attr,omitempty"`
 	Value     int    `xml:",chardata"`
+}
+
+type maxMemoryXML struct {
+	Unit  string `xml:"unit,attr"`
+	Value uint64 `xml:",chardata"`
 }
 
 type osTypeXML struct {
@@ -152,15 +158,16 @@ type devicesXML struct {
 }
 
 type domainSpecXML struct {
-	XMLName  xml.Name    `xml:"domain"`
-	Type     string      `xml:"type,attr"`
-	Name     string      `xml:"name"`
-	UUID     string      `xml:"uuid,omitempty"`
-	Memory   memoryXML   `xml:"memory"`
-	VCPU     vcpuXML     `xml:"vcpu"`
-	OS       osXML       `xml:"os"`
-	Features featuresXML `xml:"features"`
-	Devices  devicesXML  `xml:"devices"`
+	XMLName   xml.Name      `xml:"domain"`
+	Type      string        `xml:"type,attr"`
+	Name      string        `xml:"name"`
+	UUID      string        `xml:"uuid,omitempty"`
+	Memory    memoryXML     `xml:"memory"`
+	MaxMemory *maxMemoryXML `xml:"maxMemory,omitempty"`
+	VCPU      vcpuXML       `xml:"vcpu"`
+	OS        osXML         `xml:"os"`
+	Features  featuresXML   `xml:"features"`
+	Devices   devicesXML    `xml:"devices"`
 }
 
 // xmlMarshal 封装 encoding/xml 序列化，返回字符串（内部生成 XML 共用）。
@@ -274,7 +281,8 @@ func ParseDomainXML(xmlstr string) (*DomainSpec, error) {
 			Value string `xml:",chardata"`
 		} `xml:"memory"`
 		VCPU struct {
-			Value string `xml:",chardata"`
+			Current string `xml:"current,attr"`
+			Value   string `xml:",chardata"`
 		} `xml:"vcpu"`
 		OS struct {
 			Type struct {
@@ -330,11 +338,14 @@ func ParseDomainXML(xmlstr string) (*DomainSpec, error) {
 	spec := &DomainSpec{
 		Name:     dx.Name,
 		UUID:     dx.UUID,
-		VCPU:     parseInt(dx.VCPU.Value),
+		VCPU:     parseInt(dx.VCPU.Current), // current 属性为当前核数（热升级头寸存于 chardata）
 		MemoryMB: memoryToMB(dx.Memory.Value, dx.Memory.Unit),
 		OSType:   dx.OS.Type.Value,
 		Arch:     dx.OS.Type.Arch,
 		Machine:  dx.OS.Type.Machine,
+	}
+	if spec.VCPU == 0 {
+		spec.VCPU = parseInt(dx.VCPU.Value)
 	}
 	for _, b := range dx.OS.Boot {
 		spec.Boot.Devices = append(spec.Boot.Devices, b.Dev)
@@ -378,10 +389,34 @@ func ParseDomainXML(xmlstr string) (*DomainSpec, error) {
 	return spec, nil
 }
 
+// vcpuMax 计算 vcpu 热升级头寸：max(2*n, n+4)，上限 64。
+// 生成 <vcpu current='n'>max</vcpu>，运行中可热增到 max（热减不被 QEMU 支持，走关机）。
+func vcpuMax(n int) int {
+	max := n * 2
+	if n+4 > max {
+		max = n + 4
+	}
+	if max > 64 {
+		max = 64
+	}
+	return max
+}
+
+// memoryMaxKiB 计算内存热升级头寸：max(2*cur, cur+2048MiB)。
+// 生成 <maxMemory> 作为热插拔上限（仅预留上限，不实际占用），运行中可热增到该值。
+func memoryMaxKiB(cur int) uint64 {
+	maxMB := cur * 2
+	if cur+2048 > maxMB {
+		maxMB = cur + 2048
+	}
+	return uint64(maxMB) * 1024
+}
+
 // BuildDomainXML 根据 DomainSpec 生成完整 domain XML（对应 virsh define 的输入）。
-// 生成含 <memory unit='KiB'>、<vcpu placement='static'>、acpi/apic features、
-// graphics vnc（端口 -1 表示 autoport）、按 Boot.Devices 的 <os><boot dev=.../>、
-// 磁盘与网卡。CloudInit 场景由调用方预先在 spec.Disks 末尾追加 seed 盘，此处正常输出全部 Disks。
+// 生成含 <memory unit='KiB'>、<maxMemory>（热插拔上限）、<vcpu placement='static' current='n'>max</vcpu>
+// （当前核数 n，上限含热升级头寸）、acpi/apic features、graphics vnc（端口 -1 表示 autoport）、
+// 按 Boot.Devices 的 <os><boot dev=.../>、磁盘与网卡。
+// CloudInit 场景由调用方预先在 spec.Disks 末尾追加 seed 盘，此处正常输出全部 Disks。
 func BuildDomainXML(spec *DomainSpec) (string, error) {
 	if spec == nil {
 		return "", fmt.Errorf("DomainSpec 不能为 nil")
@@ -398,7 +433,8 @@ func BuildDomainXML(spec *DomainSpec) (string, error) {
 
 	dx := domainSpecXML{Type: "kvm", Name: spec.Name, UUID: spec.UUID}
 	dx.Memory = memoryXML{Unit: "KiB", Value: uint64(spec.MemoryMB) * 1024}
-	dx.VCPU = vcpuXML{Placement: "static", Value: spec.VCPU}
+	dx.MaxMemory = &maxMemoryXML{Unit: "KiB", Value: memoryMaxKiB(spec.MemoryMB)}
+	dx.VCPU = vcpuXML{Placement: "static", Current: spec.VCPU, Value: vcpuMax(spec.VCPU)}
 
 	ostype := spec.OSType
 	if ostype == "" {
