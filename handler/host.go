@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -170,6 +173,7 @@ func (h *HostHandler) TestHost(c *gin.Context) {
 	// 测试ping
 	out, err := exec.Command("ping", "-c", "1", "-W", "2", host.SSHIP).Output()
 	if err != nil {
+		h.DB.Model(&host).Update("status", "unreachable")
 		Success(c, gin.H{
 			"reachable": false,
 		})
@@ -187,6 +191,8 @@ func (h *HostHandler) TestHost(c *gin.Context) {
 			}
 		}
 	}
+	// 连通则回写状态（列表不再 unknown）
+	h.DB.Model(&host).Update("status", "reachable")
 
 	Success(c, gin.H{
 		"reachable":  true,
@@ -194,7 +200,7 @@ func (h *HostHandler) TestHost(c *gin.Context) {
 	})
 }
 
-// GetHostStats 获取宿主机实时状态
+// GetHostStats 获取宿主机实时状态（/proc 直读，与 dashboard 同源，不依赖 free/uptime 文本解析）。
 func (h *HostHandler) GetHostStats(c *gin.Context) {
 	id := c.Param("id")
 
@@ -208,18 +214,14 @@ func (h *HostHandler) GetHostStats(c *gin.Context) {
 	hostname, _ := exec.Command("hostname").Output()
 	kernel, _ := exec.Command("uname", "-r").Output()
 	cpus, _ := exec.Command("nproc").Output()
-	free, _ := exec.Command("free", "-h").Output()
-	uptime, _ := exec.Command("uptime", "-p").Output()
 
-	lines := strings.Split(string(free), "\n")
-	var memTotal, memUsed string
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "Mem:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				memTotal = fields[1]
-				memUsed = fields[2]
-			}
+	// 内存：读 /proc/meminfo（KB），展示为人类可读
+	memTotalKB, memAvailKB := readHostMeminfo()
+	memTotal, memUsed := "", ""
+	if memTotalKB > 0 {
+		memTotal = formatBytes(memTotalKB * 1024)
+		if memTotalKB > memAvailKB {
+			memUsed = formatBytes((memTotalKB - memAvailKB) * 1024)
 		}
 	}
 
@@ -229,6 +231,74 @@ func (h *HostHandler) GetHostStats(c *gin.Context) {
 		"cpu_cores":    strings.TrimSpace(string(cpus)),
 		"memory_total": memTotal,
 		"memory_used":  memUsed,
-		"uptime":       strings.TrimSpace(string(uptime)),
+		"uptime":       formatUptimeCN(readHostUptimeSec()),
 	})
+}
+
+// readHostMeminfo 读 MemTotal/MemAvailable（单位 KB）。
+func readHostMeminfo() (total, avail uint64) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		switch f[0] {
+		case "MemTotal:":
+			total, _ = strconv.ParseUint(f[1], 10, 64)
+		case "MemAvailable:":
+			avail, _ = strconv.ParseUint(f[1], 10, 64)
+		}
+	}
+	return total, avail
+}
+
+// formatBytes 字节转人类可读（B/KB/MB/GB）。
+func formatBytes(b uint64) string {
+	const unit = 1024.0
+	if b < 1024 {
+		return fmt.Sprintf("%d B", b)
+	}
+	f := float64(b)
+	for _, u := range []string{"KB", "MB", "GB", "TB"} {
+		f /= unit
+		if f < 1024 || u == "TB" {
+			return fmt.Sprintf("%.1f %s", f, u)
+		}
+	}
+	return fmt.Sprintf("%d B", b)
+}
+
+// readHostUptimeSec 读 /proc/uptime 首字段（秒）。
+func readHostUptimeSec() int64 {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	f := strings.Fields(string(data))
+	if len(f) == 0 {
+		return 0
+	}
+	v, _ := strconv.ParseFloat(f[0], 64)
+	return int64(v)
+}
+
+// formatUptimeCN 秒转中文运行时长（X 天 X 小时 X 分钟）。
+func formatUptimeCN(sec int64) string {
+	if sec <= 0 {
+		return "—"
+	}
+	d := sec / 86400
+	h := (sec % 86400) / 3600
+	m := (sec % 3600) / 60
+	if d > 0 {
+		return fmt.Sprintf("%d 天 %d 小时 %d 分钟", d, h, m)
+	}
+	if h > 0 {
+		return fmt.Sprintf("%d 小时 %d 分钟", h, m)
+	}
+	return fmt.Sprintf("%d 分钟", m)
 }
