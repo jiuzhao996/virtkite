@@ -83,6 +83,7 @@
           <el-tag v-if="isAdmin" type="warning" effect="dark" size="small">管理员</el-tag>
           <el-tag v-else type="info" effect="plain" size="small">普通用户</el-tag>
           <span class="username">{{ state.user ? state.user.username : '—' }}</span>
+          <el-button text type="primary" @click="pwdDialog = true">修改密码</el-button>
           <el-button text type="primary" @click="onLogout">退出登录</el-button>
         </div>
       </el-header>
@@ -91,14 +92,35 @@
         <router-view />
       </el-main>
     </el-container>
+
+    <!-- 修改密码（所有角色，改完强制重新登录） -->
+    <el-dialog v-model="pwdDialog" title="修改密码" width="400px">
+      <el-form :model="pwdForm" label-width="80px">
+        <el-form-item label="旧密码" required>
+          <el-input v-model="pwdForm.old_password" type="password" show-password placeholder="请输入旧密码" />
+        </el-form-item>
+        <el-form-item label="新密码" required>
+          <el-input v-model="pwdForm.new_password" type="password" show-password placeholder="至少 6 位" />
+        </el-form-item>
+        <el-form-item label="确认新密码" required>
+          <el-input v-model="pwdForm.confirm" type="password" show-password placeholder="再次输入新密码" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwdDialog = false">取消</el-button>
+        <el-button type="primary" :loading="pwdSaving" @click="doChangePwd">确认修改</el-button>
+      </template>
+    </el-dialog>
   </el-container>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { Monitor, Fold, Expand } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
+import { api } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -136,6 +158,33 @@ const title = computed(() => titleMap[route.path.split('/')[1]] || 'vmops')
 function onLogout() {
   logout()
   router.push({ name: 'login' })
+}
+
+// 修改密码（改完强制重新登录，用新密码验证）
+const pwdDialog = ref(false)
+const pwdSaving = ref(false)
+const pwdForm = ref({ old_password: '', new_password: '', confirm: '' })
+async function doChangePwd() {
+  if (!pwdForm.value.old_password || !pwdForm.value.new_password) {
+    ElMessage.warning('请填写旧密码和新密码')
+    return
+  }
+  if (pwdForm.value.new_password !== pwdForm.value.confirm) {
+    ElMessage.warning('两次输入的新密码不一致')
+    return
+  }
+  pwdSaving.value = true
+  try {
+    await api.changeMyPassword(pwdForm.value.old_password, pwdForm.value.new_password)
+    ElMessage.success('密码修改成功，请重新登录')
+    pwdDialog.value = false
+    pwdForm.value = { old_password: '', new_password: '', confirm: '' }
+    onLogout()
+  } catch (e) {
+    ElMessage.error((e.response && e.response.data && e.response.data.message) || '修改失败')
+  } finally {
+    pwdSaving.value = false
+  }
 }
 </script>
 

@@ -34,6 +34,7 @@ export const api = {
   // 认证
   login: (username, password) => unwrap(http.post('/auth/login', { username, password })),
   me: () => unwrap(http.get('/auth/me')),
+  changeMyPassword: (old_password, new_password) => unwrap(http.put('/users/me/password', { old_password, new_password })),
 
   // 宿主机
   listHosts: () => unwrap(http.get('/hosts')),

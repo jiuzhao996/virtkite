@@ -116,6 +116,8 @@ func main() {
 	{
 		// 认证相关
 		api.GET("/auth/me", authHandler.GetMe)
+		// 当前用户改密码（所有角色，需校验旧密码）
+		api.PUT("/users/me/password", userHandler.ChangeMyPassword)
 
 		// 用户管理（仅管理员）
 		users := api.Group("/users")
