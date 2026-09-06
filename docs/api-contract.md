@@ -8,6 +8,79 @@ tags: [契约, virt-manager, PVE, 后端, 前端]
 
 > 所有子代理（B1/B2/B3/B4/F1-F4）**严格依据本文件**编码。修改本文件需主 agent 确认。
 
+## 0. 统一响应与错误契约
+
+所有接口统一返回 `{code, message, data}`，其中 `code` 与 HTTP 状态码一致：
+
+| 场景 | 产出函数 | 响应体 |
+|---|---|---|
+| 成功 | `handler.Success` | `{"code":200,"message":"success","data":{...}}` |
+| 业务失败 | `handler.Fail` / `ErrorResponse` / `ErrorWithMessage` | `{"code":<状态码>,"message":"中文原因"}`（**不带 `data` 键**） |
+| 中间件拦截 | `middleware.abortJSON` | `{"code":<状态码>,"message":"中文原因","data":null}` |
+
+`middleware/jwt.go` 原先返回 `{"error":"..."}`，与全站契约不一致，现已统一为包内 `abortJSON`。
+中间件**不能**复用 `handler.Fail`：`handler` 已依赖 `middleware`（`HashPassword`、`GenerateToken` 等），
+反向引用会构成导入环，故在 `middleware` 包内单独实现同格式助手。
+
+### 0.1 鉴权与授权错误文案（逐字，前端与测试依赖）
+
+| 状态码 | message | 触发条件 | 产出位置 |
+|---|---|---|---|
+| 401 | `未提供认证信息` | 无 `Authorization` 头且无 `?token=` | `AuthMiddleware` |
+| 401 | `认证格式错误` | 头部不是 `Bearer <token>` 两段式 | `AuthMiddleware` |
+| 401 | `Token 无效或已过期` | 验签失败 / 过期 / **签名算法不是 HS256** | `AuthMiddleware` → `ParseToken` |
+| 401 | `用户不存在` | token 内 `user_id` 查不到用户 | `AuthMiddleware` |
+| 403 | `账号已被禁用` | `users.is_active = false` | `AuthMiddleware` |
+| 403 | `需要管理员权限` | 非 admin 访问 admin 组，或 viewer 发起写操作 | `AdminMiddleware` / `OperatorMiddleware` |
+| 403 | `只读角色不能使用 SSH 终端与串口控制台，请使用图形控制台查看` | viewer 访问 `/terminal` 或 `/serial` | `OperatorMiddleware` → `isGuestWriteChannel` |
+
+`ParseToken` 已加 `jwt.WithValidMethods([]string{"HS256"})`：header 中 `alg` 为 `none`、`HS512`
+等其他取值时直接判为无效（防算法混淆），统一落到 `Token 无效或已过期`。
+
+### 0.2 唯一例外：websockify token 解析（外部契约，不得改动）
+
+`GET /api/vnc/token/:token` 由 websockify 的 JSONTokenApi 插件调用，响应格式由 websockify 规定，
+**不走统一响应**，本轮未改动、后续也不得改（改则 noVNC 链路整体失效）：
+
+- 200：`{"host":"127.0.0.1","port":5900}`
+- 404：`{"error":"token 无效或已过期"}`
+
+对照：同文件的 `VNCHandler.RequestToken`（`POST /api/vms/:id/vnc-token`）的 404 已从
+`gin.H{"error"}` 改为 `Fail`，返回 `{"code":404,"message":"虚拟机不存在"}`。
+
+### 0.3 路径参数错误码（本轮变更）
+
+新增 `handler/param.go`：
+
+```go
+func parseID(raw string) (uint, bool)              // 纯函数，不写响应；供 WS 等自定义错误通道使用
+func paramID(c *gin.Context, name string) (uint, bool) // 失败时已写好 400 并 Abort，调用方直接 return
+```
+
+**为什么必须先解析**：GORM 的 `BuildCondition` 对「非纯数字字符串且未带占位参数」的内联条件，
+会把该字符串当作原始 SQL 片段拼进 `WHERE`。因此 `db.First(&vm, c.Param("id"))` 存在 SQL 注入面，
+而 `db.First(&vm, id)`（`id` 为 `uint`）走参数化。原实现共 39 处调用点未解析直传，现已全部改造：
+37 处普通 HTTP 处理器改用 `paramID`（`vm.go` 26、`host.go` 4、`image.go` 4、`audit.go` 1、`user.go` 1、`vnc.go` 1），
+2 处 WebSocket 处理器改用 `parseID`（`terminal.go`、`serial.go`，WS 已升级无法写 JSON 响应，
+错误经 WS 帧 `{"type":"error","msg":"虚拟机 ID 非法"}` 回送）。
+
+**对外行为变化**（合法数字 ID 的状态码全部不变）：
+
+| 请求 | 改造前 | 改造后 |
+|---|---|---|
+| `GET /api/vms/abc` | 404 `虚拟机不存在`（查询后才失败） | **400 `ID 参数非法`**（进 DB 前拦下） |
+| `GET /api/vms/1 OR 1=1` | 条件被拼进 SQL | **400 `ID 参数非法`** |
+| `GET /api/vms/0` | 404 | **400 `ID 参数非法`**（`parseID` 拒绝 0） |
+| `GET /api/vms/99999` | 404 `虚拟机不存在` | 404 `虚拟机不存在`（不变） |
+
+**尚未统一的三处**（早于本轮已自行解析，无注入面，但文案与 `paramID` 不一致，如实记录）：
+
+| 接口 | 非法 ID 响应 | 解析方式 |
+|---|---|---|
+| `DELETE /api/users/:id` | 400 `无效的用户ID` | `fmt.Sscanf(id, "%d", ...)` |
+| `GET`/`DELETE /api/tasks/:id` | 400 `任务 ID 不合法` | `strconv.ParseUint` |
+| `POST /api/sessions/:id/disconnect` | 400 `参数错误` | `strconv.ParseUint` |
+
 ## 核心模型：DomainSpec（service/virt/spec.go，B1 产出）
 
 ```go
@@ -111,17 +184,49 @@ func (v *Virt) CreateSnapshot(domainName, snapName, description string) error   
 // 内部：逐个 DomainSnapshotGetXMLDesc 解析 <name>/<description>/<creationTime>/<state>
 ```
 
-## 克隆 + 云镜像（B2，service/virt/clone.go + cloudinit.go 新建）
+## 克隆 + 云镜像（B2，service/virt/clone.go + cloudinit.go 新建；P2 更正实现）
 
 ```go
-// clone.go —— PVE 式 linked clone（父卷在子卷存续期间不可删）
+// clone.go —— PVE 式 linked clone（父卷在子卷存续期间不可删/移动/改写）
 func (v *Virt) CloneVolumeFromVol(poolName, srcVolName, newVolName string) (string, error)
-//   实现：StoragePoolLookupByName → StorageVolLookupByName(src) → StorageVolCreateXMLFrom(pool, childXML, src, 0)
-//   childXML: <volume><name>newVolName.qcow2</name><capacity unit="G">与父卷同虚拟容量</capacity>
-//             <target><format type='qcow2'/></target></volume>
-//   libvirt 自动在 child 上写 backing file（StorageVolGetPath 返回路径）
-func (v *Virt) CloneVMFromSpec(source *DomainSpec, newName string) (string, error) // 建卷 + BuildDomainXML + DefineDomain；返回新 domain 名
+//   实现：StoragePoolLookupByName → StorageVolLookupByName(src) → StorageVolGetInfo(取虚拟容量)
+//         → StorageVolGetPath(取父盘绝对路径) → StorageVolCreateXML(pool, childXML, 0)
+//   childXML 由 storage.go 的 buildVolumeXMLWithBacking(name, format, unit, capacity, backingPath)
+//         经 encoding/xml 序列化：
+//             <volume><name>newVolName.qcow2</name><capacity unit="B">与父卷同虚拟容量</capacity>
+//             <target><format type="qcow2"/></target>
+//             <backingStore><path>父盘绝对路径</path><format type="qcow2"/></backingStore></volume>
+//   等价 qemu-img create -f qcow2 -F qcow2 -b <父盘> <子盘>；子卷只存写入差异
+func (v *Virt) ListBackingRefs(poolName string) (map[string][]string, error)
+//   枚举池内所有卷的 <backingStore><path>，返回「父卷路径 → 依赖它的子卷名列表」
+//   （对应逐卷 virsh vol-dumpxml）。查询前若池处于 active 则先 StoragePoolRefresh，
+//   保证直接落盘的文件也进入卷列表；池内无任何 backing 引用时返回空 map（非 nil）。
+//   用途：删卷前的父盘守卫，见 task-contract.md 的 delete_vm。
+func (v *Virt) CloneVMFromSpec(source *DomainSpec, newName string) (string, error)
+//   建卷 + BuildDomainXML + DefineDomain；返回新 domain 名
+//   spec 派生由包内纯函数完成（不触碰 libvirt，可单测）：
+//     systemDiskIndex(source) int      —— 首个 device=='disk' 的下标（跳过 cdrom），无则 -1
+//     randomMACAddr() (string, error)  —— 52:54:00:xx:xx:xx（KVM 保留前缀）
+//     buildCloneSpec(source, newName, diskIdx, newDiskPath, srcDiskPath) (*DomainSpec, error)
+//        —— 深拷贝 Disks 与 Interfaces、重生成 UUID、逐块网卡重生成 MAC、清空 RawXML
+```
 
+> **⚠️ 契约更正（P2，务必以本节为准）**
+>
+> 本节此前记载的实现是 `StorageVolCreateXMLFrom(pool, childXML, src, 0)`，并写着「libvirt 自动在 child
+> 上写 backing file」——**该描述是错的，且当时的代码确实如此，即「增量克隆」名不副实**。
+> `StorageVolCreateXMLFrom`（等价 `virsh vol-clone`）做的是**全量数据拷贝**，产出的子卷没有 backing
+> file。已实测确认：`vol-clone` 出来的卷 `qemu-img info` 里没有 `backing file` 行，
+> `virsh vol-dumpxml` 里也没有 `<backingStore>` 节点。
+> 现改为 `StorageVolCreateXML` + XML 内显式声明 `<backingStore>`，实测子卷 `qemu-img info` 有
+> `backing file:`、`vol-dumpxml` 有 `<backingStore>`、`qemu-img check` 报
+> `No errors were found on the image`。
+>
+> 连带的两条契约变化：① 克隆机的**每块网卡 MAC 都必须重新生成**（libvirt 不会自动改 MAC，XML 里显式
+> 给了就照用，沿用源机 MAC 会造成同网段 ARP 冲突）；② 删除虚拟机时必须有父盘守卫（父盘一旦被删，
+> backing chain 断裂，所有子机磁盘立刻不可读且无法恢复），见 task-contract.md 的 `delete_vm`。
+
+```go
 // cloudinit.go —— seed ISO 生成（纯 Go iso9660，禁止调系统工具）
 func GenerateSeedISO(cfg *CloudInitSpec) ([]byte, error)
 //   iso9660 根目录含：user-data / meta-data / network-config
@@ -159,6 +264,27 @@ func (v *Virt) UpdateNetwork(name, xml string) error        // 停→net-undefin
 // DHCP 范围解析：getNetworkInfo 中解析 <dhcp><range start end>
 ```
 
+## XML 生成（P1：字符串拼接 → encoding/xml）
+
+`service/virt/` 原有 5 处用 `fmt.Sprintf` 拼 libvirt XML，外部可控字段可闭合标签注入任意节点
+（池 `name`/`path`、卷 `name`/`format`、网络 `name`/`gateway` 均可达）。现全部改为标准库
+`encoding/xml` 结构体 marshal，元字符由标准库自动转义，从根上免疫 XML 注入：
+
+| 函数 | 文件 | 生成物 | 序列化结构体 |
+|---|---|---|---|
+| `CreateVolume` | `storage.go` | `<volume>`（unit=G） | `buildVolumeXML` → `volumeXML` |
+| `CreateVolumeCustom` | `storage.go` | `<volume>`（自定义 format） | 同上 |
+| `CreateDirPool` | `storage.go` | `<pool type="dir">` | `buildDirPoolXML` → `poolXML` |
+| `CloneVolumeFromVol` | `clone.go` | `<volume>`（unit=B，与父卷等容量，**含 `<backingStore>`**） | `buildVolumeXMLWithBacking` → `volumeXML` + `volBackingXML` |
+| `NetworkXMLFromParams` | `network.go` | `<network>`（NAT 模板） | `networkXML` + `netForwardXML/netBridgeXML/netIPXML/netDhcpXML` |
+
+固定取值改用命名常量（`volUnitGiB`/`volUnitByte`/`volFormatQcow2`/`poolTypeDir`、
+`natForwardMode`/`natPortStart`/`natPortEnd`/`natNetmask`/`natDefaultGW`/`bridgeSTP`/`bridgeDelay`）。
+`buildVolumeXML(name, format, unit, capacity)` 是 `buildVolumeXMLWithBacking(..., backingPath="")` 的薄封装，
+`volumeXML.BackingStore` 为 `*volBackingXML` 且带 `omitempty`，因此非克隆场景不会多出空节点。
+`NetworkXMLFromParams` 保持 `string` 返回值（调用方签名不变）：结构体只含字符串与整数字段，
+`xml.Marshal` 不会失败，兜底返回空串由 `DefineNetwork` 报「定义网络失败」，绝不产出半截 XML。
+
 ## REST 接口（B4 落地，前端依赖）
 
 统一响应 `{code, message, data}`，错误走 `ErrorResponse/ErrorWithMessage`（AGENTS.md 强制）。
@@ -186,8 +312,9 @@ func (v *Virt) UpdateNetwork(name, xml string) error        // 停→net-undefin
 |---|---|---|
 | GET | `/api/vms/options` | 向导选项：`{pools[], networks[], cloud_images[], os_list[]}` |
 | POST | `/api/vms` | **升级**：body `{name, storage_pool, vcpu, memory_mb, disks[], interfaces[], cloud_init?, source_image_id?, source_vm_id?}`；disk 可 `{create_gb}`（新建）或 `{source}`（引用现有卷/镜像）；兼容旧 `iso_path` |
-| POST | `/api/vms/:id/clone` | body `{name, storage_pool, vcpu, memory_mb, network}`；基于源 VM 磁盘 linked clone |
-| POST | `/api/images/:id/clone` | body `{name, storage_pool, vcpu, memory_mb, network, cloud_init?}`；基于模板/云镜像创建 VM |
+| POST | `/api/vms/:id/clone` | body `{name, storage_pool, vcpu, memory_mb, network}`；基于源 VM 系统盘做增量克隆（子盘 `<backingStore>` 指向源盘），新机 UUID 与**全部网卡 MAC** 重新生成 |
+| POST | `/api/images/:id/clone` | body `{name, storage_pool, vcpu, memory_mb, network, cloud_init?}`；基于模板/云镜像创建 VM（同为增量克隆） |
+| POST | `/api/vms/import` | body `{host_id?, names: []}`（`host_id` 缺省取首台宿主机；`names` 为空返回 400 `请选择要导入的虚拟机`）；只写 DB 不改 libvirt。响应 `{imported, skipped, failed, errors[]}`，`errors` 元素逐字为 `"<域名>: 写入数据库失败"`（原始 GORM/SQL 错误只进服务端日志）。**注：该数组前端 `VmList.vue` 目前未消费，见「已知未处理项」** |
 
 ### 快照（改）
 | Method | Path | 说明 |
@@ -212,6 +339,80 @@ func (v *Virt) UpdateNetwork(name, xml string) error        // 停→net-undefin
 | GET | `/api/dashboard/vm-perf` | 各 VM 实时 `[{name, status, cpu_percent, mem_pct}]`（复用 GetDomainStats） |
 | GET | `/api/audit` | 已有；审计 action 补 `pause_vm/resume_vm/clone_vm/attach_disk/detach_disk/attach_nic/detach_nic/create_snapshot` 等映射 |
 
+### 控制台三入口与只读角色（P1 变更）
+
+| Method | Path | 角色 | 说明 |
+|---|---|---|---|
+| POST | `/api/vms/:id/vnc-token` | admin ✓ / viewer ✓ | 响应**新增 `view_only` 布尔字段**，见下 |
+| GET | `/api/vms/:id/terminal` | admin ✓ / viewer ✗ **403** | WS→SSH 桥；首帧 `{"type":"auth",host,port,user,password}` |
+| GET | `/api/vms/:id/serial` | admin ✓ / viewer ✗ **403** | WS→libvirt 串口桥 |
+
+`POST /api/vms/:id/vnc-token` 成功响应：
+
+```json
+{"code":200,"message":"success","data":{
+  "token":"<一次性 token>","host":"127.0.0.1","port":5900,
+  "view_only":false
+}}
+```
+
+- `view_only`：`role != "admin"` 即为 `true`（admin=false / viewer=true）。
+- 前端据此拼 noVNC URL：`view_only=true` 时追加 `&view_only=1`，并在顶栏显示「只读观看（键鼠已禁用）」标签。
+- **必要性**：VNC 协议本身没有只读模式，键鼠输入只能在客户端侧关闭，否则「只读角色」名不副实。
+
+`/terminal` 与 `/serial` 虽为 GET，但建立的是对 guest 的**双向写入**通道
+（`/terminal` 是 SSH shell，`/serial` 直连虚拟机串口，多数云镜像上即 root TTY），
+与「只读」语义冲突，因此对 viewer 关闭。判定函数为 `middleware/jwt.go` 的 `isGuestWriteChannel`
+（按 `c.FullPath()` 后缀匹配），**不能只靠 HTTP 方法判断读写语义**——浏览器 WebSocket 只能发 GET。
+
+### 输入校验（P1 新增，逐字文案）
+
+| 接口 | 字段 | 规则 | 违反时（400） |
+|---|---|---|---|
+| POST `/api/storage/pools` | `path` | 规范绝对路径：`^/[a-zA-Z0-9_./-]+$`、`filepath.Clean(p)==p`、不含 `..`、无结尾斜杠、不为 `/` | `存储池路径必须是规范的绝对路径（不含 ..、结尾斜杠），且不能是根目录` |
+| POST `/api/storage/pools/:name/volumes` | `format` | 白名单 `qcow2` / `raw`；空值仍走默认（qcow2） | `卷格式只支持 qcow2 或 raw` |
+| POST `/api/networks` | `gateway` | 合法 IPv4 且为规范写法（`ip.String()==输入`，排除 IPv6 与 `::ffff:` 映射）；空值仍走默认 `192.168.100.1` | `网关必须是合法的 IPv4 地址` |
+| POST `/api/hosts`、PUT `/api/hosts/:id` | `ssh_ip` | `net.ParseIP` 通过，或匹配保守主机名白名单 `^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$` 且长度 ≤253 | `SSH 地址格式不合法，只能是 IP 或主机名` |
+
+`ssh_ip` 的校验动机：该值会作为 argv 直接传给 `exec.Command("ping", ..., host.SSHIP)`（`TestHost`），
+以连字符开头的串（如 `-f`）会被 ping 当成选项解析（flood ping），必须拦在写库入口。
+
+存储池 `path`、卷 `format`、网络 `gateway` 的校验与 virt 层的 `encoding/xml` 序列化构成**纵深防御**：
+handler 侧限制取值域，virt 侧保证元字符转义。
+
+### Web 终端 SSH 目标校验（`handler/terminal.go` 的 `validateSSHTarget`）
+
+首帧 `auth` 的 `host`/`port` 完全来自浏览器，原实现零校验，等于把平台变成跳板机 / 内网端口扫描器 /
+口令爆破器。现按「约束由强到弱」收敛，失败原因经 WS 错误帧 `{"type":"error","msg":"<中文>"}` 回送：
+
+| 前置条件 | 规则 | 拒绝文案 |
+|---|---|---|
+| 任意 | `port` 须在 1-65535 | `端口不合法（须在 1-65535 之间）` |
+| `vms.ip` 非空 | `host` 必须与之精确一致 | `只能连接该虚拟机自身地址 <ip>` |
+| `vms.ip` 为空 | 必须是 IP 字面量（不接受主机名，防 DNS 解析到公网与 DNS rebinding） | `目标必须是 IP 地址（不支持主机名）` |
+| 同上 | 排除环回 / 未指定 / 链路本地（单播与组播）/ 组播 | `该地址不允许作为终端目标（环回 / 链路本地 / 组播）` |
+| 同上 | 必须是 RFC1918 私有网段（`net.IP.IsPrivate`） | `只允许连接私有网段地址（10/8、172.16/12、192.168/16）` |
+
+拨号前后均写服务端日志（`目标被拒` / `SSH 拨号` / `SSH 拨号失败`，含 vm、target、user、来源 IP，**不记口令**）。
+`HostKeyCallback` 显式为 `ssh.InsecureIgnoreHostKey()`：目标是平台自建的短生命周期 VM，
+IP 由 DHCP 动态分配、重建即换主机密钥，维护 known_hosts 不具可操作性；中间人风险由上表的目标白名单收敛。
+
+## 状态字面量（P2 收口为常量）
+
+`vms.status` 与 virt 层状态映射的合法取值只有四个，注意 `shut off` 是**空格**不是下划线：
+
+| 取值 | `model` 常量（业务层） | `virt` 常量（封装层） | libvirt 域状态 |
+|---|---|---|---|
+| `running` | `model.VMStatusRunning` | `virt.StatusRunning` | `DomainRunning` |
+| `shut off` | `model.VMStatusShutOff` | `virt.StatusShutOff` | `DomainShutoff` / `DomainShutdown` |
+| `paused` | `model.VMStatusPaused` | `virt.StatusPaused` | `DomainPaused` |
+| `error` | `model.VMStatusError` | `virt.StatusError` | `Nostate`/`Blocked`/`Crashed`/`Pmsuspended` 及 default |
+
+- 两处**各自定义**而非共享一份：`virt` 是最底层的 libvirt 封装层，反向 import `model` 会把 GORM 拖进封装层并倒置分层依赖。两边注释交叉引用，改一处必须同步另一处。
+- `model.VM.Status` 的 gorm tag 默认值原为 `shut_off`（下划线），与 `StateToPlatform` 的返回值及前端映射都不一致，P2 已改为 `shut off`。gorm tag 内不能引用常量，该字面量须与 `VMStatusShutOff` 手工保持一致。
+- 实测数据库中**没有** `shut_off` 存量行（所有写入路径都显式给值，从未落到列默认值）；GORM `AutoMigrate` 能把已有列的 default 改过来，后端下次重启即收敛。
+- `handler/vm.go` 的 8 处字面量已改引用常量；`service/tasks/vm_tasks.go` 尚有 5 处未换，见「已知未处理项」。
+
 ## 约定与陷阱（子代理必须遵守）
 
 1. 所有 libvirt 调用走 `service/virt`，`getConn()` 开头，错误 `%w` 中文描述注明 virsh 等价命令（AGENTS.md + vmops-libvirt skill）
@@ -219,3 +420,25 @@ func (v *Virt) UpdateNetwork(name, xml string) error        // 停→net-undefin
 3. 运行中修改：磁盘/网卡 attach/detach 用 `DomainAttachDeviceFlags(dom, xml, LIVE|CONFIG)`（`libvirt.DomainVcpuAffinityLive` 之类在 go-libvirt 对应为 `VIR_DOMAIN_AFFECT_LIVE` 常量，以 `DeviceModifyFlags` 为准，代码注释注明）；SetVcpus/SetMemory 同样 live+config
 4. 快照 ListSnapshots 旧签名被前端使用 → B2 改签名，B4 同步改 handler（契约内锁定）
 5. 前端文件零重叠：F1=VmDetail.vue（含快照 UI 保留），F2=CreateVmWizard.vue+router+api，F3=Dashboard.vue，F4=AuditList.vue+NetworkList.vue+ImageList.vue+api（部分）
+6. **路径参数中的数值主键必须经 `paramID`/`parseID` 解析后再交给 GORM**，禁止直传 `c.Param`（见 0.3 节）
+7. **WebSocket 写入必须经 `console.Conn`**，禁止直接对 `*websocket.Conn` 并发写（gorilla/websocket 明确禁止多 goroutine 同时写，违反即 panic 且 gin Recovery 拦不住）
+8. **后台 goroutine（worker / 清扫器 / WS 转发）必须自带 `defer recover()`**，gin Recovery 只覆盖 HTTP 请求链
+9. **状态字面量用常量**（`model.VMStatus*` / `virt.Status*`），禁止散落 `"running"`/`"shut off"` 字符串（见上节）
+10. **增量克隆只能靠卷 XML 的 `<backingStore>`**（`buildVolumeXMLWithBacking`），禁止用 `StorageVolCreateXMLFrom` 冒充——后者是全量拷贝，产出的子卷没有 backing file
+11. **删卷前必须过三重守卫**（池外 / 镜像库登记 / 仍被子卷 backing 依赖），见 task-contract.md 的 `delete_vm`
+
+## 已知未处理项（如实记录，勿在文档中宣称已解决）
+
+| 项 | 现状 | 影响面 |
+|---|---|---|
+| `POST /api/networks/xml`、`PUT /api/networks/:name` | 接受调用方原始 XML 直接 `net-define`，未做结构校验 | admin 可定义任意 libvirt 网络（viewer 已被 403 拦住） |
+| `PUT /api/vms/:id/xml` | 同上，接受原始 domain XML | 同上 |
+| `GET /metrics` | 公开无鉴权（Prometheus 抓取需要） | 泄漏 VM 名与资源指标，需靠防火墙限制来源 |
+| `POST /api/auth/login` | 无失败次数限流 / 验证码 | 可离线爆破弱口令 |
+| CORS | `CORS_ORIGINS` 默认 `*` | 生产需收敛为具体来源 |
+| Web 终端 `HostKeyCallback` | `InsecureIgnoreHostKey()` | 目标已限定私有网段，残余中间人风险 |
+| `golangci-lint` | 本机未安装，`.golangci.yml` 已就位但深度 lint 未执行；且该配置为 v1 schema，装 v2.x 会因字段改名（`linters-settings` → `linters.settings` 等）报错 | 静态检查覆盖不完整（`go build`/`go vet`/`gofmt` 已过） |
+| 孤儿卷 | 「先删父机、再删子机」顺序下，被父盘守卫保留的卷会残留为无人引用的孤儿文件，无自动清理入口 | 占存储空间。刻意取舍：宁可留垃圾文件也不能损坏在用磁盘 |
+| 状态字面量 | `service/tasks/vm_tasks.go` 仍有 5 处 `"shut off"` 字面量未换成 `model.VMStatusShutOff` | 一致性隐患，当前行为正确 |
+| `POST /api/vms/import` 的 `errors` | 后端已按「域名 + 中文原因」返回，但前端 `VmList.vue` 只读 `imported`/`skipped`/`failed` | 单台导入失败时用户看不到具体原因 |
+| 多宿主机 | `hosts.libvirt_uri` 已入库、已在设置页展示，但**从未用于建立连接**；`virt.New()` 固定 `libvirt.QEMUSystem`（`qemu:///system`） | 多宿主机纳管目前是空壳，只有运行后端的这台机器真实可管 |
