@@ -335,9 +335,40 @@ func (v *Virt) UpdateNetwork(name, xml string) error        // 停→net-undefin
 |---|---|---|
 | PUT | `/api/networks/:name` | body `{xml}` 编辑网络 |
 | GET | `/api/networks` | 已有，NetworkInfo 增 `autostart` |
+| PUT | `/api/networks/:name/autostart` | **新增（UX 批次）** body `{autostart: bool}`，对应 `virsh net-autostart on\|off` |
 | GET | `/api/dashboard/host-stats` | 主机实时：`{cpu_percent, mem_total_kib, mem_used_kib}`（读 /proc/stat、/proc/meminfo，或用 virt host info） |
 | GET | `/api/dashboard/vm-perf` | 各 VM 实时 `[{name, status, cpu_percent, mem_pct}]`（复用 GetDomainStats） |
 | GET | `/api/audit` | 已有；审计 action 补 `pause_vm/resume_vm/clone_vm/attach_disk/detach_disk/attach_nic/detach_nic/create_snapshot` 等映射 |
+
+### 用户 / 监控 / 设置 / 会话与任务分页（UX 批次新增）
+
+**已下线的旧接口（勿再调用，路由已删，请求会落到 SPA 兜底返回 HTML）**：
+`GET /api/host`（GetHostInfo，被 /api/dashboard/host-stats + host-history 取代）、
+`GET /api/vms/:id/detail`（GetVMDetail 聚合接口，被 /spec + /stats + stats-history 取代）。
+前端 api/index.js 同步删除死封装 getVMDetail/updateVMSpec/getImage（PUT /vms/:id/spec 后端保留，属文档化能力）。
+
+| Method | Path | 角色 | 说明 |
+|---|---|---|---|
+| GET/POST | `/api/users` | admin | 用户管理（后端原有，本批接前端 Users.vue）；CreateUser 新增角色白名单（admin/operator/viewer，否则 400「角色不合法，仅支持 admin/operator/viewer」）与密码 ≥6 位校验 |
+| PUT/DELETE | `/api/users/:id` | admin | UpdateUser 同样校验角色白名单；DeleteUser 改走 `paramID`（修掉 `fmt.Sscanf` 注入面） |
+| GET | `/api/monitor/alerts` | 登录即可 | **新增** 代理 Alertmanager `GET /api/v2/alerts`，原样透传 JSON 数组；地址来自 env `ALERTMANAGER_URL`（默认 `http://127.0.0.1:9093`，compose 内 `http://alertmanager:9093`）；AM 不可达返回 502 |
+| GET | `/api/settings` | admin | 快照新增 `writable` 节（三个可写项当前值，未设置为默认值）；`tasks.workers/queue_buffer` 改读真实常量（原硬编码占位） |
+| PUT | `/api/settings` | admin | **新增** body 三字段全可选：`default_storage_pool`（1-64 位 `A-Za-z0-9_.-`）、`vnc_token_ttl_min`（1-60）、`vnc_stale_min`（5-1440）；写 `system_settings` 表，消费方实时读取，**保存即生效无需重启**；非法值 400 逐字文案如「VNC token 有效期 必须是 1-60 的整数」 |
+| GET | `/api/storage/pools/:name/volume-refs` | operator+ | **新增** 池级卷引用：`{pool, refs: {卷名: {vms[], images[], children[]}}}`（vms=挂载该卷的域名、images=镜像库登记、children=backing 子卷） |
+| GET | `/api/sessions` | 已有 | 新增 query：`type`（vnc/ssh/serial）、`vm_name`/`username`（LIKE）、`page`/`page_size`（真分页，`total` 为 Count 真值；旧 `limit` 语义由 page_size 承接） |
+| GET | `/api/tasks` | 已有 | 新增 `page`/`page_size` 真分页（`total`=Count 真值）；旧 `limit` 参数兼容（等价 page_size） |
+
+**删卷守卫（UX 批次）**：`DELETE /api/storage/pools/:name/volumes/:vol` 不再裸删。删除前计算该卷引用
+（`ListAllDomainDiskSources` 域磁盘挂载 + `images.path` 精确匹配 + `ListBackingRefs` backing 子卷），
+任一命中返回 **409**，文案逐字格式：
+`卷 <名> 正在使用中，已阻止删除: 仍被虚拟机挂载（<vm1>、<vm2>）…；已登记为镜像库镜像（<img>）…；是增量克隆父盘，仍被 N 个子卷依赖（…）`
+——与 `tasks.execDeleteVM` 的 `shouldKeepVol` 三重守卫同一立场。
+
+**系统设置消费点**（改配置即生效，勿回退成硬编码）：
+`default_storage_pool` → `tasks.DefaultStoragePoolResolver`（原 `defaultStoragePool` 常量）；
+`vnc_token_ttl_min` → `vnc.TTLResolver`（原 token.go 硬编码 5min）；
+`vnc_stale_min` → `console.StaleAfterResolver`（原 registry.go 硬编码 60min）。
+三个 resolver 均有未接线兜底默认值，测试依赖这一行为。 |
 
 ### 控制台三入口与只读角色（P1 变更）
 
