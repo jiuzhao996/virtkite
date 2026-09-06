@@ -42,33 +42,46 @@
               </el-option>
             </el-select>
           </el-form-item>
-          <el-form-item label="ISO 路径" required>
-            <div class="iso-row">
-              <el-input v-model="iso.isoPath" placeholder="/path/to/install.iso" class="iso-path" />
-              <el-select v-model="iso.isoImageId" clearable placeholder="或从镜像库选择" class="iso-picker">
-                <el-option v-for="img in isoImages" :key="img.id" :label="img.name" :value="img.id">
-                  <div class="opt-line">
-                    <span>{{ img.name }}</span>
-                    <span class="opt-hint">{{ img.path }}</span>
-                  </div>
-                </el-option>
-                <template #empty><span class="opt-hint">镜像库暂无 ISO 镜像</span></template>
-              </el-select>
+          <el-form-item label="安装介质" required>
+            <div class="iso-pick">
+              <el-cascader
+                v-if="!iso.manual"
+                v-model="iso.pick"
+                :options="isoVolumeTree"
+                :props="{ value: 'path', label: 'label', children: 'children' }"
+                placeholder="选择存储池 → ISO 文件"
+                style="width: 100%"
+                @change="onIsoPick"
+              />
+              <el-input v-else v-model="iso.isoPath" placeholder="/path/to/install.iso" />
+              <el-checkbox v-model="iso.manual" class="manual-toggle">手动输入路径</el-checkbox>
             </div>
           </el-form-item>
-          <el-alert type="info" :closable="false" show-icon title="安装介质将挂载为只读光驱，系统安装到新建的系统盘中。" />
+          <el-alert type="info" :closable="false" show-icon title="安装介质将挂载为只读光驱，系统安装到新建的系统盘中。ISO 通常存放在「img」安装镜像池。" />
         </el-form>
 
         <el-form v-if="installMode === 'import'" label-width="110px" class="step-form">
-          <el-form-item label="磁盘路径" required>
-            <el-input v-model="importDisk.source" placeholder="如 /var/lib/libvirt/images/disk.qcow2" style="width: 480px" />
+          <el-form-item label="现有磁盘" required>
+            <div class="iso-pick">
+              <el-cascader
+                v-if="!importDisk.manual"
+                v-model="importDisk.pick"
+                :options="diskVolumeTree"
+                :props="{ value: 'path', label: 'label', children: 'children' }"
+                placeholder="选择存储池 → 磁盘卷"
+                style="width: 100%"
+                @change="onImportPick"
+              />
+              <el-input v-else v-model="importDisk.source" placeholder="/path/to/disk.qcow2" />
+              <el-checkbox v-model="importDisk.manual" class="manual-toggle">手动输入路径</el-checkbox>
+            </div>
           </el-form-item>
           <el-form-item label="操作系统">
             <el-select v-model="importDisk.osName" clearable filterable placeholder="选择操作系统（仅用于识别设备型号）" style="width: 380px">
               <el-option v-for="os in options.osList" :key="os.name" :label="os.name" :value="os.name" />
             </el-select>
           </el-form-item>
-          <el-alert type="info" :closable="false" show-icon title="直接引用现有磁盘启动，不新建卷；操作系统选择仅用于展示与设备型号推荐。" />
+          <el-alert type="info" :closable="false" show-icon title="直接引用现有磁盘启动，不新建卷；系统盘通常在「images」池、数据盘在「exten」池。操作系统选择仅用于展示与设备型号推荐。" />
         </el-form>
 
         <el-form v-if="installMode === 'cloudimage'" label-width="110px" class="step-form">
@@ -80,11 +93,12 @@
                   <span class="opt-tags">
                     <el-tag v-if="img.is_template" size="small" type="success" effect="plain">模板</el-tag>
                     <el-tag size="small" type="info" effect="plain">{{ img.format }}</el-tag>
-                    <span class="opt-hint">{{ img.os_version || '' }} · {{ img.size_gb }} GB</span>
+                    <span class="opt-hint">{{ img.os_version || '' }} · {{ img.size_gb }} GB · {{ img.path }}</span>
                   </span>
                 </div>
               </el-option>
             </el-select>
+            <div class="os-hint">镜像库是池内共享盘的「登记索引」：这里列出已登记的云镜像/模板（可跨池引用，建机不复制文件）。想上架新的？到「存储池 → 卷抽屉」把任意卷登记进库。</div>
           </el-form-item>
           <el-form-item v-if="cloudImage.imageId" label="识别系统">
             <template v-if="cloudImage.osName">
@@ -397,6 +411,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, Check, Plus, Delete, Monitor, Files, Cloudy, CopyDocument } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { fmtSizeBytes } from '../utils/format.js'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
@@ -426,8 +441,8 @@ const options = reactive({
 const vms = ref([])
 
 const form = reactive({ name: '', storagePool: '', vcpu: 2, memoryMb: 2048, diskGb: 20, machine: '' })
-const iso = reactive({ osName: '', isoPath: '', isoImageId: null })
-const importDisk = reactive({ osName: '', source: '' })
+const iso = reactive({ osName: '', isoPath: '', pick: null, manual: false })
+const importDisk = reactive({ osName: '', source: '', pick: null, manual: false })
 const cloudImage = reactive({ imageId: null, osName: '' })
 const cloneVm = reactive({ sourceVmId: null })
 const extraDisks = reactive([])
@@ -446,8 +461,38 @@ const installModes = [
   { value: 'clone', icon: CopyDocument, label: '克隆现有 VM', desc: '从现有虚拟机创建链接克隆' }
 ]
 
-const isoImages = computed(() => options.cloudImages.filter((i) => (i.format || '').toLowerCase() === 'iso'))
-const cloudImageList = computed(() => options.cloudImages.filter((i) => (i.format || '').toLowerCase() !== 'iso'))
+// 池→卷两级树：供 ISO / 现有磁盘的选择器直接点选，免手填绝对路径
+const volumeTree = computed(() =>
+  (options.storagePools || [])
+    .filter((p) => p.volumes && p.volumes.length)
+    .map((p) => ({
+      path: p.path,
+      label: `${p.name}（${p.volumes.length} 个卷）`,
+      children: p.volumes.map((v) => ({
+        path: v.path,
+        label: `${v.name} · ${fmtSizeBytes(v.capacity)}`,
+      })),
+    }))
+)
+// 安装介质树：只保留 ISO 文件
+const isoVolumeTree = computed(() =>
+  volumeTree.value
+    .map((p) => ({ ...p, children: p.children.filter((c) => c.path.toLowerCase().endsWith('.iso')) }))
+    .filter((p) => p.children.length)
+)
+// 现有磁盘树：排除光驱文件
+const diskVolumeTree = computed(() =>
+  volumeTree.value
+    .map((p) => ({ ...p, children: p.children.filter((c) => !c.path.toLowerCase().endsWith('.iso')) }))
+    .filter((p) => p.children.length)
+)
+
+function onIsoPick(val) {
+  iso.isoPath = (val && val[val.length - 1]) || ''
+}
+function onImportPick(val) {
+  importDisk.source = (val && val[val.length - 1]) || ''
+}const cloudImageList = computed(() => options.cloudImages.filter((i) => (i.format || '').toLowerCase() !== 'iso'))
 
 const activeOsName = computed(() => {
   if (installMode.value === 'iso') return iso.osName
@@ -475,14 +520,7 @@ const systemDisk = computed(() => {
 
 const diskRows = computed(() => [...systemDisk.value, ...extraDisks])
 
-const isoPathLabel = computed(() => {
-  if (installMode.value !== 'iso') return ''
-  if (iso.isoImageId) {
-    const img = options.cloudImages.find((i) => i.id === iso.isoImageId)
-    return img ? img.path : ''
-  }
-  return iso.isoPath
-})
+const isoPathLabel = computed(() => (installMode.value === 'iso' ? iso.isoPath : ''))
 
 const previewDisks = computed(() => {
   const list = []
@@ -738,7 +776,7 @@ function next() {
   if (step.value === 0) {
     if (installMode.value === 'iso') {
       if (!iso.osName) return ElMessage.warning({ message: '请选择操作系统', grouping: true })
-      if (!iso.isoPath && !iso.isoImageId) return ElMessage.warning('请填写 ISO 路径或从镜像库选择')
+      if (!iso.isoPath) return ElMessage.warning('请选择安装介质（存储池 → ISO，或勾选手动输入路径）')
     } else if (installMode.value === 'import') {
       if (!importDisk.source) return ElMessage.warning('请填写磁盘路径')
     } else if (installMode.value === 'cloudimage') {
@@ -942,6 +980,20 @@ onMounted(async () => {
   display: flex;
   gap: var(--space-lg);
   width: 100%;
+}
+
+/* 池→卷级联选择器 + 手动输入开关（ISO / 导入磁盘共用） */
+.iso-pick {
+  width: 520px;
+}
+
+.manual-toggle {
+  margin-top: var(--space-sm);
+}
+
+.manual-toggle :deep(.el-checkbox__label) {
+  font-size: 0.82rem;
+  color: var(--el-text-color-secondary);
 }
 
 .iso-path {
