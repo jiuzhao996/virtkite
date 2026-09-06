@@ -53,3 +53,23 @@ func contains(s string, kws ...string) bool {
 	}
 	return true
 }
+
+// TestInferPoolRole 池角色推断：按本平台目录约定给缺省角色，未知目录返回空串（前端展示"未分类"）。
+func TestInferPoolRole(t *testing.T) {
+	cases := []struct {
+		name, path, want string
+	}{
+		{"base", "/home/jiuzhao/storage/base", "模板基盘"},
+		{"images", "/home/jiuzhao/storage/images", "系统盘"},
+		{"exten", "/home/jiuzhao/storage/exten", "数据盘"},
+		{"img", "/home/jiuzhao/data/img", "安装镜像"},
+		{"default", "/var/lib/libvirt/images", "系统池"},
+		{"mystorage", "/srv/vm/disks", ""}, // 未命中约定：空 = 未分类，可在 UI 手动指定
+		{"base", "/srv/other", "模板基盘"}, // 池名命中即推断，不依赖路径
+	}
+	for _, c := range cases {
+		if got := inferPoolRole(c.name, c.path); got != c.want {
+			t.Errorf("inferPoolRole(%q,%q) = %q, want %q", c.name, c.path, got, c.want)
+		}
+	}
+}

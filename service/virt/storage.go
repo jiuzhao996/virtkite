@@ -27,10 +27,11 @@ type PoolInfo struct {
 
 // VolInfo 存储卷信息。
 type VolInfo struct {
-	Name       string `json:"name"`
-	Path       string `json:"path"`
-	Capacity   uint64 `json:"capacity"`
-	Allocation uint64 `json:"allocation"`
+	Name        string `json:"name"`
+	BackingFile string `json:"backing_file,omitempty"` // backing 父盘路径（仅增量克隆子卷有）
+	Path        string `json:"path"`
+	Capacity    uint64 `json:"capacity"`
+	Allocation  uint64 `json:"allocation"`
 }
 
 // 以下为存储池/存储卷 XML 生成结构（按 AGENTS.md「XML 用标准库 encoding/xml」，
@@ -375,6 +376,17 @@ func (v *Virt) getPoolInfo(l *libvirt.Libvirt, pool libvirt.StoragePool) (PoolIn
 				_ = t
 				vi.Capacity = capa
 				vi.Allocation = alloc
+			}
+			// 卷自身的 backing 父盘（有则为增量克隆子卷，前端据此外「增量系统盘」徽标）
+			if volXML, err := l.StorageVolGetXMLDesc(vol, 0); err == nil {
+				var vx struct {
+					BackingStore struct {
+						Path string `xml:"path"`
+					} `xml:"backingStore"`
+				}
+				if xmlDecode(volXML, &vx) == nil {
+					vi.BackingFile = vx.BackingStore.Path
+				}
 			}
 			info.Volumes = append(info.Volumes, vi)
 		}

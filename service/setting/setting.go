@@ -23,7 +23,8 @@ const (
 
 // 各键默认值（与配置化之前的硬编码行为一致）。
 const (
-	DefaultStoragePoolFallback = "vmops"
+	// 默认池兜底值：vmops 池已按规划淘汰，缺省落到主力系统盘池 images
+	DefaultStoragePoolFallback = "images"
 	VNCTokenTTLDefaultMin      = 5
 	VNCStaleDefaultMin         = 60
 )

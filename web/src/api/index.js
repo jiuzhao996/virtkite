@@ -153,6 +153,10 @@ export const api = {
   // file_sd 抓取目标预览（与后台落盘文件同源）
   monitorFileSD: () => unwrap(http.get('/monitor/file-sd')),
 
+  // 池平台侧元数据（角色覆盖 + 描述；role 传空串 = 自动推断，description ≤500 字符）
+  updatePoolMeta: (name, payload) => unwrap(http.put('/storage/pools/' + name + '/meta', payload)),
+  // 把池内已有卷登记进镜像库（同路径重复登记返回 409）；不复制不移动，只建索引
+  registerImage: (payload) => unwrap(http.post('/images/register', payload)),
   // 存储卷在用引用（卷管理弹窗的"在用"徽标与删卷确认）
   volumeRefs: (pool) => unwrap(http.get('/storage/pools/' + pool + '/volume-refs')),
   // 孤儿卷清理（转后台任务，202 返回 task_id）

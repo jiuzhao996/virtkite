@@ -251,6 +251,7 @@ func main() {
 		storage.Use(middleware.OperatorMiddleware())
 		{
 			storage.GET("/pools", storageHandler.ListPools)
+			storage.PUT("/pools/:name/meta", storageHandler.UpdatePoolMeta)
 			storage.GET("/pools/:name", storageHandler.GetPool)
 			storage.POST("/pools", storageHandler.CreatePool)
 			storage.DELETE("/pools/:name", storageHandler.DeletePool)
@@ -282,6 +283,7 @@ func main() {
 			images.GET("", imageHandler.ListImages)
 			images.GET("/:id", imageHandler.GetImage)
 			images.POST("/upload", imageHandler.UploadImage)
+			images.POST("/register", imageHandler.RegisterImage)
 			images.POST("/:id/clone", imageHandler.CloneVM)
 			images.PUT("/:id/template", imageHandler.SetImageTemplate)
 			images.DELETE("/:id", imageHandler.DeleteImage)

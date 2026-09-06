@@ -215,6 +215,74 @@ func (h *ImageHandler) UploadImage(c *gin.Context) {
 	Created(c, "上传成功", img)
 }
 
+// RegisterImage 登记既有存储卷为平台云镜像（POST /api/images/register）。
+// 用于把 base 等池里已存在的模板/云镜像纳入镜像库，打通「基于云镜像创建」链路——
+// 这些文件是 VM 正在引用或将被 backing 的共享盘，登记只是建目录索引，不复制不移动。
+// body: {name*, path*, os_version?, description?, is_template?}；同路径重复登记返回 409。
+func (h *ImageHandler) RegisterImage(c *gin.Context) {
+	var req struct {
+		Name        string `json:"name" binding:"required"`
+		Path        string `json:"path" binding:"required"`
+		OSVersion   string `json:"os_version"`
+		Description string `json:"description"`
+		IsTemplate  bool   `json:"is_template"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	// path 必须是存在的常规文件：登记的是磁盘索引，指向不存在文件的记录只会制造悬挂引用
+	if !filepath.IsAbs(req.Path) || !poolPathRegex.MatchString(req.Path) {
+		Fail(c, http.StatusBadRequest, "路径必须是绝对路径且只含合法字符")
+		return
+	}
+	st, err := os.Stat(req.Path)
+	if err != nil || st.IsDir() {
+		Fail(c, http.StatusBadRequest, "文件不存在或不是常规文件："+req.Path)
+		return
+	}
+
+	// 同路径去重（含软删除记录——重新登记视为恢复，复用原记录）
+	var existing model.Image
+	if err := h.DB.Unscoped().Where("path = ?", req.Path).First(&existing).Error; err == nil {
+		if existing.DeletedAt.Valid {
+			if err := h.DB.Unscoped().Model(&existing).Update("deleted_at", nil).Error; err != nil {
+				ErrorWithMessage(c, http.StatusInternalServerError, "恢复镜像登记失败", err)
+				return
+			}
+			Created(c, "已恢复登记", existing)
+			return
+		}
+		Fail(c, http.StatusConflict, "该路径已登记为镜像「"+existing.Name+"」")
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(req.Path))
+	format := "qcow2"
+	switch ext {
+	case ".iso":
+		format = "iso"
+	case ".raw":
+		format = "raw"
+	}
+	sizeGB := float64(st.Size()) / (1024.0 * 1024.0 * 1024.0)
+
+	img := model.Image{
+		Name:        req.Name,
+		Path:        req.Path,
+		OSVersion:   req.OSVersion,
+		SizeGB:      sizeGB,
+		Format:      format,
+		IsTemplate:  req.IsTemplate,
+		Description: req.Description,
+	}
+	if err := h.DB.Create(&img).Error; err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "保存镜像记录失败", err)
+		return
+	}
+	Created(c, "登记成功", img)
+}
+
 // DeleteImage 删除镜像
 func (h *ImageHandler) DeleteImage(c *gin.Context) {
 	id, ok := paramID(c, "id")

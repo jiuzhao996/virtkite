@@ -1,14 +1,18 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
@@ -27,8 +31,7 @@ func validVolName(name string) bool {
 }
 
 // validPoolPath 校验目录型存储池的宿主机路径（对应 virsh pool-define-as --target）。
-// 目录池的 path 决定该池所有卷的落盘位置，零校验等于让调用方指定宿主机任意目录，
-// 因此要求：绝对路径 + 字符白名单 + 规范写法（filepath.Clean 后与原值一致，
+// 目录池的 path 决定该池所有卷的落盘位置，零校验等于让调用方指定宿主机任意目录，// 因此要求：绝对路径 + 字符白名单 + 规范写法（filepath.Clean 后与原值一致，
 // 借此拒绝 ..、// 与结尾斜杠）+ 不得为根目录本身。
 func validPoolPath(p string) bool {
 	if !filepath.IsAbs(p) || !poolPathRegex.MatchString(p) {
@@ -75,7 +78,121 @@ func NewStorageHandler(db *gorm.DB, taskMgr *tasks.Manager) *StorageHandler {
 	return &StorageHandler{DB: db, Virt: virt.New(), Tasks: taskMgr}
 }
 
-// ListPools 存储池列表（含详情）
+// poolRoleNames 平台认池角色的全集（pool_meta.role 白名单；空串 = 跟随自动推断）。
+var poolRoleNames = []string{"模板基盘", "系统盘", "数据盘", "安装镜像", "系统池", "其他"}
+
+// inferPoolRole 按池名/路径推断池角色（纯函数，供列表展示与单测）。
+// libvirt 池 XML 没有语义字段，这里按本平台的目录约定给缺省角色：
+// base=模板基盘（backing 父盘与模板）、images=系统盘（增量克隆子卷）、
+// exten=数据盘（热挂数据盘）、img=安装镜像（ISO）、default=/var/lib=系统池。
+func inferPoolRole(name, path string) string {
+	switch {
+	case name == "base" || strings.HasSuffix(path, "/storage/base"):
+		return "模板基盘"
+	case name == "images" || strings.HasSuffix(path, "/storage/images"):
+		return "系统盘"
+	case name == "exten" || strings.HasSuffix(path, "/storage/exten"):
+		return "数据盘"
+	case name == "img" || strings.Contains(path, "/data/img"):
+		return "安装镜像"
+	case strings.HasPrefix(path, "/var/lib/libvirt"):
+		return "系统池"
+	default:
+		return ""
+	}
+}
+
+// loadPoolMeta 读取池元数据（角色覆盖 + 描述），key 为池名。
+func (h *StorageHandler) loadPoolMeta() map[string]model.PoolMeta {
+	metas := map[string]model.PoolMeta{}
+	var rows []model.PoolMeta
+	if err := h.DB.Find(&rows).Error; err != nil {
+		return metas
+	}
+	for _, r := range rows {
+		metas[r.PoolName] = r
+	}
+	return metas
+}
+
+// seedDirInfo cloud-init 种子目录信息（路径 + seed 文件数）：seed 是每 VM 一份的生成物，
+// 不进池管理，在存储页汇总条展示。
+func (h *StorageHandler) seedDirInfo() gin.H {
+	dir := config.GlobalConfig.SeedDir
+	if dir == "" {
+		dir = "/home/jiuzhao/vmops/data/seed"
+	}
+	count := 0
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), "-seed.iso") {
+				count++
+			}
+		}
+	}
+	return gin.H{"path": dir, "count": count}
+}
+
+// defaultPoolName 平台默认存储池（建机未指定池时落点），读系统设置，缺省走 setting 兜底值。
+func (h *StorageHandler) defaultPoolName() string {
+	var row model.Setting
+	if err := h.DB.Where("`key` = ?", "default_storage_pool").First(&row).Error; err == nil && row.Value != "" {
+		return row.Value
+	}
+	return setting.DefaultStoragePoolFallback
+}
+
+// UpdatePoolMeta 更新池的平台侧元数据（PUT /api/storage/pools/:name/meta）。
+// role 必须在白名单内或空串（空 = 跟随自动推断）；description 最长 500 字符。
+func (h *StorageHandler) UpdatePoolMeta(c *gin.Context) {
+	name := c.Param("name")
+	if !validVolName(name) {
+		Fail(c, http.StatusBadRequest, "存储池名称不合法")
+		return
+	}
+	var req struct {
+		Role        string `json:"role"`
+		Description string `json:"description"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	validRole := req.Role == ""
+	for _, r := range poolRoleNames {
+		if req.Role == r {
+			validRole = true
+		}
+	}
+	if !validRole {
+		Fail(c, http.StatusBadRequest, "角色只允许："+strings.Join(poolRoleNames, "/")+"或留空自动推断")
+		return
+	}
+	if len(req.Description) > 500 {
+		Fail(c, http.StatusBadRequest, "描述最长 500 字符")
+		return
+	}
+
+	var meta model.PoolMeta
+	err := h.DB.Where("pool_name = ?", name).First(&meta).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			meta = model.PoolMeta{PoolName: name}
+		} else {
+			ErrorWithMessage(c, http.StatusInternalServerError, "查询池元数据失败", err)
+			return
+		}
+	}
+	meta.Role = req.Role
+	meta.Description = req.Description
+	if err := h.DB.Save(&meta).Error; err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "保存池元数据失败", err)
+		return
+	}
+	Success(c, meta)
+}
+
+// ListPools 存储池列表（含详情与平台侧角色/描述）
 func (h *StorageHandler) ListPools(c *gin.Context) {
 	pools, err := h.Virt.ListPoolInfos()
 	if err != nil {
@@ -83,9 +200,38 @@ func (h *StorageHandler) ListPools(c *gin.Context) {
 		return
 	}
 
+	// 平台侧元数据：角色（DB 覆盖优先，缺省按名/路径推断）与描述（libvirt 池无此语义，只能平台存）
+	metas := h.loadPoolMeta()
+	items := make([]gin.H, 0, len(pools))
+	for _, p := range pools {
+		role := inferPoolRole(p.Name, p.Path)
+		description := ""
+		if m, ok := metas[p.Name]; ok {
+			if m.Role != "" {
+				role = m.Role
+			}
+			description = m.Description
+		}
+		items = append(items, gin.H{
+			"name":        p.Name,
+			"active":      p.Active,
+			"persistent":  p.Persistent,
+			"path":        p.Path,
+			"capacity":    p.Capacity,
+			"allocation":  p.Allocation,
+			"available":   p.Available,
+			"vol_count":   p.VolCount,
+			"role":        role,
+			"description": description,
+		})
+	}
+
 	Success(c, gin.H{
-		"total": len(pools),
-		"items": pools,
+		"total":        len(pools),
+		"items":        items,
+		"seed_dir":     h.seedDirInfo(),
+		"default_pool": h.defaultPoolName(),
+		"pool_roles":   poolRoleNames,
 	})
 }
 

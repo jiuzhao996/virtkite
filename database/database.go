@@ -54,6 +54,7 @@ func Init() {
 		&model.ConsoleSession{},
 		&model.Setting{},
 		&model.Alert{},
+		&model.PoolMeta{},
 	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
