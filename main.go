@@ -129,7 +129,7 @@ func main() {
 	settingsHandler := handler.NewSettingsHandler(db, settingMgr)
 	auditHandler := handler.NewAuditHandler(db)
 	dashboardHandler := handler.NewDashboardHandler(db)
-	storageHandler := handler.NewStorageHandler(db)
+	storageHandler := handler.NewStorageHandler(db, taskMgr)
 	networkHandler := handler.NewNetworkHandler()
 	vncHandler := handler.NewVNCHandler(db, consoleRegistry)
 	terminalHandler := handler.NewTerminalHandler(db, consoleRegistry)
@@ -228,6 +228,7 @@ func main() {
 			storage.DELETE("/pools/:name", storageHandler.DeletePool)
 			storage.POST("/pools/:name/volumes", storageHandler.CreateVolume)
 			storage.GET("/pools/:name/volume-refs", storageHandler.GetVolumeRefs)
+			storage.POST("/pools/:name/orphan-cleanup", storageHandler.CleanupOrphans)
 			storage.DELETE("/pools/:name/volumes/:vol", storageHandler.DeleteVolume)
 		}
 

@@ -32,6 +32,97 @@ import (
 // main 启动时接到系统设置（service/setting），未接线时退回内置默认值 vmops。
 var DefaultStoragePoolResolver = func() string { return "vmops" }
 
+// execCleanupVolumes 清理存储池孤儿卷（cleanup_volumes 任务）。
+// 判定与 execDeleteVM 的 shouldKeepVol 三重守卫同一套数据、反向使用：
+// 一个卷【既不被虚拟机挂载、也未登记镜像库、也不是任何子卷的 backing 父盘】即为孤儿，予以删除；
+// 任一命中引用则保留并记录原因。宁可漏删，不可错删。
+func execCleanupVolumes(ctx *ExecContext) error {
+	if err := checkExecContext(ctx); err != nil {
+		return err
+	}
+	var p struct {
+		Pool string `json:"pool"`
+	}
+	if raw, err := json.Marshal(ctx.Payload); err == nil && len(ctx.Payload) > 0 {
+		_ = json.Unmarshal(raw, &p)
+	}
+	pool := p.Pool
+	if pool == "" {
+		pool = DefaultStoragePoolResolver()
+	}
+
+	reportProgress(ctx, 5, "枚举存储池卷")
+	poolInfo, err := ctx.Virt.GetPoolInfo(pool)
+	if err != nil {
+		return fmt.Errorf("获取存储池 %s 信息失败: %w", pool, err)
+	}
+	// 枚举失败按空处理（与删卷守卫同一立场：守卫数据拿不全时宁可不删）
+	backing, _ := ctx.Virt.ListBackingRefs(pool)
+	disks, _ := ctx.Virt.ListAllDomainDiskSources()
+	var imgPaths []string
+	if err := ctx.DB.Model(&model.Image{}).Pluck("path", &imgPaths).Error; err != nil {
+		return fmt.Errorf("查询镜像库路径失败: %w", err)
+	}
+	imgSet := make(map[string]bool, len(imgPaths))
+	for _, path := range imgPaths {
+		imgSet[path] = true
+	}
+
+	total := len(poolInfo.Volumes)
+	deleted := []string{}
+	kept := []map[string]string{}
+	for i, vol := range poolInfo.Volumes {
+		var reasons []string
+		for domName, paths := range disks {
+			hit := false
+			for _, dp := range paths {
+				if dp == vol.Path {
+					reasons = append(reasons, "仍被虚拟机挂载（"+domName+"）")
+					hit = true
+					break
+				}
+			}
+			if hit {
+				break
+			}
+		}
+		if imgSet[vol.Path] {
+			reasons = append(reasons, "已登记为镜像库镜像")
+		}
+		if kids := backing[vol.Path]; len(kids) > 0 {
+			reasons = append(reasons, fmt.Sprintf("是增量克隆父盘，仍被 %d 个子卷依赖", len(kids)))
+		}
+
+		if len(reasons) > 0 {
+			kept = append(kept, map[string]string{"name": vol.Name, "reason": strings.Join(reasons, "；")})
+		} else if err := ctx.Virt.DeleteVolume(pool, vol.Name); err != nil {
+			kept = append(kept, map[string]string{"name": vol.Name, "reason": "删除失败: " + err.Error()})
+		} else {
+			deleted = append(deleted, vol.Name)
+		}
+		if total > 0 {
+			reportProgress(ctx, 10+80*(i+1)/total, fmt.Sprintf("已处理 %d/%d 个卷", i+1, total))
+		}
+	}
+
+	if ctx.Task != nil {
+		if b, err := json.Marshal(map[string]interface{}{
+			"pool":    pool,
+			"deleted": deleted,
+			"kept":    kept,
+		}); err == nil {
+			ctx.Task.Result = string(b)
+		}
+	}
+	if len(deleted) == 0 && len(kept) > 0 {
+		// 没删任何东西但全部有引用：任务成功，原因在 result.kept
+		reportProgress(ctx, 100, fmt.Sprintf("%d 个卷全部有引用，无需清理", len(kept)))
+		return nil
+	}
+	reportProgress(ctx, 100, fmt.Sprintf("清理完成：删除 %d 个孤儿卷，保留 %d 个", len(deleted), len(kept)))
+	return nil
+}
+
 // taskVMNameRegex 虚拟机名称只允许字母、数字、下划线和连字符（copy 自 handler/vm.go）。
 var taskVMNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
@@ -301,6 +392,7 @@ func RegisterVMTasks(m *Manager) {
 	m.Register("clone_vm", execCloneVM)
 	m.Register("clone_image_vm", execCloneImageVM)
 	m.Register("stop_vm", execStopVM)
+	m.Register("cleanup_volumes", execCleanupVolumes)
 }
 
 // execCreateVM 创建虚拟机（对应 virsh vol-create-as + virsh define）。

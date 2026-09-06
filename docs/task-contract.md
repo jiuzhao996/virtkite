@@ -13,7 +13,7 @@ tags: [契约, task, 异步]
 ```go
 type Task struct {
     ID        uint      `gorm:"primaryKey" json:"id"`
-    Type      string    `gorm:"size:50;index" json:"type"`     // create_vm / delete_vm / clone_vm / clone_image_vm / stop_vm
+    Type      string    `gorm:"size:50;index" json:"type"`     // create_vm / delete_vm / clone_vm / clone_image_vm / stop_vm / cleanup_volumes
     Title     string    `gorm:"size:200" json:"title"`         // 如 "创建虚拟机 smoke-01"
     Status    string    `gorm:"size:20;index" json:"status"`   // pending / running / success / failed
     Progress  int       `gorm:"default:0" json:"progress"`    // 0-100
@@ -102,7 +102,7 @@ worker 内一次 panic 会直接带走整个进程。故：
 ## Executors（service/tasks/vm_tasks.go，T2 产出）
 
 ```go
-func RegisterVMTasks(m *Manager) // 注册 create_vm / delete_vm / clone_vm / clone_image_vm / stop_vm
+func RegisterVMTasks(m *Manager) // 注册 create_vm / delete_vm / clone_vm / clone_image_vm / stop_vm / cleanup_volumes
 ```
 
 - **create_vm**：payload = 原 CreateVM 请求体 JSON（含 name/storage_pool/vcpu/memory_mb/disks/interfaces/network/iso_path/cloud_init/host_id）。逻辑从 `handler/vm.go CreateVM` 整体搬运：校验名称→查 host（host_id 缺省 firstHost）→默认值→UUID/MAC→组装 spec→逐盘落地（Report 10/30/50/70）→seed→BuildDomainXML→写 DB→DefineDomain。成功置 `ctx.Task.Result={"vm_id":id}`，并回填 Task.VMID/VMName。失败清理已建卷+seed（沿用原 cleanup）。
@@ -120,6 +120,7 @@ func RegisterVMTasks(m *Manager) // 注册 create_vm / delete_vm / clone_vm / cl
 | `stop_vm` | `vm`（string） | 域名 |
 | `delete_vm` | `vm`（string） | 域名 |
 | `delete_vm` | **`kept_volumes`（string[]，可选）** | **被守卫保留、刻意未删的卷**；仅在非空时出现。元素格式为 `"<卷名>（<中文原因>）"`，前端任务详情直接展示 |
+| `cleanup_volumes` | `pool`（string）、`deleted`（string[]）、`kept`（{name,reason}[]） | 清理孤儿卷：与删卷守卫同一套判定反向使用（零引用才删）。触发端点 POST /api/storage/pools/:name/orphan-cleanup |
 
 ### delete_vm 的删卷三重守卫（`shouldKeepVol`，勿回退）
 

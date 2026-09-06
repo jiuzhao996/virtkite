@@ -439,7 +439,7 @@ func TestRegisterVMTasks(t *testing.T) {
 	m := &Manager{queue: make(chan uint, 1), executors: map[string]Executor{}}
 	RegisterVMTasks(m)
 
-	want := []string{"create_vm", "delete_vm", "clone_vm", "clone_image_vm", "stop_vm"}
+	want := []string{"create_vm", "delete_vm", "clone_vm", "clone_image_vm", "stop_vm", "cleanup_volumes"}
 	for _, taskType := range want {
 		t.Run("已注册 "+taskType, func(t *testing.T) {
 			m.mu.RLock()

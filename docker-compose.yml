@@ -47,6 +47,18 @@ services:
       # 直通宿主机 libvirtd（监控与纳管需真实 KVM；无 KVM 的机器请注释掉，指标将为空但服务可启动）
       - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
 
+  # noVNC 控制台中转（一键全容器形态必需；混合形态请勿启动——与宿主机 websockify 抢 6080）
+  websockify:
+    build:
+      context: .
+      dockerfile: docker/websockify.Dockerfile
+    container_name: vmops-websockify
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "6080:6080"
+
   # Prometheus：抓取 vmops /metrics（内建 exporter，15s）
   # 不 depends_on app：app 支持宿主机原生直跑（推荐形态），容器内经 host-gateway 抓取
   prometheus:

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
 )
@@ -64,13 +65,14 @@ func (r *VolumeRefs) inUse() bool {
 
 // StorageHandler 存储池处理器
 type StorageHandler struct {
-	DB   *gorm.DB
-	Virt *virt.Virt
+	DB    *gorm.DB
+	Virt  *virt.Virt
+	Tasks *tasks.Manager
 }
 
 // NewStorageHandler 创建存储池处理器
-func NewStorageHandler(db *gorm.DB) *StorageHandler {
-	return &StorageHandler{DB: db, Virt: virt.New()}
+func NewStorageHandler(db *gorm.DB, taskMgr *tasks.Manager) *StorageHandler {
+	return &StorageHandler{DB: db, Virt: virt.New(), Tasks: taskMgr}
 }
 
 // ListPools 存储池列表（含详情）
@@ -244,6 +246,40 @@ func (h *StorageHandler) DeleteVolume(c *gin.Context) {
 	}
 
 	Success(c, gin.H{"pool": poolName, "vol": volName})
+}
+
+// CleanupOrphans 清理存储池孤儿卷（POST /api/storage/pools/:name/orphan-cleanup，转后台任务）。
+// 孤儿 = 不被虚拟机挂载、未登记镜像库、也非任何子卷 backing 父盘的卷；判定由任务执行器完成，
+// 前端确认弹窗先经 volume-refs 端点列出候选。任务结果含 deleted/kept 明细。
+func (h *StorageHandler) CleanupOrphans(c *gin.Context) {
+	if h.Tasks == nil {
+		Fail(c, http.StatusInternalServerError, "任务系统未初始化")
+		return
+	}
+	poolName := c.Param("name")
+	if !validVolName(poolName) {
+		Fail(c, http.StatusBadRequest, "存储池名称只允许字母、数字、下划线、连字符和点")
+		return
+	}
+	userID, _ := c.Get("user_id")
+	username, _ := c.Get("username")
+	var uid *uint
+	if v, ok := userID.(uint); ok {
+		uid = &v
+	}
+	uname, _ := username.(string)
+
+	task, err := h.Tasks.Submit("cleanup_volumes", "清理孤儿卷 "+poolName,
+		gin.H{"pool": poolName}, uid, uname, "", nil)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{
+		"code":    http.StatusAccepted,
+		"message": "清理任务已提交",
+		"data":    gin.H{"task_id": task.ID},
+	})
 }
 
 // volumeInUseReason 生成删卷守卫的中文拒绝原因（逐类列出引用方）。

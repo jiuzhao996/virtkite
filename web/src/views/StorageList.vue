@@ -38,10 +38,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="vol_count" label="卷数" width="80" />
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="290" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :icon="FolderOpened" @click="openVolumes(row)">卷管理</el-button>
-            <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="removePool(row)">删除</el-button>
+            <el-button v-if="isAdmin" size="small" :icon="Delete" @click="removePool(row)">删除</el-button>
+            <el-button v-if="isAdmin" size="small" type="warning" plain @click="cleanupOrphans(row)">清理孤儿卷</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -134,6 +135,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, FolderOpened, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
+import { pollTask, extractTaskId } from '../utils/task.js'
 // 容量格式化 / 错误文案 / 取消判定统一走 utils/format.js（原本地三份实现已删）
 // 本页的 .page-head / .page-title / .toolbar / .count 与其他列表页逐字相同，已收进 global.css
 import { fmtSizeBytes, errMsg, isCancel, usageColor, clampPct } from '../utils/format'
@@ -213,6 +215,43 @@ async function removePool(row) {
     await load()
   } catch (e) {
     if (!isCancel(e)) ElMessage.error(errMsg(e, '删除失败'))
+  }
+}
+
+// 清理孤儿卷：先经 volume-refs 算出零引用卷候选，确认后转后台任务删除
+async function cleanupOrphans(row) {
+  try {
+    const [poolRes, refsRes] = await Promise.all([
+      api.getStoragePool(row.name),
+      api.volumeRefs(row.name)
+    ])
+    const vols = (poolRes.data && poolRes.data.volumes) || []
+    const refs = (refsRes.data && refsRes.data.refs) || {}
+    const orphans = vols.filter((v) => !refsInUse(refs[v.name] || {})).map((v) => v.name)
+    if (!orphans.length) {
+      ElMessage.info('该存储池没有孤儿卷（所有卷都有引用）')
+      return
+    }
+    await ElMessageBox.confirm(
+      `检测到 ${orphans.length} 个孤儿卷（无任何引用，删除不可恢复）：\n${orphans.join('、')}`,
+      '清理孤儿卷',
+      { type: 'warning' }
+    )
+    const res = await api.cleanupOrphans(row.name)
+    const taskId = extractTaskId(res)
+    ElMessage.success('清理任务已提交，后台执行中')
+    const task = await pollTask(taskId)
+    let detail = ''
+    try {
+      const r = JSON.parse(task.result || '{}')
+      detail = `删除 ${(r.deleted || []).length} 个，保留 ${(r.kept || []).length} 个（详情见任务中心）`
+    } catch {
+      detail = '已完成'
+    }
+    ElMessage.success('孤儿卷清理完成：' + detail)
+    await load()
+  } catch (e) {
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '清理失败'))
   }
 }
 

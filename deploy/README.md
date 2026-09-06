@@ -24,12 +24,15 @@ docker compose up -d mysql prometheus alertmanager grafana   # 容器侧
 ## 形态二：一键全容器（发布形态）
 
 ```bash
-docker compose up -d   # 5 个容器：mysql + app + prometheus + alertmanager + grafana
+docker compose up -d   # 6 个容器：mysql + app + websockify + prometheus + alertmanager + grafana
 ```
 
 与形态一的差异与注意：
 - app 容器经挂载 `/var/run/libvirt/libvirt-sock` 直通宿主机 libvirtd（libvirt 本身无法容器化）。
-- **websockify 尚未纳入 compose**：全容器形态下 noVNC 控制台需要自行启动 websockify 或在 compose 补一个服务定义。
+- websockify 容器由 `docker/websockify.Dockerfile` 构建（debian novnc + websockify 包），
+  token-source 指向 compose 网络内的 app 服务。
+- **混合形态请勿启动 websockify 容器**（`docker compose up -d mysql prometheus alertmanager grafana`
+  按需选择即可）：它与宿主机 start.sh 起的 websockify 抢 6080 端口。
 - app 切进容器后，Prometheus 抓取目标可改回 `app:8080`（见 prometheus.yml 注释）。
 
 ## 文件清单

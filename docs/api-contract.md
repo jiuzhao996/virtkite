@@ -364,6 +364,11 @@ func (v *Virt) UpdateNetwork(name, xml string) error        // 停→net-undefin
 `卷 <名> 正在使用中，已阻止删除: 仍被虚拟机挂载（<vm1>、<vm2>）…；已登记为镜像库镜像（<img>）…；是增量克隆父盘，仍被 N 个子卷依赖（…）`
 ——与 `tasks.execDeleteVM` 的 `shouldKeepVol` 三重守卫同一立场。
 
+**孤儿卷清理（发布闭环新增）**：`POST /api/storage/pools/:name/orphan-cleanup`（Operator，202 转
+`cleanup_volumes` 后台任务）。判定与删卷守卫同一套数据反向使用：零引用（无挂载/无镜像/无子卷）才删。
+Result schema 见 docs/task-contract.md（pool/deleted/kept）。前端 StorageList 池行「清理孤儿卷」按钮，
+先经 volume-refs 列候选再确认提交。
+
 **系统设置消费点**（改配置即生效，勿回退成硬编码）：
 `default_storage_pool` → `tasks.DefaultStoragePoolResolver`（原 `defaultStoragePool` 常量）；
 `vnc_token_ttl_min` → `vnc.TTLResolver`（原 token.go 硬编码 5min）；

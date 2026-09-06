@@ -149,6 +149,8 @@ export const api = {
 
   // 存储卷在用引用（卷管理弹窗的"在用"徽标与删卷确认）
   volumeRefs: (pool) => unwrap(http.get('/storage/pools/' + pool + '/volume-refs')),
+  // 孤儿卷清理（转后台任务，202 返回 task_id）
+  cleanupOrphans: (pool) => unwrap(http.post('/storage/pools/' + pool + '/orphan-cleanup')),
 
   // 仪表盘
   dashboardOverview: () => unwrap(http.get('/dashboard/overview')),
