@@ -1,11 +1,16 @@
 <template>
   <div v-loading="loading">
     <div class="page-head">
-      <h2 class="page-title">审计日志</h2>
-      <span class="page-desc">记录平台关键操作，可按操作类型、对象、时间等条件追溯</span>
+      <div>
+        <h2 class="page-title">审计中心</h2>
+        <span class="page-desc">操作日志记录谁、何时、对哪个对象做了什么、成功还是失败；控制台会话记录谁连过哪台虚拟机。均为只读记录，用于安全追溯</span>
+      </div>
     </div>
 
-    <el-card shadow="never">
+    <el-tabs v-model="activeTab">
+      <!-- 操作日志仅管理员可见（后端 /api/audit admin-only）；viewer 只能看会话流水 -->
+      <el-tab-pane v-if="isAdmin" label="操作日志" name="ops">
+        <el-card shadow="never">
       <div class="filters">
         <el-select v-model="q.action" placeholder="操作类型" clearable filterable style="width: 180px" @change="search">
           <el-option v-for="a in actionOptions" :key="a.value" :label="a.label" :value="a.value" />
@@ -90,7 +95,12 @@
         :page-size="q.page_size"
         @current-change="onPage"
       />
-    </el-card>
+        </el-card>
+      </el-tab-pane>
+      <el-tab-pane label="控制台会话" name="sessions">
+        <SessionList />
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- 审计详情弹窗 -->
     <el-dialog v-model="detailDialog" title="审计详情" width="580px">
@@ -138,7 +148,13 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, RefreshLeft, View } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
 import { FALLBACK_ACTION_LABELS, fmtDateTime, errMsg } from '../utils/format'
+import SessionList from './SessionList.vue'
+
+const { isAdmin } = useAuth()
+// 默认 tab：管理员落在操作日志，普通用户只有会话流水可看
+const activeTab = ref(isAdmin.value ? 'ops' : 'sessions')
 
 const items = ref([])
 const total = ref(0)
@@ -229,8 +245,11 @@ async function loadActions() {
 }
 
 onMounted(() => {
-  load()
-  loadActions()
+  // 操作日志接口仅管理员可用（/api/audit admin-only），viewer 不发起请求
+  if (isAdmin.value) {
+    load()
+    loadActions()
+  }
 })
 </script>
 

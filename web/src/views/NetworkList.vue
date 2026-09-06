@@ -32,9 +32,16 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="自动启动" width="100">
+        <el-table-column label="自动启动" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.autostart ? 'primary' : 'info'" effect="plain" size="small">
+            <!-- admin 直接切换（对应 virsh net-autostart on|off）；viewer 只读展示 -->
+            <el-switch
+              v-if="isAdmin"
+              :model-value="row.autostart"
+              :loading="autostartBusy.has(row.name)"
+              @change="(v) => toggleAutostart(row, v)"
+            />
+            <el-tag v-else :type="row.autostart ? 'primary' : 'info'" effect="plain" size="small">
               {{ row.autostart ? '启用' : '禁用' }}
             </el-tag>
           </template>
@@ -226,6 +233,24 @@ async function saveEdit() {
 }
 
 async function act(row, type) {
+  // 启动/停止影响连通性：停止会瞬断该网络上所有虚拟机的流量，二次确认防误触
+  if (type === 'stop') {
+    try {
+      await ElMessageBox.confirm(
+        `确定停止网络「${row.name}」？该网络上运行中的虚拟机将立即失去网络连接。`,
+        '确认停止',
+        { type: 'warning' }
+      )
+    } catch {
+      return
+    }
+  } else {
+    try {
+      await ElMessageBox.confirm(`确定启动网络「${row.name}」？`, '确认启动', { type: 'info' })
+    } catch {
+      return
+    }
+  }
   try {
     if (type === 'start') await api.startNetwork(row.name)
     else await api.stopNetwork(row.name)
@@ -233,6 +258,23 @@ async function act(row, type) {
     await load()
   } catch (e) {
     ElMessage.error(errMsg(e, '操作失败'))
+  }
+}
+
+// 自启动开关（对应 virsh net-autostart on|off）：按行 busy，成功后本地回写不整表刷新
+const autostartBusy = ref(new Set())
+async function toggleAutostart(row, value) {
+  autostartBusy.value.add(row.name)
+  autostartBusy.value = new Set(autostartBusy.value)
+  try {
+    await api.setNetworkAutostart(row.name, !!value)
+    row.autostart = !!value
+    ElMessage.success(value ? '已启用自启动' : '已禁用自启动')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '设置自启动失败'))
+  } finally {
+    autostartBusy.value.delete(row.name)
+    autostartBusy.value = new Set(autostartBusy.value)
   }
 }
 

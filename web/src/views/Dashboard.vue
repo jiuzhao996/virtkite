@@ -166,16 +166,47 @@
           </div>
         </el-card>
       </el-col>
-      <el-col :md="12">
+      <el-col :md="isAdmin ? 12 : 24">
         <el-card shadow="hover">
           <template #header>
-            <span class="card-title">操作概览</span>
+            <div class="alert-card-head">
+              <span class="card-title">告警概览</span>
+              <el-link type="primary" :underline="false" @click="$router.push('/monitor')">前往监控中心</el-link>
+            </div>
+          </template>
+          <div v-if="alertsError" class="empty">监控栈未连接（docker compose up -d 启动 Prometheus / Alertmanager）</div>
+          <template v-else>
+            <div v-if="firingAlerts.length === 0" class="empty alert-ok">当前无告警，一切正常</div>
+            <div v-for="a in firingAlerts.slice(0, 4)" :key="a.fingerprint" class="alert-row">
+              <el-tag :type="(a.labels && a.labels.severity) === 'critical' ? 'danger' : 'warning'" effect="dark" size="small">
+                {{ (a.labels && a.labels.severity) === 'critical' ? '严重' : '警告' }}
+              </el-tag>
+              <span class="alert-name">{{ a.labels && a.labels.alertname }}</span>
+              <span class="alert-summary">{{ (a.annotations && a.annotations.summary) || '' }}</span>
+            </div>
+            <div v-if="firingAlerts.length > 4" class="empty">还有 {{ firingAlerts.length - 4 }} 条告警，见监控中心</div>
+          </template>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="16" class="mt">
+      <el-col :span="24">
+        <el-card shadow="hover">
+          <template #header>
+            <span class="card-title">平台信息</span>
           </template>
           <div class="info-rows">
             <div><span>平台</span><strong>vmops · KVM 私有云</strong></div>
             <div><span>后端</span><strong>Go + Gin + GORM + Libvirt</strong></div>
             <div><span>前端</span><strong>Vue 3 + Element Plus + ECharts</strong></div>
             <div><span>当前用户</span><strong>{{ userText }}</strong></div>
+            <template v-if="sysInfo">
+              <div><span>libvirt URI</span><strong>{{ sysInfo.virt && sysInfo.virt.libvirt_uri }}</strong></div>
+              <div><span>存储池</span><strong>{{ (sysInfo.storage && sysInfo.storage.pools || []).join('、') || '—' }}</strong></div>
+              <div><span>虚拟网络</span><strong>{{ (sysInfo.network && sysInfo.network.networks || []).join('、') || '—' }}</strong></div>
+              <div><span>运行模式</span><strong>{{ sysInfo.platform && sysInfo.platform.server_mode }} · :{{ sysInfo.platform && sysInfo.platform.server_port }}</strong></div>
+            </template>
           </div>
         </el-card>
       </el-col>
@@ -209,6 +240,35 @@ const vmStatus = ref([])
 const auditActions = ref([])
 const vmPerf = ref([])
 
+// 告警概览（登录即可见，失败静默置未连接态）
+const alerts = ref([])
+const alertsError = ref(false)
+const firingAlerts = computed(
+  () => alerts.value.filter((a) => a.status && a.status.state === 'active')
+)
+// 系统信息（仅管理员拉取，补充平台信息卡；viewer 无 /settings 权限）
+const sysInfo = ref(null)
+
+async function loadAlerts() {
+  try {
+    const res = await api.listAlerts()
+    alerts.value = Array.isArray(res.data) ? res.data : []
+    alertsError.value = false
+  } catch (e) {
+    alertsError.value = true
+  }
+}
+
+async function loadSysInfo() {
+  if (!isAdmin.value) return
+  try {
+    const res = await api.getSettings()
+    sysInfo.value = res.data || null
+  } catch (e) {
+    sysInfo.value = null
+  }
+}
+
 // 操作类型 → 中文兜底映射（后端 /audit/actions 优先覆盖）已收进 utils/format.js（与审计页共用）
 const actionLabelMap = ref({ ...FALLBACK_ACTION_LABELS })
 
@@ -228,6 +288,7 @@ const hostChartRef = ref(null)
 let chart = null
 let hostTimer = null
 let vmTimer = null
+let alertTimer = null
 
 const stats = computed(() => {
   const o = overview.value || {}
@@ -361,6 +422,23 @@ function updateChart() {
   })
 }
 
+// 进页面时从 Prometheus 预填历史曲线（替代"从零攒点等 5s"）：
+// 拉不到（监控栈未起）静默降级为原行为。之后 3s 轮询继续追加，衔接处时间连续。
+async function prefillHostHistory() {
+  try {
+    const res = await api.hostHistory(60)
+    const pts = (res.data && res.data.points) || []
+    if (!pts.length) return
+    const recent = pts.slice(-HOST_POINTS)
+    timeLabels.value = recent.map((p) => p.t)
+    cpuSeries.value = recent.map((p) => p.cpu)
+    memSeries.value = recent.map((p) => p.mem)
+    updateChart()
+  } catch (e) {
+    /* 静默降级 */
+  }
+}
+
 function initChart() {
   if (!hostChartRef.value) return
   chart = echarts.init(hostChartRef.value)
@@ -425,12 +503,19 @@ onMounted(async () => {
   const ms = getPollInterval('dashboard', POLL_DEFAULTS.dashboard)
   hostTimer = setInterval(pollHost, ms)
   vmTimer = setInterval(pollVms, ms)
+  // 告警概览与平台信息：进页拉一次，告警随仪表盘节奏轮询
+  loadAlerts()
+  loadSysInfo()
+  alertTimer = setInterval(loadAlerts, ms)
+  // 历史曲线预填：先画满过去一小时，再由轮询无缝追加
+  prefillHostHistory()
   window.addEventListener('resize', onResize)
 })
 
 onBeforeUnmount(() => {
   clearInterval(hostTimer)
   clearInterval(vmTimer)
+  clearInterval(alertTimer)
   window.removeEventListener('resize', onResize)
   if (chart) {
     chart.dispose()
@@ -654,9 +739,39 @@ onBeforeUnmount(() => {
   padding: 20px 0;
 }
 .info-rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 24px;
+}
+.alert-card-head {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.alert-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.alert-row:last-of-type {
+  border-bottom: none;
+}
+.alert-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.alert-summary {
+  color: var(--color-muted-foreground);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alert-ok {
+  color: var(--color-success);
 }
 .info-rows > div {
   display: flex;

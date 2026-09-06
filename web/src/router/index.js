@@ -25,9 +25,11 @@ const routes = [
       { path: 'storage', name: 'storage', component: () => import('../views/StorageList.vue') },
       { path: 'networks', name: 'networks', component: () => import('../views/NetworkList.vue') },
       { path: 'tasks', name: 'tasks', component: () => import('../views/TaskList.vue') },
-      { path: 'sessions', name: 'sessions', component: () => import('../views/SessionList.vue') },
-      { path: 'settings', name: 'settings', component: () => import('../views/Settings.vue'), meta: { requiresAdmin: true } },
-      { path: 'audit', name: 'audit', component: () => import('../views/AuditList.vue'), meta: { requiresAdmin: true } }
+      { path: 'audit', name: 'audit', component: () => import('../views/AuditList.vue') },
+      { path: 'monitor', name: 'monitor', component: () => import('../views/Monitor.vue') },
+      { path: 'profile', name: 'profile', component: () => import('../views/Profile.vue') },
+      { path: 'users', name: 'users', component: () => import('../views/UserList.vue'), meta: { requiresAdmin: true } },
+      { path: 'settings', name: 'settings', component: () => import('../views/Settings.vue'), meta: { requiresAdmin: true } }
     ]
   }
 ]

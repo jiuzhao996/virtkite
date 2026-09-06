@@ -21,15 +21,21 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="path" label="路径" min-width="200" show-overflow-tooltip />
-        <el-table-column label="容量" width="110">
-          <template #default="{ row }">{{ fmtSizeBytes(row.capacity) }}</template>
-        </el-table-column>
-        <el-table-column label="已分配" width="110">
-          <template #default="{ row }">{{ fmtSizeBytes(row.allocation) }}</template>
-        </el-table-column>
-        <el-table-column label="可用" width="110">
-          <template #default="{ row }">{{ fmtSizeBytes(row.available) }}</template>
+        <el-table-column prop="path" label="路径" min-width="180" show-overflow-tooltip />
+        <el-table-column label="容量使用" min-width="220">
+          <template #default="{ row }">
+            <div class="cap-cell">
+              <el-progress
+                :percentage="usedPct(row)"
+                :color="usageColor(usedPct(row))"
+                :stroke-width="8"
+                :show-text="false"
+              />
+              <span class="cap-text">
+                {{ fmtSizeBytes(row.allocation) }} / {{ fmtSizeBytes(row.capacity) }} · 可用 {{ fmtSizeBytes(row.available) }}
+              </span>
+            </div>
+          </template>
         </el-table-column>
         <el-table-column prop="vol_count" label="卷数" width="80" />
         <el-table-column label="操作" width="200" fixed="right">
@@ -65,8 +71,28 @@
         </div>
       </div>
       <el-table :data="volumes" stripe border size="small" style="width: 100%" max-height="380" empty-text="该存储池暂无卷">
-        <el-table-column prop="name" label="名称" min-width="160" />
-        <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="name" label="名称" min-width="150" />
+        <el-table-column label="在用" width="170">
+          <template #default="{ row }">
+            <template v-if="volRefs[row.name] && refsInUse(volRefs[row.name])">
+              <el-tooltip placement="top" :content="refsTooltip(volRefs[row.name])">
+                <span class="ref-tags">
+                  <el-tag v-if="volRefs[row.name].vms && volRefs[row.name].vms.length" type="warning" size="small" effect="light">
+                    VM×{{ volRefs[row.name].vms.length }}
+                  </el-tag>
+                  <el-tag v-if="volRefs[row.name].images && volRefs[row.name].images.length" type="primary" size="small" effect="light">
+                    镜像×{{ volRefs[row.name].images.length }}
+                  </el-tag>
+                  <el-tag v-if="volRefs[row.name].children && volRefs[row.name].children.length" type="danger" size="small" effect="light">
+                    子卷×{{ volRefs[row.name].children.length }}
+                  </el-tag>
+                </span>
+              </el-tooltip>
+            </template>
+            <el-tag v-else type="info" size="small" effect="plain">未使用</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="path" label="路径" min-width="200" show-overflow-tooltip />
         <el-table-column label="容量" width="100">
           <template #default="{ row }">{{ fmtSizeBytes(row.capacity) }}</template>
         </el-table-column>
@@ -109,14 +135,14 @@ import { Refresh, Plus, FolderOpened, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 // 容量格式化 / 错误文案 / 取消判定统一走 utils/format.js（原本地三份实现已删）
-// 本页的 .page-head / .page-title / .toolbar / .count 与其他列表页逐字相同，已收进 global.css，
-// 故整个 <style scoped> 块被删除，本页不再有独有样式。
-import { fmtSizeBytes, errMsg, isCancel } from '../utils/format'
+// 本页的 .page-head / .page-title / .toolbar / .count 与其他列表页逐字相同，已收进 global.css
+import { fmtSizeBytes, errMsg, isCancel, usageColor, clampPct } from '../utils/format'
 
 const { isAdmin } = useAuth()
 
 const pools = ref([])
 const volumes = ref([])
+const volRefs = ref({}) // 卷名 → {vms, images, children}
 const loading = ref(false)
 const saving = ref(false)
 const poolDialog = ref(false)
@@ -126,6 +152,23 @@ const curPool = ref('')
 
 const poolForm = ref({ name: '', path: '' })
 const volForm = ref({ name: '', format: 'qcow2', capacity: 20 })
+
+// 池容量使用率（allocation/capacity），配色走 format.js 的阈值色
+function usedPct(row) {
+  if (!row.capacity) return 0
+  return clampPct(Math.round((row.allocation / row.capacity) * 100))
+}
+
+function refsInUse(r) {
+  return (r.vms && r.vms.length) || (r.images && r.images.length) || (r.children && r.children.length)
+}
+function refsTooltip(r) {
+  const parts = []
+  if (r.vms && r.vms.length) parts.push('虚拟机: ' + r.vms.join('、'))
+  if (r.images && r.images.length) parts.push('镜像: ' + r.images.join('、'))
+  if (r.children && r.children.length) parts.push('增量克隆子卷: ' + r.children.join('、'))
+  return parts.join('；')
+}
 
 async function load() {
   loading.value = true
@@ -173,14 +216,33 @@ async function removePool(row) {
   }
 }
 
+// 卷管理弹窗 + 引用数据（一次拉全池 refs，"在用"徽标与删卷确认共用）
 async function openVolumes(row) {
   curPool.value = row.name
   volDialog.value = true
   try {
-    const res = await api.getStoragePool(row.name)
-    volumes.value = (res.data && res.data.volumes) || []
+    const [poolRes, refsRes] = await Promise.all([
+      api.getStoragePool(row.name),
+      api.volumeRefs(row.name)
+    ])
+    volumes.value = (poolRes.data && poolRes.data.volumes) || []
+    volRefs.value = (refsRes.data && refsRes.data.refs) || {}
   } catch (e) {
     ElMessage.error(errMsg(e, '获取卷列表失败'))
+  }
+}
+
+// 刷新卷列表 + 引用（新建卷/删卷后调用）
+async function refreshVolumes() {
+  try {
+    const [poolRes, refsRes] = await Promise.all([
+      api.getStoragePool(curPool.value),
+      api.volumeRefs(curPool.value)
+    ])
+    volumes.value = (poolRes.data && poolRes.data.volumes) || []
+    volRefs.value = (refsRes.data && refsRes.data.refs) || {}
+  } catch (e) {
+    ElMessage.error(errMsg(e, '刷新卷列表失败'))
   }
 }
 
@@ -199,8 +261,7 @@ async function createVolume() {
     await api.createVolume(curPool.value, { ...volForm.value })
     ElMessage.success('卷已创建')
     volCreateDialog.value = false
-    const res = await api.getStoragePool(curPool.value)
-    volumes.value = (res.data && res.data.volumes) || []
+    await refreshVolumes()
   } catch (e) {
     ElMessage.error(errMsg(e, '创建失败'))
   } finally {
@@ -209,12 +270,17 @@ async function createVolume() {
 }
 
 async function removeVolume(row) {
+  // 删卷确认带上引用详情；后端守卫同样会拦截（双保险）
+  const r = volRefs.value[row.name]
+  let msg = '确定删除卷「' + row.name + '」？此操作不可恢复。'
+  if (r && refsInUse(r)) {
+    msg = '卷「' + row.name + '」正在被使用：' + refsTooltip(r) + '。\n强删可能导致虚拟机磁盘损坏，确定继续？'
+  }
   try {
-    await ElMessageBox.confirm('确定删除卷「' + row.name + '」？', '确认删除', { type: 'warning' })
+    await ElMessageBox.confirm(msg, '确认删除', { type: refsInUse(r) ? 'error' : 'warning' })
     await api.deleteVolume(curPool.value, row.name)
     ElMessage.success('卷已删除')
-    const res = await api.getStoragePool(curPool.value)
-    volumes.value = (res.data && res.data.volumes) || []
+    await refreshVolumes()
   } catch (e) {
     if (!isCancel(e)) ElMessage.error(errMsg(e, '删除失败'))
   }
@@ -222,3 +288,22 @@ async function removeVolume(row) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+/* 池容量使用率单元格：进度条 + 数字行 */
+.cap-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 12px;
+}
+.cap-text {
+  font-size: 0.8rem;
+  color: var(--color-muted-foreground);
+  white-space: nowrap;
+}
+.ref-tags {
+  display: inline-flex;
+  gap: 4px;
+}
+</style>

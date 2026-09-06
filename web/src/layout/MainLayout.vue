@@ -16,46 +16,22 @@
         class="menu"
         background-color="transparent"
       >
-        <el-menu-item index="/dashboard">
-          <el-icon><DataLine /></el-icon>
-          <span>仪表盘</span>
-        </el-menu-item>
-        <el-menu-item index="/vms">
-          <el-icon><Monitor /></el-icon>
-          <span>虚拟机</span>
-        </el-menu-item>
-        <el-menu-item index="/hosts">
-          <el-icon><Cpu /></el-icon>
-          <span>宿主机</span>
-        </el-menu-item>
-        <el-menu-item index="/images">
-          <el-icon><Picture /></el-icon>
-          <span>镜像管理</span>
-        </el-menu-item>
-        <el-menu-item index="/storage">
-          <el-icon><FolderOpened /></el-icon>
-          <span>存储池</span>
-        </el-menu-item>
-        <el-menu-item index="/networks">
-          <el-icon><Connection /></el-icon>
-          <span>网络</span>
-        </el-menu-item>
-        <el-menu-item index="/tasks">
-          <el-icon><List /></el-icon>
-          <span>任务中心</span>
-        </el-menu-item>
-        <el-menu-item index="/sessions">
-          <el-icon><Link /></el-icon>
-          <span>会话管理</span>
-        </el-menu-item>
-        <el-menu-item v-if="isAdmin" index="/settings">
-          <el-icon><Setting /></el-icon>
-          <span>系统设置</span>
-        </el-menu-item>
-        <el-menu-item v-if="isAdmin" index="/audit">
-          <el-icon><Document /></el-icon>
-          <span>审计日志</span>
-        </el-menu-item>
+        <!-- 分组折叠菜单：展开状态由本地 closedGroups 自管（el-menu 的 default-openeds 只在
+             挂载瞬间生效，isAdmin 异步到达后重渲染的分组接不到，会出现刷新后全部收起的竞态） -->
+        <el-menu-item-group v-for="group in menuGroups" :key="group.name">
+          <template #title>
+            <span class="nav-group-title" @click="toggleGroup(group.name)">
+              <span class="group-title">{{ group.name }}</span>
+              <el-icon class="group-caret" :class="{ closed: closedGroups.has(group.name) }"><ArrowDown /></el-icon>
+            </span>
+          </template>
+          <template v-if="!closedGroups.has(group.name)">
+            <el-menu-item v-for="item in group.items" :key="item.index" :index="item.index">
+              <el-icon><component :is="item.icon" /></el-icon>
+              <span>{{ item.label }}</span>
+            </el-menu-item>
+          </template>
+        </el-menu-item-group>
       </el-menu>
       <div v-else class="collapse-nav">
         <template v-for="item in navItems" :key="item.index">
@@ -80,11 +56,45 @@
       <el-header class="header">
         <h2 class="header-title">{{ title }}</h2>
         <div class="header-right">
+          <!-- 任务铃：有进行中的后台任务时亮角标，点开看进度、跳任务中心 -->
+          <el-popover trigger="click" width="320">
+            <template #reference>
+              <el-badge :value="activeTasks.length" :hidden="!activeTasks.length" :max="99" class="task-bell">
+                <el-icon :size="18"><Bell /></el-icon>
+              </el-badge>
+            </template>
+            <div class="task-pop-head">进行中任务（{{ activeTasks.length }}）</div>
+            <div v-if="!activeTasks.length" class="task-pop-empty">当前没有进行中的任务</div>
+            <div v-else class="task-pop-list">
+              <div v-for="t in activeTasks" :key="t.id" class="task-pop-item">
+                <span class="task-pop-title">{{ t.title }}</span>
+                <el-tag :type="t.status === 'running' ? 'primary' : 'info'" size="small">
+                  {{ t.status === 'running' ? '执行中' : '等待中' }}
+                </el-tag>
+              </div>
+            </div>
+            <el-button text type="primary" class="task-pop-more" @click="router.push('/tasks')">前往任务中心</el-button>
+          </el-popover>
           <el-tag v-if="isAdmin" type="warning" effect="dark" size="small">管理员</el-tag>
           <el-tag v-else type="info" effect="plain" size="small">普通用户</el-tag>
-          <span class="username">{{ state.user ? state.user.username : '—' }}</span>
-          <el-button text type="primary" @click="pwdDialog = true">修改密码</el-button>
-          <el-button text type="primary" @click="onLogout">退出登录</el-button>
+          <!-- 用户中心：资料/改密码/轮询偏好集中在个人中心页（对标云控制台顶栏分工） -->
+          <el-dropdown trigger="click" @command="onUserCommand">
+            <span class="user-entry">
+              <el-icon :size="18"><UserFilled /></el-icon>
+              <span class="username">{{ state.user ? state.user.username : '—' }}</span>
+              <el-icon class="entry-caret" :size="12"><ArrowDown /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="profile">
+                  <el-icon><User /></el-icon>个人中心
+                </el-dropdown-item>
+                <el-dropdown-item divided command="logout">
+                  <el-icon><SwitchButton /></el-icon>退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </el-header>
 
@@ -92,100 +102,114 @@
         <router-view />
       </el-main>
     </el-container>
-
-    <!-- 修改密码（所有角色，改完强制重新登录） -->
-    <el-dialog v-model="pwdDialog" title="修改密码" width="400px">
-      <el-form :model="pwdForm" label-width="80px">
-        <el-form-item label="旧密码" required>
-          <el-input v-model="pwdForm.old_password" type="password" show-password placeholder="请输入旧密码" />
-        </el-form-item>
-        <el-form-item label="新密码" required>
-          <el-input v-model="pwdForm.new_password" type="password" show-password placeholder="至少 6 位" />
-        </el-form-item>
-        <el-form-item label="确认新密码" required>
-          <el-input v-model="pwdForm.confirm" type="password" show-password placeholder="再次输入新密码" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="pwdDialog = false">取消</el-button>
-        <el-button type="primary" :loading="pwdSaving" @click="doChangePwd">确认修改</el-button>
-      </template>
-    </el-dialog>
   </el-container>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { Monitor, Fold, Expand } from '@element-plus/icons-vue'
+import { ArrowDown, Bell, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
-import { errMsg } from '../utils/format'
+import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
 
 const route = useRoute()
 const router = useRouter()
-const { state, isAdmin, logout } = useAuth()
+const { state, isAdmin, setPageTitle, logout } = useAuth()
 const collapsed = ref(false)
 
+// 分组导航：group 字段同时驱动展开态（el-menu-item-group）与折叠态 v-for，
+// adminOnly 过滤在 menuGroups 里统一做。层级思路：资源组 = 用户生产消费的对象（虚拟机/镜像），
+// 宿主机与存储池/网络同属基础设施（提供算力/存储/网络）；会话管理并入审计中心（审计页 tab）；
+// 个人资料/改密码/轮询偏好收进顶栏「个人中心」（对标 JumpServer 审计模块与云控制台顶栏分工）。
 const navItems = [
-  { index: '/dashboard', label: '仪表盘', icon: 'DataLine' },
-  { index: '/vms', label: '虚拟机', icon: 'Monitor' },
-  { index: '/hosts', label: '宿主机', icon: 'Cpu' },
-  { index: '/images', label: '镜像管理', icon: 'Picture' },
-  { index: '/storage', label: '存储池', icon: 'FolderOpened' },
-  { index: '/networks', label: '网络', icon: 'Connection' },
-  { index: '/tasks', label: '任务中心', icon: 'List' },
-  { index: '/sessions', label: '会话管理', icon: 'Link' },
-  { index: '/settings', label: '系统设置', icon: 'Setting', adminOnly: true },
-  { index: '/audit', label: '审计日志', icon: 'Document', adminOnly: true }
+  { index: '/dashboard', label: '仪表盘', icon: 'DataLine', group: '总览' },
+  { index: '/monitor', label: '监控中心', icon: 'Odometer', group: '总览' },
+  { index: '/vms', label: '虚拟机', icon: 'Monitor', group: '资源' },
+  { index: '/images', label: '镜像管理', icon: 'Picture', group: '资源' },
+  { index: '/hosts', label: '宿主机', icon: 'Cpu', group: '基础设施' },
+  { index: '/storage', label: '存储池', icon: 'FolderOpened', group: '基础设施' },
+  { index: '/networks', label: '网络', icon: 'Connection', group: '基础设施' },
+  { index: '/tasks', label: '任务中心', icon: 'List', group: '运维' },
+  { index: '/audit', label: '审计中心', icon: 'Document', group: '运维' },
+  { index: '/users', label: '用户管理', icon: 'User', group: '管理', adminOnly: true },
+  { index: '/settings', label: '系统设置', icon: 'Setting', group: '管理', adminOnly: true }
 ]
+
+const menuGroups = computed(() => {
+  const visible = navItems.filter((it) => !it.adminOnly || isAdmin.value)
+  const order = ['总览', '资源', '基础设施', '运维', '管理']
+  return order
+    .map((name) => ({ name, items: visible.filter((it) => it.group === name) }))
+    .filter((g) => g.items.length > 0)
+})
+
+// 分组折叠状态：默认全展开（closedGroups 为空），点击组名切换；不依赖 el-menu 内部展开机制
+const closedGroups = ref(new Set())
+function toggleGroup(name) {
+  const next = new Set(closedGroups.value)
+  if (next.has(name)) next.delete(name)
+  else next.add(name)
+  closedGroups.value = next
+}
 
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard'))
 const titleMap = {
   dashboard: '仪表盘',
+  monitor: '监控中心',
   vms: '虚拟机管理',
   hosts: '宿主机管理',
   images: '镜像管理',
   storage: '存储池管理',
   networks: '网络管理',
   tasks: '任务中心',
-  sessions: '会话管理',
+  audit: '审计中心',
+  users: '用户管理',
   settings: '系统设置',
-  audit: '审计日志'
+  profile: '个人中心'
 }
-const title = computed(() => titleMap[route.path.split('/')[1]] || 'vmops')
+// 详情页先显示动态标题（如 VM 名），页面没写时回退静态映射
+const title = computed(() => state.pageTitle || titleMap[route.path.split('/')[1]] || 'vmops')
+
+// 离开详情类路由时清掉动态标题残留（/vms/new 不是详情页）
+watch(
+  () => route.path,
+  (p) => {
+    if (!/^\/vms\/\d+/.test(p)) setPageTitle('')
+  }
+)
+
+// 任务铃轮询：pending/running 两路合并；失败静默（铃铛只是辅助入口，不打扰用户）
+const activeTasks = ref([])
+let taskTimer = null
+async function loadActiveTasks() {
+  try {
+    const [run, pend] = await Promise.all([
+      api.listTasks({ status: 'running', page_size: 100 }),
+      api.listTasks({ status: 'pending', page_size: 100 })
+    ])
+    activeTasks.value = [...(run.items || []), ...(pend.items || [])]
+  } catch (e) {
+    /* 静默 */
+  }
+}
+onMounted(() => {
+  loadActiveTasks()
+  taskTimer = setInterval(loadActiveTasks, getPollInterval('tasks', POLL_DEFAULTS.tasks))
+})
+onUnmounted(() => {
+  if (taskTimer) clearInterval(taskTimer)
+})
 
 function onLogout() {
   logout()
   router.push({ name: 'login' })
 }
 
-// 修改密码（改完强制重新登录，用新密码验证）
-const pwdDialog = ref(false)
-const pwdSaving = ref(false)
-const pwdForm = ref({ old_password: '', new_password: '', confirm: '' })
-async function doChangePwd() {
-  if (!pwdForm.value.old_password || !pwdForm.value.new_password) {
-    ElMessage.warning('请填写旧密码和新密码')
-    return
-  }
-  if (pwdForm.value.new_password !== pwdForm.value.confirm) {
-    ElMessage.warning('两次输入的新密码不一致')
-    return
-  }
-  pwdSaving.value = true
-  try {
-    await api.changeMyPassword(pwdForm.value.old_password, pwdForm.value.new_password)
-    ElMessage.success('密码修改成功，请重新登录')
-    pwdDialog.value = false
-    pwdForm.value = { old_password: '', new_password: '', confirm: '' }
-    onLogout()
-  } catch (e) {
-    ElMessage.error(errMsg(e, '修改失败'))
-  } finally {
-    pwdSaving.value = false
-  }
+// 顶栏用户下拉：个人中心走独立页面（资料/改密码/轮询偏好），退出直接登出
+function onUserCommand(cmd) {
+  if (cmd === 'profile') router.push('/profile')
+  else if (cmd === 'logout') onLogout()
 }
 </script>
 
@@ -245,6 +269,43 @@ async function doChangePwd() {
   border-right: none;
   flex: 1;
   background: transparent;
+  /* 菜单项多时允许滚动（侧栏整体 100vh，brand 区之外是菜单区） */
+  overflow-y: auto;
+  min-height: 0;
+}
+/* 分组标题行（本地折叠状态，点击切换） */
+.menu :deep(.el-menu-item-group__title) {
+  padding: 0;
+}
+.nav-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+  font-weight: 600;
+  height: 36px;
+  padding: 0 16px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+.nav-group-title:hover {
+  color: rgba(255, 255, 255, 0.95);
+}
+.group-title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+.group-caret {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  transition: transform 0.2s ease;
+}
+.group-caret.closed {
+  transform: rotate(-90deg);
 }
 .collapse-nav {
   flex: 1;
@@ -276,9 +337,19 @@ async function doChangePwd() {
   font-weight: 600;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
+/* 分组之间留呼吸感（首个分组不额外加） */
+.menu :deep(.el-menu-item-group) {
+  margin-top: 8px;
+}
+.menu :deep(.el-menu-item-group:first-child) {
+  margin-top: 2px;
+}
 .menu :deep(.el-menu-item) {
-  color: rgba(255, 255, 255, 0.72);
-  margin: 2px 8px;
+  height: 42px;
+  line-height: 42px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.78);
+  margin: 2px 10px;
   border-radius: 10px;
   transition: all 0.2s ease;
 }
@@ -313,6 +384,52 @@ async function doChangePwd() {
   align-items: center;
   gap: 12px;
 }
+/* 任务铃 */
+.task-bell {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--color-muted-foreground);
+  padding: 4px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+.task-bell:hover {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+.task-pop-head {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.task-pop-empty {
+  color: var(--color-muted-foreground);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.task-pop-list {
+  max-height: 260px;
+  overflow-y: auto;
+}
+.task-pop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.task-pop-title {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-pop-more {
+  width: 100%;
+  margin-top: 8px;
+}
 .header-right :deep(.el-tag),
 .username {
   color: var(--color-muted-foreground);
@@ -320,6 +437,24 @@ async function doChangePwd() {
 .username {
   font-weight: 500;
   color: var(--color-foreground);
+}
+/* 顶栏用户入口（头像+用户名+下拉箭头） */
+.user-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--color-foreground);
+  outline: none;
+  transition: background 0.2s ease;
+}
+.user-entry:hover {
+  background: var(--color-background);
+}
+.entry-caret {
+  color: var(--color-muted-foreground);
 }
 .main {
   background: var(--color-background);

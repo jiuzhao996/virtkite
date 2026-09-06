@@ -1,82 +1,36 @@
 <template>
   <div v-loading="loading">
     <div class="page-head">
-      <h2 class="page-title">系统设置</h2>
+      <div>
+        <h2 class="page-title">系统设置</h2>
+        <span class="page-desc">平台运行参数，保存进数据库、立即生效无需重启；生效配置的只读快照见仪表盘「平台信息」卡，界面轮询偏好已移至顶栏「个人中心」</span>
+      </div>
       <el-button :icon="Refresh" :loading="loading" circle text @click="load" />
     </div>
 
-    <el-row :gutter="16">
-      <!-- 平台 -->
-      <el-col :xs="24" :md="12" class="mb">
-        <el-card shadow="never">
-          <template #header><span class="card-title">平台</span></template>
-          <el-descriptions :column="1" size="small" border>
-            <el-descriptions-item label="版本">{{ g('platform.version') }}</el-descriptions-item>
-            <el-descriptions-item label="运行模式">{{ g('platform.server_mode') }}</el-descriptions-item>
-            <el-descriptions-item label="监听端口">{{ g('platform.server_port') }}</el-descriptions-item>
-            <el-descriptions-item label="后端时间">{{ g('platform.time') }}</el-descriptions-item>
-          </el-descriptions>
-        </el-card>
-      </el-col>
-      <!-- 虚拟化 -->
-      <el-col :xs="24" :md="12" class="mb">
-        <el-card shadow="never">
-          <template #header><span class="card-title">虚拟化</span></template>
-          <el-descriptions :column="1" size="small" border>
-            <el-descriptions-item label="libvirt URI">{{ g('virt.libvirt_uri') }}</el-descriptions-item>
-          </el-descriptions>
-        </el-card>
-      </el-col>
-      <!-- 存储 -->
-      <el-col :xs="24" :md="12" class="mb">
-        <el-card shadow="never">
-          <template #header><span class="card-title">存储</span></template>
-          <el-descriptions :column="1" size="small" border>
-            <el-descriptions-item label="镜像目录">{{ g('storage.image_dir') }}</el-descriptions-item>
-            <el-descriptions-item label="seed 目录">{{ g('storage.seed_dir') }}</el-descriptions-item>
-            <el-descriptions-item label="存储池">{{ arr('storage.pools').join('、') || '—' }}</el-descriptions-item>
-          </el-descriptions>
-        </el-card>
-      </el-col>
-      <!-- 网络 -->
-      <el-col :xs="24" :md="12" class="mb">
-        <el-card shadow="never">
-          <template #header><span class="card-title">网络</span></template>
-          <el-descriptions :column="1" size="small" border>
-            <el-descriptions-item label="虚拟网络">{{ arr('network.networks').join('、') || '—' }}</el-descriptions-item>
-          </el-descriptions>
-        </el-card>
-      </el-col>
-      <!-- 任务与会话 -->
-      <el-col :xs="24" :md="12" class="mb">
-        <el-card shadow="never">
-          <template #header><span class="card-title">任务与会话</span></template>
-          <el-descriptions :column="1" size="small" border>
-            <el-descriptions-item label="任务 worker 数">{{ g('tasks.workers') }}</el-descriptions-item>
-            <el-descriptions-item label="任务队列缓冲">{{ g('tasks.queue_buffer') }}</el-descriptions-item>
-            <el-descriptions-item label="VNC 会话过期">{{ g('sessions.vnc_stale_min') }} 分钟无解析</el-descriptions-item>
-          </el-descriptions>
-        </el-card>
-      </el-col>
-      <!-- 前端轮询偏好（本机浏览器生效） -->
-      <el-col :xs="24" :md="12" class="mb">
-        <el-card shadow="never">
-          <template #header>
-            <div class="card-head">
-              <span class="card-title">前端轮询偏好</span>
-              <el-button size="small" type="primary" @click="savePoll">保存</el-button>
-            </div>
-          </template>
-          <el-form label-width="140px" size="small">
-            <el-form-item v-for="(label, key) in POLL_LABELS" :key="key" :label="label">
-              <el-input-number v-model="pollForm[key]" :min="1000" :max="60000" :step="1000" controls-position="right" />
-              <span class="unit">毫秒</span>
-            </el-form-item>
-          </el-form>
-          <p class="tip">保存在本机浏览器，下次进入页面生效（1000–60000ms）。</p>
-        </el-card>
-      </el-col>
-    </el-row>
+    <!-- 可写配置：DB 持久化、写入即生效 -->
+    <el-card shadow="never" class="mb">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">运行参数</span>
+          <el-button size="small" type="primary" :loading="saving" @click="saveWritable">保存并生效</el-button>
+        </div>
+      </template>
+      <el-form label-width="170px" size="small" style="max-width: 560px">
+        <el-form-item label="默认存储池">
+          <el-input v-model="writable.default_storage_pool" placeholder="未指定池时创建/删除 VM 使用的池名" />
+        </el-form-item>
+        <el-form-item label="VNC token 有效期">
+          <el-input-number v-model="writable.vnc_token_ttl_min" :min="1" :max="60" controls-position="right" />
+          <span class="unit">分钟（每次生成 token 实时读取）</span>
+        </el-form-item>
+        <el-form-item label="VNC 会话过期判定">
+          <el-input-number v-model="writable.vnc_stale_min" :min="5" :max="1440" controls-position="right" />
+          <span class="unit">分钟（超时无活动将被清扫收敛）</span>
+        </el-form-item>
+      </el-form>
+      <p class="tip">以上配置持久化在数据库中，保存后立即生效，无需重启后端。</p>
+    </el-card>
   </div>
 </template>
 
@@ -85,38 +39,26 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { POLL_DEFAULTS, POLL_LABELS, getPollInterval, setPollInterval } from '../utils/settings'
+import { errMsg } from '../utils/format'
 
 const loading = ref(false)
-const data = ref({})
+const saving = ref(false)
 
-function g(path) {
-  return path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : null), data.value) ?? '—'
-}
-// 数组安全取值（数据未到时 g() 回 '—'，直接 .join 会抛 TypeError）
-function arr(path) {
-  const v = path.split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : null), data.value)
-  return Array.isArray(v) ? v : []
-}
-
-const pollForm = reactive({})
-function loadPollForm() {
-  for (const key of Object.keys(POLL_DEFAULTS)) {
-    pollForm[key] = getPollInterval(key, POLL_DEFAULTS[key])
-  }
-}
-function savePoll() {
-  for (const [key, val] of Object.entries(pollForm)) {
-    pollForm[key] = setPollInterval(key, val)
-  }
-  ElMessage.success('已保存，下次进入页面生效')
-}
+// 可写配置表单（默认值兜底，后端 GET /settings 的 writable 节回填）
+const writable = reactive({
+  default_storage_pool: 'vmops',
+  vnc_token_ttl_min: 5,
+  vnc_stale_min: 60
+})
 
 async function load() {
   loading.value = true
   try {
     const res = await api.getSettings()
-    data.value = res.data || {}
+    const w = (res.data && res.data.writable) || {}
+    if (w.default_storage_pool) writable.default_storage_pool = w.default_storage_pool
+    if (w.vnc_token_ttl_min) writable.vnc_token_ttl_min = Number(w.vnc_token_ttl_min) || writable.vnc_token_ttl_min
+    if (w.vnc_stale_min) writable.vnc_stale_min = Number(w.vnc_stale_min) || writable.vnc_stale_min
   } catch (e) {
     ElMessage.error('获取系统设置失败')
   } finally {
@@ -124,14 +66,31 @@ async function load() {
   }
 }
 
-onMounted(() => {
-  loadPollForm()
-  load()
-})
+async function saveWritable() {
+  if (!writable.default_storage_pool) {
+    ElMessage.warning('默认存储池不能为空')
+    return
+  }
+  saving.value = true
+  try {
+    await api.updateSettings({
+      default_storage_pool: writable.default_storage_pool,
+      vnc_token_ttl_min: writable.vnc_token_ttl_min,
+      vnc_stale_min: writable.vnc_stale_min
+    })
+    ElMessage.success('已保存并生效')
+    load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存失败'))
+  } finally {
+    saving.value = false
+  }
+}
+
+onMounted(load)
 </script>
 
 <style scoped>
-/* .page-head / .page-title 已收进 global.css */
 .mb {
   margin-bottom: 16px;
 }

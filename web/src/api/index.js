@@ -79,7 +79,6 @@ export const api = {
   // 虚拟机
   listVMs: () => unwrap(http.get('/vms')),
   getVM: (id) => unwrap(http.get('/vms/' + id)),
-  getVMDetail: (id) => unwrap(http.get('/vms/' + id + '/detail')),
   getVMXML: (id) => unwrap(http.get('/vms/' + id + '/xml')),
   updateVMXML: (id, xml) => unwrap(http.put('/vms/' + id + '/xml', { xml })),
   createVM: (payload) => unwrap(http.post('/vms', payload)),
@@ -90,7 +89,6 @@ export const api = {
 
   // 虚拟机 - 配置模型 / 硬件管理 / 动作（virt-manager 对齐）
   getVMSpec: (id) => unwrap(http.get('/vms/' + id + '/spec')),
-  updateVMSpec: (id, spec) => unwrap(http.put('/vms/' + id + '/spec', spec)),
   pauseVM: (id) => unwrap(http.post('/vms/' + id + '/pause')),
   resumeVM: (id) => unwrap(http.post('/vms/' + id + '/resume')),
   getVMStats: (id) => unwrap(http.get('/vms/' + id + '/stats')),
@@ -123,7 +121,6 @@ export const api = {
 
   // 镜像
   listImages: (params) => unwrap(http.get('/images', { params })),
-  getImage: (id) => unwrap(http.get('/images/' + id)),
   // 上传大文件：不限超时 + 可选进度回调（percent, loaded, total）
   uploadImage: (formData, onProgress) => unwrap(http.post('/images/upload', formData, uploadConfig(onProgress))),
   deleteImage: (id) => unwrap(http.delete('/images/' + id)),
@@ -136,15 +133,32 @@ export const api = {
   createNetwork: (payload) => unwrap(http.post('/networks', payload)),
   defineNetworkXML: (payload) => unwrap(http.post('/networks/xml', payload)),
   updateNetwork: (name, xml) => unwrap(http.put('/networks/' + name, { xml })),
+  setNetworkAutostart: (name, autostart) => unwrap(http.put('/networks/' + name + '/autostart', { autostart })),
   startNetwork: (name) => unwrap(http.post('/networks/' + name + '/start')),
   stopNetwork: (name) => unwrap(http.post('/networks/' + name + '/stop')),
   deleteNetwork: (name) => unwrap(http.delete('/networks/' + name)),
+
+  // 用户管理（仅管理员）
+  listUsers: () => unwrap(http.get('/users')),
+  createUser: (payload) => unwrap(http.post('/users', payload)),
+  updateUser: (id, payload) => unwrap(http.put('/users/' + id, payload)),
+  deleteUser: (id) => unwrap(http.delete('/users/' + id)),
+
+  // 监控中心（Alertmanager 告警代理，登录即可看）
+  listAlerts: () => unwrap(http.get('/monitor/alerts')),
+
+  // 存储卷在用引用（卷管理弹窗的"在用"徽标与删卷确认）
+  volumeRefs: (pool) => unwrap(http.get('/storage/pools/' + pool + '/volume-refs')),
 
   // 仪表盘
   dashboardOverview: () => unwrap(http.get('/dashboard/overview')),
   vmStatus: () => unwrap(http.get('/dashboard/vm-status')),
   dashboardHostStats: () => unwrap(http.get('/dashboard/host-stats')),
   vmPerf: () => unwrap(http.get('/dashboard/vm-perf')),
+  // 历史性能曲线（Prometheus query_range，进页面即画满，无需等轮询攒点）
+  hostHistory: (minutes) => unwrap(http.get('/dashboard/host-history', { params: { minutes } })),
+  vmHistory: (minutes) => unwrap(http.get('/dashboard/vm-history', { params: { minutes } })),
+  vmStatsHistory: (id, minutes) => unwrap(http.get('/vms/' + id + '/stats-history', { params: { minutes } })),
 
   // 审计
   listAudit: (params) => unwrap(http.get('/audit', { params })),
@@ -160,8 +174,9 @@ export const api = {
   listSessions: (params) => unwrap(http.get('/sessions', { params })),
   disconnectSession: (id) => unwrap(http.post('/sessions/' + id + '/disconnect')),
 
-  // 系统设置快照（仅管理员）
-  getSettings: () => unwrap(http.get('/settings'))
+  // 系统设置（仅管理员）：GET 生效配置快照 + 可写项当前值；PUT 修改可写项（写入即生效）
+  getSettings: () => unwrap(http.get('/settings')),
+  updateSettings: (payload) => unwrap(http.put('/settings', payload))
 }
 
 // TOKEN_KEY 实际定义在 store/auth.js，这里原样 re-export，保持既有的「从 ../api 导入 TOKEN_KEY」写法可用

@@ -140,7 +140,7 @@
               </el-card>
             </div>
             <el-card shadow="never" class="chart-card">
-              <template #header><span class="card-title">实时曲线（近 60 次采样，每 {{ statsIntervalMs / 1000 }}s）</span></template>
+              <template #header><span class="card-title">性能曲线（近 60 个采样点：历史来自 Prometheus，之后每 {{ statsIntervalMs / 1000 }}s 实时追加）</span></template>
               <div ref="perfChartEl" class="perf-chart"></div>
             </el-card>
           </template>
@@ -409,7 +409,7 @@ import { vmStatusText, vmStatusTag, usageColor, fmtRateBytes, nowClock, isCancel
 
 const route = useRoute()
 const router = useRouter()
-const { isAdmin } = useAuth()
+const { isAdmin, setPageTitle } = useAuth()
 const id = route.params.id
 
 // echarts 不解析 var()，实时曲线需要真实色值：挂载时读一次 CSS 变量
@@ -519,6 +519,8 @@ async function loadSpec() {
     const res = await api.getVMSpec(id)
     vm.value = (res.data && res.data.vm) || null
     spec.value = (res.data && res.data.spec) || null
+    // 顶栏标题显示 VM 名（离开路由时由 MainLayout 的 watch 清除）
+    if (vm.value && vm.value.name) setPageTitle(vm.value.name)
     if (spec.value && spec.value.disks && activeDisk.value >= spec.value.disks.length) {
       activeDisk.value = Math.max(0, spec.value.disks.length - 1)
     }
@@ -641,6 +643,22 @@ function pollStats() {
       if (activeView.value === 'perf') renderPerfChart()
     })
     .catch(() => {})
+}
+
+// 进详情页时从 Prometheus 预填历史曲线（替代"从零攒点、刷新即失"）：
+// 拉不到（监控栈未起/VM 从未运行）静默降级为原行为。之后轮询继续无缝追加。
+async function prefillStatsHistory() {
+  try {
+    const res = await api.vmStatsHistory(id, 30)
+    const pts = (res.data && res.data.points) || []
+    if (!pts.length) return
+    const recent = pts.slice(-60)
+    cpuHistory.value = recent.map((p) => ({ t: p.t, v: p.cpu }))
+    memHistory.value = recent.map((p) => ({ t: p.t, v: p.mem }))
+    if (activeView.value === 'perf') renderPerfChart()
+  } catch (e) {
+    /* 静默降级 */
+  }
 }
 
 function initPerfChart() {
@@ -966,6 +984,7 @@ onMounted(async () => {
   await loadSpec()
   await loadSnapshots()
   await loadXML()
+  prefillStatsHistory()
   statsTimer = setInterval(pollStats, statsIntervalMs)
 })
 

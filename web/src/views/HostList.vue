@@ -23,10 +23,11 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="220" fixed="right">
+        <el-table-column label="操作" min-width="280" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :icon="Connection" :loading="testBusy.has(row.id)" @click="test(row)">测试连通</el-button>
             <el-button size="small" :icon="DataLine" @click="showStats(row)">查看状态</el-button>
+            <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
             <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -45,7 +46,8 @@
       </el-descriptions>
     </el-dialog>
 
-    <el-dialog v-model="dialog" title="添加宿主机" width="480px">
+    <!-- 添加 / 编辑 复用一个弹窗：editingId 区分模式 -->
+    <el-dialog v-model="dialog" :title="editingId ? '编辑宿主机' : '添加宿主机'" width="480px">
       <el-form :model="form" label-width="90px">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" />
@@ -68,7 +70,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
-        <el-button type="primary" :loading="creating" @click="create">添加</el-button>
+        <el-button type="primary" :loading="creating" @click="submit">{{ editingId ? '保存' : '添加' }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -77,7 +79,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, Connection, DataLine, Delete } from '@element-plus/icons-vue'
+import { Refresh, Plus, Connection, DataLine, Edit, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { hostStatusText, hostStatusTag, errMsg, isCancel } from '../utils/format'
@@ -93,6 +95,8 @@ const statsTarget = ref(null)
 const statsData = ref(null)
 const dialog = ref(false)
 const creating = ref(false)
+// 编辑模式标识：null = 新建；编辑与新建复用同一弹窗与表单
+const editingId = ref(null)
 
 const form = reactive({
   name: '',
@@ -158,6 +162,7 @@ async function remove(h) {
 }
 
 function openCreate() {
+  editingId.value = null
   Object.assign(form, {
     name: '',
     libvirt_uri: 'qemu:///system',
@@ -169,19 +174,37 @@ function openCreate() {
   dialog.value = true
 }
 
-async function create() {
+function openEdit(row) {
+  editingId.value = row.id
+  Object.assign(form, {
+    name: row.name || '',
+    libvirt_uri: row.libvirt_uri || 'qemu:///system',
+    ssh_ip: row.ssh_ip || '',
+    ssh_port: row.ssh_port || 22,
+    ssh_user: row.ssh_user || 'root',
+    description: row.description || ''
+  })
+  dialog.value = true
+}
+
+async function submit() {
   if (!form.name || !form.ssh_ip) {
     ElMessage.warning('请填写名称和 SSH IP')
     return
   }
   creating.value = true
   try {
-    await api.createHost({ ...form })
-    ElMessage.success('添加成功')
+    if (editingId.value) {
+      await api.updateHost(editingId.value, { ...form })
+      ElMessage.success('已保存')
+    } else {
+      await api.createHost({ ...form })
+      ElMessage.success('添加成功')
+    }
     dialog.value = false
     await load()
   } catch (e) {
-    ElMessage.error(errMsg(e, '添加失败'))
+    ElMessage.error(errMsg(e, editingId.value ? '保存失败' : '添加失败'))
   } finally {
     creating.value = false
   }

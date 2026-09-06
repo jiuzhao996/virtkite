@@ -539,8 +539,32 @@ async function openConsole(vm) {
   router.push({ name: 'console', params: { id: vm.id } })
 }
 
+// 进页面时从 Prometheus 预填各 VM 迷你曲线的历史（替代"从零攒点、刷新即失"）：
+// 后端一次返回全部 VM 的序列（按名字分组），按名字映射到卡片 id；拉不到静默降级。
+async function prefillVMHistories() {
+  try {
+    const res = await api.vmHistory(30)
+    const vms = (res.data && res.data.vms) || {}
+    const nameToId = {}
+    for (const vm of items.value) nameToId[vm.name] = vm.id
+    for (const [name, pts] of Object.entries(vms)) {
+      const id = nameToId[name]
+      if (!id || !pts.length) continue
+      const recent = pts.slice(-HIST_MAX)
+      histMap.value[id] = {
+        t: recent.map((p) => p.t),
+        cpu: recent.map((p) => p.cpu),
+        mem: recent.map((p) => p.mem)
+      }
+    }
+    nextTick(syncCharts)
+  } catch (e) {
+    /* 静默降级 */
+  }
+}
+
 onMounted(() => {
-  load()
+  load().then(prefillVMHistories)
   pollTimer = setInterval(silentRefresh, getPollInterval('vmlist', POLL_DEFAULTS.vmlist))
   window.addEventListener('resize', onWinResize)
 })

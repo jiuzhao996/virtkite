@@ -1,19 +1,23 @@
 <template>
   <div v-loading="loading">
-    <div class="page-head">
-      <h2 class="page-title">会话管理</h2>
-    </div>
-    <el-card shadow="never">
-      <div class="toolbar">
-        <div class="toolbar-left">
-          <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 140px" @change="load">
-            <el-option label="进行中" value="active" />
-            <el-option label="已结束" value="closed" />
-          </el-select>
-        </div>
-        <span class="count">共 {{ total }} 个会话<span v-if="activeCount" class="running-hint"> · {{ activeCount }} 个进行中</span></span>
+    <!-- 已并入「审计中心」的会话审计 tab：本组件不再带页面头，由 AuditList 提供标题与说明 -->
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <el-button type="primary" :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
+        <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 120px" @change="reload">
+          <el-option label="进行中" value="active" />
+          <el-option label="已结束" value="closed" />
+        </el-select>
+        <el-select v-model="q.type" placeholder="连接方式" clearable style="width: 120px" @change="reload">
+          <el-option label="图形控制台" value="vnc" />
+          <el-option label="Web 终端" value="ssh" />
+          <el-option label="串口 Console" value="serial" />
+        </el-select>
+        <el-input v-model="q.vm_name" placeholder="按虚拟机名搜索" clearable style="width: 170px" @keyup.enter="reload" @clear="reload" />
+        <el-input v-model="q.username" placeholder="按用户搜索" clearable style="width: 140px" @keyup.enter="reload" @clear="reload" />
       </div>
+      <span class="count">共 {{ total }} 个会话<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span></span>
+    </div>
       <el-alert
         type="info"
         :closable="false"
@@ -48,6 +52,12 @@
         <el-table-column label="开始时间" width="170">
           <template #default="{ row }">{{ fmtDateTimeLocale(row.started_at) }}</template>
         </el-table-column>
+        <el-table-column label="最近活跃" width="170">
+          <template #default="{ row }">
+            <!-- last_seen：VNC 会话是否已僵死的唯一依据（超时未刷新将被清扫器收敛） -->
+            <span class="mono">{{ row.last_seen ? fmtDateTimeLocale(row.last_seen) : '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="时长" width="110">
           <template #default="{ row }">{{ duration(row) }}</template>
         </el-table-column>
@@ -64,7 +74,17 @@
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+
+      <el-pagination
+        v-model:current-page="q.page"
+        v-model:page-size="q.page_size"
+        :total="total"
+        :page-sizes="[20, 50, 100]"
+        layout="total, sizes, prev, pager, next"
+        class="pager"
+        @current-change="load"
+        @size-change="onPageSizeChange"
+      />
   </div>
 </template>
 
@@ -82,7 +102,7 @@ const { isAdmin } = useAuth()
 const items = ref([])
 const total = ref(0)
 const loading = ref(false)
-const q = ref({ status: '' })
+const q = ref({ status: '', type: '', vm_name: '', username: '', page: 1, page_size: 20 })
 
 function duration(row) {
   const start = new Date(row.started_at).getTime()
@@ -97,11 +117,25 @@ const activeCount = computed(() => items.value.filter((s) => s.status === 'activ
 
 // 拉取列表（首屏/手动刷新与静默轮询共用，只负责取数与赋值）
 async function fetchSessions() {
-  const params = {}
+  const params = { page: q.value.page, page_size: q.value.page_size }
   if (q.value.status) params.status = q.value.status
+  if (q.value.type) params.type = q.value.type
+  if (q.value.vm_name) params.vm_name = q.value.vm_name
+  if (q.value.username) params.username = q.value.username
   const res = await api.listSessions(params)
   items.value = (res.data && res.data.items) || []
   total.value = (res.data && res.data.total) || 0
+}
+
+// 筛选条件变更：回到第 1 页再查
+function reload() {
+  q.value.page = 1
+  load()
+}
+
+function onPageSizeChange() {
+  q.value.page = 1
+  load()
 }
 
 // 首屏 / 手动刷新 / 切筛选：带整页 loading
@@ -158,7 +192,12 @@ onUnmounted(() => {
 .toolbar-left {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+.pager {
+  margin-top: 12px;
+  justify-content: flex-end;
 }
 .running-hint {
   color: var(--color-accent);

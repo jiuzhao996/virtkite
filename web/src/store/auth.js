@@ -8,8 +8,16 @@ export const TOKEN_KEY = 'vmops_token'
 
 const state = reactive({
   token: localStorage.getItem(TOKEN_KEY) || '',
-  user: null
+  user: null,
+  // 顶栏动态页标题：详情页（如 VmDetail）拿到实体后写入，离开路由时清空。
+  // MainLayout 的 title 优先显示它，为空时回退到按路径映射的静态标题。
+  pageTitle: ''
 })
+
+// setPageTitle 设置/清除顶栏动态标题（传空串清除）。
+function setPageTitle(t) {
+  state.pageTitle = t || ''
+}
 
 function setToken(token) {
   state.token = token
@@ -42,6 +50,7 @@ export function useAuth() {
     isLoggedIn,
     setToken,
     setUser,
+    setPageTitle,
     logout
   }
 }
