@@ -40,6 +40,15 @@ func main() {
 		log.Fatalf("release 模式必须设置 JWT_SECRET_KEY 环境变量：当前为空或仍是内置默认值，存在 Token 伪造风险")
 	}
 
+	// release 模式禁止 CORS 通配符：* 等于允许任意站点携带凭据跨域调用全部 API。
+	// 与 JWT 校验同款策略：显式配置具体来源后才允许启动。
+	if config.GlobalConfig.ServerMode == "release" && config.GlobalConfig.CORSOrigins == "*" {
+		log.Fatalf("release 模式必须设置 CORS_ORIGINS 环境变量（如 https://vmops.example.com）：* 通配符存在跨站调用 API 的风险")
+	}
+	if config.GlobalConfig.ServerMode == "release" {
+		log.Println("⚠️ /metrics 为公开端点（Prometheus 抓取用），生产环境请用防火墙限制 :8080 的来源网段")
+	}
+
 	// 初始化数据库
 	database.Init()
 	db := database.GetDB()
