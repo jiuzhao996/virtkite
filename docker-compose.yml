@@ -36,6 +36,10 @@ services:
       # ⚠️ 生产环境请务必改掉下面的 JWT 密钥
       JWT_SECRET_KEY: change-me-please-use-a-strong-random-secret
       SERVER_PORT: "8080"
+      # 监控中心代理查询告警用（compose 网络内用服务名；宿主机直跑默认 127.0.0.1:9093）
+      ALERTMANAGER_URL: http://alertmanager:9093
+      # 仪表盘/虚拟机详情的历史曲线经 Prometheus query_range 查询
+      PROMETHEUS_URL: http://prometheus:9090
     ports:
       - "8080:8080"
     volumes:
@@ -43,13 +47,15 @@ services:
       # 直通宿主机 libvirtd（监控与纳管需真实 KVM；无 KVM 的机器请注释掉，指标将为空但服务可启动）
       - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
 
-  # Prometheus：抓取 app:8080/metrics（内建 exporter，15s）
+  # Prometheus：抓取 vmops /metrics（内建 exporter，15s）
+  # 不 depends_on app：app 支持宿主机原生直跑（推荐形态），容器内经 host-gateway 抓取
   prometheus:
-    image: prom/prometheus:v2.53.0
+    image: prom/prometheus:v3.14.0
     container_name: vmops-prometheus
     restart: unless-stopped
-    depends_on:
-      - app
+    extra_hosts:
+      # 让 host.docker.internal 指向宿主机（app 原生直跑形态也能被容器内 Prometheus 抓到）
+      - "host.docker.internal:host-gateway"
     ports:
       - "9090:9090"
     volumes:
@@ -59,11 +65,11 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
-      - "--alertmanager.url=http://alertmanager:9093"
+      # 注意：Prometheus 2.x 已移除 --alertmanager.url 参数，告警对接在 prometheus.yml 的 alerting 段配置
 
   # Alertmanager：告警分组去重（UI :9093，通知通道见 deploy/alertmanager.yml 注释）
   alertmanager:
-    image: prom/alertmanager:v0.27.0
+    image: prom/alertmanager:v0.34.0
     container_name: vmops-alertmanager
     restart: unless-stopped
     depends_on:
@@ -79,7 +85,7 @@ services:
 
   # Grafana：预置数据源 + vmops 看板（admin/admin，首次登录后改密）
   grafana:
-    image: grafana/grafana:11.1.0
+    image: grafana/grafana:13.2.1
     container_name: vmops-grafana
     restart: unless-stopped
     depends_on:
@@ -89,6 +95,10 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+      # 供产品「监控中心」页 iframe 嵌入：开匿名只读 + 允许被嵌入（Grafana 11 默认拒绝）
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
     volumes:
       - ./deploy/grafana-datasource.yml:/etc/grafana/provisioning/datasources/vmops.yml:ro
       - ./deploy/grafana-dashboard-provider.yml:/etc/grafana/provisioning/dashboards/vmops.yml:ro
