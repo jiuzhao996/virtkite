@@ -727,7 +727,7 @@ function buildPayload() {
 function next() {
   if (step.value === 0) {
     if (installMode.value === 'iso') {
-      if (!iso.osName) return ElMessage.warning('请选择操作系统')
+      if (!iso.osName) return ElMessage.warning({ message: '请选择操作系统', grouping: true })
       if (!iso.isoPath && !iso.isoImageId) return ElMessage.warning('请填写 ISO 路径或从镜像库选择')
     } else if (installMode.value === 'import') {
       if (!importDisk.source) return ElMessage.warning('请填写磁盘路径')

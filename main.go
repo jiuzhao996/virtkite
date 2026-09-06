@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"path/filepath"
 	"time"
 
@@ -62,6 +63,7 @@ func main() {
 	// 启动收敛：内存队列/连接随进程消失，DB 里残留的 pending/running 任务与 ssh/serial 会话
 	// 置终态，避免重启后幽灵任务与幽灵会话（VNC 靠 last_seen 过期清扫收敛，无需处理）
 	sweepStaleRecords(db)
+	startAuditRetention(db)
 
 	// 初始化Gin
 	if config.GlobalConfig.ServerMode == "release" {
@@ -336,6 +338,42 @@ func main() {
 // sweepStaleRecords 启动收敛：进程重启导致内存态丢失，DB 残留的中间态需置终态。
 //   - tasks: pending/running 的任务队列已丢，不可重入（executor 非幂等，重跑会重复建盘），标记 failed 并写明原因
 //   - console_sessions: ssh/serial 的 WS 随进程死亡，标记 closed；VNC 靠 last_seen 过期清扫，不动
+// startAuditRetention 审计日志保留期清理：启动跑一轮 + 每 24h 一轮，
+// 删除 30 天前的记录（分批 DELETE 防止单语句锁表太久）。
+// 背景：审计表曾因 GET 轮询全量记录在数小时内膨胀到 6 万条；GET 已不再入审计，
+// 此任务兜底长期运行的存量增长。后台 goroutine 自带 recover（见 AGENTS 并发规范）。
+func startAuditRetention(db *gorm.DB) {
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[audit] 保留期清理 panic=%v\n%s", rec, debug.Stack())
+			}
+		}()
+
+		cleanup := func() {
+			cutoff := time.Now().AddDate(0, 0, -30)
+			for {
+				res := db.Exec("DELETE FROM audit_logs WHERE created_at < ? LIMIT 10000", cutoff)
+				if res.Error != nil {
+					log.Printf("[audit] 保留期清理失败: %v", res.Error)
+					return
+				}
+				if res.RowsAffected < 10000 {
+					return
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+		}
+
+		cleanup()
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanup()
+		}
+	}()
+}
+
 func sweepStaleRecords(db *gorm.DB) {
 	now := time.Now()
 	r1 := db.Model(&model.Task{}).

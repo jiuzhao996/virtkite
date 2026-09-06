@@ -194,6 +194,8 @@ async function loadActiveTasks() {
   }
 }
 onMounted(() => {
+  // 兜底清残留动态标题：从独立路由（如控制台）回到布局时 watch 不会触发
+  if (!/^\/vms\/\d+/.test(route.path)) setPageTitle('')
   loadActiveTasks()
   taskTimer = setInterval(loadActiveTasks, getPollInterval('tasks', POLL_DEFAULTS.tasks))
 })

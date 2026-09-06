@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net/http"
 	"log"
 	"strings"
 	"time"
@@ -29,6 +30,16 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 			strings.HasPrefix(path, "/favicon.ico") ||
 			path == "/api/health" ||
 			path == "/metrics" {
+			c.Next()
+			return
+		}
+
+		// GET 轮询不写审计：仪表盘/列表/性能曲线都是 3~5s 一次的只读轮询，
+		// 全记会把 audit_logs 刷成天文数字（实测数小时累积 6 万条），
+		// 且「操作类型分布」里 access 类压扁真实操作统计。
+		// 审计价值在「谁改了什么」——写操作与登录均已覆盖；
+		// 「谁连了哪台控制台」由 console_sessions 表完整记录，不依赖审计。
+		if method == http.MethodGet {
 			c.Next()
 			return
 		}

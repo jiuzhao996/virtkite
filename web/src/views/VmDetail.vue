@@ -989,6 +989,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  setPageTitle('') // 动态标题随页销毁：否则经 /console/:id 这类独立路由往返后顶栏残留旧 VM 名
   if (statsTimer) {
     clearInterval(statsTimer)
     statsTimer = null
