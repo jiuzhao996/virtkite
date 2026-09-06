@@ -33,7 +33,7 @@ func (v *Virt) ListNetworks() ([]NetworkInfo, error) {
 	flags := libvirt.ConnectListNetworksActive | libvirt.ConnectListNetworksInactive
 	networks, _, err := l.ConnectListAllNetworks(1, flags)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("枚举网络失败（对应 virsh net-list --all）: %w", err)
 	}
 
 	infos := make([]NetworkInfo, 0, len(networks))
@@ -55,7 +55,7 @@ func (v *Virt) GetNetwork(name string) (*NetworkInfo, error) {
 	}
 	n, err := l.NetworkLookupByName(name)
 	if err != nil {
-		return nil, fmt.Errorf("网络 %s 不存在: %v", name, err)
+		return nil, fmt.Errorf("网络 %s 不存在: %w", name, err)
 	}
 	info, err := v.getNetworkInfo(l, n)
 	if err != nil {
@@ -254,28 +254,107 @@ func (v *Virt) UpdateNetwork(name, xml string) error {
 	return nil
 }
 
+// 以下为 NAT 网络 XML 生成结构（按 AGENTS.md「XML 用标准库 encoding/xml」，
+// 参照 spec.go 的 BuildDomainXML 写法）。用 xml.Marshal 而非字符串拼接：
+// 网络名/网关中的 XML 元字符由标准库自动转义，无法闭合标签注入额外节点。
+
+// netPortXML <port start='1024' end='65535'/>
+type netPortXML struct {
+	Start int `xml:"start,attr"`
+	End   int `xml:"end,attr"`
+}
+
+// netNatXML <nat><port .../></nat>
+type netNatXML struct {
+	Port netPortXML `xml:"port"`
+}
+
+// netForwardXML <forward mode='nat'><nat>...</nat></forward>
+type netForwardXML struct {
+	Mode string    `xml:"mode,attr"`
+	NAT  netNatXML `xml:"nat"`
+}
+
+// netBridgeXML <bridge name='virbr10' stp='on' delay='0'/>
+type netBridgeXML struct {
+	Name  string `xml:"name,attr"`
+	STP   string `xml:"stp,attr"`
+	Delay string `xml:"delay,attr"`
+}
+
+// netRangeXML <range start='192.168.100.2' end='192.168.100.254'/>
+type netRangeXML struct {
+	Start string `xml:"start,attr"`
+	End   string `xml:"end,attr"`
+}
+
+// netDhcpXML <dhcp><range .../></dhcp>
+type netDhcpXML struct {
+	Range netRangeXML `xml:"range"`
+}
+
+// netIPXML <ip address='192.168.100.1' netmask='255.255.255.0'><dhcp>...</dhcp></ip>
+type netIPXML struct {
+	Address string     `xml:"address,attr"`
+	Netmask string     `xml:"netmask,attr"`
+	DHCP    netDhcpXML `xml:"dhcp"`
+}
+
+// networkXML 网络定义根元素（对应 virsh net-define 的输入 XML）。
+type networkXML struct {
+	XMLName xml.Name      `xml:"network"`
+	Name    string        `xml:"name"`
+	Forward netForwardXML `xml:"forward"`
+	Bridge  netBridgeXML  `xml:"bridge"`
+	IP      netIPXML      `xml:"ip"`
+}
+
+// NAT 网络模板固定取值（命名常量，避免散落字面量）。
+const (
+	natForwardMode = "nat"           // <forward mode>
+	natPortStart   = 1024            // <nat><port start>
+	natPortEnd     = 65535           // <nat><port end>
+	natNetmask     = "255.255.255.0" // <ip netmask>：模板固定 /24
+	natDefaultGW   = "192.168.100.1" // gateway 入参为空时的默认网关
+	bridgeSTP      = "on"            // <bridge stp>
+	bridgeDelay    = "0"             // <bridge delay>
+)
+
 // NetworkXMLFromParams 根据参数生成 NAT 网络 XML（类似 virsh net-create 的 NAT 模板）。
+// 走 encoding/xml 序列化，name/gateway 为外部可控输入，由标准库自动转义，无 XML 注入面。
 func NetworkXMLFromParams(name, cidr, gateway string) string {
-	// cidr 形如 192.168.100.0/24，提取网段
+	// cidr 形如 192.168.100.0/24；当前模板固定 /24 掩码，暂不使用该入参
+	_ = cidr
 	ipPart := gateway
 	if ipPart == "" {
-		ipPart = "192.168.100.1"
+		ipPart = natDefaultGW
 	}
-	_ = cidr
-	return fmt.Sprintf(`<network>
-  <name>%s</name>
-  <forward mode='nat'>
-    <nat>
-      <port start='1024' end='65535'/>
-    </nat>
-  </forward>
-  <bridge name='virbr%d' stp='on' delay='0'/>
-  <ip address='%s' netmask='255.255.255.0'>
-    <dhcp>
-      <range start='%s' end='%s'/>
-    </dhcp>
-  </ip>
-</network>`, name, hashNetwork(name), ipPart, dhcpStart(ipPart), dhcpEnd(ipPart))
+
+	nx := networkXML{
+		Name: name,
+		Forward: netForwardXML{
+			Mode: natForwardMode,
+			NAT:  netNatXML{Port: netPortXML{Start: natPortStart, End: natPortEnd}},
+		},
+		Bridge: netBridgeXML{
+			Name:  fmt.Sprintf("virbr%d", hashNetwork(name)),
+			STP:   bridgeSTP,
+			Delay: bridgeDelay,
+		},
+		IP: netIPXML{
+			Address: ipPart,
+			Netmask: natNetmask,
+			DHCP:    netDhcpXML{Range: netRangeXML{Start: dhcpStart(ipPart), End: dhcpEnd(ipPart)}},
+		},
+	}
+
+	out, err := xml.Marshal(nx)
+	if err != nil {
+		// networkXML 只含字符串/整数字段，Marshal 不会失败；
+		// 兜底返回空串，由调用方 DefineNetwork 报「定义网络失败」，不生成半截 XML。
+		return ""
+	}
+	return string(out)
 }
 
 // hashNetwork 根据名称生成稳定网桥后缀

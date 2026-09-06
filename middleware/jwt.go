@@ -40,9 +40,11 @@ func GenerateToken(user *model.User) (string, error) {
 
 // ParseToken 解析JWT Token
 func ParseToken(tokenString string) (*Claims, error) {
+	// 必须用 WithValidMethods 锁定签名算法：否则攻击者可把 header 的 alg 换成
+	// 其他类型让库走不同的验签路径（算法混淆攻击）。本项目只签发 HS256。
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		return []byte(config.GlobalConfig.JWTSecretKey), nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 	if err != nil {
 		return nil, err
 	}
@@ -52,6 +54,17 @@ func ParseToken(tokenString string) (*Claims, error) {
 	}
 
 	return nil, jwt.ErrSignatureInvalid
+}
+
+// abortJSON 以全站统一响应格式 {code, message, data} 中断请求。
+// 中间件不能复用 handler 包的 Fail：handler 已依赖 middleware（HashPassword 等），
+// 反向引用会构成导入环，因此在本包内单独提供。
+func abortJSON(c *gin.Context, status int, message string) {
+	c.AbortWithStatusJSON(status, gin.H{
+		"code":    status,
+		"message": message,
+		"data":    nil,
+	})
 }
 
 // claimsFromRequest 从 HTTP 请求的 Authorization 头（或 ?token= 查询参数）解析 JWT Claims。
@@ -90,16 +103,14 @@ func AuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 			authHeader = "Bearer " + c.Query("token")
 		}
 		if authHeader == "Bearer " {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "未提供认证信息"})
-			c.Abort()
+			abortJSON(c, http.StatusUnauthorized, "未提供认证信息")
 			return
 		}
 
 		// 提取Token
 		parts := strings.SplitN(authHeader, " ", 2)
 		if !(len(parts) == 2 && parts[0] == "Bearer") {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "认证格式错误"})
-			c.Abort()
+			abortJSON(c, http.StatusUnauthorized, "认证格式错误")
 			return
 		}
 
@@ -108,23 +119,20 @@ func AuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 		// 解析Token
 		claims, err := ParseToken(tokenString)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Token无效或已过期"})
-			c.Abort()
+			abortJSON(c, http.StatusUnauthorized, "Token 无效或已过期")
 			return
 		}
 
 		// 查询用户
 		var user model.User
 		if err := db.First(&user, claims.UserID).Error; err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "用户不存在"})
-			c.Abort()
+			abortJSON(c, http.StatusUnauthorized, "用户不存在")
 			return
 		}
 
 		// 检查用户状态
 		if !user.IsActive {
-			c.JSON(http.StatusForbidden, gin.H{"error": "账号已被禁用"})
-			c.Abort()
+			abortJSON(c, http.StatusForbidden, "账号已被禁用")
 			return
 		}
 
@@ -145,10 +153,10 @@ func AuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 // AdminMiddleware 管理员权限中间件
 func AdminMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 断言带 ok：上下文里的 role 类型不符时按无权限处理，不能 panic 掉整条请求链
 		role, exists := c.Get("role")
-		if !exists || role.(string) != "admin" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
-			c.Abort()
+		if roleStr, ok := role.(string); !exists || !ok || roleStr != "admin" {
+			abortJSON(c, http.StatusForbidden, "需要管理员权限")
 			return
 		}
 		c.Next()
@@ -156,9 +164,13 @@ func AdminMiddleware() gin.HandlerFunc {
 }
 
 // OperatorMiddleware 运维权限中间件（RBAC 第一阶段：只读 viewer）。
-// admin 放行全部；viewer 仅放行读操作（GET）与控制台只看通道（VNC token 签发，
-// WS 终端/串口本身就是 GET），其余变更操作（POST/PUT/DELETE）一律 403。
+// admin 放行全部；viewer 放行读操作（GET）与图形控制台 token 签发（VNC 以 view_only 模式打开），
+// 其余变更操作（POST/PUT/DELETE）一律 403。
 // /users 与 /audit 组继续用 AdminMiddleware（用户哈希与审计敏感）。
+//
+// 例外：SSH 终端与串口控制台虽然是 GET，但建立的是对 guest 的**双向写入**通道
+// （/terminal 是 SSH shell，/serial 直连虚拟机串口，多数云镜像上即 root TTY），
+// 与「只读」语义冲突，因此对 viewer 关闭，只留图形控制台的只读观看。
 func OperatorMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role, _ := c.Get("role")
@@ -166,8 +178,12 @@ func OperatorMiddleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		// viewer 只读 + 控制台
+		// viewer 只读 + 图形控制台观看
 		if c.Request.Method == http.MethodGet {
+			if isGuestWriteChannel(c.FullPath()) {
+				abortJSON(c, http.StatusForbidden, "只读角色不能使用 SSH 终端与串口控制台，请使用图形控制台查看")
+				return
+			}
 			c.Next()
 			return
 		}
@@ -176,12 +192,17 @@ func OperatorMiddleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
-		c.Abort()
+		abortJSON(c, http.StatusForbidden, "需要管理员权限")
 	}
 }
 
 // isVNCTokenPath 判断是否为 VNC token 签发路径（gin FullPath 模板，如 /api/vms/:id/vnc-token）。
 func isVNCTokenPath(fullPath string) bool {
 	return strings.HasSuffix(fullPath, "/vnc-token")
+}
+
+// isGuestWriteChannel 判断是否为对 guest 的交互式写入通道（SSH 终端 / 串口控制台）。
+// 两者都注册为 GET（浏览器 WebSocket 只能发 GET），不能只靠方法判断读写语义。
+func isGuestWriteChannel(fullPath string) bool {
+	return strings.HasSuffix(fullPath, "/terminal") || strings.HasSuffix(fullPath, "/serial")
 }

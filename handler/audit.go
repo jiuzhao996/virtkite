@@ -84,7 +84,10 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 
 // GetAuditLog 获取单条审计日志详情
 func (h *AuditHandler) GetAuditLog(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var log model.AuditLog
 	if err := h.DB.First(&log, id).Error; err != nil {

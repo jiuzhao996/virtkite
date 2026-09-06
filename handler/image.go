@@ -80,7 +80,10 @@ func (h *ImageHandler) ListImages(c *gin.Context) {
 
 // GetImage 获取镜像详情
 func (h *ImageHandler) GetImage(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var img model.Image
 	if err := h.DB.First(&img, id).Error; err != nil {
@@ -214,7 +217,10 @@ func (h *ImageHandler) UploadImage(c *gin.Context) {
 
 // DeleteImage 删除镜像
 func (h *ImageHandler) DeleteImage(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var img model.Image
 	if err := h.DB.First(&img, id).Error; err != nil {
@@ -251,7 +257,10 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 
 // SetImageTemplate 标记/取消镜像为模板（body: {is_template}）。
 func (h *ImageHandler) SetImageTemplate(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var img model.Image
 	if err := h.DB.First(&img, id).Error; err != nil {
 		Fail(c, http.StatusNotFound, "镜像不存在")
@@ -281,7 +290,10 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "任务系统未初始化")
 		return
 	}
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var img model.Image
 	if err := h.DB.First(&img, id).Error; err != nil {
 		Fail(c, http.StatusNotFound, "镜像不存在")

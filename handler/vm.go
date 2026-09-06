@@ -132,7 +132,7 @@ func (h *VMHandler) ListVMs(c *gin.Context) {
 	// 实时性能：仅 running 采样，key 为 VM id（与 /dashboard/vm-perf 同口径，供列表页合并请求）
 	perf := make(map[uint]gin.H, len(vms))
 	for _, vm := range vms {
-		if vm.Status != "running" {
+		if vm.Status != model.VMStatusRunning {
 			continue
 		}
 		if st, err := h.Virt.GetDomainStats(vm.Name); err == nil && st != nil {
@@ -159,7 +159,10 @@ func (h *VMHandler) ListVMs(c *gin.Context) {
 
 // GetVM 获取虚拟机详情
 func (h *VMHandler) GetVM(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var vm model.VM
 	if err := h.DB.Preload("Host").First(&vm, id).Error; err != nil {
@@ -182,7 +185,10 @@ func (h *VMHandler) GetVM(c *gin.Context) {
 
 // GetVMDetail 返回 VM 详情（基础信息 + 磁盘/网卡 + 运行使用率），供详情页展示。
 func (h *VMHandler) GetVMDetail(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.Preload("Host").First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -203,7 +209,7 @@ func (h *VMHandler) GetVMDetail(c *gin.Context) {
 
 	// 运行使用率（仅 running 有意义；CPU% 由前端按 cputime 差值计算）
 	usage := gin.H{"running": false, "mem_used_mb": 0, "mem_total_mb": 0, "guest_used_mb": 0, "guest_total_mb": 0, "vcpus": 0, "cpu_time_ns": 0, "host_cpus": 0}
-	if vm.Status == "running" {
+	if vm.Status == model.VMStatusRunning {
 		if info, err := h.Virt.GetDomainInfo(vm.Name); err == nil {
 			hostCpus := 0
 			if out, cerr := exec.Command("nproc").Output(); cerr == nil {
@@ -316,7 +322,10 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 
 // GetVMSpec 返回虚拟机完整配置（DB 记录 + DomainSpec，spec 含 raw_xml 回显）。
 func (h *VMHandler) GetVMSpec(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.Preload("Host").First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -341,7 +350,10 @@ func (h *VMHandler) GetVMSpec(c *gin.Context) {
 // 请求体为完整 DomainSpec（raw_xml 忽略）；VM 运行中禁止修改，须先关机。
 // 同步回写 DB 的 vcpu / memory_mb / disk_gb（首个磁盘容量近似）/ mac_address（首个网卡）。
 func (h *VMHandler) UpdateVMSpec(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -355,7 +367,7 @@ func (h *VMHandler) UpdateVMSpec(c *gin.Context) {
 	}
 
 	// 运行时禁止整体重定义，提示先关机
-	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state == "running" {
+	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state == virt.StatusRunning {
 		Fail(c, http.StatusBadRequest, "虚拟机运行中，请先关机后再修改配置")
 		return
 	}
@@ -395,7 +407,10 @@ func (h *VMHandler) UpdateVMSpec(c *gin.Context) {
 
 // PauseVM 暂停虚拟机（对应 virsh suspend）。
 func (h *VMHandler) PauseVM(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -405,13 +420,16 @@ func (h *VMHandler) PauseVM(c *gin.Context) {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
-	h.DB.Model(&vm).Update("status", "paused")
+	h.DB.Model(&vm).Update("status", model.VMStatusPaused)
 	Success(c, gin.H{"vm": vm.Name, "message": "虚拟机已暂停"})
 }
 
 // ResumeVM 恢复已暂停的虚拟机（对应 virsh resume）。
 func (h *VMHandler) ResumeVM(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -421,14 +439,17 @@ func (h *VMHandler) ResumeVM(c *gin.Context) {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
-	h.DB.Model(&vm).Update("status", "running")
+	h.DB.Model(&vm).Update("status", model.VMStatusRunning)
 	Success(c, gin.H{"vm": vm.Name, "message": "虚拟机已恢复"})
 }
 
 // AttachDisk 热插拔磁盘（对应 virsh attach-device，运行中生效并落配置）。
 // body: {disk: DiskSpec}；disk.Target 为空时按 bus 自动分配（NextDiskTarget）。
 func (h *VMHandler) AttachDisk(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -466,7 +487,10 @@ func (h *VMHandler) AttachDisk(c *gin.Context) {
 
 // DetachDisk 移除磁盘（对应 virsh detach-device，按 target dev 匹配）。
 func (h *VMHandler) DetachDisk(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	target := c.Param("target")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
@@ -483,7 +507,10 @@ func (h *VMHandler) DetachDisk(c *gin.Context) {
 // AttachInterface 添加网卡（对应 virsh attach-interface，运行中生效并落配置）。
 // body: {interface: InterfaceSpec}；mac 为空自动生成。
 func (h *VMHandler) AttachInterface(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -521,7 +548,10 @@ func (h *VMHandler) AttachInterface(c *gin.Context) {
 
 // DetachInterface 移除网卡（对应 virsh detach-interface，按 MAC 地址匹配）。
 func (h *VMHandler) DetachInterface(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	mac := c.Param("mac")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
@@ -539,7 +569,10 @@ func (h *VMHandler) DetachInterface(c *gin.Context) {
 // 停机态通过重 define 修改持久配置（setvcpus CONFIG 无法超 <vcpu> 上限）；
 // 运行态走 live API（仅可调至启动时最大核数以内，超出提示关机）。
 func (h *VMHandler) SetVcpu(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -555,7 +588,7 @@ func (h *VMHandler) SetVcpu(c *gin.Context) {
 	}
 
 	// 停机态：读取 spec → 改 vcpu → 重建 XML → 重 define
-	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != "running" {
+	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != virt.StatusRunning {
 		spec, err := h.Virt.GetDomainSpec(vm.Name)
 		if err != nil {
 			ErrorResponse(c, http.StatusInternalServerError, err)
@@ -586,7 +619,10 @@ func (h *VMHandler) SetVcpu(c *gin.Context) {
 // SetMemory 调整内存（对应 virsh setmem），同步 DB。
 // 停机态通过重 define 修改持久配置；运行态走 live API（仅可调至启动时最大内存以内）。
 func (h *VMHandler) SetMemory(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -601,7 +637,7 @@ func (h *VMHandler) SetMemory(c *gin.Context) {
 		return
 	}
 
-	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != "running" {
+	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != virt.StatusRunning {
 		spec, err := h.Virt.GetDomainSpec(vm.Name)
 		if err != nil {
 			ErrorResponse(c, http.StatusInternalServerError, err)
@@ -630,7 +666,10 @@ func (h *VMHandler) SetMemory(c *gin.Context) {
 
 // SetAutostart 设置开机自启（对应 virsh autostart）。
 func (h *VMHandler) SetAutostart(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -653,7 +692,10 @@ func (h *VMHandler) SetAutostart(c *gin.Context) {
 
 // SetBoot 修改引导顺序（body {devices: []}，如 ["cdrom","hd"]）。停机状态下整体重 define。
 func (h *VMHandler) SetBoot(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -690,7 +732,10 @@ func (h *VMHandler) SetBoot(c *gin.Context) {
 
 // GetVMStats 返回虚拟机实时性能统计（服务端差分计算 CPU/IO 速率）。
 func (h *VMHandler) GetVMStats(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -710,7 +755,10 @@ func (h *VMHandler) CloneVM(c *gin.Context) {
 	if !h.submitTaskGuard(c) {
 		return
 	}
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var src model.VM
 	if err := h.DB.Preload("Host").First(&src, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -755,7 +803,10 @@ func (h *VMHandler) CloneVM(c *gin.Context) {
 
 // StartVM 启动虚拟机
 func (h *VMHandler) StartVM(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
@@ -770,7 +821,7 @@ func (h *VMHandler) StartVM(c *gin.Context) {
 	}
 
 	// 更新状态
-	h.DB.Model(&vm).Update("status", "running")
+	h.DB.Model(&vm).Update("status", model.VMStatusRunning)
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
@@ -784,7 +835,10 @@ func (h *VMHandler) StopVM(c *gin.Context) {
 	if !h.submitTaskGuard(c) {
 		return
 	}
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -807,7 +861,10 @@ func (h *VMHandler) StopVM(c *gin.Context) {
 
 // RestartVM 重启虚拟机
 func (h *VMHandler) RestartVM(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
@@ -833,7 +890,10 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 	if !h.submitTaskGuard(c) {
 		return
 	}
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -856,7 +916,10 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 
 // GetVMXML 获取虚拟机 XML 定义
 func (h *VMHandler) GetVMXML(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -874,7 +937,10 @@ func (h *VMHandler) GetVMXML(c *gin.Context) {
 
 // UpdateVMXML 更新虚拟机 XML 定义（高级功能）
 func (h *VMHandler) UpdateVMXML(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -899,7 +965,10 @@ func (h *VMHandler) UpdateVMXML(c *gin.Context) {
 
 // ListSnapshots 获取虚拟机快照列表（返回 SnapshotInfo 详情数组，含 description/creation_time/state）。
 func (h *VMHandler) ListSnapshots(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -917,7 +986,10 @@ func (h *VMHandler) ListSnapshots(c *gin.Context) {
 
 // CreateSnapshot 创建虚拟机快照（body: {name, description?}）。
 func (h *VMHandler) CreateSnapshot(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
 		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
@@ -947,7 +1019,10 @@ func (h *VMHandler) CreateSnapshot(c *gin.Context) {
 
 // DeleteSnapshot 删除虚拟机快照
 func (h *VMHandler) DeleteSnapshot(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	snapName := c.Param("snap")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
@@ -965,7 +1040,10 @@ func (h *VMHandler) DeleteSnapshot(c *gin.Context) {
 
 // RevertSnapshot 回滚虚拟机到指定快照
 func (h *VMHandler) RevertSnapshot(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	snapName := c.Param("snap")
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
@@ -1153,7 +1231,10 @@ func (h *VMHandler) ImportVMs(c *gin.Context) {
 		}
 		if err := h.DB.Create(&vm).Error; err != nil {
 			failed++
-			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
+			// 完整错误（含 GORM/SQL 原文）只进服务端日志，响应里只给中文原因 + 域名，
+			// 避免把表结构、约束名等内部细节泄漏到前端（见 AGENTS.md 后端标准第 3 条）
+			LogError(c, fmt.Errorf("导入存量虚拟机 %s 写入数据库失败: %w", name, err))
+			errs = append(errs, fmt.Sprintf("%s: 写入数据库失败", name))
 			continue
 		}
 		inserted++

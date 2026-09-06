@@ -82,7 +82,10 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 
 // UpdateUser 更新用户
 func (h *UserHandler) UpdateUser(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var user model.User
 	if err := h.DB.First(&user, id).Error; err != nil {

@@ -1,11 +1,20 @@
 package handler
 
 import (
+	"net"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/service/virt"
 )
+
+// validIPv4 校验是否为合法的点分十进制 IPv4 地址（网关将写入 libvirt <ip address>）。
+// 额外要求规范写法（ip.String() 与输入一致），借此排除 IPv6 与 ::ffff:1.2.3.4 之类映射写法；
+// 与 virt 层的 encoding/xml 序列化构成纵深防御。
+func validIPv4(s string) bool {
+	ip := net.ParseIP(s)
+	return ip != nil && ip.To4() != nil && ip.String() == s
+}
 
 // NetworkHandler 网络处理器
 type NetworkHandler struct {
@@ -55,6 +64,11 @@ func (h *NetworkHandler) CreateNetwork(c *gin.Context) {
 	}
 	if !validateVMName(req.Name) {
 		Fail(c, http.StatusBadRequest, "网络名称只允许字母、数字、下划线和连字符")
+		return
+	}
+	// gateway 留空时 virt 层用默认网关（192.168.100.1），保持原行为；非空则必须是合法 IPv4
+	if req.Gateway != "" && !validIPv4(req.Gateway) {
+		Fail(c, http.StatusBadRequest, "网关必须是合法的 IPv4 地址")
 		return
 	}
 

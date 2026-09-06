@@ -2,9 +2,11 @@ package handler
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -21,6 +23,22 @@ type HostHandler struct {
 // NewHostHandler 创建宿主机处理器
 func NewHostHandler(db *gorm.DB) *HostHandler {
 	return &HostHandler{DB: db}
+}
+
+// hostAddrRegex 主机名保守白名单：只允许字母、数字、点和连字符，且首尾必须是字母或数字
+var hostAddrRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$`)
+
+// validateSSHIP 校验宿主机 SSH 地址合法性：优先按 IP 解析，非 IP 时退回主机名白名单。
+// 该值会作为 argv 直接传给 exec.Command("ping", ..., host.SSHIP)（见 TestHost），
+// 若放过 "-f" 之类以连字符开头的串，会被 ping 当成选项解析（flood ping），必须拦在写库入口。
+func validateSSHIP(addr string) bool {
+	if addr == "" || len(addr) > 253 {
+		return false
+	}
+	if net.ParseIP(addr) != nil {
+		return true
+	}
+	return hostAddrRegex.MatchString(addr)
 }
 
 // ListHosts 获取宿主机列表
@@ -49,6 +67,12 @@ func (h *HostHandler) CreateHost(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+
+	// SSH 地址后续会作为 argv 传给 ping（见 TestHost），入库前必须校验格式
+	if !validateSSHIP(req.SSHIP) {
+		Fail(c, http.StatusBadRequest, "SSH 地址格式不合法，只能是 IP 或主机名")
 		return
 	}
 
@@ -84,7 +108,10 @@ func (h *HostHandler) CreateHost(c *gin.Context) {
 
 // UpdateHost 更新宿主机
 func (h *HostHandler) UpdateHost(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var host model.Host
 	if err := h.DB.First(&host, id).Error; err != nil {
@@ -102,6 +129,12 @@ func (h *HostHandler) UpdateHost(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+
+	// 同 CreateHost：改地址也要过格式校验，否则 ping 的 argv 仍可被塞入选项
+	if req.SSHIP != nil && !validateSSHIP(*req.SSHIP) {
+		Fail(c, http.StatusBadRequest, "SSH 地址格式不合法，只能是 IP 或主机名")
 		return
 	}
 
@@ -136,7 +169,10 @@ func (h *HostHandler) UpdateHost(c *gin.Context) {
 
 // DeleteHost 删除宿主机
 func (h *HostHandler) DeleteHost(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var host model.Host
 	if err := h.DB.First(&host, id).Error; err != nil {
@@ -162,7 +198,10 @@ func (h *HostHandler) DeleteHost(c *gin.Context) {
 
 // TestHost 测试宿主机连通性
 func (h *HostHandler) TestHost(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var host model.Host
 	if err := h.DB.First(&host, id).Error; err != nil {
@@ -202,7 +241,10 @@ func (h *HostHandler) TestHost(c *gin.Context) {
 
 // GetHostStats 获取宿主机实时状态（/proc 直读，与 dashboard 同源，不依赖 free/uptime 文本解析）。
 func (h *HostHandler) GetHostStats(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	var host model.Host
 	if err := h.DB.First(&host, id).Error; err != nil {

@@ -29,13 +29,18 @@ func NewVNCHandler(db *gorm.DB, sessions *console.Registry) *VNCHandler {
 	}
 }
 
-// RequestToken 为指定 VM 生成 VNC 访问令牌（admin）。
-// 返回 websocket 连接地址，供前端 noVNC 使用。
+// RequestToken 为指定 VM 生成 VNC 访问令牌。
+// 返回 websocket 连接地址供前端 noVNC 使用；只读角色（viewer）附带 view_only 标记，
+// 由前端以 noVNC 的 view_only 模式打开——图形控制台协议本身没有只读模式，
+// 键盘鼠标必须在客户端侧禁用，这样「只读运维」角色才名副其实。
 func (h *VNCHandler) RequestToken(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 	var vm model.VM
 	if err := h.DB.First(&vm, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "虚拟机不存在"})
+		Fail(c, http.StatusNotFound, "虚拟机不存在")
 		return
 	}
 
@@ -54,10 +59,15 @@ func (h *VNCHandler) RequestToken(c *gin.Context) {
 		h.Sessions.OpenVNC(vm.ID, vm.Name, uname, uid, c.ClientIP(), token)
 	}
 
+	// 非 admin 一律只读观看
+	role, _ := c.Get("role")
+	roleStr, _ := role.(string)
+
 	Success(c, gin.H{
-		"token": token,
-		"host":  "127.0.0.1",
-		"port":  port,
+		"token":     token,
+		"host":      "127.0.0.1",
+		"port":      port,
+		"view_only": roleStr != "admin",
 	})
 }
 
