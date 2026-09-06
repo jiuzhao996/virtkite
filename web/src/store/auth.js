@@ -1,5 +1,10 @@
 import { reactive, computed } from 'vue'
-import { TOKEN_KEY } from '../api'
+
+// token 的 localStorage 键：**定义在 store 而非 api**。
+// 原先定义在 api/index.js，store 反向 import 它；一旦 api 需要 import store 的 logout()
+// 就会构成 api ↔ store 循环依赖。token 本身属于会话状态，归 store 更自然，
+// api/index.js 改为从这里 import 并原样 re-export（ConsolePage 等从 ../api 取 TOKEN_KEY 的写法不受影响）。
+export const TOKEN_KEY = 'vmops_token'
 
 const state = reactive({
   token: localStorage.getItem(TOKEN_KEY) || '',
@@ -16,7 +21,13 @@ function setUser(user) {
   state.user = user
 }
 
-function logout() {
+/**
+ * 清空会话：内存 state 与 localStorage 一起清。
+ * 401 拦截器必须调它（而不是只删 localStorage）——否则 state.token 残留导致
+ * isLoggedIn 仍为 true，路由守卫「已登录访问 /login → 重定向 dashboard」会把
+ * 用户从登录页弹回去，形成打转。
+ */
+export function logout() {
   setToken('')
   state.user = null
 }

@@ -23,13 +23,13 @@
         </el-table-column>
         <el-table-column prop="path" label="路径" min-width="200" show-overflow-tooltip />
         <el-table-column label="容量" width="110">
-          <template #default="{ row }">{{ fmtSize(row.capacity) }}</template>
+          <template #default="{ row }">{{ fmtSizeBytes(row.capacity) }}</template>
         </el-table-column>
         <el-table-column label="已分配" width="110">
-          <template #default="{ row }">{{ fmtSize(row.allocation) }}</template>
+          <template #default="{ row }">{{ fmtSizeBytes(row.allocation) }}</template>
         </el-table-column>
         <el-table-column label="可用" width="110">
-          <template #default="{ row }">{{ fmtSize(row.available) }}</template>
+          <template #default="{ row }">{{ fmtSizeBytes(row.available) }}</template>
         </el-table-column>
         <el-table-column prop="vol_count" label="卷数" width="80" />
         <el-table-column label="操作" width="200" fixed="right">
@@ -68,7 +68,7 @@
         <el-table-column prop="name" label="名称" min-width="160" />
         <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
         <el-table-column label="容量" width="100">
-          <template #default="{ row }">{{ fmtSize(row.capacity) }}</template>
+          <template #default="{ row }">{{ fmtSizeBytes(row.capacity) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="90">
           <template #default="{ row }">
@@ -108,6 +108,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, FolderOpened, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
+// 容量格式化 / 错误文案 / 取消判定统一走 utils/format.js（原本地三份实现已删）
+// 本页的 .page-head / .page-title / .toolbar / .count 与其他列表页逐字相同，已收进 global.css，
+// 故整个 <style scoped> 块被删除，本页不再有独有样式。
+import { fmtSizeBytes, errMsg, isCancel } from '../utils/format'
 
 const { isAdmin } = useAuth()
 
@@ -122,22 +126,6 @@ const curPool = ref('')
 
 const poolForm = ref({ name: '', path: '' })
 const volForm = ref({ name: '', format: 'qcow2', capacity: 20 })
-
-function fmtSize(n) {
-  if (n === null || n === undefined || n === '') return '—'
-  const gb = n / 1024 / 1024 / 1024
-  return gb >= 1024 ? (gb / 1024).toFixed(1) + ' TB' : gb.toFixed(1) + ' GB'
-}
-
-// 后端统一返回 {code, message, data}，错误提示取 message 字段
-function errMsg(e, fallback) {
-  return (e.response && e.response.data && e.response.data.message) || fallback
-}
-
-// 确认框点取消/点 X 关闭都视为取消，不弹错误提示
-function isCancel(e) {
-  return e === 'cancel' || e === 'close' || e?.message === 'cancel' || e?.message === 'close'
-}
 
 async function load() {
   loading.value = true
@@ -234,27 +222,3 @@ async function removeVolume(row) {
 
 onMounted(load)
 </script>
-
-<style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.count {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
-}
-</style>

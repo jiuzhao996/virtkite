@@ -25,7 +25,7 @@
         <el-table-column prop="name" label="名称" min-width="150" />
         <el-table-column prop="os_version" label="OS 版本" min-width="130" />
         <el-table-column label="大小(GB)" width="110">
-          <template #default="{ row }">{{ fmtSize(row.size_gb) }}</template>
+          <template #default="{ row }">{{ fmtSizeGB(row.size_gb) }}</template>
         </el-table-column>
         <el-table-column label="格式" width="90">
           <template #default="{ row }">
@@ -40,7 +40,7 @@
         </el-table-column>
         <el-table-column label="上传时间" min-width="172">
           <template #default="{ row }">
-            <span class="mono">{{ fmtTime(row.created_at) }}</span>
+            <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" min-width="300" fixed="right">
@@ -95,6 +95,15 @@
             <div class="el-upload__text">拖入文件或 <em>点击选择</em></div>
           </el-upload>
         </el-form-item>
+        <!-- 上传进度：镜像可达数 GB，无进度条时用户无法判断是否卡死 -->
+        <el-form-item v-if="uploading" label="进度">
+          <el-progress
+            :percentage="uploadPct"
+            :stroke-width="10"
+            :format="(p) => (p >= 100 ? '服务端写入中…' : p + '%')"
+            style="width: 100%"
+          />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialog = false">取消</el-button>
@@ -134,6 +143,7 @@ import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu } from '@e
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
+import { fmtSizeGB, fmtDateTime, errMsg, isCancel } from '../utils/format'
 
 const { isAdmin } = useAuth()
 
@@ -143,6 +153,7 @@ const loading = ref(false)
 const filter = ref('')
 const dialog = ref(false)
 const uploading = ref(false)
+const uploadPct = ref(0)
 const file = ref(null)
 const uploadRef = ref(null)
 const poolOptions = ref(['img'])
@@ -154,24 +165,6 @@ const form = reactive({ name: '', os_version: '', is_template: false, pool: 'img
 const cloneForm = reactive({ name: '', vcpu: 1, memory_mb: 1024, network: 'default' })
 
 const templateCount = computed(() => items.value.filter((i) => i.is_template).length)
-
-function errMsg(e, fallback) {
-  return (e.response && e.response.data && e.response.data.message) || fallback
-}
-
-function fmtSize(gb) {
-  const n = Number(gb)
-  if (!isFinite(n)) return '0.00'
-  return n.toFixed(2)
-}
-
-function fmtTime(s) {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (isNaN(d.getTime())) return s
-  const p = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
 
 function onFileChange(uploadFile) {
   file.value = uploadFile.raw
@@ -209,6 +202,7 @@ async function loadPools() {
 function openUpload() {
   Object.assign(form, { name: '', os_version: '', is_template: false, pool: 'img' })
   file.value = null
+  uploadPct.value = 0
   // 清空上传组件遗留的文件列表，避免上次上传的文件残留（limit=1 下无法再选新文件）
   if (uploadRef.value) uploadRef.value.clearFiles()
   dialog.value = true
@@ -230,8 +224,12 @@ async function upload() {
   fd.append('pool', form.pool || 'img')
   fd.append('is_template', form.is_template ? 'true' : 'false')
   uploading.value = true
+  uploadPct.value = 0
   try {
-    await api.uploadImage(fd)
+    // 上传接口已单独设为不限超时（见 api/index.js），进度由 onUploadProgress 回传
+    await api.uploadImage(fd, (percent) => {
+      uploadPct.value = percent
+    })
     ElMessage.success('上传成功')
     dialog.value = false
     file.value = null
@@ -257,7 +255,7 @@ async function toggleTemplate(img) {
     ElMessage.success(`${label}成功`)
     await load()
   } catch (e) {
-    if (e !== 'cancel' && e?.message !== 'cancel') {
+    if (!isCancel(e)) {
       ElMessage.error(errMsg(e, '操作失败'))
     }
   }
@@ -306,7 +304,7 @@ async function remove(img) {
     ElMessage.success('已删除')
     await load()
   } catch (e) {
-    if (e !== 'cancel' && e?.message !== 'cancel') {
+    if (!isCancel(e)) {
       ElMessage.error(errMsg(e, '删除失败'))
     }
   }
@@ -319,36 +317,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.page-desc {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
+/* .page-head / .page-title / .page-desc / .toolbar / .count 已收进 global.css；.mono 的 font-family 亦然 */
 .toolbar-left,
 .toolbar-right {
   display: flex;
   align-items: center;
   gap: var(--space-lg);
-}
-.count {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
 }
 .ops {
   display: flex;
@@ -357,7 +331,6 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 .mono {
-  font-family: var(--font-mono);
   font-size: 0.85rem;
 }
 .clone-tip {

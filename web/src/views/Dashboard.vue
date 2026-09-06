@@ -75,19 +75,19 @@
             <div class="donut" :style="{ background: donutStyle }"><span class="donut-center">{{ totalVM }}<small>台</small></span></div>
             <div class="donut-legend">
               <div v-for="item in vmStatus" :key="item.status" class="legend-item">
-                <span class="dot" :style="{ background: statusHex(item.status) }" />
-                <span>{{ statusText(item.status) }}</span>
+                <span class="dot" :style="{ background: vmStatusHex(item.status) }" />
+                <span>{{ vmStatusText(item.status) }}</span>
                 <b>{{ item.count }}</b>
               </div>
             </div>
           </div>
           <div class="status-rows">
             <div v-for="item in vmStatus" :key="item.status" class="status-row">
-              <span class="status-name">{{ statusText(item.status) }}</span>
+              <span class="status-name">{{ vmStatusText(item.status) }}</span>
               <el-progress
                 class="status-bar"
                 :percentage="pct(item.count)"
-                :color="statusColor(item.status)"
+                :color="vmStatusColor(item.status)"
                 :format="() => item.count + ' 台'"
               />
             </div>
@@ -115,7 +115,7 @@
             </el-table-column>
             <el-table-column label="状态" width="120">
               <template #default="{ row }">
-                <el-tag :type="tagType(row.status)" effect="light" size="small" round>{{ statusText(row.status) }}</el-tag>
+                <el-tag :type="vmStatusTag(row.status)" effect="light" size="small" round>{{ vmStatusText(row.status) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="CPU" min-width="220">
@@ -123,7 +123,7 @@
                 <div v-if="row.status === 'running'" class="perf-cell">
                   <el-progress
                     :percentage="clampPct(row.cpu_percent)"
-                    :color="barColor(row.cpu_percent)"
+                    :color="usageColor(row.cpu_percent)"
                     :stroke-width="8"
                     :format="() => Math.round(row.cpu_percent || 0) + '%'"
                   />
@@ -136,7 +136,7 @@
                 <div v-if="row.status === 'running'" class="perf-cell">
                   <el-progress
                     :percentage="clampPct(row.mem_pct)"
-                    :color="barColor(row.mem_pct)"
+                    :color="usageColor(row.mem_pct)"
                     :stroke-width="8"
                     :format="() => Math.round(row.mem_pct || 0) + '%'"
                   />
@@ -190,6 +190,17 @@ import { Refresh, Cpu, Monitor, VideoPlay, FolderOpened, Connection, Picture, Us
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
+import {
+  FALLBACK_ACTION_LABELS,
+  vmStatusText,
+  vmStatusTag,
+  vmStatusColor,
+  vmStatusHex,
+  usageColor,
+  clampPct,
+  nowClock,
+  cssVar
+} from '../utils/format'
 
 const { state, isAdmin } = useAuth()
 const loading = ref(false)
@@ -198,26 +209,12 @@ const vmStatus = ref([])
 const auditActions = ref([])
 const vmPerf = ref([])
 
-// 操作类型 → 中文兜底映射（后端 /audit/actions 优先覆盖）
-const FALLBACK_ACTION_LABELS = {
-  login: '登录', logout: '登出',
-  create_vm: '创建虚拟机', delete_vm: '删除虚拟机', start_vm: '开机', stop_vm: '关机',
-  restart_vm: '重启', import_vm: '导入虚拟机', pause_vm: '暂停虚拟机', resume_vm: '恢复虚拟机',
-  clone_vm: '克隆虚拟机',
-  attach_disk: '挂载磁盘', detach_disk: '移除磁盘', attach_nic: '添加网卡', detach_nic: '移除网卡',
-  create_snapshot: '创建快照', delete_snapshot: '删除快照', revert_snapshot: '回滚快照',
-  update_vm_spec: '更新虚拟机配置', update_vm_xml: '更新虚拟机XML', update_vm: '更新虚拟机',
-  set_vcpu: '调整CPU核数', set_memory: '调整内存', set_autostart: '设置开机自启', set_boot: '设置引导顺序',
-  create_host: '添加宿主机', update_host: '更新宿主机', delete_host: '删除宿主机',
-  upload_image: '上传镜像', delete_image: '删除镜像', set_image_template: '设置镜像模板', clone_image: '镜像创建虚拟机',
-  create_network: '创建网络', update_network: '更新网络', delete_network: '删除网络',
-  create_volume: '创建存储卷', delete_volume: '删除存储卷', access: '访问'
-}
+// 操作类型 → 中文兜底映射（后端 /audit/actions 优先覆盖）已收进 utils/format.js（与审计页共用）
 const actionLabelMap = ref({ ...FALLBACK_ACTION_LABELS })
 
 const HOST_POINTS = 60
 
-const cssVar = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+// echarts 不解析 var()，主机曲线需要真实色值：cssVar 由 utils/format.js 提供
 const primaryColor = cssVar('--el-color-primary', '#2a9da5')
 const memChartColor = cssVar('--color-success', '#16a34a')
 
@@ -238,11 +235,11 @@ const stats = computed(() => {
     { label: '宿主机', icon: Cpu, color: 'var(--color-primary)', value: o.host_count || 0 },
     { label: '虚拟机', icon: Monitor, color: 'var(--color-primary)', value: o.vm_count || 0 },
     { label: '运行中', icon: VideoPlay, color: 'var(--color-accent)', value: o.running_vm_count || 0 },
-    { label: '存储池', icon: FolderOpened, color: '#d97706', value: o.pool_count || 0 },
+    { label: '存储池', icon: FolderOpened, color: 'var(--color-warning)', value: o.pool_count || 0 },
     { label: '网络', icon: Connection, color: '#2563eb', value: o.network_count || 0 },
     { label: '镜像', icon: Picture, color: '#7c3aed', value: o.image_count || 0 },
     { label: '用户', icon: User, color: '#0891b2', value: o.user_count || 0 },
-    { label: '审计', icon: Document, color: '#64748b', value: o.audit_count || 0 }
+    { label: '审计', icon: Document, color: 'var(--color-info)', value: o.audit_count || 0 }
   ]
 })
 
@@ -254,36 +251,9 @@ const userText = computed(() => {
 
 const totalVM = computed(() => vmStatus.value.reduce((a, b) => a + b.count, 0))
 
-function fmtTime() {
-  return new Date().toLocaleTimeString('zh-CN', { hour12: false })
-}
-
 function pct(count) {
   if (!totalVM.value) return 0
   return Math.round((count / totalVM.value) * 100)
-}
-function statusText(s) {
-  return { running: '运行中', 'shut off': '已关机', paused: '已暂停', error: '错误' }[s] || s
-}
-function tagType(s) {
-  if (s === 'running') return 'success'
-  if (s === 'paused') return 'warning'
-  if (s === 'error') return 'danger'
-  return 'info'
-}
-function statusColor(s) {
-  if (s === 'running') return 'var(--color-success)'
-  if (s === 'paused') return 'var(--color-warning)'
-  if (s === 'shut off') return 'var(--color-info)'
-  return 'var(--color-danger)'
-}
-// 图表用十六进制（含环形图 conic-gradient）
-function statusHex(s) {
-  if (s === 'running') return '#16a34a'
-  if (s === 'paused') return '#d97706'
-  if (s === 'shut off') return '#64748b'
-  if (s === 'error') return '#dc2626'
-  return '#2a9da5'
 }
 const donutStyle = computed(() => {
   if (!totalVM.value) return '#eef2f6'
@@ -292,21 +262,10 @@ const donutStyle = computed(() => {
     const from = Math.round((acc / totalVM.value) * 360)
     acc += it.count
     const to = Math.round((acc / totalVM.value) * 360)
-    return `${statusHex(it.status)} ${from}deg ${to}deg`
+    return `${vmStatusHex(it.status)} ${from}deg ${to}deg`
   })
   return `conic-gradient(${segs.join(', ')})`
 })
-
-// VM 性能阈值配色：<60 绿，60-80 橙，>=80 红
-function barColor(v) {
-  const c = Number(v) || 0
-  if (c >= 80) return 'var(--color-danger)'
-  if (c >= 60) return 'var(--color-warning)'
-  return 'var(--color-success)'
-}
-function clampPct(v) {
-  return Math.max(0, Math.min(100, Math.round(Number(v) || 0)))
-}
 
 // 审计动作分布（取前 8）
 const topActions = computed(() => [...auditActions.value].sort((a, b) => b.count - a.count).slice(0, 8))
@@ -318,11 +277,11 @@ function actionLabel(a) {
   return actionLabelMap.value[a] || a
 }
 function actionColor(a) {
-  if (a.includes('delete')) return '#dc2626'
-  if (a.includes('create') || a.includes('upload') || a.includes('import')) return '#2a9da5'
-  if (a.includes('start') || a.includes('login')) return '#16a34a'
-  if (a.includes('stop') || a.includes('restart')) return '#d97706'
-  return '#64748b'
+  if (a.includes('delete')) return 'var(--color-danger)'
+  if (a.includes('create') || a.includes('upload') || a.includes('import')) return 'var(--color-primary)'
+  if (a.includes('start') || a.includes('login')) return 'var(--color-success)'
+  if (a.includes('stop') || a.includes('restart')) return 'var(--color-warning)'
+  return 'var(--color-info)'
 }
 
 async function loadAll() {
@@ -369,13 +328,13 @@ async function pollHost() {
     }
     cpuSeries.value.push(cpu)
     memSeries.value.push(memPct)
-    timeLabels.value.push(fmtTime())
+    timeLabels.value.push(nowClock())
     if (cpuSeries.value.length > HOST_POINTS) {
       cpuSeries.value.shift()
       memSeries.value.shift()
       timeLabels.value.shift()
     }
-    lastUpdate.value = fmtTime()
+    lastUpdate.value = nowClock()
     updateChart()
   } catch (e) {
     // 静默降级
@@ -481,21 +440,11 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
+/* .page-head / .page-title 已收进 global.css（原本页 margin-bottom: 16px 与 var(--space-xl) 等值） */
 .head-left {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
 }
 .live-tag {
   display: inline-flex;

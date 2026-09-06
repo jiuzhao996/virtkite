@@ -116,6 +116,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Document, VideoPlay, VideoPause, Delete, Edit } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
+import { errMsg, isCancel } from '../utils/format'
 
 const { isAdmin } = useAuth()
 
@@ -133,15 +134,6 @@ const editForm = ref({ xml: '' })
 
 const activeCount = computed(() => networks.value.filter((n) => n.active).length)
 const autostartCount = computed(() => networks.value.filter((n) => n.autostart).length)
-
-function errMsg(e, fallback) {
-  return (e.response && e.response.data && e.response.data.message) || fallback
-}
-
-// 确认框点取消/点 X 关闭都视为取消，不弹错误提示
-function isCancel(e) {
-  return e === 'cancel' || e === 'close' || e?.message === 'cancel' || e?.message === 'close'
-}
 
 async function load() {
   loading.value = true
@@ -259,39 +251,14 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.page-desc {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
+/* .page-head / .page-title / .page-desc / .toolbar / .count 已收进 global.css；.mono 的 font-family 亦然 */
 .toolbar-left,
 .toolbar-right {
   display: flex;
   align-items: center;
   gap: var(--space-lg);
 }
-.count {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
-}
 .mono {
-  font-family: var(--font-mono);
   font-size: 0.85rem;
 }
 .muted {

@@ -121,6 +121,7 @@ import { ElMessage } from 'element-plus'
 import { Monitor, Fold, Expand } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
+import { errMsg } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -181,7 +182,7 @@ async function doChangePwd() {
     pwdForm.value = { old_password: '', new_password: '', confirm: '' }
     onLogout()
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.message) || '修改失败')
+    ElMessage.error(errMsg(e, '修改失败'))
   } finally {
     pwdSaving.value = false
   }

@@ -28,13 +28,13 @@
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="title" label="任务" min-width="200" show-overflow-tooltip />
         <el-table-column label="类型" width="130">
-          <template #default="{ row }">{{ typeText(row.type) }}</template>
+          <template #default="{ row }">{{ taskTypeText(row.type) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="statusTag(row.status)" effect="light">
+            <el-tag :type="taskStatusTag(row.status)" effect="light">
               <span v-if="row.status === 'running' || row.status === 'pending'" class="pulse-dot" />
-              {{ statusText(row.status) }}
+              {{ taskStatusText(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -57,7 +57,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="170">
-          <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
+          <template #default="{ row }">{{ fmtDateTimeLocale(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
@@ -83,6 +83,7 @@ import { Refresh, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
+import { taskTypeText, taskStatusText, taskStatusTag, fmtDateTimeLocale, errMsg, isCancel } from '../utils/format'
 
 const { isAdmin } = useAuth()
 
@@ -90,30 +91,6 @@ const items = ref([])
 const total = ref(0)
 const loading = ref(false)
 const q = ref({ status: '', limit: 50 })
-
-function typeText(t) {
-  return {
-    create_vm: '创建虚拟机',
-    delete_vm: '删除虚拟机',
-    clone_vm: '克隆虚拟机',
-    clone_image_vm: '从镜像创建',
-    stop_vm: '停止虚拟机'
-  }[t] || t
-}
-function statusText(s) {
-  return { pending: '等待中', running: '执行中', success: '成功', failed: '失败' }[s] || s
-}
-function statusTag(s) {
-  if (s === 'success') return 'success'
-  if (s === 'failed') return 'danger'
-  if (s === 'running') return 'primary'
-  return 'info'
-}
-function fmtTime(s) {
-  if (!s) return '—'
-  const d = new Date(s)
-  return d.toLocaleString('zh-CN', { hour12: false })
-}
 
 const activeCount = computed(() => items.value.filter((t) => t.status === 'pending' || t.status === 'running').length)
 const finishedCount = computed(() => items.value.filter((t) => t.status === 'success' || t.status === 'failed').length)
@@ -154,7 +131,7 @@ async function remove(row) {
     ElMessage.success('已删除')
     await load()
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error((e.response && e.response.data && e.response.data.message) || '删除失败')
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '删除失败'))
   }
 }
 
@@ -171,7 +148,7 @@ async function clearFinished() {
     ElMessage.success('已清理')
     await load()
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error('清理失败')
+    if (!isCancel(e)) ElMessage.error('清理失败')
   }
 }
 
@@ -185,32 +162,12 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
+/* .page-head / .page-title / .toolbar / .count 已收进 global.css */
 .toolbar-left {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-}
-.count {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
 }
 .running-hint {
   color: var(--el-color-primary);

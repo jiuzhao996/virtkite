@@ -131,17 +131,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
+/* .page-head / .page-title 已收进 global.css */
 .mb {
   margin-bottom: 16px;
 }

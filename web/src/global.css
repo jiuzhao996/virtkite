@@ -68,6 +68,42 @@ body {
   font-size: 14px;
 }
 
+/* ============ 页面骨架（列表页共用，原先在各 SFC 的 scoped style 里逐字重复） ============ */
+/* 只搬移「各文件定义完全一致」的规则，有差异的仍留在各页面 scoped style 内：
+   - .toolbar-left/.toolbar-right：gap 有 8px / 12px 两种，且 flex-wrap 不一致 → 留在原地
+   - .running-hint：颜色有 --color-accent / --el-color-primary 两种 → 留在原地
+   - .mono 的 font-size：镜像/审计/网络是 0.85rem，虚拟机详情不设 → 只搬 font-family
+   - VmDetail 的 .toolbar 是详情页顶栏（带背景/边框/内边距），与列表页 .toolbar 同名不同物，
+     其 scoped 选择器特异性更高，本节规则不会覆盖它 */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xl);
+}
+.page-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+.page-desc {
+  color: var(--color-muted-foreground);
+  font-size: 0.9rem;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xl);
+}
+.count {
+  color: var(--color-muted-foreground);
+  font-size: 0.9rem;
+}
+.mono {
+  font-family: var(--font-mono);
+}
+
 /* Element Plus 全局质感微调 */
 .el-card {
   border-radius: var(--radius-md);

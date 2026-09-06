@@ -2,7 +2,9 @@
   <div class="console-page" v-loading="loading">
     <!-- 顶部条 -->
     <div class="topbar">
-      <el-button text class="back" @click="$router.push('/vms')">← 返回</el-button>
+      <el-button text class="back" @click="$router.push('/vms')">
+        <el-icon><ArrowLeft /></el-icon><span>返回</span>
+      </el-button>
       <div class="vm-info">
         <span class="vm-name">{{ vm ? vm.name : '...' }}</span>
         <el-tag v-if="vm" :type="vm.status === 'running' ? 'success' : 'info'" effect="dark" size="small">
@@ -10,9 +12,9 @@
         </el-tag>
       </div>
       <div class="topbar-tip">
-        <span v-if="view === 'vnc'">🖥️ 图形控制台 (VNC)</span>
-        <span v-else-if="view === 'ssh'">⌨️ Web 终端 (SSH)</span>
-        <span v-else-if="view === 'serial'">▮ 串口 Console</span>
+        <span v-if="view === 'vnc'"><el-icon><Monitor /></el-icon>图形控制台 (VNC)</span>
+        <span v-else-if="view === 'ssh'"><el-icon><Platform /></el-icon>Web 终端 (SSH)</span>
+        <span v-else-if="view === 'serial'"><el-icon><Connection /></el-icon>串口 Console</span>
         <span v-else>选择连接方式</span>
       </div>
     </div>
@@ -21,16 +23,27 @@
       <!-- 可折叠侧边栏 -->
       <aside class="sidebar" :class="{ collapsed }">
         <button class="collapse-btn" :title="collapsed ? '展开侧边栏' : '收起侧边栏'" @click="collapsed = !collapsed">
-          {{ collapsed ? '»' : '«' }}
+          <el-icon v-if="collapsed"><ArrowRight /></el-icon>
+          <el-icon v-else><ArrowLeft /></el-icon>
         </button>
         <button class="nav-item" :class="{ active: view === 'vnc' }" @click="select('vnc')">
-          <span class="icon">🖥️</span><span v-if="!collapsed" class="label">图形控制台 (VNC)</span>
+          <el-icon class="icon"><Monitor /></el-icon><span v-if="!collapsed" class="label">图形控制台 (VNC)</span>
         </button>
-        <button class="nav-item" :class="{ active: view === 'ssh' }" @click="select('ssh')">
-          <span class="icon">⌨️</span><span v-if="!collapsed" class="label">Web 终端 (SSH)</span>
+        <button
+          v-if="isAdmin"
+          class="nav-item"
+          :class="{ active: view === 'ssh' }"
+          @click="select('ssh')"
+        >
+          <el-icon class="icon"><Platform /></el-icon><span v-if="!collapsed" class="label">Web 终端 (SSH)</span>
         </button>
-        <button class="nav-item serial-item" :class="{ active: view === 'serial' }" @click="select('serial')">
-          <span class="icon">▮</span><span v-if="!collapsed" class="label">串口 Console</span>
+        <button
+          v-if="isAdmin"
+          class="nav-item serial-item"
+          :class="{ active: view === 'serial' }"
+          @click="select('serial')"
+        >
+          <el-icon class="icon"><Connection /></el-icon><span v-if="!collapsed" class="label">串口 Console</span>
           <span v-if="!collapsed" class="rec">免IP</span>
         </button>
       </aside>
@@ -43,28 +56,33 @@
           <p class="pick-sub">选择一种方式进入「{{ vm ? vm.name : '虚拟机' }}」的控制台</p>
           <div class="cards">
             <div class="card" @click="select('vnc')">
-              <div class="card-icon">🖥️</div>
+              <div class="card-icon"><el-icon><Monitor /></el-icon></div>
               <div class="card-title">图形控制台 (VNC)</div>
               <div class="card-desc">noVNC 图形远程桌面，所见即所得。需 VM 运行中，无需 IP 与账号。</div>
               <div class="card-badge" :class="vm && vm.status === 'running' ? 'ok' : 'warn'">
                 {{ vm && vm.status === 'running' ? '● 可用' : '● 需运行中' }}
               </div>
             </div>
-            <div class="card" @click="select('ssh')">
-              <div class="card-icon">⌨️</div>
+            <div v-if="isAdmin" class="card" @click="select('ssh')">
+              <div class="card-icon"><el-icon><Platform /></el-icon></div>
               <div class="card-title">Web 终端 (SSH)</div>
               <div class="card-desc">字符 SSH 终端（xterm.js），比 VNC 更顺滑。需 VM IP 与账号密码。</div>
               <div class="card-badge ok">● 需网络可达</div>
             </div>
-            <div class="card serial" @click="select('serial')">
-              <div class="card-icon">▮</div>
+            <div v-if="isAdmin" class="card serial" @click="select('serial')">
+              <div class="card-icon"><el-icon><Connection /></el-icon></div>
               <div class="card-title">串口 Console</div>
               <div class="card-desc">免 IP 直连 VM 串口（virsh console），无网卡 / 未配置 IP 也能进系统。</div>
               <div class="card-badge" :class="serialUnavailable ? 'warn' : 'gold'">
-                {{ serialUnavailable ? '● 不可用：' + serialReason : '★ 先尝试它' }}
+                <template v-if="serialUnavailable">● 不可用：{{ serialReason }}</template>
+                <template v-else><el-icon><StarFilled /></el-icon>先尝试它</template>
               </div>
             </div>
           </div>
+          <p v-if="!isAdmin" class="pick-note">
+            当前为只读角色：SSH 终端与串口 Console 会向虚拟机内部写入，已限定为管理员使用；
+            图形控制台以只读模式打开（可查看画面，键鼠输入禁用）。
+          </p>
         </div>
 
         <!-- VNC 图形控制台：浅色干净背景，无背景图 -->
@@ -85,7 +103,8 @@
             <div v-if="vncFrameLoading" class="vnc-loading" v-loading="true" element-loading-text="图形桌面加载中…" />
             <iframe :src="vncUrl" class="vnc" @load="onVncLoad" />
             <div class="vnc-bar">
-              <span>🖥️ 图形控制台已连接</span>
+              <span><el-icon><Monitor /></el-icon>图形控制台已连接</span>
+              <el-tag v-if="vncViewOnly" type="warning" size="small" effect="dark">只读观看（键鼠已禁用）</el-tag>
               <div class="vnc-bar-btns">
                 <el-button size="small" text @click="openVncNewWindow">新窗口打开</el-button>
                 <el-button size="small" text @click="vncUrl = ''">重新连接</el-button>
@@ -109,27 +128,27 @@
           <!-- JumpServer 风格顶部信息栏 -->
           <div class="term-header">
             <div class="term-header-left">
-              <span class="term-logo">🛡️ VMOps</span>
+              <span class="term-logo"><el-icon><Lock /></el-icon>VMOps</span>
               <span class="term-divider">|</span>
               <span v-if="connected" class="term-status online">● 已连接</span>
               <span v-else class="term-status offline">○ 未连接</span>
             </div>
             <div class="term-header-center">
-              <span class="term-user">👤 当前用户：{{ currentUser }}</span>
+              <span class="term-user"><el-icon><User /></el-icon>当前用户：{{ currentUser }}</span>
               <span class="term-divider">|</span>
-              <span class="term-host">🖥️ {{ hostLabel }}</span>
+              <span class="term-host"><el-icon><Monitor /></el-icon>{{ hostLabel }}</span>
             </div>
             <div class="term-header-right">
-              <span class="term-clock">🕐 {{ clock || '--' }}</span>
+              <span class="term-clock"><el-icon><Clock /></el-icon>{{ clock || '--' }}</span>
             </div>
           </div>
 
-          <div v-if="termError" class="term-error">⚠️ {{ termError }}</div>
+          <div v-if="termError" class="term-error"><el-icon><WarningFilled /></el-icon>{{ termError }}</div>
 
           <!-- SSH 连接表单 -->
           <div v-if="view === 'ssh' && !connected" class="ssh-form-wrap">
             <div class="ssh-form">
-              <h3 class="form-title">⌨️ SSH 连接</h3>
+              <h3 class="form-title"><el-icon><Platform /></el-icon>SSH 连接</h3>
               <el-form label-width="70px">
                 <el-form-item label="主机">
                   <el-input v-model="sshForm.host" placeholder="VM IP 或域名，默认取虚拟机 IP" />
@@ -150,11 +169,12 @@
 
           <!-- 串口连接面板：无表单，醒目入口 -->
           <div v-else-if="view === 'serial' && !connected" class="serial-panel">
-            <div class="serial-big-icon">▮</div>
+            <div class="serial-big-icon"><el-icon><Connection /></el-icon></div>
             <div class="serial-title">串口 Console · 免 IP 直连</div>
             <div class="serial-desc">等价 virsh console，直接读写 guest 串口 ttyS0。无需 IP / 账号，无网卡也能进系统，建议优先尝试。</div>
             <el-button type="warning" size="large" class="serial-btn" :loading="connecting" @click="connectSerial">
-              {{ connecting ? '连接中…' : '▶ 连接串口 Console' }}
+              <el-icon v-if="!connecting"><CaretRight /></el-icon>
+              <span>{{ connecting ? '连接中…' : '连接串口 Console' }}</span>
             </el-button>
           </div>
 
@@ -172,15 +192,19 @@
           <div class="term-footer">
             <div class="term-footer-left">
               <template v-if="connected">
-                <el-button size="small" class="ft-btn" :loading="connecting" @click="reconnect">🔄 重新连接</el-button>
+                <el-button size="small" class="ft-btn" :loading="connecting" @click="reconnect">
+                  <el-icon v-if="!connecting"><Refresh /></el-icon><span>重新连接</span>
+                </el-button>
                 <el-button size="small" class="ft-btn" @click="disconnectFromTerminal">断开</el-button>
               </template>
               <template v-else>
-                <el-button size="small" class="ft-btn" @click="goBackToPick">← 返回选择</el-button>
+                <el-button size="small" class="ft-btn" @click="goBackToPick">
+                  <el-icon><ArrowLeft /></el-icon><span>返回选择</span>
+                </el-button>
               </template>
             </div>
             <div class="term-footer-right">
-              <span class="text-muted">💡 鼠标选中复制，Ctrl+Shift+V 粘贴</span>
+              <span class="text-muted"><el-icon><InfoFilled /></el-icon>鼠标选中复制，Ctrl+Shift+V 粘贴</span>
               <span class="term-size">{{ connected ? termSize : '--' }}</span>
             </div>
           </div>
@@ -194,6 +218,23 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+// 图标一律用组件（禁止 emoji 当图标）。main.js 已全量全局注册，这里仍显式 import：
+// 一是模板里能看出图标来源，二是将来改按需引入不用回头翻模板。
+import {
+  ArrowLeft,
+  ArrowRight,
+  CaretRight,
+  Clock,
+  Connection,
+  InfoFilled,
+  Lock,
+  Monitor,
+  Platform,
+  Refresh,
+  StarFilled,
+  User,
+  WarningFilled,
+} from '@element-plus/icons-vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -204,6 +245,7 @@ import consoleBg from '../assets/console-bg.jpg'
 const route = useRoute()
 const id = route.params.id
 const auth = useAuth()
+const { isAdmin } = auth
 
 const vm = ref(null)
 const loading = ref(true)
@@ -214,6 +256,8 @@ const view = ref(null)         // 'vnc' | 'ssh' | 'serial' | null(选择页)
 const vncLoading = ref(false)
 const vncUrl = ref('')
 const vncFrameLoading = ref(false)
+// 只读角色以 noVNC view_only 模式打开：能看画面，键鼠输入禁用（后端 vnc-token 返回该标记）
+const vncViewOnly = ref(false)
 // 页内开机（VNC 未运行时闭环，不跳走）
 const powerLoading = ref(false)
 
@@ -273,11 +317,12 @@ async function load() {
     if (vm.value && vm.value.ip) sshForm.value.host = vm.value.ip
     // 恢复上次成功的 SSH 参数（只记 host/port/user，不记密码）
     restoreSshForm()
-    // 智能默认：VM 运行中先自动尝试串口 Console（免 IP 最轻），失败再回到选择页
-    if (vm.value && vm.value.status === 'running') autoEnterSerial()
+    // 智能默认：VM 运行中先自动尝试串口 Console（免 IP 最轻），失败再回到选择页。
+    // 只读角色没有串口权限（后端 403），直接留在选择页只展示图形控制台。
+    if (vm.value && vm.value.status === 'running' && isAdmin.value) autoEnterSerial()
     else if (vm.value) {
       serialUnavailable.value = true
-      serialReason.value = 'VM 未运行'
+      serialReason.value = isAdmin.value ? 'VM 未运行' : '仅管理员可用'
     }
   } catch (e) {
     ElMessage.error('虚拟机不存在')
@@ -363,6 +408,11 @@ function cleanupConnection() {
 
 function select(v) {
   if (view.value === v) return
+  // 兜底：SSH / 串口是对 guest 的写入通道，只读角色由后端 403 拦，前端不给入口
+  if ((v === 'ssh' || v === 'serial') && !isAdmin.value) {
+    ElMessage.warning('只读角色不能使用 SSH 终端与串口控制台，请使用图形控制台查看')
+    return
+  }
   cleanupConnection()
   probeMode = false
   view.value = v
@@ -393,7 +443,11 @@ async function connectVNC() {
     if (!token) throw new Error('token 为空')
     const host = window.location.hostname
     vncFrameLoading.value = true
-    vncUrl.value = `http://${host}:6080/vnc.html?autoconnect=1&resize=scale&path=websockify?token=${token}`
+    // 只读角色由后端返回 view_only=true：noVNC 侧禁用键鼠输入，
+    // 使「只读运维」名副其实（VNC 协议本身没有只读模式，必须在客户端关掉输入）
+    vncViewOnly.value = !!(res.data && res.data.view_only)
+    const viewOnlyParam = vncViewOnly.value ? '&view_only=1' : ''
+    vncUrl.value = `http://${host}:6080/vnc.html?autoconnect=1&resize=scale${viewOnlyParam}&path=websockify?token=${token}`
     // 兜底：iframe onload 失败时 15s 后关闭 loading，避免无限转圈（onVncLoad 会清掉）
     if (vncTimer) clearTimeout(vncTimer)
     vncTimer = setTimeout(() => { vncFrameLoading.value = false; vncTimer = null }, 15000)
@@ -638,6 +692,25 @@ onUnmounted(() => cleanupConnection())
   overflow: hidden;
 }
 
+/* ========== 行内图标统一微调 ==========
+   图标一律用 @element-plus/icons-vue 组件（禁止 emoji）。el-icon 是 inline-flex，
+   默认按基线对齐 → 1em 的图标盒整体压在基线上，与中文混排时目测偏高；
+   统一下压 0.15em 并补 4px 右间距（原来 emoji 后面跟的那个空格已删）。
+   注意：不覆盖 el-button 内的图标，按钮的图标/文字间距由 Element Plus 自己管。 */
+.topbar-tip .el-icon,
+.vnc-bar > span .el-icon,
+.term-logo .el-icon,
+.term-user .el-icon,
+.term-host .el-icon,
+.term-clock .el-icon,
+.term-error .el-icon,
+.form-title .el-icon,
+.card-badge .el-icon,
+.text-muted .el-icon {
+  margin-right: 4px;
+  vertical-align: -0.15em;
+}
+
 /* ========== 顶部条 ========== */
 .topbar {
   position: relative;
@@ -672,6 +745,9 @@ onUnmounted(() => cleanupConnection())
 .sidebar.collapsed { width: 56px; }
 .collapse-btn {
   align-self: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 30px;
   height: 30px;
   margin-bottom: 6px;
@@ -702,7 +778,17 @@ onUnmounted(() => cleanupConnection())
 .nav-item:hover { background: rgba(88, 166, 255, 0.08); color: #e6edf3; }
 .nav-item.active { background: rgba(88, 166, 255, 0.15); color: #58a6ff; }
 .sidebar.collapsed .nav-item { justify-content: center; padding: 12px 0; }
-.nav-item .icon { width: 24px; flex: none; text-align: center; font-size: 1.05rem; }
+/* 侧栏图标：固定 24px 槽位并自身居中，折叠态槽位收成 auto 由 .nav-item 居中；
+   1.15rem 是与原 emoji 目测等大的字号（el-icon 的 svg 恒为 1em） */
+.nav-item .icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  flex: none;
+  font-size: 1.15rem;
+  line-height: 1;
+}
 .sidebar.collapsed .nav-item .icon { width: auto; }
 .nav-item .rec {
   margin-left: auto;
@@ -729,6 +815,18 @@ onUnmounted(() => cleanupConnection())
 }
 .pick-title { margin: 0; color: #1f2937; font-size: 1.5rem; }
 .pick-sub { margin: 8px 0 28px; color: #6b7280; font-size: 0.92rem; }
+.pick-note {
+  max-width: 720px;
+  margin: 24px auto 0;
+  padding: 12px 16px;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  text-align: left;
+}
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 290px));
@@ -751,7 +849,17 @@ onUnmounted(() => cleanupConnection())
   border-color: #58a6ff;
   box-shadow: 0 10px 24px rgba(88, 166, 255, 0.18);
 }
-.card .card-icon { font-size: 2.2rem; }
+/* 卡片装饰大图标：原 emoji 为 2.2rem 且自带颜色；换成单色 svg 后
+   字号上调到 2.4rem 补足视觉体量，并固定 2.6rem 行高保持卡片总高不变、显式给色 */
+.card .card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.6rem;
+  font-size: 2.4rem;
+  line-height: 1;
+  color: #58a6ff;
+}
 .card .card-title { margin: 10px 0 6px; color: #111827; font-size: 1.02rem; font-weight: 600; }
 .card .card-desc { min-height: 46px; color: #6b7280; font-size: 0.82rem; line-height: 1.55; }
 .card-badge {
@@ -772,6 +880,8 @@ onUnmounted(() => cleanupConnection())
   border-color: #f0b90b;
   box-shadow: 0 10px 24px rgba(240, 185, 11, 0.22);
 }
+/* 串口卡沿用金色主题，图标跟着卡片走 */
+.card.serial .card-icon { color: #f0b90b; }
 .card-badge.gold { color: #7c4a03; background: #fde68a; }
 
 /* ---------- VNC 视图（浅色，无背景图） ---------- */
@@ -963,12 +1073,15 @@ onUnmounted(() => cleanupConnection())
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2.6rem;
   color: #f0b90b;
   border: 2px solid rgba(240, 185, 11, 0.5);
   border-radius: 50%;
   background: rgba(8, 14, 24, 0.6);
-  text-shadow: 0 0 14px rgba(240, 185, 11, 0.5);
+}
+/* 圆盘内的大图标：svg 不吃 text-shadow，原来的金色发光改用 drop-shadow 保留 */
+.serial-big-icon .el-icon {
+  font-size: 2.8rem;
+  filter: drop-shadow(0 0 12px rgba(240, 185, 11, 0.55));
 }
 .serial-title { color: #e6edf3; font-size: 1.25rem; font-weight: 600; }
 .serial-desc { max-width: 460px; color: #9db1c8; font-size: 0.88rem; line-height: 1.6; }

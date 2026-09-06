@@ -5,7 +5,7 @@
       <div class="tb-left">
         <el-button text :icon="ArrowLeft" @click="back">返回</el-button>
         <span class="tb-name">{{ vmName }}</span>
-        <el-tag v-if="vm" :type="statusTag(vm.status)" effect="dark" size="small">{{ statusText(vm.status) }}</el-tag>
+        <el-tag v-if="vm" :type="vmStatusTag(vm.status)" effect="dark" size="small">{{ vmStatusText(vm.status, '—') }}</el-tag>
         <span v-if="vm && vm.ip" class="tb-ip">{{ vm.ip }}</span>
       </div>
       <div class="tb-actions">
@@ -78,7 +78,7 @@
               <el-descriptions-item label="名称">{{ spec ? spec.name : '—' }}</el-descriptions-item>
               <el-descriptions-item label="UUID">{{ spec ? spec.uuid : '—' }}</el-descriptions-item>
               <el-descriptions-item label="状态">
-                <el-tag :type="statusTag(vm ? vm.status : '')" size="small" effect="light">{{ statusText(vm ? vm.status : '') }}</el-tag>
+                <el-tag :type="vmStatusTag(vm ? vm.status : '')" size="small" effect="light">{{ vmStatusText(vm ? vm.status : '', '—') }}</el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="宿主机">{{ hostName }}</el-descriptions-item>
               <el-descriptions-item label="存储池">{{ vm ? vm.storage_pool || '—' : '—' }}</el-descriptions-item>
@@ -124,23 +124,23 @@
             <div class="metric-grid metric-grid-4">
               <el-card shadow="never" class="metric">
                 <div class="metric-label">磁盘读取</div>
-                <div class="metric-val mono">{{ fmtBytes(stats && stats.disk_read_bps) }}</div>
+                <div class="metric-val mono">{{ fmtRateBytes(stats && stats.disk_read_bps) }}</div>
               </el-card>
               <el-card shadow="never" class="metric">
                 <div class="metric-label">磁盘写入</div>
-                <div class="metric-val mono">{{ fmtBytes(stats && stats.disk_write_bps) }}</div>
+                <div class="metric-val mono">{{ fmtRateBytes(stats && stats.disk_write_bps) }}</div>
               </el-card>
               <el-card shadow="never" class="metric">
                 <div class="metric-label">网络接收</div>
-                <div class="metric-val mono">{{ fmtBytes(stats && stats.net_rx_bps) }}</div>
+                <div class="metric-val mono">{{ fmtRateBytes(stats && stats.net_rx_bps) }}</div>
               </el-card>
               <el-card shadow="never" class="metric">
                 <div class="metric-label">网络发送</div>
-                <div class="metric-val mono">{{ fmtBytes(stats && stats.net_tx_bps) }}</div>
+                <div class="metric-val mono">{{ fmtRateBytes(stats && stats.net_tx_bps) }}</div>
               </el-card>
             </div>
             <el-card shadow="never" class="chart-card">
-              <template #header><span class="card-title">实时曲线（近 60 次采样，每 2s）</span></template>
+              <template #header><span class="card-title">实时曲线（近 60 次采样，每 {{ statsIntervalMs / 1000 }}s）</span></template>
               <div ref="perfChartEl" class="perf-chart"></div>
             </el-card>
           </template>
@@ -404,11 +404,18 @@ import {
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
+import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
+import { vmStatusText, vmStatusTag, usageColor, fmtRateBytes, nowClock, isCancel, cssVar } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()
 const { isAdmin } = useAuth()
 const id = route.params.id
+
+// echarts 不解析 var()，实时曲线需要真实色值：挂载时读一次 CSS 变量
+const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2a9da5')
+const CHART_MEM_COLOR = cssVar('--color-warning', '#d97706')
+const CHART_AXIS_COLOR = cssVar('--color-info', '#64748b')
 
 /* ---------- 基础状态 ---------- */
 const vm = ref(null)
@@ -420,7 +427,9 @@ const activeView = ref('overview')
 const activeDisk = ref(0)
 const activeNic = ref(0)
 
-/* ---------- 性能（2s 轮询，独立于 spec） ---------- */
+/* ---------- 性能（轮询间隔取系统设置的 vmstats 偏好，独立于 spec） ---------- */
+// 原先硬编码 2000ms，是唯一没接入 utils/settings.js 轮询偏好的定时器
+const statsIntervalMs = getPollInterval('vmstats', POLL_DEFAULTS.vmstats)
 const stats = ref(null)
 const cpuHistory = ref([])
 const memHistory = ref([])
@@ -473,16 +482,6 @@ const macText = computed(() => {
   return (vm.value && vm.value.mac_address) || '—'
 })
 
-function statusText(s) {
-  return { running: '运行中', paused: '已暂停', 'shut off': '已关机', error: '异常' }[s] || s || '—'
-}
-function statusTag(s) {
-  if (s === 'running') return 'success'
-  if (s === 'paused') return 'warning'
-  if (s === 'error') return 'danger'
-  return 'info'
-}
-
 const diskMenuItems = computed(() =>
   (spec.value && spec.value.disks
     ? spec.value.disks.map((d, i) => ({ index: `disk-${i}`, target: d.target || `disk${i + 1}` }))
@@ -514,10 +513,6 @@ function onMenuSelect(index) {
 }
 
 /* ---------- 数据加载 ---------- */
-function errMsg(e, fb) {
-  return taskErrorMessage(e, fb)
-}
-
 async function loadSpec() {
   loading.value = true
   try {
@@ -531,7 +526,7 @@ async function loadSpec() {
       activeNic.value = Math.max(0, spec.value.interfaces.length - 1)
     }
   } catch (e) {
-    ElMessage.error(errMsg(e, '获取虚拟机配置失败'))
+    ElMessage.error(taskErrorMessage(e, '获取虚拟机配置失败'))
   } finally {
     loading.value = false
   }
@@ -575,7 +570,7 @@ async function act(type) {
     }
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '操作失败'))
+    ElMessage.error(taskErrorMessage(e, '操作失败'))
   } finally {
     busy.value = ''
   }
@@ -597,7 +592,7 @@ async function doDelete() {
     ElMessage.success('虚拟机已删除')
     router.push('/vms')
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error(errMsg(e, '删除失败'))
+    if (!isCancel(e)) ElMessage.error(taskErrorMessage(e, '删除失败'))
   } finally {
     busy.value = ''
   }
@@ -611,18 +606,6 @@ function back() {
 }
 
 /* ---------- 性能轮询 + echarts ---------- */
-function fmtBytes(v) {
-  if (!v || v <= 0) return '0 B/s'
-  const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
-  let n = v
-  let i = 0
-  while (n >= 1024 && i < units.length - 1) {
-    n /= 1024
-    i++
-  }
-  return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i]
-}
-
 const memUsedMB = computed(() => ((stats.value && stats.value.mem_used_kib) || 0) / 1024)
 const memTotalMB = computed(() => ((stats.value && stats.value.mem_total_kib) || 0) / 1024)
 const guestUsedMB = computed(() => ((stats.value && stats.value.guest_used_kib) || 0) / 1024)
@@ -639,14 +622,9 @@ function memText() {
   if (hasGuestMem.value) return guestUsedMB.value.toFixed(0) + ' / ' + guestTotalMB.value.toFixed(0) + ' MB'
   return memUsedMB.value.toFixed(0) + ' / ' + memTotalMB.value.toFixed(0) + ' MB'
 }
-function usageColor(p) {
-  if (p >= 80) return '#dc2626'
-  if (p >= 60) return '#d97706'
-  return '#16a34a'
-}
 
 function pushHistory() {
-  const t = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  const t = nowClock()
   cpuHistory.value.push({ t, v: Number(cpuPct.value.toFixed(1)) })
   memHistory.value.push({ t, v: Number(memPct.value.toFixed(1)) })
   if (cpuHistory.value.length > 60) cpuHistory.value.shift()
@@ -685,9 +663,9 @@ function renderPerfChart() {
         type: 'category',
         boundaryGap: false,
         data: cpuHistory.value.map((p) => p.t),
-        axisLabel: { fontSize: 10, color: '#64748b' }
+        axisLabel: { fontSize: 10, color: CHART_AXIS_COLOR }
       },
-      yAxis: { type: 'value', min: 0, max: 100, axisLabel: { fontSize: 10, color: '#64748b' } },
+      yAxis: { type: 'value', min: 0, max: 100, axisLabel: { fontSize: 10, color: CHART_AXIS_COLOR } },
       series: [
         {
           name: 'CPU %',
@@ -695,9 +673,9 @@ function renderPerfChart() {
           smooth: true,
           showSymbol: false,
           data: cpuHistory.value.map((p) => p.v),
-          lineStyle: { width: 2, color: '#2a9da5' },
-          itemStyle: { color: '#2a9da5' },
-          areaStyle: { opacity: 0.06, color: '#2a9da5' }
+          lineStyle: { width: 2, color: CHART_CPU_COLOR },
+          itemStyle: { color: CHART_CPU_COLOR },
+          areaStyle: { opacity: 0.06, color: CHART_CPU_COLOR }
         },
         {
           name: '内存 %',
@@ -705,9 +683,9 @@ function renderPerfChart() {
           smooth: true,
           showSymbol: false,
           data: memHistory.value.map((p) => p.v),
-          lineStyle: { width: 2, color: '#d97706' },
-          itemStyle: { color: '#d97706' },
-          areaStyle: { opacity: 0.06, color: '#d97706' }
+          lineStyle: { width: 2, color: CHART_MEM_COLOR },
+          itemStyle: { color: CHART_MEM_COLOR },
+          areaStyle: { opacity: 0.06, color: CHART_MEM_COLOR }
         }
       ]
     },
@@ -741,7 +719,7 @@ async function applyVcpu() {
     ElMessage.success('vCPU 已调整为 ' + n + ' 核（live + config）')
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '调整失败'))
+    ElMessage.error(taskErrorMessage(e, '调整失败'))
   } finally {
     busy.value = ''
   }
@@ -759,7 +737,7 @@ async function applyMemory() {
     ElMessage.success('内存已调整为 ' + m + ' MB（live + config）')
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '调整失败'))
+    ElMessage.error(taskErrorMessage(e, '调整失败'))
   } finally {
     busy.value = ''
   }
@@ -776,7 +754,7 @@ async function applyBoot() {
     ElMessage.success('引导顺序已更新')
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '保存失败'))
+    ElMessage.error(taskErrorMessage(e, '保存失败'))
   } finally {
     busy.value = ''
   }
@@ -789,7 +767,7 @@ async function onAutostartChange(val) {
     ElMessage.success(val ? '已开启开机自启' : '已关闭开机自启')
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '设置自启失败'))
+    ElMessage.error(taskErrorMessage(e, '设置自启失败'))
     await loadSpec()
   } finally {
     busy.value = ''
@@ -804,7 +782,7 @@ async function removeDisk(disk) {
     ElMessage.success('磁盘已移除')
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '移除磁盘失败'))
+    ElMessage.error(taskErrorMessage(e, '移除磁盘失败'))
   }
 }
 
@@ -839,7 +817,7 @@ async function submitDisk() {
     diskDialog.value = false
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '添加磁盘失败'))
+    ElMessage.error(taskErrorMessage(e, '添加磁盘失败'))
   } finally {
     diskSaving.value = false
   }
@@ -852,7 +830,7 @@ async function removeNic(nic) {
     ElMessage.success('网卡已移除')
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '移除网卡失败'))
+    ElMessage.error(taskErrorMessage(e, '移除网卡失败'))
   }
 }
 
@@ -884,7 +862,7 @@ async function submitNic() {
     nicDialog.value = false
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '添加网卡失败'))
+    ElMessage.error(taskErrorMessage(e, '添加网卡失败'))
   } finally {
     nicSaving.value = false
   }
@@ -899,8 +877,8 @@ async function loadSnapshots() {
     snapshots.value = raw.map((s) => ({
       ...s,
       timeText: s.creation_time ? new Date(s.creation_time * 1000).toLocaleString() : '—',
-      stateText: statusText(s.state),
-      stateTag: statusTag(s.state)
+      stateText: vmStatusText(s.state, '—'),
+      stateTag: vmStatusTag(s.state)
     }))
   } catch (e) {
     snapshots.value = []
@@ -927,7 +905,7 @@ async function submitSnapshot() {
     snapDialog.value = false
     await loadSnapshots()
   } catch (e) {
-    ElMessage.error(errMsg(e, '创建快照失败'))
+    ElMessage.error(taskErrorMessage(e, '创建快照失败'))
   } finally {
     snapSaving.value = false
   }
@@ -941,7 +919,7 @@ async function revertSnap(snap) {
     await loadSnapshots()
     await loadSpec()
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error(errMsg(e, '回滚失败'))
+    if (!isCancel(e)) ElMessage.error(taskErrorMessage(e, '回滚失败'))
   }
 }
 
@@ -952,7 +930,7 @@ async function removeSnap(snap) {
     ElMessage.success('快照已删除')
     await loadSnapshots()
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error(errMsg(e, '删除失败'))
+    if (!isCancel(e)) ElMessage.error(taskErrorMessage(e, '删除失败'))
   }
 }
 
@@ -962,7 +940,7 @@ async function loadXML() {
     const res = await api.getVMXML(id)
     xmlText.value = (res.data && res.data.xml) || (spec.value && spec.value.raw_xml) || ''
   } catch (e) {
-    ElMessage.error(errMsg(e, '获取 XML 失败'))
+    ElMessage.error(taskErrorMessage(e, '获取 XML 失败'))
   }
 }
 
@@ -977,7 +955,7 @@ async function saveXML() {
     ElMessage.success('XML 已保存')
     await loadSpec()
   } catch (e) {
-    ElMessage.error(errMsg(e, '保存失败'))
+    ElMessage.error(taskErrorMessage(e, '保存失败'))
   } finally {
     xmlSaving.value = false
   }
@@ -988,7 +966,7 @@ onMounted(async () => {
   await loadSpec()
   await loadSnapshots()
   await loadXML()
-  statsTimer = setInterval(pollStats, 2000)
+  statsTimer = setInterval(pollStats, statsIntervalMs)
 })
 
 onUnmounted(() => {
@@ -1132,9 +1110,6 @@ onUnmounted(() => {
 }
 .perf-chart {
   height: 260px;
-}
-.mono {
-  font-family: var(--font-mono);
 }
 
 /* 编辑页 */

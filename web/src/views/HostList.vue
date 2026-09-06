@@ -18,8 +18,8 @@
         <el-table-column prop="ssh_user" label="SSH 用户" width="110" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'online' ? 'success' : row.status === 'offline' ? 'danger' : 'info'" effect="light">
-              {{ statusText(row.status) }}
+            <el-tag :type="hostStatusTag(row.status)" effect="light">
+              {{ hostStatusText(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -80,6 +80,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Connection, DataLine, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
+import { hostStatusText, hostStatusTag, errMsg, isCancel } from '../utils/format'
 
 const { isAdmin } = useAuth()
 
@@ -101,10 +102,6 @@ const form = reactive({
   ssh_user: 'root',
   description: ''
 })
-
-function statusText(s) {
-  return { online: '在线', offline: '离线', unknown: '未知' }[s] || s
-}
 
 async function load() {
   loading.value = true
@@ -128,7 +125,7 @@ async function test(h) {
     if (d.reachable) ElMessage.success('连通，延迟 ' + (d.latency_ms || '—') + ' ms')
     else ElMessage.warning('无法连通该宿主机')
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.message) || '连通性测试失败')
+    ElMessage.error(errMsg(e, '连通性测试失败'))
   } finally {
     testBusy.value.delete(h.id)
     testBusy.value = new Set(testBusy.value)
@@ -143,7 +140,7 @@ async function showStats(h) {
     const res = await api.hostStats(h.id)
     statsData.value = res.data || {}
   } catch (e) {
-    statsData.value = { error: (e.response && e.response.data && e.response.data.message) || '获取失败' }
+    statsData.value = { error: errMsg(e, '获取失败') }
   }
 }
 
@@ -155,8 +152,8 @@ async function remove(h) {
     await load()
   } catch (e) {
     // 点右上角 X 关闭返回 'close'，同样视为取消，不弹错误提示
-    if (e === 'cancel' || e === 'close' || e?.message === 'cancel' || e?.message === 'close') return
-    ElMessage.error((e.response && e.response.data && e.response.data.message) || '删除失败')
+    if (isCancel(e)) return
+    ElMessage.error(errMsg(e, '删除失败'))
   }
 }
 
@@ -184,7 +181,7 @@ async function create() {
     dialog.value = false
     await load()
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.message) || '添加失败')
+    ElMessage.error(errMsg(e, '添加失败'))
   } finally {
     creating.value = false
   }
@@ -194,27 +191,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.count {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
-}
+/* .page-head / .page-title / .toolbar / .count 已收进 global.css */
 .loading {
   color: var(--color-muted-foreground);
   text-align: center;

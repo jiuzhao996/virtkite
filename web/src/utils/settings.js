@@ -27,12 +27,14 @@ export const POLL_DEFAULTS = {
   vmlist: 5000, // 虚拟机列表静默刷新
   dashboard: 3000, // 仪表盘主机/VM 性能
   tasks: 3000, // 任务中心智能轮询
-  sessions: 5000 // 会话列表
+  sessions: 5000, // 会话列表
+  vmstats: 2000 // 虚拟机详情页实时性能（CPU/内存/磁盘/网络 + 曲线）
 }
 
 export const POLL_LABELS = {
   vmlist: '虚拟机列表刷新',
   dashboard: '仪表盘性能刷新',
   tasks: '任务中心刷新',
-  sessions: '会话列表刷新'
+  sessions: '会话列表刷新',
+  vmstats: '虚拟机详情性能刷新'
 }

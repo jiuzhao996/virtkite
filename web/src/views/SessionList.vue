@@ -32,7 +32,7 @@
         </el-table-column>
         <el-table-column label="方式" width="110">
           <template #default="{ row }">
-            <el-tag :type="typeTag(row.type)" effect="light">{{ typeText(row.type) }}</el-tag>
+            <el-tag :type="sessionTypeTag(row.type)" effect="light">{{ sessionTypeText(row.type) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100">
@@ -46,7 +46,7 @@
         <el-table-column prop="username" label="用户" width="120" />
         <el-table-column prop="client_ip" label="来源 IP" width="140" />
         <el-table-column label="开始时间" width="170">
-          <template #default="{ row }">{{ fmtTime(row.started_at) }}</template>
+          <template #default="{ row }">{{ fmtDateTimeLocale(row.started_at) }}</template>
         </el-table-column>
         <el-table-column label="时长" width="110">
           <template #default="{ row }">{{ duration(row) }}</template>
@@ -75,6 +75,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
+import { sessionTypeText, sessionTypeTag, fmtDateTimeLocale, errMsg, isCancel } from '../utils/format'
 
 const { isAdmin } = useAuth()
 
@@ -83,18 +84,6 @@ const total = ref(0)
 const loading = ref(false)
 const q = ref({ status: '' })
 
-function typeText(t) {
-  return { vnc: '图形控制台', ssh: 'Web 终端', serial: '串口' }[t] || t
-}
-function typeTag(t) {
-  if (t === 'vnc') return 'primary'
-  if (t === 'ssh') return 'success'
-  return 'warning'
-}
-function fmtTime(s) {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('zh-CN', { hour12: false })
-}
 function duration(row) {
   const start = new Date(row.started_at).getTime()
   const end = row.ended_at ? new Date(row.ended_at).getTime() : Date.now()
@@ -106,14 +95,20 @@ function duration(row) {
 
 const activeCount = computed(() => items.value.filter((s) => s.status === 'active').length)
 
+// 拉取列表（首屏/手动刷新与静默轮询共用，只负责取数与赋值）
+async function fetchSessions() {
+  const params = {}
+  if (q.value.status) params.status = q.value.status
+  const res = await api.listSessions(params)
+  items.value = (res.data && res.data.items) || []
+  total.value = (res.data && res.data.total) || 0
+}
+
+// 首屏 / 手动刷新 / 切筛选：带整页 loading
 async function load() {
   loading.value = true
   try {
-    const params = {}
-    if (q.value.status) params.status = q.value.status
-    const res = await api.listSessions(params)
-    items.value = (res.data && res.data.items) || []
-    total.value = (res.data && res.data.total) || 0
+    await fetchSessions()
   } catch (e) {
     ElMessage.error('获取会话列表失败')
   } finally {
@@ -121,24 +116,37 @@ async function load() {
   }
 }
 
+// 轮询静默刷新：不动 loading，否则整页 v-loading 每 5s 闪一次（与其他轮询页一致）
+// 仍保留「上一轮未回 / 首屏加载中就跳过」的守卫，避免请求堆叠（原实现靠 loading 判断）
+let refreshing = false
+async function silentRefresh() {
+  if (refreshing || loading.value) return
+  refreshing = true
+  try {
+    await fetchSessions()
+  } catch (e) {
+    // 忽略：轮询失败不打扰用户，下一轮自动重试
+  } finally {
+    refreshing = false
+  }
+}
+
 let pollTimer = null
 
 async function disconnect(row) {
   try {
-    await ElMessageBox.confirm(`确定强制断开 ${row.username || '未知用户'} 的 ${typeText(row.type)}会话（${row.vm_name}）？`, '确认断开', { type: 'warning' })
+    await ElMessageBox.confirm(`确定强制断开 ${row.username || '未知用户'} 的 ${sessionTypeText(row.type)}会话（${row.vm_name}）？`, '确认断开', { type: 'warning' })
     await api.disconnectSession(row.id)
     ElMessage.success('已断开')
     await load()
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error((e.response && e.response.data && e.response.data.message) || '断开失败')
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '断开失败'))
   }
 }
 
 onMounted(() => {
   load()
-  pollTimer = setInterval(() => {
-    if (!loading.value) load()
-  }, getPollInterval('sessions', POLL_DEFAULTS.sessions))
+  pollTimer = setInterval(silentRefresh, getPollInterval('sessions', POLL_DEFAULTS.sessions))
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -146,31 +154,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
+/* .page-head / .page-title / .toolbar / .count 已收进 global.css */
 .toolbar-left {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.count {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
 }
 .running-hint {
   color: var(--color-accent);

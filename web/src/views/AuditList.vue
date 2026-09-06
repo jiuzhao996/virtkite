@@ -34,7 +34,7 @@
       <el-table :data="items" stripe border style="width: 100%" empty-text="暂无审计记录">
         <el-table-column label="时间" min-width="172">
           <template #default="{ row }">
-            <span class="mono">{{ fmtTime(row.created_at) }}</span>
+            <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作人" width="120">
@@ -97,7 +97,7 @@
       <div v-if="current" class="detail-grid">
         <div class="d-item">
           <span class="d-label">时间</span>
-          <span class="mono">{{ fmtTime(current.created_at) }}</span>
+          <span class="mono">{{ fmtDateTime(current.created_at) }}</span>
         </div>
         <div class="d-item">
           <span class="d-label">操作人</span>
@@ -138,6 +138,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, RefreshLeft, View } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { FALLBACK_ACTION_LABELS, fmtDateTime, errMsg } from '../utils/format'
 
 const items = ref([])
 const total = ref(0)
@@ -148,22 +149,7 @@ const current = ref(null)
 
 const objectOptions = ['vm', 'host', 'image', 'user', 'system']
 
-// 兜底映射：auditActions() 不可用时兜底展示中文
-const FALLBACK_ACTION_LABELS = {
-  login: '登录', logout: '登出',
-  create_vm: '创建虚拟机', delete_vm: '删除虚拟机', start_vm: '开机', stop_vm: '关机',
-  restart_vm: '重启', import_vm: '导入虚拟机', pause_vm: '暂停虚拟机', resume_vm: '恢复虚拟机',
-  clone_vm: '克隆虚拟机',
-  attach_disk: '挂载磁盘', detach_disk: '移除磁盘', attach_nic: '添加网卡', detach_nic: '移除网卡',
-  create_snapshot: '创建快照', delete_snapshot: '删除快照', revert_snapshot: '回滚快照',
-  update_vm_spec: '更新虚拟机配置', update_vm_xml: '更新虚拟机XML', update_vm: '更新虚拟机',
-  set_vcpu: '调整CPU核数', set_memory: '调整内存', set_autostart: '设置开机自启', set_boot: '设置引导顺序',
-  create_host: '添加宿主机', update_host: '更新宿主机', delete_host: '删除宿主机',
-  upload_image: '上传镜像', delete_image: '删除镜像', set_image_template: '设置镜像模板', clone_image: '镜像创建虚拟机',
-  create_network: '创建网络', update_network: '更新网络', delete_network: '删除网络',
-  create_volume: '创建存储卷', delete_volume: '删除存储卷', access: '访问'
-}
-
+// 兜底映射（FALLBACK_ACTION_LABELS）与仪表盘共用，已收进 utils/format.js
 const actionMap = ref({ ...FALLBACK_ACTION_LABELS })
 
 const actionOptions = computed(() =>
@@ -178,14 +164,6 @@ function actionLabel(action) {
 }
 
 const q = reactive({ action: '', object_type: '', username: '', status: '', start: '', end: '', page: 1, page_size: 20 })
-
-function fmtTime(s) {
-  if (!s) return '—'
-  const d = new Date(s)
-  if (isNaN(d.getTime())) return s
-  const p = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
 
 function onRange(val) {
   if (val && val.length === 2) {
@@ -226,7 +204,7 @@ async function load() {
     items.value = (res.data && res.data.items) || []
     total.value = (res.data && res.data.total) || 0
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.message) || '获取审计日志失败')
+    ElMessage.error(errMsg(e, '获取审计日志失败'))
   } finally {
     loading.value = false
   }
@@ -257,21 +235,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.page-desc {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
-}
+/* .page-head / .page-title / .page-desc 已收进 global.css；.mono 的 font-family 亦然，此处只留字号 */
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -283,7 +247,6 @@ onMounted(() => {
   justify-content: flex-end;
 }
 .mono {
-  font-family: var(--font-mono);
   font-size: 0.85rem;
 }
 .muted {

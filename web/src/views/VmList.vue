@@ -57,7 +57,7 @@
               <!-- 腾讯云式状态：圆点 + 文字，运行态呼吸灯 -->
               <span class="vm-status" :class="'st-' + (vm.status || 'unknown').replace(' ', '-')">
                 <span class="status-dot" />
-                {{ statusText(vm.status) }}
+                {{ vmStatusText(vm.status) }}
               </span>
             </div>
             <div class="vm-meta">
@@ -75,8 +75,8 @@
             <div class="vm-perf" v-if="vm.status === 'running' && perfOf(vm)">
               <div class="perf-values">
                 <span class="live-tag"><span class="live-dot" />实时</span>
-                <span class="perf-val">CPU <b :style="{ color: barColor(perfOf(vm).cpu_percent || 0) }">{{ (perfOf(vm).cpu_percent || 0).toFixed(1) }}%</b></span>
-                <span class="perf-val">内存 <b :style="{ color: barColor(perfOf(vm).mem_pct || 0) }">{{ (perfOf(vm).mem_pct || 0).toFixed(1) }}%</b></span>
+                <span class="perf-val">CPU <b :style="{ color: usageColor(perfOf(vm).cpu_percent || 0) }">{{ (perfOf(vm).cpu_percent || 0).toFixed(1) }}%</b></span>
+                <span class="perf-val">内存 <b :style="{ color: usageColor(perfOf(vm).mem_pct || 0) }">{{ (perfOf(vm).mem_pct || 0).toFixed(1) }}%</b></span>
                 <span class="perf-time" v-if="perfAt(vm)">{{ perfAt(vm) }}</span>
               </div>
               <div class="spark" :ref="(el) => setSparkRef(vm.id, el)" />
@@ -142,7 +142,7 @@
           <el-table-column prop="name" label="名称" min-width="130" />
           <el-table-column label="状态" width="90">
             <template #default="{ row }">
-              <el-tag :type="statusTag(row.state)" effect="light">{{ statusText(row.state) }}</el-tag>
+              <el-tag :type="vmStatusTag(row.state, 'primary')" effect="light">{{ vmStatusText(row.state) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="规格" width="150">
@@ -173,9 +173,15 @@ import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
+import { vmStatusText, vmStatusTag, usageColor, nowClock, errMsg, isCancel, cssVar } from '../utils/format'
 
 const router = useRouter()
 const { isAdmin } = useAuth()
+
+// echarts 不解析 var()，需要真实色值：挂载时读一次 CSS 变量（避免散落 hex）
+const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2a9da5')
+const CHART_MEM_COLOR = cssVar('--color-warning', '#d97706')
+const CHART_BASELINE_COLOR = cssVar('--color-border-strong', '#cbd5e1')
 
 const items = ref([])
 const total = ref(0)
@@ -225,11 +231,6 @@ function perfOf(row) {
 function perfAt(row) {
   return perfAtMap.value[row.id] || ''
 }
-function barColor(p) {
-  if (p >= 80) return '#dc2626'
-  if (p >= 60) return '#d97706'
-  return '#16a34a'
-}
 
 // 卡片多选（替代 el-table selection 列）
 function isChecked(vm) {
@@ -241,17 +242,6 @@ function toggleCheck(vm, on) {
   } else {
     checked.value = checked.value.filter((r) => r.id !== vm.id)
   }
-}
-
-function statusText(s) {
-  return { running: '运行中', stopped: '已关机', 'shut off': '已关机', paused: '已暂停', error: '异常' }[s] || s
-}
-function statusTag(s) {
-  if (s === 'running') return 'success'
-  if (s === 'paused') return 'warning'
-  if (s === 'error') return 'danger'
-  if (s === 'shut off' || s === 'stopped') return 'info'
-  return 'primary'
 }
 
 async function load() {
@@ -271,7 +261,7 @@ async function load() {
 // 应用实时性能：后端 listVMs 已合并 perf（{id: {cpu_percent, mem_pct}}），无需第二次请求
 function applyPerf(perfObj) {
   const m = {}
-  const tstr = new Date().toLocaleTimeString('zh-CN', { hour12: false })
+  const tstr = nowClock()
   for (const [id, p] of Object.entries(perfObj || {})) {
     if (!p) continue
     m[id] = p
@@ -335,7 +325,7 @@ function syncCharts() {
                   { xAxis: h.t[h.t.length - 1], yAxis: 0 }
                 ]
               ],
-              lineStyle: { color: '#cbd5e1', type: 'dashed', width: 1 }
+              lineStyle: { color: CHART_BASELINE_COLOR, type: 'dashed', width: 1 }
             }
           ]
         : []
@@ -353,8 +343,8 @@ function syncCharts() {
             smooth: true,
             showSymbol: false,
             data: h.cpu,
-            lineStyle: { width: 1.5, color: '#2a9da5' },
-            areaStyle: { opacity: 0.12, color: '#2a9da5' },
+            lineStyle: { width: 1.5, color: CHART_CPU_COLOR },
+            areaStyle: { opacity: 0.12, color: CHART_CPU_COLOR },
             // 零基线参考：动态 Y 下锚定 0，避免噪声误读为负载
             markLine: baseMark[0] || { silent: true, symbol: ['none', 'none'], data: [] }
           },
@@ -364,8 +354,8 @@ function syncCharts() {
             smooth: true,
             showSymbol: false,
             data: h.mem,
-            lineStyle: { width: 1.5, color: '#d97706' },
-            areaStyle: { opacity: 0.12, color: '#d97706' }
+            lineStyle: { width: 1.5, color: CHART_MEM_COLOR },
+            areaStyle: { opacity: 0.12, color: CHART_MEM_COLOR }
           }
         ]
       },
@@ -429,7 +419,8 @@ async function openImport() {
     importUnmanaged.value = data.unmanaged || 0
     unmanaged.value = ((data.items || []).filter((i) => !i.managed))
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.detail) || '扫描失败，无法连接 libvirt')
+    // 后端已统一为 {code, message, data}（handler 层禁止再泄漏 detail），走统一提取
+    ElMessage.error(errMsg(e, '扫描失败，无法连接 libvirt'))
   } finally {
     importScanning.value = false
   }
@@ -448,7 +439,7 @@ async function doImport() {
     importDialog.value = false
     await load()
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.message) || '导入失败')
+    ElMessage.error(errMsg(e, '导入失败'))
   } finally {
     importing.value = false
   }
@@ -530,7 +521,7 @@ async function action(vm, type) {
       await load()
     }
   } catch (e) {
-    if (e !== 'cancel' && e?.message !== 'cancel') {
+    if (!isCancel(e)) {
       ElMessage.error(taskErrorMessage(e, '操作失败'))
     }
   } finally {
@@ -566,32 +557,12 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
-.page-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-xl);
-}
+/* .page-head / .page-title / .toolbar / .count / .mono 已收进 global.css */
 .toolbar-left {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-}
-.count {
-  color: var(--color-muted-foreground);
-  font-size: 0.9rem;
 }
 .running-hint {
   color: var(--color-accent);
@@ -694,9 +665,6 @@ onUnmounted(() => {
   gap: 4px;
   font-size: 0.82rem;
   color: var(--color-muted-foreground);
-}
-.meta-item.mono {
-  font-family: var(--font-mono);
 }
 .vm-spec {
   display: flex;

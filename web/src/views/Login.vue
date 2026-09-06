@@ -31,7 +31,7 @@
       </el-form>
 
       <div class="demo-tip">
-        💡 演示账号：<br />
+        <el-icon><InfoFilled /></el-icon>演示账号：<br />
         管理员 <code>admin</code> / <code>password</code><br />
         普通用户 <code>user</code> / <code>123456</code>
       </div>
@@ -43,7 +43,7 @@
 import { reactive, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Lock } from '@element-plus/icons-vue'
+import { InfoFilled, Lock } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import loginBg from '../assets/login-bg.jpg'
@@ -157,5 +157,10 @@ async function submit() {
   font-size: 0.85rem;
   color: var(--color-primary);
   line-height: 1.9;
+}
+/* 提示图标：el-icon 默认基线对齐，与中文混排偏高，下压 0.15em 并补右间距 */
+.demo-tip .el-icon {
+  margin-right: 4px;
+  vertical-align: -0.15em;
 }
 </style>
