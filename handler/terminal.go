@@ -2,10 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,16 +39,24 @@ var wsUpgrader = websocket.Upgrader{
 
 // Connect 处理 WebSocket SSH 终端连接（GET /api/vms/:id/terminal）。
 func (h *TerminalHandler) Connect(c *gin.Context) {
-	conn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
+	rawConn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
+	// stdout/stderr 转发、主循环 pong、管理员强制断开会并发写同一连接，
+	// 必须经 console.Conn 串行化，否则 gorilla/websocket 直接 panic 并带走进程。
+	conn := console.NewConn(rawConn)
 	defer conn.Close()
 	log.Printf("[terminal] WS 已连接 from=%s vm=%s", c.ClientIP(), c.Param("id"))
 
-	// 校验 VM 存在
+	// 校验 VM 存在（ID 必须先解析成数值，直传字符串会被 GORM 当原始 SQL 拼接，见 param.go）
+	vmID, ok := parseID(c.Param("id"))
+	if !ok {
+		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "虚拟机 ID 非法"})
+		return
+	}
 	var vm model.VM
-	if err := h.DB.First(&vm, c.Param("id")).Error; err != nil {
+	if err := h.DB.First(&vm, vmID).Error; err != nil {
 		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "虚拟机不存在"})
 		return
 	}
@@ -76,14 +87,26 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 		port = 22
 	}
 
+	// 目标白名单校验：拨号参数完全来自浏览器，不校验等于把平台变成跳板机
+	if err := validateSSHTarget(&vm, auth.Host, port); err != nil {
+		log.Printf("[terminal] 目标被拒 vm=%s(%d) target=%s:%d user=%s from=%s reason=%v",
+			vm.Name, vm.ID, auth.Host, port, auth.User, c.ClientIP(), err)
+		_ = conn.WriteJSON(gin.H{"type": "error", "msg": err.Error()})
+		return
+	}
+	// 留痕：谁、从哪、连了哪个目标（口令不记录）
+	log.Printf("[terminal] SSH 拨号 vm=%s(%d) target=%s:%d user=%s from=%s",
+		vm.Name, vm.ID, auth.Host, port, auth.User, c.ClientIP())
+
 	// SSH 连接目标主机
 	sshConfig := &ssh.ClientConfig{
-		User:    auth.User,
-		Auth:    []ssh.AuthMethod{ssh.Password(auth.Password)},
-		Timeout: 8 * time.Second,
-		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			return nil
-		},
+		User: auth.User,
+		Auth: []ssh.AuthMethod{ssh.Password(auth.Password)},
+		// 目标是平台自己创建的短生命周期虚拟机，IP 由 DHCP 动态分配、重建即换主机密钥，
+		// 维护 known_hosts 不具可操作性，故显式跳过主机密钥校验。
+		// 中间人风险由上面的 validateSSHTarget 收敛：目标被限制在本机私有网段内。
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         8 * time.Second,
 	}
 	client, err := ssh.Dial("tcp", net.JoinHostPort(auth.Host, itoa(port)), sshConfig)
 	if err != nil {
@@ -146,8 +169,15 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 	var wg sync.WaitGroup
 
 	// SSH stdout/stderr → WebSocket（二进制帧，xterm 直接写入）
+	// 两个 goroutine 并发调用，写入由 console.Conn 的写锁串行化。
 	pipeOut := func(r io.Reader) {
 		defer wg.Done()
+		// 后台 goroutine 的 panic 无法被 gin Recovery 拦截，会直接终止进程，必须自兜底
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[terminal] 输出转发 panic vm=%s panic=%v\n%s", vm.Name, rec, debug.Stack())
+			}
+		}()
 		buf := make([]byte, 4096)
 		for {
 			n, err := r.Read(buf)
@@ -166,6 +196,7 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 	go pipeOut(stderr)
 
 	// WebSocket → SSH stdin，同时处理 resize / 心跳
+readLoop:
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
@@ -181,8 +212,8 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 			switch msg.Type {
 			case "input":
 				if _, werr := stdin.Write([]byte(msg.Data)); werr != nil {
-					_ = conn.Close()
-					break
+					// 带标签跳出外层 for：裸 break 只能跳出 switch（原实现的缺陷）
+					break readLoop
 				}
 			case "resize":
 				if msg.Cols > 0 && msg.Rows > 0 {
@@ -195,7 +226,7 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 		} else {
 			// 兼容直接发送文本输入
 			if _, werr := stdin.Write(data); werr != nil {
-				break
+				break readLoop
 			}
 		}
 	}
@@ -207,6 +238,46 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 	_ = session.Wait()
 	wg.Wait()
 	_ = client.Close()
+}
+
+// validateSSHTarget 校验 Web 终端的 SSH 拨号目标。
+//
+// 原实现里 host/port/user/password 全部取自浏览器首帧且零校验，配合 RBAC 对 GET 的放行，
+// 任何登录用户都能驱动服务器向任意地址发起 SSH 连接 —— 平台等于免费的跳板机、
+// 内网端口扫描器与口令爆破器。本函数把目标收敛到「本机管理的虚拟机」范围内。
+//
+// 约束由强到弱：
+//  1. 平台已记录该 VM 的 IP（vm.IP 非空）→ 目标必须与之精确一致；
+//  2. 未记录 IP（无 guest agent 时的常态）→ 只接受 RFC1918 私有网段的 IP 字面量，
+//     并排除环回（否则可 SSH 进宿主机自身）、链路本地、组播与未指定地址；
+//     不接受主机名，避免 DNS 解析到公网或 DNS rebinding 绕过；
+//  3. 端口必须落在 1-65535。
+//
+// 返回的错误文案会直接回显到前端终端，因此一律为中文且不含内部细节。
+func validateSSHTarget(vm *model.VM, host string, port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("端口不合法（须在 1-65535 之间）")
+	}
+
+	// 平台已知该虚拟机地址时，只允许连它自己
+	if recorded := strings.TrimSpace(vm.IP); recorded != "" {
+		if host != recorded {
+			return fmt.Errorf("只能连接该虚拟机自身地址 %s", recorded)
+		}
+		return nil
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("目标必须是 IP 地址（不支持主机名）")
+	}
+	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+		return fmt.Errorf("该地址不允许作为终端目标（环回 / 链路本地 / 组播）")
+	}
+	if !ip.IsPrivate() {
+		return fmt.Errorf("只允许连接私有网段地址（10/8、172.16/12、192.168/16）")
+	}
+	return nil
 }
 
 // itoa 简易整型转字符串，避免额外 import。

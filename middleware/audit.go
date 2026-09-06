@@ -1,8 +1,6 @@
 package middleware
 
 import (
-	"bytes"
-	"io"
 	"log"
 	"strings"
 	"time"
@@ -24,22 +22,31 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 		sourceIP := c.ClientIP()
 
 		// 静态资源、健康检查与指标抓取不写审计，避免刷屏
-		// （/metrics 会被 Prometheus 每 15s 抓取，不排除将淹没审计表）
-		if strings.HasPrefix(path, "/static") || path == "/api/health" || path == "/metrics" {
+		// （/metrics 会被 Prometheus 每 15s 抓取，不排除将淹没审计表；
+		//   /assets 是 Vite 产物 js/css，开一次页面就是一批请求；favicon 同理）
+		if strings.HasPrefix(path, "/static") ||
+			strings.HasPrefix(path, "/assets") ||
+			strings.HasPrefix(path, "/favicon.ico") ||
+			path == "/api/health" ||
+			path == "/metrics" {
 			c.Next()
 			return
 		}
 
 		// 获取用户信息：审计中间件注册在全局（早于 JWT 中间件），
 		// 因此需要自行解析 Bearer token 补齐 username/user_id。
+		// 类型断言一律带 ok：上下文值类型不符时降级为匿名请求，不能 panic 掉整条请求链。
 		var userID *uint
 		var username string
 		if uid, exists := c.Get("user_id"); exists {
-			uidUint := uid.(uint)
-			userID = &uidUint
+			if uidUint, ok := uid.(uint); ok {
+				userID = &uidUint
+			}
 		}
 		if uname, exists := c.Get("username"); exists {
-			username = uname.(string)
+			if unameStr, ok := uname.(string); ok {
+				username = unameStr
+			}
 		}
 		if userID == nil || username == "" {
 			if claims, err := claimsFromRequest(c.Request); err == nil {
@@ -49,15 +56,17 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 			}
 		}
 
-		// 读取请求体（用于审计）
-		var requestBody []byte
-		if c.Request.Body != nil {
-			requestBody, _ = io.ReadAll(c.Request.Body)
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-		}
-
 		// 处理请求
 		c.Next()
+
+		// NoRoute 兜底（SPA 前端路由回退 / 产物缺失提示页）也会走到这里：
+		// 非 /api 路径且响应是 HTML 或纯文本时，说明只是刷新页面命中前端路由，不写审计。
+		if !strings.HasPrefix(path, "/api") {
+			contentType := c.Writer.Header().Get("Content-Type")
+			if strings.HasPrefix(contentType, "text/html") || strings.HasPrefix(contentType, "text/plain") {
+				return
+			}
+		}
 
 		// 计算处理时间
 		duration := time.Since(startTime)

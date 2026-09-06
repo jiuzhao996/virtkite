@@ -1,10 +1,11 @@
 package console
 
 import (
+	"log"
+	"runtime/debug"
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/jiuzhao/vmops/model"
 	"gorm.io/gorm"
 )
@@ -14,47 +15,83 @@ const vncStaleAfter = 60 * time.Minute
 
 // Registry 控制台会话注册表（单进程内存 + DB 持久）。
 // SSH/串口 WS 连接持有在此，可服务端强制断开；VNC token 映射用于解析事件刷新存活。
+// 持有的连接一律是写入串行化的 *Conn（见 conn.go），因为强制断开与桥接转发会并发写同一连接。
 type Registry struct {
 	mu      sync.Mutex
 	DB      *gorm.DB
-	conns   map[uint]*websocket.Conn // sessionID → WS 连接（仅 ssh/serial）
-	byToken map[string]uint          // vnc token → sessionID
+	conns   map[uint]*Conn  // sessionID → WS 连接（仅 ssh/serial）
+	byToken map[string]uint // vnc token → sessionID
 }
 
 // NewRegistry 创建会话注册表。
 func NewRegistry(db *gorm.DB) *Registry {
 	return &Registry{
 		DB:      db,
-		conns:   make(map[uint]*websocket.Conn),
+		conns:   make(map[uint]*Conn),
 		byToken: make(map[string]uint),
 	}
 }
 
 // StartSweeper 启动过期清扫（VNC 无关闭事件，超 vncStaleAfter 未解析即标记 closed）。
+// 清扫器为常驻后台 goroutine，单轮 panic 由 sweepOnce 自行兜底，不会终止定时循环。
 func (r *Registry) StartSweeper() {
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
-			cutoff := time.Now().Add(-vncStaleAfter)
-			_ = r.DB.Model(&model.ConsoleSession{}).
-				Where("status = ? AND type = ? AND last_seen < ?", "active", "vnc", cutoff).
-				Updates(map[string]interface{}{"status": "closed", "ended_at": time.Now()})
-			// 清理已关闭会话的 token 映射（避免内存膨胀）
-			r.mu.Lock()
-			for token, id := range r.byToken {
-				var s model.ConsoleSession
-				if err := r.DB.Select("status").First(&s, id).Error; err != nil || s.Status != "active" {
-					delete(r.byToken, token)
-				}
-			}
-			r.mu.Unlock()
+			r.sweepOnce()
 		}
 	}()
 }
 
+// sweepOnce 执行一轮清扫：收敛过期 VNC 会话 + 清理已关闭会话的 token 映射。
+// 后台 goroutine 内的 panic 无法被 gin Recovery 拦截，会直接终止进程，故此处必须自兜底。
+func (r *Registry) sweepOnce() {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("[console] 会话清扫 panic=%v\n%s", rec, debug.Stack())
+		}
+	}()
+
+	cutoff := time.Now().Add(-vncStaleAfter)
+	if err := r.DB.Model(&model.ConsoleSession{}).
+		Where("status = ? AND type = ? AND last_seen < ?", "active", "vnc", cutoff).
+		Updates(map[string]interface{}{"status": "closed", "ended_at": time.Now()}).Error; err != nil {
+		log.Printf("[console] 收敛过期 VNC 会话失败: %v", err)
+	}
+
+	// 先在锁内取快照，逐条查库在锁外进行：持锁做 DB IO 会阻塞所有会话的开启与关闭
+	r.mu.Lock()
+	snapshot := make(map[string]uint, len(r.byToken))
+	for token, id := range r.byToken {
+		snapshot[token] = id
+	}
+	r.mu.Unlock()
+
+	stale := make([]string, 0, len(snapshot))
+	for token, id := range snapshot {
+		var s model.ConsoleSession
+		if err := r.DB.Select("status").First(&s, id).Error; err != nil || s.Status != "active" {
+			stale = append(stale, token)
+		}
+	}
+	if len(stale) == 0 {
+		return
+	}
+
+	r.mu.Lock()
+	for _, token := range stale {
+		// 二次确认映射未在锁外查库期间被重新签发覆盖
+		if id, ok := r.byToken[token]; ok && snapshot[token] == id {
+			delete(r.byToken, token)
+		}
+	}
+	r.mu.Unlock()
+}
+
 // Open 创建 WS 会话（ssh/serial）并持有连接，返回 DB 记录。
-func (r *Registry) Open(vmID uint, vmName, typ, username string, userID *uint, clientIP string, conn *websocket.Conn) *model.ConsoleSession {
+// conn 必须是写入串行化的 *Conn：强制断开会与桥接转发并发写同一连接。
+func (r *Registry) Open(vmID uint, vmName, typ, username string, userID *uint, clientIP string, conn *Conn) *model.ConsoleSession {
 	now := time.Now()
 	s := &model.ConsoleSession{
 		VMID: vmID, VMName: vmName, Type: typ,
@@ -126,9 +163,8 @@ func (r *Registry) Disconnect(id uint) error {
 	if !ok {
 		return ErrNoLiveConn
 	}
-	// 先发关闭帧再关底层连接，尽量让浏览器收到通知
-	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "管理员已断开连接"))
-	return conn.Close()
+	// 关闭帧与底层关闭都在 Conn 的写锁内完成，与桥接 goroutine 的转发写互斥
+	return conn.CloseWithReason("管理员已断开连接")
 }
 
 // noLiveConnError 会话无可控连接（VNC 或已关闭）。

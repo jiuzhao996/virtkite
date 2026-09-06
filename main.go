@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,9 +29,13 @@ func main() {
 	// 初始化配置
 	config.Init()
 
-	// release 模式下必须配置 JWT_SECRET_KEY
-	if config.GlobalConfig.ServerMode == "release" && config.GlobalConfig.JWTSecretKey == "" {
-		log.Fatalf("JWT_SECRET_KEY is required in release mode")
+	// release 模式下必须显式配置 JWT_SECRET_KEY。
+	// 注意：config 包给该项兜了硬编码默认值，所以只判 `== ""` 永不成立（校验形同虚设），
+	// 必须同时拒绝「仍是内置默认值」的情况，否则线上密钥公开可见、Token 可被任意伪造。
+	const builtinJWTSecret = "vmops-jwt-secret-key-change-in-production"
+	if config.GlobalConfig.ServerMode == "release" &&
+		(config.GlobalConfig.JWTSecretKey == "" || config.GlobalConfig.JWTSecretKey == builtinJWTSecret) {
+		log.Fatalf("release 模式必须设置 JWT_SECRET_KEY 环境变量：当前为空或仍是内置默认值，存在 Token 伪造风险")
 	}
 
 	// 初始化数据库
@@ -47,35 +52,47 @@ func main() {
 	}
 	r := gin.Default()
 
+	// 镜像上传走 multipart：超过该阈值的部分落磁盘临时文件，不再全量驻留内存，
+	// 避免多 GB 的 qcow2/ISO 把进程内存打满（显式声明 32MB 意图，勿改大）
+	r.MaxMultipartMemory = 32 << 20
+
 	// 注册中间件
 	r.Use(middleware.CORSMiddleware())
 	r.Use(middleware.AuditMiddleware(db))
 
-	// 静态文件服务：优先托管 Vite 构建产物 web/dist，缺失时回退到 static/index.html。
+	// 静态文件服务：按候选目录依次探测前端产物，第一个存在 index.html 的胜出。
 	// 用 os.ReadFile + c.Data 返回 index.html，规避 gin 对含 .html 路径的 301 目录索引重定向怪癖。
-	exePath, _ := os.Executable()
-	exeDir := filepath.Dir(exePath)
-	webDir := filepath.Join(exeDir, "web", "dist")
-	indexFile := filepath.Join(webDir, "index.html")
-	indexBytes, err := os.ReadFile(indexFile)
-	if err != nil {
-		// 回退：旧版单文件前端
-		indexFile = filepath.Join(exeDir, "static", "index.html")
-		indexBytes, err = os.ReadFile(indexFile)
-		if err != nil {
-			log.Fatalf("读取前端入口失败（请先 `cd web && npm run build`）: %v", err)
+	webDir, indexBytes := locateWebRoot()
+
+	if indexBytes != nil {
+		serveIndex := func(c *gin.Context) {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", indexBytes)
 		}
-	}
+		r.GET("/", serveIndex)
+		r.NoRoute(serveIndex)
 
-	serveIndex := func(c *gin.Context) {
-		c.Data(200, "text/html; charset=utf-8", indexBytes)
-	}
-	r.GET("/", serveIndex)
-	r.NoRoute(serveIndex)
+		// 托管前端静态资源（js/css 等），避免被 NoRoute 兜底为 index.html。
+		// 目录必须取自上面探测命中的 webDir，不能硬编码相对路径（工作目录不确定）。
+		assetsDir := filepath.Join(webDir, "assets")
+		if info, statErr := os.Stat(assetsDir); statErr == nil && info.IsDir() {
+			r.Static("/assets", assetsDir)
+		}
+	} else {
+		// 开发场景：后端 `go run main.go` + 前端 `npm run dev`（Vite 把 /api 代理到 8080），
+		// 此时没有构建产物是正常的，只提供 API 即可，绝不能因此退出进程。
+		log.Printf("⚠️ 未找到前端构建产物（已探测 web/dist 与 static 候选目录），本次仅提供 API 服务；需要页面请先执行 `cd web && npm run build` 再重启后端")
 
-	// 托管 Vite 构建的静态资源（js/css 等），避免被 NoRoute 兜底为 index.html
-	if info, statErr := os.Stat(filepath.Join(webDir, "assets")); statErr == nil && info.IsDir() {
-		r.Static("/assets", filepath.Join(webDir, "assets"))
+		// 产物缺失时给出中文纯文本提示，避免空 body / 404 让人误判后端已挂
+		hint := "vmops 后端已启动，但未找到前端构建产物（web/dist/index.html）。\n" +
+			"当前仅提供 API 服务。\n" +
+			"构建前端：cd web && npm run build，然后重启后端。\n" +
+			"开发模式：cd web && npm run dev，直接访问 Vite 开发服务器（其 /api 已代理到本服务）。\n"
+		serveHint := func(c *gin.Context) {
+			c.String(http.StatusServiceUnavailable, hint)
+		}
+		r.GET("/", serveHint)
+		r.NoRoute(serveHint)
+		// 产物缺失时跳过 /assets 注册（无目录可托管）
 	}
 
 	// 初始化Handler
@@ -305,20 +322,59 @@ func sweepStaleRecords(db *gorm.DB) {
 	}
 }
 
+// locateWebRoot 按候选目录依次探测前端产物，返回命中的目录与 index.html 内容。
+// 候选顺序：<exeDir>/web/dist → <exeDir>/static → <cwd>/web/dist → <cwd>/static。
+// 追加 cwd 候选是因为 `go run main.go` 时二进制在 /tmp/go-build*/ 临时目录，
+// exeDir 下必然找不到产物（README/AGENTS.md 都把 go run 写成标准运行方式）。
+// 全部未命中返回 ("", nil)，交由调用方降级为「仅 API」模式，不视为致命错误。
+func locateWebRoot() (dir string, index []byte) {
+	var candidates []string
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates, filepath.Join(exeDir, "web", "dist"), filepath.Join(exeDir, "static"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(cwd, "web", "dist"), filepath.Join(cwd, "static"))
+	}
+
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(filepath.Join(candidate, "index.html"))
+		if err != nil {
+			continue
+		}
+		// 打印命中目录：改前端后没生效多半是命中了另一份产物（见 AGENTS.md 踩坑记录）
+		log.Printf("前端产物目录: %s", candidate)
+		return candidate, data
+	}
+	return "", nil
+}
+
 // initSeedData 初始化种子数据
 func initSeedData(db *gorm.DB) {
 	// 检查是否有用户
 	var count int64
-	db.Model(&model.User{}).Count(&count)
+	if err := db.Model(&model.User{}).Count(&count).Error; err != nil {
+		// 查不到就无法判断是否需要种子，此时建账号可能撞唯一索引，直接放弃并留日志
+		log.Printf("统计用户数失败，跳过种子数据初始化: %v", err)
+		return
+	}
 	if count > 0 {
 		return
 	}
 
 	log.Println("初始化种子数据...")
 
-	// 生成密码哈希
-	adminHash, _ := middleware.HashPassword("password")
-	userHash, _ := middleware.HashPassword("123456")
+	// 生成密码哈希：失败必须中止，否则会写入空哈希造成账号静默不可登录
+	adminHash, err := middleware.HashPassword("password")
+	if err != nil {
+		log.Printf("生成管理员密码哈希失败，跳过种子数据初始化: %v", err)
+		return
+	}
+	userHash, err := middleware.HashPassword("123456")
+	if err != nil {
+		log.Printf("生成普通用户密码哈希失败，跳过种子数据初始化: %v", err)
+		return
+	}
 
 	// 创建管理员
 	admin := &model.User{
@@ -338,10 +394,17 @@ func initSeedData(db *gorm.DB) {
 		IsActive:     true,
 	}
 
-	db.Create(admin)
-	db.Create(user)
+	// 种子账号写入失败必须可见，否则首次启动后无法登录却毫无线索
+	if err := db.Create(admin).Error; err != nil {
+		log.Printf("创建种子管理员账号失败: %v", err)
+	}
+	if err := db.Create(user).Error; err != nil {
+		log.Printf("创建种子普通用户失败: %v", err)
+	}
 
+	// 只打用户名与角色，绝不把明文口令写进日志（日志常被收集/共享）
 	log.Println("✅ 种子数据初始化完成")
-	log.Println("   👑 管理员: admin / password")
-	log.Println("   👤 用户:   user / 123456")
+	log.Println("   👑 管理员: admin（角色 admin）")
+	log.Println("   👤 用户:   user（角色 viewer）")
+	log.Println("   🔑 默认口令见 README，首次登录后请立即修改")
 }

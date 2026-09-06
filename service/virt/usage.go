@@ -94,9 +94,9 @@ func (v *Virt) ListDomainDevices(name string) (disks []Device, nics []Device, er
 	var dx struct {
 		Devices struct {
 			Disks []struct {
-				Type     string `xml:"type,attr"`
-				Device   string `xml:"device,attr"`
-				Driver   struct {
+				Type   string `xml:"type,attr"`
+				Device string `xml:"device,attr"`
+				Driver struct {
 					Type string `xml:"type,attr"`
 				} `xml:"driver"`
 				Source struct {
