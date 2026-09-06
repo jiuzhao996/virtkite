@@ -192,6 +192,17 @@
 - **WS 写入一律经 `console.NewConn(rawConn)` 包装**（见后端标准第 9 条），禁止回退成裸 `*websocket.Conn`。
 
 
+## 远程推送注意（本机实测）
+
+- 双远程：`origin` = Gitee（分支名 **master**）、`github` = GitHub（分支名 **main**）；本地只有 `main`。
+- 推送命令：`git push origin main:master` + `git push github main`。
+- Gitee HTTPS token 认证的用户名是 `jiuzhao996`（无连字符，与仓库路径 `jiuzhao-996` 不同），
+  用错报「The token username invalid」。令牌真实用户名可用
+  `https://gitee.com/api/v5/user?access_token=<token>` 反查。
+- GitHub 直连经常超时/HTTP2 framing 错误，走本机 Clash 代理：
+  `https_proxy=http://127.0.0.1:7890 git push github main`。
+- 凭据存于本机 `~/.git-credentials`（600 权限，明文）。若仓库将来公开，先轮换两个 token。
+
 ## 并发协作注意
 
 - 本目录可能被**多个 opencode 终端同时编辑**（共享同一工作树，改动均未提交）。动手前/提交前先 `git status`、`git diff` 确认，避免覆盖他人未提交的改动；不要在别人重构中途大改同一批文件。
