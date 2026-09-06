@@ -198,6 +198,42 @@ func (v *Virt) GetAllDomainStates() (map[string]string, error) {
 	return result, nil
 }
 
+// ListAllDomainDiskSources 返回所有域的磁盘源路径映射（域名 → 磁盘 source 路径列表）。
+// 供删卷守卫判定卷是否仍被虚拟机挂载（对应 virsh list --all + domblklist --all）。
+// 仅统计 device='disk' 的真实磁盘，cdrom/floppy 的 ISO/seed 不算占用卷。
+func (v *Virt) ListAllDomainDiskSources() (map[string][]string, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return nil, err
+	}
+
+	flags := libvirt.ConnectListDomainsActive | libvirt.ConnectListDomainsInactive
+	domains, _, err := l.ConnectListAllDomains(1, flags)
+	if err != nil {
+		return nil, fmt.Errorf("枚举虚拟机失败: %w", err)
+	}
+
+	result := make(map[string][]string, len(domains))
+	for _, d := range domains {
+		xmlstr, err := l.DomainGetXMLDesc(d, 0)
+		if err != nil {
+			continue
+		}
+		spec, err := ParseDomainXML(xmlstr)
+		if err != nil {
+			continue
+		}
+		paths := make([]string, 0, len(spec.Disks))
+		for _, disk := range spec.Disks {
+			if disk.Device == "disk" && disk.Source != "" {
+				paths = append(paths, disk.Source)
+			}
+		}
+		result[d.Name] = paths
+	}
+	return result, nil
+}
+
 // GetDomainXML 返回虚拟机完整 XML 定义（对应 virsh dumpxml）。
 func (v *Virt) GetDomainXML(name string) (string, error) {
 	l, err := v.getConn()

@@ -118,6 +118,23 @@ func (h *NetworkHandler) UpdateNetwork(c *gin.Context) {
 	Success(c, gin.H{"name": name, "message": "网络已更新"})
 }
 
+// SetNetworkAutostart 设置网络自启动 PUT /api/networks/:name/autostart（body: {autostart: bool}）。
+func (h *NetworkHandler) SetNetworkAutostart(c *gin.Context) {
+	name := c.Param("name")
+	var req struct {
+		Autostart *bool `json:"autostart" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, http.StatusBadRequest, "参数错误：autostart 必须为布尔值")
+		return
+	}
+	if err := h.Virt.SetNetworkAutostart(name, *req.Autostart); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"name": name, "autostart": *req.Autostart})
+}
+
 // StartNetwork 启动网络
 func (h *NetworkHandler) StartNetwork(c *gin.Context) {
 	name := c.Param("name")

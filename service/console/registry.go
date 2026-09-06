@@ -10,8 +10,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// VNC 会话无连接关闭事件：超过该时长无 token 解析即视为掉线，由清扫器收敛。
-const vncStaleAfter = 60 * time.Minute
+// StaleAfterResolver 返回 VNC 会话无活动判定过期的时长（超过该时长无 token 解析即视为掉线，
+// 由清扫器收敛）。main 启动时接到系统设置（service/setting），未接线时退回默认 60 分钟。
+var StaleAfterResolver = func() time.Duration { return 60 * time.Minute }
 
 // Registry 控制台会话注册表（单进程内存 + DB 持久）。
 // SSH/串口 WS 连接持有在此，可服务端强制断开；VNC token 映射用于解析事件刷新存活。
@@ -32,7 +33,7 @@ func NewRegistry(db *gorm.DB) *Registry {
 	}
 }
 
-// StartSweeper 启动过期清扫（VNC 无关闭事件，超 vncStaleAfter 未解析即标记 closed）。
+// StartSweeper 启动过期清扫（VNC 无关闭事件，超 StaleAfterResolver 时长未解析即标记 closed）。
 // 清扫器为常驻后台 goroutine，单轮 panic 由 sweepOnce 自行兜底，不会终止定时循环。
 func (r *Registry) StartSweeper() {
 	go func() {
@@ -53,7 +54,7 @@ func (r *Registry) sweepOnce() {
 		}
 	}()
 
-	cutoff := time.Now().Add(-vncStaleAfter)
+	cutoff := time.Now().Add(-StaleAfterResolver())
 	if err := r.DB.Model(&model.ConsoleSession{}).
 		Where("status = ? AND type = ? AND last_seen < ?", "active", "vnc", cutoff).
 		Updates(map[string]interface{}{"status": "closed", "ended_at": time.Now()}).Error; err != nil {

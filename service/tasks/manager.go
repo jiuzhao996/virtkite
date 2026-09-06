@@ -38,6 +38,12 @@ const (
 	maxErrorLen = 500
 )
 
+// WorkerCount / QueueBufferSize 供系统设置页展示真实生效值（handler/settings 快照读取）。
+const (
+	WorkerCount     = workerCount
+	QueueBufferSize = queueBufferSize
+)
+
 const (
 	// statusPending 任务等待执行。
 	statusPending = "pending"
@@ -198,6 +204,35 @@ func (m *Manager) List(limit int, status string) ([]model.Task, error) {
 		return nil, fmt.Errorf("查询任务列表失败: %w", err)
 	}
 	return items, nil
+}
+
+// ListPaged 分页版任务列表：返回当前页与筛选条件下的真实总数。
+// page 从 1 起；pageSize 钳制到 [1, maxListLimit]。
+func (m *Manager) ListPaged(page, pageSize int, status string) ([]model.Task, int64, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = defaultListLimit
+	}
+	if pageSize > maxListLimit {
+		pageSize = maxListLimit
+	}
+
+	q := m.DB.Model(&model.Task{})
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("统计任务总数失败: %w", err)
+	}
+
+	items := []model.Task{}
+	if err := q.Order("id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
+		return nil, 0, fmt.Errorf("查询任务列表失败: %w", err)
+	}
+	return items, total, nil
 }
 
 // loop worker 主循环：从队列取 taskID 执行。queue 永不关闭，worker 随进程退出。

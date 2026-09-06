@@ -21,27 +21,54 @@ func NewSessionHandler(db *gorm.DB, sessions *console.Registry) *SessionHandler 
 	return &SessionHandler{DB: db, Sessions: sessions}
 }
 
-// ListSessions 会话列表（进行中优先，其次按开始时间倒序，默认 100 条）。
+// ListSessions 会话列表（进行中优先，其次按开始时间倒序）。
+// 支持 status/type 精确过滤、vm_name/username 模糊过滤、page/page_size 真分页（total 为真实总数）。
 func (h *SessionHandler) ListSessions(c *gin.Context) {
-	limit := 100
-	if v := c.Query("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
-			limit = n
+	page := 1
+	if s := c.Query("page"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			page = n
 		}
 	}
-	var items []model.ConsoleSession
-	query := h.DB.Order("CASE WHEN status='active' THEN 0 ELSE 1 END, started_at DESC").Limit(limit)
+	pageSize := 20
+	if s := c.Query("page_size"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 500 {
+			pageSize = n
+		}
+	}
+
+	query := h.DB.Model(&model.ConsoleSession{})
 	if status := c.Query("status"); status == "active" || status == "closed" {
 		query = query.Where("status = ?", status)
 	}
-	if err := query.Find(&items).Error; err != nil {
+	if t := c.Query("type"); t == "vnc" || t == "ssh" || t == "serial" {
+		query = query.Where("type = ?", t)
+	}
+	if q := c.Query("vm_name"); q != "" {
+		query = query.Where("vm_name LIKE ?", "%"+q+"%")
+	}
+	if q := c.Query("username"); q != "" {
+		query = query.Where("username LIKE ?", "%"+q+"%")
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "统计会话总数失败", err)
+		return
+	}
+
+	var items []model.ConsoleSession
+	if err := query.
+		Order("CASE WHEN status='active' THEN 0 ELSE 1 END, started_at DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).
+		Find(&items).Error; err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "查询会话失败", err)
 		return
 	}
 	if items == nil {
 		items = []model.ConsoleSession{}
 	}
-	Success(c, gin.H{"total": len(items), "items": items})
+	Success(c, gin.H{"total": total, "items": items})
 }
 
 // DisconnectSession 强制断开会话。

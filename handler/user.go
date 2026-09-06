@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -34,6 +33,9 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 	})
 }
 
+// validRoles 角色白名单，与 model.User.Role 的取值一致
+var validRoles = map[string]bool{"admin": true, "operator": true, "viewer": true}
+
 // CreateUser 创建用户
 func (h *UserHandler) CreateUser(c *gin.Context) {
 	var req struct {
@@ -46,6 +48,21 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	// 密码强度与 ChangeMyPassword 对齐：至少 6 位
+	if len(req.Password) < 6 {
+		Fail(c, http.StatusBadRequest, "密码至少 6 位")
+		return
+	}
+
+	// 设置默认角色；角色必须是白名单内的合法值
+	if req.Role == "" {
+		req.Role = "viewer"
+	}
+	if !validRoles[req.Role] {
+		Fail(c, http.StatusBadRequest, "角色不合法，仅支持 admin/operator/viewer")
 		return
 	}
 
@@ -108,6 +125,11 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	// 更新字段
 	updates := map[string]interface{}{}
 	if req.Role != nil {
+		// 角色必须是白名单内的合法值
+		if !validRoles[*req.Role] {
+			Fail(c, http.StatusBadRequest, "角色不合法，仅支持 admin/operator/viewer")
+			return
+		}
 		updates["role"] = *req.Role
 	}
 	if req.IsActive != nil {
@@ -178,28 +200,26 @@ func (h *UserHandler) ChangeMyPassword(c *gin.Context) {
 
 // DeleteUser 删除用户
 func (h *UserHandler) DeleteUser(c *gin.Context) {
-	id := c.Param("id")
+	// 路径参数主键必须经 paramID 解析（防 GORM 内联条件注入），禁止直传 c.Param
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
 
 	// 不能删除自己
 	currentUserID, _ := c.Get("user_id")
 	var userID uint
-	if _, ok := currentUserID.(uint); ok {
-		userID = currentUserID.(uint)
+	if v, ok := currentUserID.(uint); ok {
+		userID = v
 	}
 
-	var targetID uint
-	if _, err := fmt.Sscanf(id, "%d", &targetID); err != nil {
-		Fail(c, http.StatusBadRequest, "无效的用户ID")
-		return
-	}
-
-	if userID == targetID {
+	if userID == id {
 		Fail(c, http.StatusBadRequest, "不能删除自己")
 		return
 	}
 
 	var user model.User
-	if err := h.DB.First(&user, targetID).Error; err != nil {
+	if err := h.DB.First(&user, id).Error; err != nil {
 		Fail(c, http.StatusNotFound, "用户不存在")
 		return
 	}

@@ -28,8 +28,9 @@ import (
 	"github.com/jiuzhao/vmops/service/virt"
 )
 
-// defaultStoragePool 未指定存储池时使用的默认池名（与 model.VM.StoragePool 的 gorm 默认值一致）。
-const defaultStoragePool = "vmops"
+// DefaultStoragePoolResolver 返回未指定存储池时使用的默认池名（与 model.VM.StoragePool 的 gorm 默认值一致）。
+// main 启动时接到系统设置（service/setting），未接线时退回内置默认值 vmops。
+var DefaultStoragePoolResolver = func() string { return "vmops" }
 
 // taskVMNameRegex 虚拟机名称只允许字母、数字、下划线和连字符（copy 自 handler/vm.go）。
 var taskVMNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -360,7 +361,7 @@ func execCreateVM(ctx *ExecContext) error {
 
 	// 默认值（沿用原 CreateVM 逻辑）。
 	if storagePool == "" {
-		storagePool = defaultStoragePool
+		storagePool = DefaultStoragePoolResolver()
 	}
 	if vcpu == 0 {
 		vcpu = 1
@@ -627,7 +628,7 @@ func execDeleteVM(ctx *ExecContext) error {
 	//    删除前有三重守卫，任一命中即跳过该卷并记录原因（见 shouldKeepVol）。
 	pool := vm.StoragePool
 	if pool == "" {
-		pool = defaultStoragePool
+		pool = DefaultStoragePoolResolver()
 	}
 	// 池路径前缀（用于判定卷是否属于平台托管，避免删池外文件）。
 	poolPath, _ := ctx.Virt.GetPoolPath(pool)

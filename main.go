@@ -15,7 +15,9 @@ import (
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/console"
+	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
+	"github.com/jiuzhao/vmops/service/vnc"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
 )
@@ -41,6 +43,12 @@ func main() {
 	// 初始化数据库
 	database.Init()
 	db := database.GetDB()
+
+	// 系统可写配置（DB 持久化）：接线到各消费方，运行时修改即时生效
+	settingMgr := setting.NewManager(db)
+	tasks.DefaultStoragePoolResolver = settingMgr.DefaultStoragePool
+	vnc.TTLResolver = settingMgr.VNCTokenTTL
+	console.StaleAfterResolver = settingMgr.VNCStale
 
 	// 启动收敛：内存队列/连接随进程消失，DB 里残留的 pending/running 任务与 ssh/serial 会话
 	// 置终态，避免重启后幽灵任务与幽灵会话（VNC 靠 last_seen 过期清扫收敛，无需处理）
@@ -109,14 +117,16 @@ func main() {
 	imageHandler := handler.NewImageHandler(db, taskMgr)
 	taskHandler := handler.NewTaskHandler(db, taskMgr)
 	sessionHandler := handler.NewSessionHandler(db, consoleRegistry)
-	settingsHandler := handler.NewSettingsHandler(db)
+	settingsHandler := handler.NewSettingsHandler(db, settingMgr)
 	auditHandler := handler.NewAuditHandler(db)
 	dashboardHandler := handler.NewDashboardHandler(db)
-	storageHandler := handler.NewStorageHandler()
+	storageHandler := handler.NewStorageHandler(db)
 	networkHandler := handler.NewNetworkHandler()
 	vncHandler := handler.NewVNCHandler(db, consoleRegistry)
 	terminalHandler := handler.NewTerminalHandler(db, consoleRegistry)
 	metricsHandler := handler.NewMetricsHandler(db)
+	monitorHandler := handler.NewMonitorHandler(config.GlobalConfig.AlertmanagerURL)
+	historyHandler := handler.NewHistoryHandler(db, config.GlobalConfig.PrometheusURL)
 
 	// 公开接口（无需认证）
 	r.POST("/api/auth/login", authHandler.Login)
@@ -168,13 +178,14 @@ func main() {
 			vms.POST("/import", vmHandler.ImportVMs)
 			vms.POST("", vmHandler.CreateVM)
 			vms.GET("/:id", vmHandler.GetVM)
-			vms.GET("/:id/detail", vmHandler.GetVMDetail)
 			vms.GET("/:id/spec", vmHandler.GetVMSpec)
 			vms.PUT("/:id/spec", vmHandler.UpdateVMSpec)
 			vms.POST("/:id/clone", vmHandler.CloneVM)
 			vms.POST("/:id/pause", vmHandler.PauseVM)
 			vms.POST("/:id/resume", vmHandler.ResumeVM)
 			vms.GET("/:id/stats", vmHandler.GetVMStats)
+			// 虚拟机历史曲线（Prometheus query_range，进详情页即画满）
+			vms.GET("/:id/stats-history", historyHandler.VMStatsHistory)
 			vms.PUT("/:id/cpu", vmHandler.SetVcpu)
 			vms.PUT("/:id/memory", vmHandler.SetMemory)
 			vms.PUT("/:id/autostart", vmHandler.SetAutostart)
@@ -207,6 +218,7 @@ func main() {
 			storage.POST("/pools", storageHandler.CreatePool)
 			storage.DELETE("/pools/:name", storageHandler.DeletePool)
 			storage.POST("/pools/:name/volumes", storageHandler.CreateVolume)
+			storage.GET("/pools/:name/volume-refs", storageHandler.GetVolumeRefs)
 			storage.DELETE("/pools/:name/volumes/:vol", storageHandler.DeleteVolume)
 		}
 
@@ -219,6 +231,7 @@ func main() {
 			networks.POST("", networkHandler.CreateNetwork)
 			networks.POST("/xml", networkHandler.DefineNetworkXML)
 			networks.PUT("/:name", networkHandler.UpdateNetwork)
+			networks.PUT("/:name/autostart", networkHandler.SetNetworkAutostart)
 			networks.POST("/:name/start", networkHandler.StartNetwork)
 			networks.POST("/:name/stop", networkHandler.StopNetwork)
 			networks.DELETE("/:name", networkHandler.DeleteNetwork)
@@ -236,8 +249,11 @@ func main() {
 			images.DELETE("/:id", imageHandler.DeleteImage)
 		}
 
-		// 宿主机信息（兼容旧接口）
-		api.GET("/host", vmHandler.GetHostInfo)
+		// 监控中心（登录即可看：告警列表 + Grafana 看板入口，与 dashboard 同级）
+		monitor := api.Group("/monitor")
+		{
+			monitor.GET("/alerts", monitorHandler.ListAlerts)
+		}
 
 		// 仪表盘（仅管理员）
 		dashboard := api.Group("/dashboard")
@@ -247,7 +263,10 @@ func main() {
 			dashboard.GET("/vm-status", dashboardHandler.VMStatusDistribution)
 			dashboard.GET("/host-stats", dashboardHandler.HostStats)
 			dashboard.GET("/vm-perf", dashboardHandler.VmPerf)
-		}
+			// 宿主机历史曲线（Prometheus query_range，进页面即画满）
+			dashboard.GET("/host-history", historyHandler.HostHistory)
+			// 全部虚拟机历史曲线（虚拟机列表页迷你图预填）
+			dashboard.GET("/vm-history", historyHandler.VMsHistory)		}
 
 		// 审计日志查询（仅管理员）
 		audit := api.Group("/audit")
@@ -264,6 +283,7 @@ func main() {
 		settings.Use(middleware.AdminMiddleware())
 		{
 			settings.GET("", settingsHandler.GetSettings)
+		settings.PUT("", settingsHandler.UpdateSettings)
 		}
 
 		// 异步任务查询（仅管理员）

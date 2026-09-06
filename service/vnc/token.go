@@ -16,20 +16,22 @@ type TokenEntry struct {
 	CreatedAt time.Time
 }
 
+// TTLResolver 返回 token 有效期。main 启动时接到系统设置（service/setting），
+// 未接线时退回默认 5 分钟——有效期每次生成 token 时实时读取，改配置无需重启。
+var TTLResolver = func() time.Duration { return 5 * time.Minute }
+
 // TokenStore 内存令牌存储，管理 VM VNC 访问的一次性 token。
 type TokenStore struct {
 	mu     sync.Mutex
 	byID   map[uint]string       // vmID -> token
 	tokens map[string]TokenEntry // token -> entry
-	ttl    time.Duration
 }
 
-// NewTokenStore 创建令牌存储（默认 TTL 5 分钟）。
+// NewTokenStore 创建令牌存储。
 func NewTokenStore() *TokenStore {
 	return &TokenStore{
 		byID:   make(map[uint]string),
 		tokens: make(map[string]TokenEntry),
-		ttl:    5 * time.Minute,
 	}
 }
 
@@ -53,7 +55,7 @@ func (s *TokenStore) Generate(vmID uint, host string, port int) string {
 		Token:     token,
 		Host:      host,
 		Port:      port,
-		ExpireAt:  time.Now().Add(s.ttl),
+		ExpireAt:  time.Now().Add(TTLResolver()),
 		CreatedAt: time.Now(),
 	}
 	return token

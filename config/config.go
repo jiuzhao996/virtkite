@@ -32,6 +32,12 @@ type Config struct {
 
 	// cloud-init seed 镜像目录（需当前用户可写、qemu 进程可读；不依赖存储池目录权限）
 	SeedDir string
+
+	// Alertmanager 地址（监控中心代理查询告警用；docker compose 内为 http://alertmanager:9093）
+	AlertmanagerURL string
+
+	// Prometheus 地址（仪表盘/虚拟机详情的历史曲线查询用；docker compose 内为 http://prometheus:9090）
+	PrometheusURL string
 }
 
 var GlobalConfig *Config
@@ -64,6 +70,12 @@ func Init() {
 
 		// cloud-init seed 镜像目录
 		SeedDir: getEnv("SEED_DIR", "/home/jiuzhao/vmops/data/seed"),
+
+		// Alertmanager 地址
+		AlertmanagerURL: getEnv("ALERTMANAGER_URL", "http://127.0.0.1:9093"),
+
+		// Prometheus 地址
+		PrometheusURL: getEnv("PROMETHEUS_URL", "http://127.0.0.1:9090"),
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -180,71 +179,6 @@ func (h *VMHandler) GetVM(c *gin.Context) {
 		"code":    200,
 		"message": "success",
 		"data":    vm,
-	})
-}
-
-// GetVMDetail 返回 VM 详情（基础信息 + 磁盘/网卡 + 运行使用率），供详情页展示。
-func (h *VMHandler) GetVMDetail(c *gin.Context) {
-	id, ok := paramID(c, "id")
-	if !ok {
-		return
-	}
-	var vm model.VM
-	if err := h.DB.Preload("Host").First(&vm, id).Error; err != nil {
-		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
-		return
-	}
-
-	// 同步 libvirt 状态
-	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != "" {
-		vm.Status = state
-		h.DB.Model(&vm).Update("status", state)
-	}
-
-	// 磁盘/网卡（XML 解析，停机亦可读）
-	disks, nics, err := h.Virt.ListDomainDevices(vm.Name)
-	if err != nil {
-		disks, nics = []virt.Device{}, []virt.Device{}
-	}
-
-	// 运行使用率（仅 running 有意义；CPU% 由前端按 cputime 差值计算）
-	usage := gin.H{"running": false, "mem_used_mb": 0, "mem_total_mb": 0, "guest_used_mb": 0, "guest_total_mb": 0, "vcpus": 0, "cpu_time_ns": 0, "host_cpus": 0}
-	if vm.Status == model.VMStatusRunning {
-		if info, err := h.Virt.GetDomainInfo(vm.Name); err == nil {
-			hostCpus := 0
-			if out, cerr := exec.Command("nproc").Output(); cerr == nil {
-				_, _ = fmt.Sscanf(string(out), "%d", &hostCpus)
-			}
-			// 客户机真实内存（balloon memory_stats，KvmDash 同款口径）；无 balloon 时为 0，前端回退分配口径
-			guestUsed, guestTotal := 0, 0
-			if ms := h.Virt.GetMemoryStats(vm.Name); len(ms) > 0 {
-				if actual, ok := ms["actual"]; ok && actual > 0 {
-					guestTotal = int(actual / 1024)
-					if unused, ok := ms["unused"]; ok && unused <= actual {
-						guestUsed = int((actual - unused) / 1024)
-					} else if rss, ok := ms["rss"]; ok {
-						guestUsed = int(rss / 1024)
-					}
-				}
-			}
-			usage = gin.H{
-				"running":        true,
-				"mem_used_mb":    int(info.MemKiB / 1024),
-				"mem_total_mb":   int(info.MaxMemKiB / 1024),
-				"guest_used_mb":  guestUsed,
-				"guest_total_mb": guestTotal,
-				"vcpus":          info.VCPUs,
-				"cpu_time_ns":    info.CPUTimeNS,
-				"host_cpus":      hostCpus,
-			}
-		}
-	}
-
-	Success(c, gin.H{
-		"vm":    vm,
-		"disks": disks,
-		"nics":  nics,
-		"usage": usage,
 	})
 }
 
@@ -1057,56 +991,6 @@ func (h *VMHandler) RevertSnapshot(c *gin.Context) {
 	}
 
 	Success(c, gin.H{"vm": vm.Name, "snapshot": snapName})
-}
-
-// GetHostInfo 获取宿主机信息
-func (h *VMHandler) GetHostInfo(c *gin.Context) {
-	hostname, err := exec.Command("hostname").Output()
-	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "获取主机名失败", err)
-		return
-	}
-	kernel, err := exec.Command("uname", "-r").Output()
-	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "获取内核版本失败", err)
-		return
-	}
-	cpus, err := exec.Command("nproc").Output()
-	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "获取 CPU 数量失败", err)
-		return
-	}
-	free, err := exec.Command("free", "-h").Output()
-	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "获取内存信息失败", err)
-		return
-	}
-	uptime, err := exec.Command("uptime", "-p").Output()
-	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "获取运行时长失败", err)
-		return
-	}
-
-	lines := strings.Split(string(free), "\n")
-	var memTotal, memUsed string
-	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "Mem:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				memTotal = fields[1]
-				memUsed = fields[2]
-			}
-		}
-	}
-
-	c.JSON(200, HostInfo{
-		Hostname: strings.TrimSpace(string(hostname)),
-		Kernel:   strings.TrimSpace(string(kernel)),
-		CPUs:     strings.TrimSpace(string(cpus)),
-		MemTotal: memTotal,
-		MemUsed:  memUsed,
-		Uptime:   strings.TrimSpace(string(uptime)),
-	})
 }
 
 // ScanImportVMs 扫描宿主机上未被平台纳管的存量域（virsh 已定义、DB 无记录的 VM）。

@@ -155,6 +155,26 @@ func (v *Virt) StopNetwork(name string) error {
 	return nil
 }
 
+// SetNetworkAutostart 设置网络自启动（对应 virsh net-autostart <net> on|off）。
+func (v *Virt) SetNetworkAutostart(name string, autostart bool) error {
+	l, err := v.getConn()
+	if err != nil {
+		return err
+	}
+	n, err := l.NetworkLookupByName(name)
+	if err != nil {
+		return fmt.Errorf("网络 %s 不存在: %w", name, err)
+	}
+	flag := int32(0)
+	if autostart {
+		flag = 1
+	}
+	if err := l.NetworkSetAutostart(n, flag); err != nil {
+		return fmt.Errorf("设置网络自启动失败: %w", err)
+	}
+	return nil
+}
+
 // DeleteNetwork 删除网络定义（对应 virsh net-undefine）。运行中的网络先停止再删除。
 func (v *Virt) DeleteNetwork(name string) error {
 	l, err := v.getConn()

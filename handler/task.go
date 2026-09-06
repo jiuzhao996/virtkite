@@ -21,21 +21,32 @@ func NewTaskHandler(db *gorm.DB, taskMgr *tasks.Manager) *TaskHandler {
 	return &TaskHandler{DB: db, Tasks: taskMgr}
 }
 
-// ListTasks 任务列表 GET /api/tasks?status=&limit=（limit 默认 50）。
-// 返回 {total, items}，items 为 Task JSON（payload 不对外）。
+// ListTasks 任务列表 GET /api/tasks?status=&page=&page_size=（page 从 1 起，page_size 默认 50）。
+// 返回 {total, items}，total 为筛选条件下的真实总数；兼容旧 limit 参数（等价 page_size）。
 func (h *TaskHandler) ListTasks(c *gin.Context) {
 	if h.Tasks == nil {
 		Fail(c, http.StatusInternalServerError, "任务系统未初始化")
 		return
 	}
 	status := c.Query("status")
-	limit := 50
-	if s := c.Query("limit"); s != "" {
+	page := 1
+	if s := c.Query("page"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			limit = n
+			page = n
 		}
 	}
-	items, err := h.Tasks.List(limit, status)
+	pageSize := 50
+	if s := c.Query("page_size"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			pageSize = n
+		}
+	} else if s := c.Query("limit"); s != "" {
+		// 旧参数兼容：limit 语义等价 page_size
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			pageSize = n
+		}
+	}
+	items, total, err := h.Tasks.ListPaged(page, pageSize, status)
 	if err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "查询任务列表失败", err)
 		return
@@ -44,7 +55,7 @@ func (h *TaskHandler) ListTasks(c *gin.Context) {
 		items = []model.Task{}
 	}
 	Success(c, gin.H{
-		"total": len(items),
+		"total": total,
 		"items": items,
 	})
 }

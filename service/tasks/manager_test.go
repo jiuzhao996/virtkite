@@ -166,7 +166,7 @@ func TestTaskContractConstants(t *testing.T) {
 		{"running 状态字面量", statusRunning, "running"},
 		{"success 状态字面量", statusSuccess, "success"},
 		{"failed 状态字面量", statusFailed, "failed"},
-		{"默认存储池名（与 model.VM.StoragePool 的 gorm 默认值一致）", defaultStoragePool, "vmops"},
+		{"默认存储池名（与 model.VM.StoragePool 的 gorm 默认值一致）", DefaultStoragePoolResolver(), "vmops"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
