@@ -231,6 +231,8 @@
             </div>
           </template>
           <div class="panel-actions">
+            <el-button v-if="isAdmin" type="success" plain :icon="MagicStick" :loading="quickDiskLoading" @click="quickAddDisk">一键数据盘（20G）</el-button>
+            <el-button v-if="isAdmin" plain :icon="Connection" :loading="standardLoading" @click="ensureStandard">补齐标准设备（guest-agent/rng）</el-button>
             <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openDiskDialog">添加磁盘</el-button>
           </div>
         </section>
@@ -267,6 +269,7 @@
             </div>
           </template>
           <div class="panel-actions">
+            <el-button v-if="isAdmin" type="success" plain :icon="MagicStick" :loading="quickNicLoading" @click="quickAddNic">一键网卡（default）</el-button>
             <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openNicDialog">添加网卡</el-button>
           </div>
         </section>
@@ -399,7 +402,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
 import {
   ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Plus, Refresh,
-  RefreshLeft, Odometer, TrendCharts, Cpu, Coin, Sort, FolderOpened, Connection, CameraFilled, Document
+  RefreshLeft, Odometer, TrendCharts, Cpu, Coin, Sort, FolderOpened, Connection, CameraFilled, Document, MagicStick
 } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
@@ -454,6 +457,54 @@ const nicFormRef = ref(null)
 const nicForm = reactive({ source: '', model: 'virtio' })
 const nicSaving = ref(false)
 const networks = ref([])
+
+// 一键添加硬件
+const quickDiskLoading = ref(false)
+const quickNicLoading = ref(false)
+const standardLoading = ref(false)
+
+async function quickAddDisk() {
+  quickDiskLoading.value = true
+  try {
+    const res = await api.quickAttachDisk(id, { size_gb: 20 })
+    const d = res.data || {}
+    ElMessage.success('已创建并挂载 20G 数据盘：' + (d.volume || '') + '（' + (d.pool || '') + '）')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '一键添加数据盘失败'))
+  } finally {
+    quickDiskLoading.value = false
+  }
+}
+
+async function quickAddNic() {
+  quickNicLoading.value = true
+  try {
+    await api.attachInterface(id, { type: 'network', source: 'default', model: 'virtio' })
+    ElMessage.success('已在 default 网络添加 virtio 网卡')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '一键添加网卡失败'))
+  } finally {
+    quickNicLoading.value = false
+  }
+}
+
+// 补齐标准设备：给存量虚拟机挂 guest-agent 通道与 virtio-rng（新装机已默认携带），幂等
+async function ensureStandard() {
+  standardLoading.value = true
+  try {
+    const res = await api.ensureStandardDevices(id)
+    const d = res.data || {}
+    if (d.attached && d.attached.length) ElMessage.success(d.message || '已补齐标准设备')
+    else ElMessage.info('已是标准配置，无需补齐')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '补齐标准设备失败'))
+  } finally {
+    standardLoading.value = false
+  }
+}
 
 const snapDialog = ref(false)
 const snapForm = reactive({ name: '', description: '' })

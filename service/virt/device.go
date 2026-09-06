@@ -1,6 +1,7 @@
 package virt
 
 import (
+	"encoding/xml"
 	"fmt"
 	"strings"
 
@@ -146,6 +147,75 @@ func (v *Virt) DetachInterface(domain, mac string) error {
 		return fmt.Errorf("移除网卡失败（对应 virsh detach-interface）: %w", err)
 	}
 	return nil
+}
+
+// domainDevicePresence 解析域 XML 判断 guest-agent 通道与 rng 是否已挂载（避免重复 attach）。
+// 注意通道/rng 挂在 <devices> 之下，解析结构必须保留这一层级。
+type domainDevicePresence struct {
+	Devices struct {
+		Channels []struct {
+			Target struct {
+				Name string `xml:"name,attr"`
+			} `xml:"target"`
+		} `xml:"channel"`
+		Rng *struct{} `xml:"rng"`
+	} `xml:"devices"`
+}
+
+// EnsureStandardDevices 补齐标准设备：guest-agent 通道（org.qemu.guest_agent.0）与
+// virtio-rng（/dev/urandom）。新建虚拟机已由 BuildDomainXML 显式生成，此方法用于补齐
+// 存量虚拟机，使其与新装机配置一致；幂等，已存在的设备自动跳过。
+// 返回本次实际添加的设备名列表（空列表 = 已是标准配置）。
+// 串口/控制台与 memballoon 由 libvirt 隐式默认提供，无需处理。
+func (v *Virt) EnsureStandardDevices(domain string) ([]string, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return nil, err
+	}
+	dom, err := l.DomainLookupByName(domain)
+	if err != nil {
+		return nil, fmt.Errorf("虚拟机 %s 不存在: %w", domain, err)
+	}
+
+	xmlstr, err := v.GetDomainXML(domain)
+	if err != nil {
+		return nil, err
+	}
+	var presence domainDevicePresence
+	if err := xml.Unmarshal([]byte(xmlstr), &presence); err != nil {
+		return nil, fmt.Errorf("解析域 XML 失败: %w", err)
+	}
+	hasAgent, hasRng := false, false
+	for _, ch := range presence.Devices.Channels {
+		if ch.Target.Name == "org.qemu.guest_agent.0" {
+			hasAgent = true
+		}
+	}
+	hasRng = presence.Devices.Rng != nil
+
+	flags := deviceFlags(domainRunning(l, dom))
+	attached := make([]string, 0, 2)
+	if !hasAgent {
+		agentXML, err := xmlMarshal(channelXML{Type: "unix", Target: channelTargetXML{Type: "virtio", Name: "org.qemu.guest_agent.0"}})
+		if err != nil {
+			return nil, fmt.Errorf("生成 guest-agent 通道 XML 失败: %w", err)
+		}
+		if err := l.DomainAttachDeviceFlags(dom, agentXML, flags); err != nil {
+			return attached, fmt.Errorf("添加 guest-agent 通道失败（对应 virsh attach-device）: %w", err)
+		}
+		attached = append(attached, "guest-agent 通道")
+	}
+	if !hasRng {
+		rngDevXML, err := xmlMarshal(rngXML{Model: "virtio", Backend: rngBackendXML{Model: "random", Value: "/dev/urandom"}})
+		if err != nil {
+			return nil, fmt.Errorf("生成 virtio-rng XML 失败: %w", err)
+		}
+		if err := l.DomainAttachDeviceFlags(dom, rngDevXML, flags); err != nil {
+			return attached, fmt.Errorf("添加 virtio-rng 失败（对应 virsh attach-device）: %w", err)
+		}
+		attached = append(attached, "virtio-rng")
+	}
+	return attached, nil
 }
 
 // SetVcpus 调整虚拟机 CPU 核数（对应 virsh setvcpus）。

@@ -182,9 +182,11 @@ type serialModelXML struct {
 
 // channelXML Guest Agent 通道（org.qemu.guest_agent.0）：guest 内安装 qemu-guest-agent
 // 后可经 virtio 串口通信，是后续走 agent 途径回填 IP/采集 guest 信息的前提。
+// XMLName 必须显式声明：单设备片段独立序列化时（attach-device）靠它确定根元素名。
 type channelXML struct {
-	Type   string           `xml:"type,attr"`
-	Target channelTargetXML `xml:"target"`
+	XMLName xml.Name         `xml:"channel"`
+	Type    string           `xml:"type,attr"`
+	Target  channelTargetXML `xml:"target"`
 }
 
 type channelTargetXML struct {
@@ -194,6 +196,7 @@ type channelTargetXML struct {
 
 // rngXML virtio 随机数发生器：云镜像 guest 熵不足会导致启动慢/SSH 卡顿。
 type rngXML struct {
+	XMLName xml.Name      `xml:"rng"`
 	Model   string        `xml:"model,attr"`
 	Backend rngBackendXML `xml:"backend"`
 }

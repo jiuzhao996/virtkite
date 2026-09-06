@@ -4,7 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -423,6 +425,120 @@ func (h *VMHandler) AttachDisk(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"vm": vm.Name, "disk": req.Disk})
+}
+
+// QuickAttachDisk 一键添加数据盘：在存储池创建 qcow2 卷并挂载到虚拟机（对应
+// virsh vol-create-as + attach-device 两步合一），免手工建卷再填路径。
+// body 可空：{size_gb（缺省 20）, pool（缺省用虚拟机记录的 storage_pool）}。
+// 卷名 <vm名>-dN.qcow2，N 从现有数据盘数顺延并跳过池内已占用的名字，避免重名冲突。
+func (h *VMHandler) QuickAttachDisk(c *gin.Context) {
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+
+	var req struct {
+		SizeGB int    `json:"size_gb"`
+		Pool   string `json:"pool"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	if req.SizeGB == 0 {
+		req.SizeGB = 20
+	}
+	if req.SizeGB < 1 || req.SizeGB > 4096 {
+		Fail(c, http.StatusBadRequest, "磁盘容量需在 1-4096 GB 之间")
+		return
+	}
+	if req.Pool == "" {
+		req.Pool = vm.StoragePool
+	}
+	if req.Pool == "" {
+		Fail(c, http.StatusBadRequest, "虚拟机未记录存储池，请在请求中指定 pool")
+		return
+	}
+
+	spec, err := h.Virt.GetDomainSpec(vm.Name)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	poolPath, err := h.Virt.GetPoolPath(req.Pool)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "存储池不存在或不可用", err)
+		return
+	}
+	// 已占用卷名集合（同池重名会建卷失败，先查后建）
+	existing := map[string]bool{}
+	if info, err := h.Virt.GetPoolInfo(req.Pool); err == nil {
+		for _, vol := range info.Volumes {
+			existing[vol.Name] = true
+		}
+	}
+
+	// 命名：<vm名>-dN，N 从现有数据盘数 +1 起顺延，撞名继续 +1
+	idx := 1
+	for _, d := range spec.Disks {
+		if d.Device == "disk" {
+			idx++
+		}
+	}
+	volName := fmt.Sprintf("%s-d%d", vm.Name, idx)
+	for existing[volName+".qcow2"] {
+		idx++
+		volName = fmt.Sprintf("%s-d%d", vm.Name, idx)
+	}
+
+	if _, err := h.Virt.CreateVolume(req.Pool, volName, req.SizeGB); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	disk := virt.DiskSpec{
+		Type:   "file",
+		Device: "disk",
+		Driver: "qcow2",
+		Bus:    "virtio",
+		Source: fmt.Sprintf("%s/%s.qcow2", strings.TrimRight(poolPath, "/"), volName),
+		Target: virt.NextDiskTarget(spec, "virtio"),
+	}
+	if err := h.Virt.AttachDisk(vm.Name, disk); err != nil {
+		// 挂载失败回滚刚建的卷，避免留孤儿卷
+		_ = h.Virt.DeleteVolume(req.Pool, volName+".qcow2")
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"vm": vm.Name, "disk": disk, "volume": volName + ".qcow2", "pool": req.Pool, "size_gb": req.SizeGB})
+}
+
+// EnsureStandardDevices 补齐标准设备（guest-agent 通道 + virtio-rng），幂等。
+// 用于把存量虚拟机配置对齐到新装机的标准设备集；响应返回本次实际添加的设备列表。
+func (h *VMHandler) EnsureStandardDevices(c *gin.Context) {
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
+	var vm model.VM
+	if err := h.DB.First(&vm, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "虚拟机不存在", err)
+		return
+	}
+	attached, err := h.Virt.EnsureStandardDevices(vm.Name)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	if len(attached) == 0 {
+		Success(c, gin.H{"vm": vm.Name, "attached": attached, "message": "已是标准配置，无需补齐"})
+		return
+	}
+	Success(c, gin.H{"vm": vm.Name, "attached": attached, "message": "已补齐：" + strings.Join(attached, "、")})
 }
 
 // DetachDisk 移除磁盘（对应 virsh detach-device，按 target dev 匹配）。

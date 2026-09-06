@@ -99,6 +99,8 @@ export const api = {
   attachDisk: (id, disk) => unwrap(http.post('/vms/' + id + '/devices/disks', { disk })),
   detachDisk: (id, target) => unwrap(http.delete('/vms/' + id + '/devices/disks/' + target)),
   attachInterface: (id, iface) => unwrap(http.post('/vms/' + id + '/devices/interfaces', { interface: iface })),
+  quickAttachDisk: (id, opts = {}) => unwrap(http.post('/vms/' + id + '/devices/disks/quick', opts)),
+  ensureStandardDevices: (id) => unwrap(http.post('/vms/' + id + '/devices/standard')),
   detachInterface: (id, mac) => unwrap(http.delete('/vms/' + id + '/devices/interfaces/' + mac)),
   cloneVM: (id, payload) => unwrap(http.post('/vms/' + id + '/clone', payload)),
   vmOptions: () => unwrap(http.get('/vms/options')),
