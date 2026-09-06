@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/digitalocean/go-libvirt"
 )
@@ -400,4 +401,54 @@ func replaceLastOctet(ip string, last int) string {
 		return ip
 	}
 	return fmt.Sprintf("%s.%d", ip[:idx], last)
+}
+
+// DhcpLease DHCP 租约条目（对应 virsh net-dhcp-leases 输出的一行）。
+type DhcpLease struct {
+	MAC      string
+	IP       string
+	Hostname string
+}
+
+// ListDHCPLeases 枚举所有活跃网络的 DHCP 租约并归并（对应 virsh net-dhcp-leases <net>）。
+// 用于把 VM 实际获取到的 IP 回填进数据库（vms.ip）——Web 终端 SSH 目标白名单
+// 依赖该字段做「VM 已记录 IP 则精确匹配」，无回填则该分支永远不可达。
+func (v *Virt) ListDHCPLeases() ([]DhcpLease, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return nil, err
+	}
+
+	networks, _, err := l.ConnectListAllNetworks(1, libvirt.ConnectListNetworksActive)
+	if err != nil {
+		return nil, fmt.Errorf("枚举活跃网络失败: %w", err)
+	}
+
+	now := time.Now().Unix()
+	leases := make([]DhcpLease, 0, 8)
+	for _, n := range networks {
+		items, _, err := l.NetworkGetDhcpLeases(n, libvirt.OptString{}, -1, 0)
+		if err != nil {
+			// 单个网络失败（如无 DHCP 配置）不影响其余网络的租约收集
+			continue
+		}
+		for _, it := range items {
+			if it.Ipaddr == "" {
+				continue
+			}
+			// 过滤已过期租约（Expirytime 为 0 表示无过期时间，不过滤）
+			if it.Expirytime > 0 && it.Expirytime < now {
+				continue
+			}
+			lease := DhcpLease{IP: it.Ipaddr}
+			if len(it.Mac) > 0 {
+				lease.MAC = it.Mac[0]
+			}
+			if len(it.Hostname) > 0 {
+				lease.Hostname = it.Hostname[0]
+			}
+			leases = append(leases, lease)
+		}
+	}
+	return leases, nil
 }

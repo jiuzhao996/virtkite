@@ -110,6 +110,9 @@ type HostInfo struct {
 
 // ListVMs 获取虚拟机列表（含运行中 VM 的实时性能，合并 vm-perf，列表页一次请求即可渲染指标）。
 func (h *VMHandler) ListVMs(c *gin.Context) {
+	// 惰性回填 vms.ip（DHCP 租约 → 按 MAC 匹配；内部 30s 节流），查询前执行保证本次响应拿到新 IP
+	h.syncVMIPs()
+
 	// 从数据库查询虚拟机
 	var vms []model.VM
 	if err := h.DB.Preload("Host").Find(&vms).Error; err != nil {
@@ -162,6 +165,9 @@ func (h *VMHandler) GetVM(c *gin.Context) {
 	if !ok {
 		return
 	}
+
+	// 惰性回填 vms.ip（与 ListVMs 同一节流），详情页与 SSH 白名单用到的 IP 才不会长期过期
+	h.syncVMIPs()
 
 	var vm model.VM
 	if err := h.DB.Preload("Host").First(&vm, id).Error; err != nil {

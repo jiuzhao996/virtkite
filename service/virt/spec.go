@@ -48,6 +48,7 @@ type DomainSpec struct {
 	OSType     string          `json:"os_type"`
 	Arch       string          `json:"arch"`
 	Machine    string          `json:"machine"`
+	CPUMode    string          `json:"cpu_mode"` // CPU 模型：host-passthrough 直通宿主 CPU；空值在 BuildDomainXML 中也按直通处理
 	Boot       BootSpec        `json:"boot"`
 	Disks      []DiskSpec      `json:"disks"`
 	Interfaces []InterfaceSpec `json:"interfaces"`
@@ -145,6 +146,68 @@ type featuresXML struct {
 	APIC *emptyXML `xml:"apic"`
 }
 
+// cpuXML CPU 模型定义（host-passthrough 直通宿主 CPU，性能最好且嵌套虚拟化可用；
+// libvirt 缺省的 custom 派生模型性能差，故平台默认显式输出直通）。
+type cpuXML struct {
+	Mode string `xml:"mode,attr"`
+}
+
+// timerXML <clock> 子定时器（与手工模板一致：rtc catchup / pit delay / hpet 关闭，抗时钟漂移）。
+type timerXML struct {
+	Name       string `xml:"name,attr"`
+	TickPolicy string `xml:"tickpolicy,attr,omitempty"`
+	Present    string `xml:"present,attr,omitempty"`
+}
+
+type clockXML struct {
+	Offset string     `xml:"offset,attr"`
+	Timers []timerXML `xml:"timer"`
+}
+
+// serialDevXML 串口/控制台设备（serial 与 console 共用同一形状，靠父级 tag 区分元素名）。
+type serialDevXML struct {
+	Type   string           `xml:"type,attr"`
+	Target *serialTargetXML `xml:"target"`
+}
+
+type serialTargetXML struct {
+	Type  string          `xml:"type,attr"`
+	Port  int             `xml:"port,attr"`
+	Model *serialModelXML `xml:"model,omitempty"`
+}
+
+type serialModelXML struct {
+	Name string `xml:"name,attr"`
+}
+
+// channelXML Guest Agent 通道（org.qemu.guest_agent.0）：guest 内安装 qemu-guest-agent
+// 后可经 virtio 串口通信，是后续走 agent 途径回填 IP/采集 guest 信息的前提。
+type channelXML struct {
+	Type   string           `xml:"type,attr"`
+	Target channelTargetXML `xml:"target"`
+}
+
+type channelTargetXML struct {
+	Type string `xml:"type,attr"`
+	Name string `xml:"name,attr"`
+}
+
+// rngXML virtio 随机数发生器：云镜像 guest 熵不足会导致启动慢/SSH 卡顿。
+type rngXML struct {
+	Model   string        `xml:"model,attr"`
+	Backend rngBackendXML `xml:"backend"`
+}
+
+type rngBackendXML struct {
+	Model string `xml:"model,attr"`
+	Value string `xml:",chardata"`
+}
+
+// memballoonXML 内存气球设备（libvirt 隐式默认也会加，显式输出保持与模板一致、语义明确）。
+type memballoonXML struct {
+	Model string `xml:"model,attr"`
+}
+
 type graphicsXML struct {
 	Type     string `xml:"type,attr"`
 	Port     int    `xml:"port,attr"`
@@ -154,6 +217,11 @@ type graphicsXML struct {
 type devicesXML struct {
 	Disks      []diskXML      `xml:"disk"`
 	Interfaces []interfaceXML `xml:"interface"`
+	Serial     *serialDevXML  `xml:"serial,omitempty"`
+	Console    *serialDevXML  `xml:"console,omitempty"`
+	Channels   []channelXML   `xml:"channel,omitempty"`
+	Rng        *rngXML        `xml:"rng,omitempty"`
+	Memballoon *memballoonXML `xml:"memballoon,omitempty"`
 	Graphics   graphicsXML    `xml:"graphics"`
 }
 
@@ -167,6 +235,8 @@ type domainSpecXML struct {
 	VCPU      vcpuXML       `xml:"vcpu"`
 	OS        osXML         `xml:"os"`
 	Features  featuresXML   `xml:"features"`
+	CPU       *cpuXML       `xml:"cpu,omitempty"`
+	Clock     *clockXML     `xml:"clock,omitempty"`
 	Devices   devicesXML    `xml:"devices"`
 }
 
@@ -294,6 +364,9 @@ func ParseDomainXML(xmlstr string) (*DomainSpec, error) {
 				Dev string `xml:"dev,attr"`
 			} `xml:"boot"`
 		} `xml:"os"`
+		CPU struct {
+			Mode string `xml:"mode,attr"`
+		} `xml:"cpu"`
 		Devices struct {
 			Disks []struct {
 				Type   string `xml:"type,attr"`
@@ -343,6 +416,7 @@ func ParseDomainXML(xmlstr string) (*DomainSpec, error) {
 		OSType:   dx.OS.Type.Value,
 		Arch:     dx.OS.Type.Arch,
 		Machine:  dx.OS.Type.Machine,
+		CPUMode:  dx.CPU.Mode,
 	}
 	if spec.VCPU == 0 {
 		spec.VCPU = parseInt(dx.VCPU.Value)
@@ -456,12 +530,47 @@ func BuildDomainXML(spec *DomainSpec) (string, error) {
 
 	dx.Features = featuresXML{ACPI: &emptyXML{}, APIC: &emptyXML{}}
 
+	// CPU 直通：与手工模板一致（host-passthrough），性能最好且嵌套虚拟化可用；
+	// CPUMode 为空也按直通处理（libvirt 缺省 custom 派生模型性能差）；
+	// "default" 表示显式不输出 cpu 节点、保留 libvirt 缺省语义。
+	cpuMode := spec.CPUMode
+	if cpuMode == "" {
+		cpuMode = "host-passthrough"
+	}
+	if cpuMode != "default" {
+		dx.CPU = &cpuXML{Mode: cpuMode}
+	}
+
+	// 时钟：UTC + 定时器策略（rtc catchup / pit delay / hpet 关闭），抗时钟漂移
+	dx.Clock = &clockXML{Offset: "utc", Timers: []timerXML{
+		{Name: "rtc", TickPolicy: "catchup"},
+		{Name: "pit", TickPolicy: "delay"},
+		{Name: "hpet", Present: "no"},
+	}}
+
 	for _, d := range spec.Disks {
 		dx.Devices.Disks = append(dx.Devices.Disks, diskXMLFromSpec(d))
 	}
 	for _, i := range spec.Interfaces {
 		dx.Devices.Interfaces = append(dx.Devices.Interfaces, interfaceXMLFromSpec(i))
 	}
+
+	// 串口 + 控制台：显式声明 pty（对应 virsh console 依赖的设备），不依赖 libvirt 隐式默认
+	dx.Devices.Serial = &serialDevXML{
+		Type:   "pty",
+		Target: &serialTargetXML{Type: "isa-serial", Port: 0, Model: &serialModelXML{Name: "isa-serial"}},
+	}
+	dx.Devices.Console = &serialDevXML{
+		Type:   "pty",
+		Target: &serialTargetXML{Type: "serial", Port: 0},
+	}
+	// Guest Agent 通道 + virtio-rng + 内存气球（与手工模板对齐）
+	dx.Devices.Channels = []channelXML{{
+		Type:   "unix",
+		Target: channelTargetXML{Type: "virtio", Name: "org.qemu.guest_agent.0"},
+	}}
+	dx.Devices.Rng = &rngXML{Model: "virtio", Backend: rngBackendXML{Model: "random", Value: "/dev/urandom"}}
+	dx.Devices.Memballoon = &memballoonXML{Model: "virtio"}
 
 	gtype := spec.Graphics.Type
 	if gtype == "" {

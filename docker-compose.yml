@@ -40,10 +40,17 @@ services:
       ALERTMANAGER_URL: http://alertmanager:9093
       # 仪表盘/虚拟机详情的历史曲线经 Prometheus query_range 查询
       PROMETHEUS_URL: http://prometheus:9090
+      # Prometheus file_sd 目标文件（服务发现闭环）：与 prometheus 服务的挂载指向同一宿主机目录，
+      # 平台每分钟把 running 且有 IP 的 VM 写入该文件（宿主机原生直跑时改在 .env 配置 FILE_SD_PATH）
+      FILE_SD_PATH: /app/deploy/file_sd/targets.json
+      # 告警网关令牌（可选）：设置后需同步在 deploy/alertmanager.yml 的 webhook url 追加 ?token=<值>
+      # ALERT_WEBHOOK_TOKEN: change-me
     ports:
       - "8080:8080"
     volumes:
       - ./static:/app/static
+      # file_sd 目标文件：与 prometheus 服务挂载同一宿主机目录（见 prometheus.volumes）
+      - ./deploy/file_sd:/app/deploy/file_sd
       # 直通宿主机 libvirtd（监控与纳管需真实 KVM；无 KVM 的机器请注释掉，指标将为空但服务可启动）
       - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
 
@@ -73,6 +80,8 @@ services:
     volumes:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./deploy/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # file_sd 动态抓取目标（服务发现闭环）：平台侧 FILE_SD_PATH 写入该目录，30s 自动重载
+      - ./deploy/file_sd:/etc/prometheus/file_sd
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -86,6 +95,9 @@ services:
     restart: unless-stopped
     depends_on:
       - prometheus
+    extra_hosts:
+      # 告警 webhook 推回平台（host.docker.internal:8080）需要宿主机网关别名
+      - "host.docker.internal:host-gateway"
     ports:
       - "9093:9093"
     volumes:

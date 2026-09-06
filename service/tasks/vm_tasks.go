@@ -419,10 +419,25 @@ func execCreateVM(ctx *ExecContext) error {
 	storagePool, _ := strParam(payload, "storage_pool")
 	network, _ := strParam(payload, "network")
 	isoPath, _ := strParam(payload, "iso_path")
+	machine, _ := strParam(payload, "machine")
+	cpuMode, _ := strParam(payload, "cpu_mode")
 	vcpu, _ := intParam(payload, "vcpu")
 	memoryMB, _ := intParam(payload, "memory_mb")
 	diskGB, _ := intParam(payload, "disk_gb")
 	hostID, hasHostID := intParam(payload, "host_id")
+
+	// 机器类型白名单：q35（推荐，与手工模板一致）/ pc（i440fx 兼容别名）/ 空=libvirt 自动
+	switch machine {
+	case "", "q35", "pc":
+	default:
+		return errors.New("机器类型只支持 q35 或 pc")
+	}
+	// CPU 模式白名单：host-passthrough（直通，缺省）/ default（显式不输出 cpu 节点，用 libvirt 缺省模型）
+	switch cpuMode {
+	case "", "host-passthrough", "default":
+	default:
+		return errors.New("CPU 模式只支持 host-passthrough（直通）或 default")
+	}
 
 	var disks []createDiskReq
 	if raw, ok := payload["disks"]; ok && raw != nil {
@@ -491,6 +506,8 @@ func execCreateVM(ctx *ExecContext) error {
 		MemoryMB: memoryMB,
 		OSType:   "hvm",
 		Arch:     "x86_64",
+		Machine:  machine,
+		CPUMode:  cpuMode,
 		Boot:     virt.BootSpec{Devices: []string{"hd"}},
 		Graphics: virt.GraphicsSpec{Type: "vnc", Port: -1},
 	}

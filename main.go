@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"runtime/debug"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +16,7 @@ import (
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/console"
+	monitor "github.com/jiuzhao/vmops/service/monitor"
 	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/vnc"
@@ -47,7 +48,9 @@ func main() {
 		log.Fatalf("release 模式必须设置 CORS_ORIGINS 环境变量（如 https://vmops.example.com）：* 通配符存在跨站调用 API 的风险")
 	}
 	if config.GlobalConfig.ServerMode == "release" {
-		log.Println("⚠️ /metrics 为公开端点（Prometheus 抓取用），生产环境请用防火墙限制 :8080 的来源网段")
+		if config.GlobalConfig.MetricsToken == "" {
+			log.Println("⚠️ /metrics 为公开端点（Prometheus 抓取用）：建议设置 METRICS_TOKEN 开启 Bearer 认证，或用防火墙限制 :8080 的来源网段")
+		}
 	}
 
 	// 初始化数据库
@@ -64,6 +67,10 @@ func main() {
 	// 置终态，避免重启后幽灵任务与幽灵会话（VNC 靠 last_seen 过期清扫收敛，无需处理）
 	sweepStaleRecords(db)
 	startAuditRetention(db)
+
+	// Prometheus file_sd 目标文件写入（服务发现闭环：平台建 VM → VM 的 node_exporter
+	// 自动进抓取目标）。FILE_SD_PATH 未配置时内部直接不启动。
+	monitor.StartFileSDWriter(db, config.GlobalConfig.FileSDPath, time.Minute)
 
 	// 初始化Gin
 	if config.GlobalConfig.ServerMode == "release" {
@@ -136,7 +143,8 @@ func main() {
 	vncHandler := handler.NewVNCHandler(db, consoleRegistry)
 	terminalHandler := handler.NewTerminalHandler(db, consoleRegistry)
 	metricsHandler := handler.NewMetricsHandler(db)
-	monitorHandler := handler.NewMonitorHandler(config.GlobalConfig.AlertmanagerURL)
+	monitorHandler := handler.NewMonitorHandler(db, config.GlobalConfig.AlertmanagerURL)
+	alertWebhookHandler := handler.NewAlertWebhookHandler(db, config.GlobalConfig.AlertWebhookToken)
 	historyHandler := handler.NewHistoryHandler(db, config.GlobalConfig.PrometheusURL)
 
 	// 公开接口（无需认证）
@@ -145,8 +153,24 @@ func main() {
 	// VNC token 解析（供 websockify JSONTokenApi 内网调用）
 	r.GET("/api/vnc/token/:token", vncHandler.ResolveToken)
 
-	// Prometheus 指标（公开，供 Prometheus scrape；生产环境建议防火墙限制来源）
-	r.GET("/metrics", metricsHandler.Handler)
+	// Alertmanager 告警网关（webhook 推送 → 去重入库告警历史）。
+	// 配置 ALERT_WEBHOOK_TOKEN 后要求 ?token= 或 Bearer 匹配，需与 deploy/alertmanager.yml 同步。
+	r.POST("/api/monitor/webhook", alertWebhookHandler.Handle)
+
+	// Prometheus 指标（供 Prometheus scrape）。设置 METRICS_TOKEN 后要求 Bearer 认证
+	// （Prometheus 抓取任务配 bearer_token；websockify 无关此路径），未设置则保持公开。
+	if config.GlobalConfig.MetricsToken != "" {
+		metricsToken := config.GlobalConfig.MetricsToken
+		r.GET("/metrics", func(c *gin.Context) {
+			if c.GetHeader("Authorization") != "Bearer "+metricsToken && c.Query("token") != metricsToken {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
+			metricsHandler.Handler(c)
+		})
+	} else {
+		r.GET("/metrics", metricsHandler.Handler)
+	}
 
 	// 需要认证的接口
 	api := r.Group("/api")
@@ -265,6 +289,10 @@ func main() {
 		monitor := api.Group("/monitor")
 		{
 			monitor.GET("/alerts", monitorHandler.ListAlerts)
+			// 告警历史（webhook 入库数据的追溯查询，与实时列表互补）
+			monitor.GET("/alerts/history", monitorHandler.AlertHistory)
+			// file_sd 抓取目标预览（与后台落盘文件同源，调试/前端展示用）
+			monitor.GET("/file-sd", monitorHandler.PreviewFileSD)
 		}
 
 		// 仪表盘（仅管理员）
@@ -278,7 +306,8 @@ func main() {
 			// 宿主机历史曲线（Prometheus query_range，进页面即画满）
 			dashboard.GET("/host-history", historyHandler.HostHistory)
 			// 全部虚拟机历史曲线（虚拟机列表页迷你图预填）
-			dashboard.GET("/vm-history", historyHandler.VMsHistory)		}
+			dashboard.GET("/vm-history", historyHandler.VMsHistory)
+		}
 
 		// 审计日志查询（仅管理员）
 		audit := api.Group("/audit")
@@ -295,7 +324,7 @@ func main() {
 		settings.Use(middleware.AdminMiddleware())
 		{
 			settings.GET("", settingsHandler.GetSettings)
-		settings.PUT("", settingsHandler.UpdateSettings)
+			settings.PUT("", settingsHandler.UpdateSettings)
 		}
 
 		// 异步任务查询（仅管理员）
@@ -338,6 +367,7 @@ func main() {
 // sweepStaleRecords 启动收敛：进程重启导致内存态丢失，DB 残留的中间态需置终态。
 //   - tasks: pending/running 的任务队列已丢，不可重入（executor 非幂等，重跑会重复建盘），标记 failed 并写明原因
 //   - console_sessions: ssh/serial 的 WS 随进程死亡，标记 closed；VNC 靠 last_seen 过期清扫，不动
+//
 // startAuditRetention 审计日志保留期清理：启动跑一轮 + 每 24h 一轮，
 // 删除 30 天前的记录（分批 DELETE 防止单语句锁表太久）。
 // 背景：审计表曾因 GET 轮询全量记录在数小时内膨胀到 6 万条；GET 已不再入审计，

@@ -184,6 +184,14 @@
               <el-option v-for="p in options.pools" :key="p" :label="p" :value="p" />
             </el-select>
           </el-form-item>
+          <el-form-item label="机器类型">
+            <el-select v-model="form.machine" style="width: 320px">
+              <el-option label="自动（libvirt 默认）" value="" />
+              <el-option label="q35（PCIe 拓扑，推荐）" value="q35" />
+              <el-option label="pc（i440fx，兼容旧系统）" value="pc" />
+            </el-select>
+            <span class="os-hint">CPU 直通与 Guest Agent 通道默认启用</span>
+          </el-form-item>
         </el-form>
       </div>
 
@@ -417,7 +425,7 @@ const options = reactive({
 })
 const vms = ref([])
 
-const form = reactive({ name: '', storagePool: '', vcpu: 2, memoryMb: 2048, diskGb: 20 })
+const form = reactive({ name: '', storagePool: '', vcpu: 2, memoryMb: 2048, diskGb: 20, machine: '' })
 const iso = reactive({ osName: '', isoPath: '', isoImageId: null })
 const importDisk = reactive({ osName: '', source: '' })
 const cloudImage = reactive({ imageId: null, osName: '' })
@@ -710,6 +718,8 @@ function buildPayload() {
     vcpu: form.vcpu,
     memory_mb: form.memoryMb
   }
+  // 机器类型：q35/pc 透传，空 = libvirt 自动；CPU 直通由后端缺省启用
+  if (form.machine) payload.machine = form.machine
   if (installMode.value === 'iso') {
     payload.disks = buildDisks()
     payload.iso_path = isoPathLabel.value

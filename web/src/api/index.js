@@ -146,6 +146,10 @@ export const api = {
 
   // 监控中心（Alertmanager 告警代理，登录即可看）
   listAlerts: () => unwrap(http.get('/monitor/alerts')),
+  // 告警历史（webhook 入库数据，params: { status, fingerprint, page, page_size }）
+  monitorAlertHistory: (params) => unwrap(http.get('/monitor/alerts/history', { params })),
+  // file_sd 抓取目标预览（与后台落盘文件同源）
+  monitorFileSD: () => unwrap(http.get('/monitor/file-sd')),
 
   // 存储卷在用引用（卷管理弹窗的"在用"徽标与删卷确认）
   volumeRefs: (pool) => unwrap(http.get('/storage/pools/' + pool + '/volume-refs')),

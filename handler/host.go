@@ -59,7 +59,6 @@ func (h *HostHandler) ListHosts(c *gin.Context) {
 func (h *HostHandler) CreateHost(c *gin.Context) {
 	var req struct {
 		Name        string `json:"name" binding:"required"`
-		LibvirtURI  string `json:"libvirt_uri"`
 		SSHIP       string `json:"ssh_ip" binding:"required"`
 		SSHPort     int    `json:"ssh_port"`
 		SSHUser     string `json:"ssh_user"`
@@ -77,9 +76,6 @@ func (h *HostHandler) CreateHost(c *gin.Context) {
 	}
 
 	// 设置默认值
-	if req.LibvirtURI == "" {
-		req.LibvirtURI = "qemu:///system"
-	}
 	if req.SSHPort == 0 {
 		req.SSHPort = 22
 	}
@@ -90,7 +86,6 @@ func (h *HostHandler) CreateHost(c *gin.Context) {
 	// 创建宿主机
 	host := model.Host{
 		Name:        req.Name,
-		LibvirtURI:  req.LibvirtURI,
 		SSHIP:       req.SSHIP,
 		SSHPort:     req.SSHPort,
 		SSHUser:     req.SSHUser,
@@ -121,7 +116,6 @@ func (h *HostHandler) UpdateHost(c *gin.Context) {
 
 	var req struct {
 		Name        *string `json:"name"`
-		LibvirtURI  *string `json:"libvirt_uri"`
 		SSHIP       *string `json:"ssh_ip"`
 		SSHPort     *int    `json:"ssh_port"`
 		SSHUser     *string `json:"ssh_user"`
@@ -142,9 +136,6 @@ func (h *HostHandler) UpdateHost(c *gin.Context) {
 	updates := map[string]interface{}{}
 	if req.Name != nil {
 		updates["name"] = *req.Name
-	}
-	if req.LibvirtURI != nil {
-		updates["libvirt_uri"] = *req.LibvirtURI
 	}
 	if req.SSHIP != nil {
 		updates["ssh_ip"] = *req.SSHIP

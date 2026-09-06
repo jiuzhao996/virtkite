@@ -38,6 +38,18 @@ type Config struct {
 
 	// Prometheus 地址（仪表盘/虚拟机详情的历史曲线查询用；docker compose 内为 http://prometheus:9090）
 	PrometheusURL string
+
+	// /metrics 抓取令牌（非空时 /metrics 要求 Authorization: Bearer <token> 或 ?token=<token>，
+	// 与 deploy/prometheus.yml 抓取任务的 bearer_token 配对；为空则保持公开，用防火墙限制来源）
+	MetricsToken string
+
+	// Prometheus file_sd 目标文件路径（非空时后台协程每分钟把 running 且有 IP 的 VM
+	// 原子写入该文件，供 prometheus.yml 的 file_sd_configs 消费；为空则不启用）
+	FileSDPath string
+
+	// Alertmanager webhook 令牌（非空时 POST /api/monitor/webhook 要求 ?token= 或
+	// Authorization: Bearer 匹配；为空则公开，与 deploy/alertmanager.yml 的 webhook_config 配对）
+	AlertWebhookToken string
 }
 
 var GlobalConfig *Config
@@ -76,6 +88,15 @@ func Init() {
 
 		// Prometheus 地址
 		PrometheusURL: getEnv("PROMETHEUS_URL", "http://127.0.0.1:9090"),
+
+		// /metrics 抓取令牌
+		MetricsToken: getEnv("METRICS_TOKEN", ""),
+
+		// Prometheus file_sd 目标文件路径
+		FileSDPath: getEnv("FILE_SD_PATH", ""),
+
+		// Alertmanager webhook 令牌
+		AlertWebhookToken: getEnv("ALERT_WEBHOOK_TOKEN", ""),
 	}
 }
 

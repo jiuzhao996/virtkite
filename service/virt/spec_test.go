@@ -268,6 +268,48 @@ func TestBuildDomainXMLDefaults(t *testing.T) {
 	}
 }
 
+// TestBuildDomainXMLDeviceDetails 对齐手工模板机 XML 的设备细节批次：CPU 直通、clock 定时器、
+// guest-agent 通道、virtio-rng、memballoon、串口/控制台 pty——这些在手工模板里多年生产验证过，
+// 平台生成路径必须等价输出；CPU 模式空值按 host-passthrough 处理。
+func TestBuildDomainXMLDeviceDetails(t *testing.T) {
+	out, err := BuildDomainXML(&DomainSpec{Name: "detail", VCPU: 1, MemoryMB: 512})
+	if err != nil {
+		t.Fatalf("生成失败: %v", err)
+	}
+	for _, want := range []string{
+		`<cpu mode="host-passthrough">`, // 空值默认直通
+		`<clock offset="utc">`,          // 时钟 UTC
+		`<timer name="rtc" tickpolicy="catchup">`,
+		`<timer name="pit" tickpolicy="delay">`,
+		`<timer name="hpet" present="no">`,
+		`<serial type="pty">`, // 串口 pty（virsh console 依赖）
+		`<target type="isa-serial" port="0">`,
+		`<console type="pty">`,
+		`<channel type="unix">`, // guest-agent 通道
+		`<target type="virtio" name="org.qemu.guest_agent.0">`,
+		`<rng model="virtio">`, // 随机数发生器
+		`<backend model="random">/dev/urandom</backend>`,
+		`<memballoon model="virtio">`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("生成 XML 缺少设备细节 %q\n%s", want, out)
+		}
+	}
+
+	// 显式 CPUMode 应透传（含 default = 不输出 cpu 节点，保留 libvirt 缺省语义）
+	outP, err := BuildDomainXML(&DomainSpec{Name: "p", VCPU: 1, MemoryMB: 512, CPUMode: "host-passthrough"})
+	if err != nil || !strings.Contains(outP, `<cpu mode="host-passthrough">`) {
+		t.Errorf("显式 host-passthrough 应原样输出: err=%v\n%s", err, outP)
+	}
+	outD, err := BuildDomainXML(&DomainSpec{Name: "d", VCPU: 1, MemoryMB: 512, CPUMode: "default"})
+	if err != nil {
+		t.Fatalf("CPUMode=default 生成失败: %v", err)
+	}
+	if strings.Contains(outD, "<cpu ") {
+		t.Errorf("CPUMode=default 不应输出 cpu 节点:\n%s", outD)
+	}
+}
+
 // TestBuildDomainXMLXMLEscape 是 P1 安全批次的回归锚点：用户可控字符串（名称、磁盘路径、
 // 网络名）塞进 XML 后必须被转义，反解后值原样、结构无新增节点。
 // 修复前 virt 层是字符串拼接，闭合载荷可注入任意 libvirt 定义。

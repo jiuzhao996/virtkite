@@ -6,11 +6,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// Host 宿主机模型
+// Host 宿主机模型。
+// 定位是「宿主机登记与状态采集」：登记 SSH 信息用于连通性探测（ping），
+// 关联 vms 做资源归属。跨宿主机的虚拟化操作不在本平台范围内——
+// 虚拟化连接由全局 LIBVIRT_URI（config.LibvirtURI，默认 qemu:///system）决定。
+// 早期版本曾在此放 libvirt_uri 字段冒充多宿主机纳管，因从未用于建立连接已移除。
 type Host struct {
 	ID          uint           `gorm:"primaryKey" json:"id"`
 	Name        string         `gorm:"size:100;not null" json:"name"`
-	LibvirtURI  string         `gorm:"size:255;default:qemu:///system" json:"libvirt_uri"`
 	SSHIP       string         `gorm:"size:45" json:"ssh_ip"`
 	SSHPort     int            `gorm:"default:22" json:"ssh_port"`
 	SSHUser     string         `gorm:"size:50;default:root" json:"ssh_user"`

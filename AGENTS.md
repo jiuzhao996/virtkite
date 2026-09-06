@@ -147,6 +147,16 @@
 - **坑三（国内网络）**：Docker Hub 直连超时，用 `docker.m.daocloud.io` 拉取后 `docker tag` 回官方名再 `docker rmi` 镜像源名。
 - 形态切换与文件清单见 `deploy/README.md`（新增）。两种形态：混合（开发/演示推荐）与一键全容器（发布形态，websockify 尚未入 compose，控制台链路要补）。
 
+### 多宿主机砍除 + 监控闭环 + XML 设备细节批次（2026-09）
+
+- **多宿主机空壳已砍除（勿回退）**：`model/host.go` 的 `libvirt_uri` 字段与 `handler/host.go`、`HostList.vue` 的对应入口已删除，宿主机模块重新定位为「宿主机登记与状态采集」（SSH 连通性 ping + 状态采集）；跨宿主机虚拟化操作仍列后续工作。注意 GORM AutoMigrate 不会 drop 列，库里残留 `libvirt_uri` 列无害。`config.LibvirtURI`（全局 LIBVIRT_URI env）是平台自身的连接配置，与此无关，保留。
+- **`vms.ip` DHCP 回填已落地**：virt 层 `ListDHCPLeases()`（`service/virt/network.go`，对应 `virsh net-dhcp-leases`，多网络归并 + 过期过滤），`handler/vm_ip_sync.go` 的 `syncVMIPs()` 在 VM 列表/详情请求时惰性触发（全局 30s 节流、失败静默），按 MAC 匹配回填。**`validateSSHTarget` 分支 1（已记录 IP 精确匹配）由不可达变为可用**。qemu-guest-agent 途径仍为后续工作（XML 已具备通道）。
+- **`/metrics` 抓取令牌**：env `METRICS_TOKEN` 非空时要求 `Authorization: Bearer` 或 `?token=`；`deploy/prometheus.yml` 注释里有配对的 bearer_token 配置。未设置保持公开。
+- **监控服务发现闭环已落地**：`service/monitor`（`GenerateFileSD` 纯函数 + `StartFileSDWriter` 后台原子写），env `FILE_SD_PATH` 启用（compose 全容器形态开箱即用，宿主机直跑需在 .env 手工加），输出 running 且已知 IP 的 VM 为 `ip:9100` node_exporter 目标（同 IP 去重）；`GET /api/monitor/file-sd` 预览。**file_sd 只含 VM 目标，平台自身 exporter 走 prometheus.yml 静态抓取，勿混入**。guest 内需装 node_exporter。
+- **Alertmanager 告警网关已落地**：`model.Alert`（alerts 表，fingerprint 唯一）+ `POST /api/monitor/webhook`（env `ALERT_WEBHOOK_TOKEN` 可选鉴权；**除 401/400 外恒 200，防 AM 重试轰炸**）+ `GET /api/monitor/alerts/history`（分页，status/fingerprint 过滤）+ Monitor.vue「告警历史」卡片。`deploy/alertmanager.yml` 已并挂 webhook receiver（host.docker.internal:8080）。
+- **域 XML 设备细节已对齐手工模板机（`BuildDomainXML`）**：显式输出 host-passthrough CPU（`CPUMode` 空值按直通；**"default" 特殊值 = 不输出 cpu 节点**）、clock 定时器（rtc catchup/pit delay/hpet off）、guest-agent 通道（org.qemu.guest_agent.0）、virtio-rng（/dev/urandom）、memballoon、串口/控制台 pty；`ParseDomainXML` 回读 cpu mode。建机链路（execCreateVM）支持 `machine`（白名单 q35/pc/空）与 `cpu_mode`（白名单 host-passthrough/default）参数，向导「机器类型」下拉透传。**已实测 `virt-xml-validate` 通过 + virsh define/dumpxml 确认设备全部就位**。新增 `TestBuildDomainXMLDeviceDetails`。
+- **早前遗留清单核实结果（勿再列为待办）**：登录限流已实现（`handler/auth.go` loginLimiter，同 IP 1 分钟 5 次失败锁定）；孤儿卷清理已闭环（`POST /api/storage/pools/:name/orphan-cleanup` + `cleanup_volumes` 任务）；CORS release 模式禁 `*`（main.go 启动校验）。仍有效遗留：原始 XML 直定义端点、SSH `InsecureIgnoreHostKey`、golangci-lint 未装、`ImportVMs` errors 数组前端未消费、IPv6 ULA 文案不对齐。
+
 ## 部署/运行
 
 - 后端：`go run main.go`（默认 `:8080`）；前端：`cd web && npm run dev`（`/api` 代理到 `:8080`）

@@ -52,9 +52,6 @@
         <el-form-item label="名称" required>
           <el-input v-model="form.name" />
         </el-form-item>
-        <el-form-item label="Libvirt URI">
-          <el-input v-model="form.libvirt_uri" placeholder="qemu:///system" />
-        </el-form-item>
         <el-form-item label="SSH IP" required>
           <el-input v-model="form.ssh_ip" />
         </el-form-item>
@@ -100,7 +97,6 @@ const editingId = ref(null)
 
 const form = reactive({
   name: '',
-  libvirt_uri: 'qemu:///system',
   ssh_ip: '',
   ssh_port: 22,
   ssh_user: 'root',
@@ -165,7 +161,6 @@ function openCreate() {
   editingId.value = null
   Object.assign(form, {
     name: '',
-    libvirt_uri: 'qemu:///system',
     ssh_ip: '',
     ssh_port: 22,
     ssh_user: 'root',
@@ -178,7 +173,6 @@ function openEdit(row) {
   editingId.value = row.id
   Object.assign(form, {
     name: row.name || '',
-    libvirt_uri: row.libvirt_uri || 'qemu:///system',
     ssh_ip: row.ssh_ip || '',
     ssh_port: row.ssh_port || 22,
     ssh_user: row.ssh_user || 'root',

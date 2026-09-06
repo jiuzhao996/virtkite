@@ -41,10 +41,41 @@ docker compose up -d   # 6 个容器：mysql + app + websockify + prometheus + a
 |---|---|
 | prometheus.yml | 抓取配置 + 告警规则引用 + alerting 对接 |
 | alerts.yml | 5 条告警规则（VMRunningDrop/HostCpuHigh/PoolSpaceLow/TaskBacklog/VMCpuHot，全中文 summary） |
-| alertmanager.yml | 告警分组/路由（receiver 目前是占位 webhook，通知渠道按需补） |
+| alertmanager.yml | 告警分组/路由（占位 webhook + 平台告警网关 vmops-webhook，见下「告警网关」） |
 | grafana-datasource.yml | 预置 Prometheus 数据源 |
 | grafana-dashboard-provider.yml | 看板文件 provider |
 | grafana-dashboard.json | vmops 私有云监控看板（uid: vmops-overview，9 面板） |
+| file_sd/ | Prometheus file_sd 目标目录（平台自动生成 targets.json，见下「监控服务发现闭环」） |
+
+## 监控服务发现闭环（file_sd）
+
+平台建 VM 后，VM 内的 node_exporter 自动进入 Prometheus 抓取目标，无需手工改 prometheus.yml：
+
+1. 平台侧设置 `FILE_SD_PATH` 环境变量，指向目标文件（默认空=不启用）：
+   - docker compose 形态：compose 已为 app 配好 `FILE_SD_PATH: /app/deploy/file_sd/targets.json`，
+     该目录同时挂载进 prometheus 容器的 `/etc/prometheus/file_sd`，两侧共享同一宿主机目录，开箱即用。
+   - 宿主机原生直跑（混合形态）：在 `.env` 里加
+     `FILE_SD_PATH=/home/<user>/vmops/deploy/file_sd/targets.json`（与 compose 挂载同一目录即可复用）。
+2. 平台后台协程每分钟把「running 且 IP 非空」的虚拟机写入该文件（先写 `.tmp` 再原子 rename），
+   格式 `[{"targets": ["<ip>:9100"], "labels": {"job": "vm-node", "vm_name": ..., "vm_id": ...}}]`；
+   同 IP 多机去重（vm_name/vm_id 逗号拼接）。
+3. `deploy/prometheus.yml` 的 `file_sd_configs` 每 30s 重载该目录下的 `*.json`。
+4. 登录后 `GET /api/monitor/file-sd` 可实时预览当前将生成的内容。
+
+> ⚠️ **VM 内需自行安装 node_exporter（默认 :9100）**，平台只负责下发抓取目标；
+> 目标未装 exporter 会呈现 up 状态翻转，属预期。
+
+## 告警网关（Alertmanager webhook 回推）
+
+`deploy/alertmanager.yml` 的 default receiver 已并挂第二个 webhook：告警（含 resolved）
+推回平台 `POST /api/monitor/webhook`，按 fingerprint 去重入库 `alerts` 表，
+监控中心页的「告警历史」卡片可追溯（实时列表代理 AM，重启/环形截断后查不到，历史不受影响）。
+
+- host.docker.internal 由 compose alertmanager 服务的 `extra_hosts: host-gateway` 解析。
+- 平台设置 `ALERT_WEBHOOK_TOKEN` 后要求 `?token=<值>` 或 `Authorization: Bearer <值>`，
+  需同步在 alertmanager.yml 的 webhook url 后追加 `?token=<值>`；默认空=公开接收。
+- 除鉴权失败/请求体非法外网关恒返回 200（Alertmanager 对非 2xx 会按策略重试轰炸），
+  处理失败只记服务端日志。
 
 镜像版本：grafana 13.2.1 / prometheus v3.14.0 / alertmanager v0.34.0 / mysql 8.0.36（Docker Hub 直连超时时用 `docker.m.daocloud.io` 拉取后 tag 回官方名）。
 

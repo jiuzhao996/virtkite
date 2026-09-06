@@ -20,3 +20,12 @@ scrape_configs:
       # 若要切回纯容器形态的直连，可改回 targets: ["app:8080"]。
       - targets: ["host.docker.internal:8080"]
     metrics_path: /metrics
+    # 平台侧设置 METRICS_TOKEN 环境变量后，/metrics 要求 Bearer 认证：
+    # 取消下行注释并保持两侧取值一致即可；未设置 METRICS_TOKEN 时必须保持注释状态。
+    # authorization:
+    #   credentials: <METRICS_TOKEN 的值>
+    # file_sd 动态抓取目标（服务发现闭环）：平台侧 FILE_SD_PATH 指向本文件时由平台自动生成，
+    # VM 内 node_exporter（:9100）与平台自身 exporter 都从该文件下发，无需改本配置。
+    file_sd_configs:
+      - files: ["/etc/prometheus/file_sd/*.json"]
+        refresh_interval: 30s

@@ -1,6 +1,7 @@
 # Alertmanager 配置：接收 Prometheus 告警，分组去重后推送。
-# 默认 webhook 为占位地址（演示不落地通知，只在 UI :9093 可见 firing 状态）；
-# 生产请替换为钉钉/飞书/企业微信机器人 webhook（见下方注释示例）。
+# 告警经 default receiver 的两个 webhook 并行外送：占位地址（演示不落地通知，只在
+# UI :9093 可见 firing 状态）+ 平台告警网关（POST /api/monitor/webhook，去重入库告警历史）。
+# 生产如需钉钉/飞书/企业微信机器人，在 default receiver 下再并一个 webhook_config 即可。
 global:
   resolve_timeout: 5m
 
@@ -17,6 +18,11 @@ receivers:
       # 占位：演示环境无真实通道，告警仅在 Alertmanager UI 可见
       - url: "http://127.0.0.1:5001/hook"
         send_resolved: false
-    # 生产示例（钉钉群机器人，二选一，取消注释并填 key）：
+      # 平台告警网关：推送回 vmops 入库（监控中心可查告警历史）。
+      # host.docker.internal 由 compose 的 extra_hosts(host-gateway) 解析到宿主机；
+      # 平台设置了 ALERT_WEBHOOK_TOKEN 时，在 url 后追加 ?token=<值>，两侧必须一致。
+      - url: "http://host.docker.internal:8080/api/monitor/webhook"
+        send_resolved: true
+    # 生产示例（钉钉群机器人，取消注释并填 key）：
     # - url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_KEY"
     #   send_resolved: true
