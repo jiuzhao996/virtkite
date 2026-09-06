@@ -409,7 +409,7 @@ import { vmStatusText, vmStatusTag, usageColor, fmtRateBytes, nowClock, isCancel
 
 const route = useRoute()
 const router = useRouter()
-const { isAdmin, setPageTitle } = useAuth()
+const { isAdmin } = useAuth()
 const id = route.params.id
 
 // echarts 不解析 var()，实时曲线需要真实色值：挂载时读一次 CSS 变量
@@ -519,8 +519,6 @@ async function loadSpec() {
     const res = await api.getVMSpec(id)
     vm.value = (res.data && res.data.vm) || null
     spec.value = (res.data && res.data.spec) || null
-    // 顶栏标题显示 VM 名（离开路由时由 MainLayout 的 watch 清除）
-    if (vm.value && vm.value.name) setPageTitle(vm.value.name)
     if (spec.value && spec.value.disks && activeDisk.value >= spec.value.disks.length) {
       activeDisk.value = Math.max(0, spec.value.disks.length - 1)
     }
@@ -989,7 +987,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  setPageTitle('') // 动态标题随页销毁：否则经 /console/:id 这类独立路由往返后顶栏残留旧 VM 名
   if (statsTimer) {
     clearInterval(statsTimer)
     statsTimer = null

@@ -54,7 +54,31 @@
 
     <el-container>
       <el-header class="header">
-        <h2 class="header-title">{{ title }}</h2>
+        <!-- 顶栏不放页面标题（职责在页面自身页头，避免双标题重复）；
+             改为全局搜索（VM 名直达详情，对标云控制台顶栏分工）+ 全屏切换 -->
+        <div class="header-left">
+          <el-select
+            v-model="searchSel"
+            class="global-search"
+            filterable
+            clearable
+            placeholder="搜索虚拟机名称，回车直达详情"
+            :loading="searchLoading"
+            @focus="loadSearchVMs"
+            @change="goSearchVM"
+          >
+            <el-option v-for="vm in searchVMs" :key="vm.id" :label="vm.name" :value="vm.id">
+              <span class="s-name">{{ vm.name }}</span>
+              <el-tag :type="vmStatusTag(vm.status)" size="small" effect="light" class="s-tag">
+                {{ vmStatusText(vm.status) }}
+              </el-tag>
+            </el-option>
+            <template #empty>无匹配虚拟机</template>
+          </el-select>
+          <el-tooltip content="全屏切换" placement="bottom">
+            <el-button text :icon="FullScreen" class="fs-btn" @click="toggleFullscreen" />
+          </el-tooltip>
+        </div>
         <div class="header-right">
           <!-- 任务铃：有进行中的后台任务时亮角标，点开看进度、跳任务中心 -->
           <el-popover trigger="click" width="320">
@@ -108,14 +132,15 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, Bell, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, Bell, FullScreen, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
+import { vmStatusText, vmStatusTag } from '../utils/format'
 import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
 
 const route = useRoute()
 const router = useRouter()
-const { state, isAdmin, setPageTitle, logout } = useAuth()
+const { state, isAdmin, logout } = useAuth()
 const collapsed = ref(false)
 
 // 分组导航：group 字段同时驱动展开态（el-menu-item-group）与折叠态 v-for，
@@ -154,30 +179,40 @@ function toggleGroup(name) {
 }
 
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard'))
-const titleMap = {
-  dashboard: '仪表盘',
-  monitor: '监控中心',
-  vms: '虚拟机管理',
-  hosts: '宿主机管理',
-  images: '镜像管理',
-  storage: '存储池管理',
-  networks: '网络管理',
-  tasks: '任务中心',
-  audit: '审计中心',
-  users: '用户管理',
-  settings: '系统设置',
-  profile: '个人中心'
-}
-// 详情页先显示动态标题（如 VM 名），页面没写时回退静态映射
-const title = computed(() => state.pageTitle || titleMap[route.path.split('/')[1]] || 'vmops')
 
-// 离开详情类路由时清掉动态标题残留（/vms/new 不是详情页）
-watch(
-  () => route.path,
-  (p) => {
-    if (!/^\/vms\/\d+/.test(p)) setPageTitle('')
+// 全局搜索：进布局拉一次 VM 清单（15 台规模客户端过滤足够），选中直达详情。
+// viewer 也可用（GET /vms 对 viewer 放行）。拉取失败静默（搜索是辅助入口）。
+const searchVMs = ref([])
+const searchSel = ref('')
+const searchLoading = ref(false)
+let searchLoaded = false
+async function loadSearchVMs() {
+  if (searchLoaded) return
+  searchLoading.value = true
+  try {
+    const res = await api.listVMs()
+    searchVMs.value = (res.data && res.data.items) || []
+    searchLoaded = true
+  } catch (e) {
+    /* 静默 */
+  } finally {
+    searchLoading.value = false
   }
-)
+}
+function goSearchVM(id) {
+  if (!id) return
+  searchSel.value = ''
+  router.push({ name: 'vm-detail', params: { id: String(id) } })
+}
+
+// 全屏切换（演示投屏用）
+function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen()
+  } else {
+    document.documentElement.requestFullscreen()
+  }
+}
 
 // 任务铃轮询：pending/running 两路合并；失败静默（铃铛只是辅助入口，不打扰用户）
 const activeTasks = ref([])
@@ -194,9 +229,8 @@ async function loadActiveTasks() {
   }
 }
 onMounted(() => {
-  // 兜底清残留动态标题：从独立路由（如控制台）回到布局时 watch 不会触发
-  if (!/^\/vms\/\d+/.test(route.path)) setPageTitle('')
   loadActiveTasks()
+  loadSearchVMs() // 全局搜索数据：布局挂载即加载（el-select 的 @focus 在部分触发方式下不可靠）
   taskTimer = setInterval(loadActiveTasks, getPollInterval('tasks', POLL_DEFAULTS.tasks))
 })
 onUnmounted(() => {
@@ -375,11 +409,26 @@ function onUserCommand(cmd) {
   color: var(--color-foreground);
   border-bottom: 1px solid var(--color-border);
 }
-.header-title {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--color-foreground);
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  max-width: 460px;
+  margin-right: 16px;
+}
+.global-search {
+  width: 100%;
+}
+.s-name {
+  flex: 1;
+  margin-right: 8px;
+}
+.s-tag {
+  margin-left: auto;
+}
+.fs-btn {
+  color: var(--color-muted-foreground);
 }
 .header-right {
   display: flex;
