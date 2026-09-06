@@ -15,9 +15,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,9 @@ import (
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/virt"
 )
+
+// defaultStoragePool 未指定存储池时使用的默认池名（与 model.VM.StoragePool 的 gorm 默认值一致）。
+const defaultStoragePool = "vmops"
 
 // taskVMNameRegex 虚拟机名称只允许字母、数字、下划线和连字符（copy 自 handler/vm.go）。
 var taskVMNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -355,7 +360,7 @@ func execCreateVM(ctx *ExecContext) error {
 
 	// 默认值（沿用原 CreateVM 逻辑）。
 	if storagePool == "" {
-		storagePool = "vmops"
+		storagePool = defaultStoragePool
 	}
 	if vcpu == 0 {
 		vcpu = 1
@@ -619,34 +624,74 @@ func execDeleteVM(ctx *ExecContext) error {
 	reportProgress(ctx, 30, "虚拟机定义已删除（对应 virsh undefine），开始清理磁盘")
 
 	// 3. 删除存储卷（对应 virsh vol-delete）：枚举的磁盘源 + 默认系统盘兜底。
-	//    仅删除位于平台托管池路径下的卷，避免误删共享基镜像（如克隆子卷的父盘）。
+	//    删除前有三重守卫，任一命中即跳过该卷并记录原因（见 shouldKeepVol）。
 	pool := vm.StoragePool
 	if pool == "" {
-		pool = "vmops"
+		pool = defaultStoragePool
 	}
-	// 池路径前缀（用于判定卷是否属于平台托管，避免删共享镜像）。
+	// 池路径前缀（用于判定卷是否属于平台托管，避免删池外文件）。
 	poolPath, _ := ctx.Virt.GetPoolPath(pool)
-	volNameFor := func(src string) (string, bool) {
-		if src == "" {
-			return "", false
-		}
-		if poolPath != "" && !strings.HasPrefix(src, poolPath+"/") {
-			return "", false
-		}
-		return filepath.Base(src), true
+
+	// 守卫二的数据：平台镜像库登记的文件路径集合。
+	// 「基于云镜像创建」是直接引用不拷贝（见 execCreateVM 的 source_image_id 分支），
+	// 若镜像与 VM 同池，按池路径判定会把基镜像本体当成该 VM 的盘删掉，
+	// 而 images 表记录仍在 —— 留下悬挂记录且其他引用它的 VM 一并损坏。
+	managedImagePaths := map[string]bool{}
+	var imgs []model.Image
+	if err := ctx.DB.Select("path").Find(&imgs).Error; err != nil {
+		log.Printf("[tasks] 读取镜像库路径失败，跳过基镜像守卫 vm=%s err=%v", vm.Name, err)
 	}
+	for _, img := range imgs {
+		if img.Path != "" {
+			managedImagePaths[img.Path] = true
+		}
+	}
+
+	// 守卫三的数据：池内 qcow2 backing file 引用（父卷路径 → 依赖它的子卷）。
+	backingRefs, err := ctx.Virt.ListBackingRefs(pool)
+	if err != nil {
+		log.Printf("[tasks] 枚举 backing 引用失败，跳过父盘守卫 vm=%s pool=%s err=%v", vm.Name, pool, err)
+		backingRefs = map[string][]string{}
+	}
+
+	var keptVols []string
+	// shouldKeepVol 判断某个磁盘源是否必须保留，返回保留原因（空串表示可删）。
+	shouldKeepVol := func(src, volName string) string {
+		// 守卫一：池外文件不属于平台托管，一律不动（如挂载的宿主机 ISO）
+		if poolPath != "" && !strings.HasPrefix(src, poolPath+"/") {
+			return "不在存储池 " + pool + " 路径下"
+		}
+		// 守卫二：镜像库登记的共享基镜像
+		if managedImagePaths[src] {
+			return "是镜像库登记的共享基镜像"
+		}
+		// 守卫三：仍被子卷当作 qcow2 backing file（增量克隆父盘）
+		if children := backingRefs[src]; len(children) > 0 {
+			return fmt.Sprintf("是增量克隆父盘，仍被 %d 个子卷依赖（%s）",
+				len(children), strings.Join(children, "、"))
+		}
+		return ""
+	}
+
 	seen := map[string]bool{}
 	tryDeleteVol := func(src string) {
 		if src == "" {
 			return
 		}
-		volName, ok := volNameFor(src)
-		if !ok || seen[volName] {
+		volName := filepath.Base(src)
+		if seen[volName] {
 			return
 		}
 		seen[volName] = true
+		if reason := shouldKeepVol(src, volName); reason != "" {
+			log.Printf("[tasks] 保留卷（未删）vm=%s vol=%s 原因=%s", vm.Name, volName, reason)
+			keptVols = append(keptVols, volName+"（"+reason+"）")
+			return
+		}
 		// libvirt 卷（克隆卷等 root 属主）走 vol-delete；seed 等直接落盘文件 libvirt 不认作卷，os 兜底删文件。
-		_ = ctx.Virt.DeleteVolume(pool, volName)
+		if err := ctx.Virt.DeleteVolume(pool, volName); err != nil {
+			log.Printf("[tasks] 删除卷失败 vm=%s pool=%s vol=%s err=%v", vm.Name, pool, volName, err)
+		}
 		if poolPath != "" {
 			_ = os.Remove(filepath.Join(poolPath, volName))
 		}
@@ -654,8 +699,14 @@ func execDeleteVM(ctx *ExecContext) error {
 	for _, src := range diskSources {
 		tryDeleteVol(src)
 	}
-	tryDeleteVol(filepath.Join(poolPath, vm.Name+".qcow2"))
-	reportProgress(ctx, 70, "磁盘清理完成")
+	if poolPath != "" {
+		tryDeleteVol(filepath.Join(poolPath, vm.Name+".qcow2"))
+	}
+	if len(keptVols) > 0 {
+		reportProgress(ctx, 70, "磁盘清理完成（保留 "+strconv.Itoa(len(keptVols))+" 个共享卷）")
+	} else {
+		reportProgress(ctx, 70, "磁盘清理完成")
+	}
 
 	// 4. 清理 cloud-init seed 镜像（独立 seed 目录，非池卷）。
 	if seedDir := taskSeedDir(); seedDir != "" {
@@ -667,7 +718,12 @@ func execDeleteVM(ctx *ExecContext) error {
 		return fmt.Errorf("删除虚拟机记录失败: %w", err)
 	}
 
-	setTaskResultVM(ctx, map[string]interface{}{"vm": vm.Name}, vm.ID, vm.Name)
+	// 结果里带上被守卫保留的卷，让用户知道哪些共享文件刻意没删（前端任务详情可见）
+	result := map[string]interface{}{"vm": vm.Name}
+	if len(keptVols) > 0 {
+		result["kept_volumes"] = keptVols
+	}
+	setTaskResultVM(ctx, result, vm.ID, vm.Name)
 	return nil
 }
 
@@ -727,7 +783,9 @@ func execCloneVM(ctx *ExecContext) error {
 	}
 	reportProgress(ctx, 50, "克隆完成（对应 virsh vol-clone + define）")
 
-	// 新域 UUID 与首个网卡 MAC 从 libvirt 查询（克隆后重新生成）。
+	// 新域 UUID 与首个网卡 MAC 回读 libvirt。
+	// 注意：libvirt 不会自动改 MAC（XML 里显式给了就照用），重新生成是
+	// CloneVMFromSpec 做的（randomMACAddr 逐块换），这里只是把结果同步进 DB。
 	uuid := ""
 	nicMAC := ""
 	if ns, err := ctx.Virt.GetDomainSpec(name); err == nil && ns != nil {

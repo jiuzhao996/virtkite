@@ -11,8 +11,19 @@ import (
 	"github.com/digitalocean/go-libvirt"
 )
 
-// CloneVolumeFromVol 基于父卷创建子卷（对应 virsh vol-clone；libvirt 自动写 qcow2 backing file）。
-// 子卷存续期间父卷不可删除/移动。返回子卷路径。
+// CloneVolumeFromVol 基于父卷创建**增量**子卷（linked clone，等价
+// qemu-img create -f qcow2 -F qcow2 -b <父盘> <子盘>）。
+// 子卷只保存写入差异，基础数据仍读父盘，因此建盘瞬时完成、几乎不占空间。
+// 返回子卷路径。
+//
+// 实现要点（曾经的坑）：必须用 StorageVolCreateXML + XML 里声明 <backingStore>。
+// 早期实现用的是 StorageVolCreateXMLFrom（等价 virsh vol-clone），
+// 那个 API 做的是**全量数据拷贝**，产出的子卷没有 backing file
+// ——即「增量克隆」名不副实。已实测确认：vol-clone 出来的卷
+// qemu-img info 里没有 backing file 行，vol-dumpxml 里也没有 <backingStore>。
+//
+// 代价：子卷存续期间父卷不可删除/移动/改写。删除虚拟机时由
+// ListBackingRefs 守卫拦住父盘（见 service/tasks 的 execDeleteVM）。
 func (v *Virt) CloneVolumeFromVol(poolName, srcVolName, newVolName string) (string, error) {
 	l, err := v.getConn()
 	if err != nil {
@@ -32,20 +43,23 @@ func (v *Virt) CloneVolumeFromVol(poolName, srcVolName, newVolName string) (stri
 	if err != nil {
 		return "", fmt.Errorf("获取父卷 %s 容量失败: %w", srcVolName, err)
 	}
+	// backingStore 需要父盘绝对路径
+	srcPath, err := l.StorageVolGetPath(srcVol)
+	if err != nil {
+		return "", fmt.Errorf("获取父卷 %s 路径失败: %w", srcVolName, err)
+	}
 
 	// newVolName 入参不含扩展名，函数内补 .qcow2
 	childName := newVolName + ".qcow2"
-	childXML := fmt.Sprintf(`<volume>
-  <name>%s</name>
-  <capacity unit="B">%d</capacity>
-  <target>
-    <format type='qcow2'/>
-  </target>
-</volume>`, childName, capacity)
-
-	child, err := l.StorageVolCreateXMLFrom(pool, childXML, srcVol, 0)
+	// 卷 XML 走 encoding/xml 序列化（buildVolumeXMLWithBacking，storage.go），卷名自动转义无注入面
+	childXML, err := buildVolumeXMLWithBacking(childName, volFormatQcow2, volUnitByte, int64(capacity), srcPath)
 	if err != nil {
-		return "", fmt.Errorf("克隆卷失败（对应 virsh vol-clone）: %w", err)
+		return "", err
+	}
+
+	child, err := l.StorageVolCreateXML(pool, childXML, 0)
+	if err != nil {
+		return "", fmt.Errorf("创建增量克隆子卷失败（对应 virsh vol-create）: %w", err)
 	}
 	p, err := l.StorageVolGetPath(child)
 	if err != nil {
@@ -135,14 +149,76 @@ func randomUUIDV4() (string, error) {
 	), nil
 }
 
+// randomMACAddr 生成一个 KVM 保留前缀（52:54:00）的随机 MAC 地址。
+// 前缀与 libvirt/QEMU 自动分配的保持一致，避免与物理网卡厂商 OUI 冲突。
+// 克隆整机时必须为每块网卡重新生成：MAC 沿用源机会导致同网段地址冲突，
+// 两台机器同时开机后 ARP 表错乱、网络双双不可用。
+func randomMACAddr() (string, error) {
+	b := make([]byte, 3)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("52:54:00:%02x:%02x:%02x", b[0], b[1], b[2]), nil
+}
+
+// systemDiskIndex 返回源 spec 里首个 device=='disk' 的磁盘下标（系统盘），无则返回 -1。
+// cdrom / floppy 不能作为 linked clone 的父盘。
+func systemDiskIndex(source *DomainSpec) int {
+	for i := range source.Disks {
+		if source.Disks[i].Device == "disk" {
+			return i
+		}
+	}
+	return -1
+}
+
+// buildCloneSpec 由源 spec 派生克隆 spec（纯函数，不触碰 libvirt，便于单元测试）。
+//
+// 三件必须做对的事：
+//  1. Disks 与 Interfaces 都要**深拷贝**。`*source` 只复制切片头，
+//     直接改元素会同时污染源 spec（源 VM 的运行配置）；
+//  2. UUID 重新生成；
+//  3. **每块网卡的 MAC 都要重新生成**。libvirt 不会自动改 MAC——XML 里显式给了就照用，
+//     沿用源机 MAC 会让克隆机与源机在同一网段地址冲突，两台同时开机后
+//     ARP 表错乱、网络双双不可用。这是本函数存在的主要原因。
+//
+// diskIdx 为系统盘下标，newDiskPath 为已克隆好的子卷路径，srcDiskPath 为父盘路径（仅记录展示）。
+func buildCloneSpec(source *DomainSpec, newName string, diskIdx int, newDiskPath, srcDiskPath string) (*DomainSpec, error) {
+	uuid, err := randomUUIDV4()
+	if err != nil {
+		return nil, fmt.Errorf("生成新 UUID 失败: %w", err)
+	}
+
+	spec := *source
+	spec.Name = newName
+	spec.UUID = uuid
+
+	spec.Disks = make([]DiskSpec, len(source.Disks))
+	copy(spec.Disks, source.Disks)
+	if diskIdx >= 0 && diskIdx < len(spec.Disks) {
+		spec.Disks[diskIdx].Source = newDiskPath
+		spec.Disks[diskIdx].BackingFile = srcDiskPath // 记录父盘（展示用）
+	}
+
+	spec.Interfaces = make([]InterfaceSpec, len(source.Interfaces))
+	copy(spec.Interfaces, source.Interfaces)
+	for i := range spec.Interfaces {
+		mac, err := randomMACAddr()
+		if err != nil {
+			return nil, fmt.Errorf("生成克隆网卡 MAC 失败: %w", err)
+		}
+		spec.Interfaces[i].MAC = mac
+	}
+
+	spec.RawXML = "" // 克隆后 XML 由 BuildDomainXML 重建，raw_xml 不再适用
+	return &spec, nil
+}
+
 // CloneVMFromSpec 基于源 DomainSpec 克隆整机（建卷 + 改 spec + define，不启动）。
 // 对源首个 device=='disk' 的系统盘做 linked clone（CloneVolumeFromVol），
-// 替换新 spec 的磁盘 source 为新卷路径，其余设备复制；UUID 重新生成。
-// 返回新 domain 名（对应 virsh vol-clone + virsh define）。
-//
-// 依赖说明：本函数依赖 B1 产出的 service/virt/spec.go 中的 DomainSpec/DiskSpec 类型
-// 与 BuildDomainXML 函数（契约锁定），当前 B1 尚未落盘，本函数暂无法编译；
-// 待 spec.go 落地后即恢复正常。
+// 替换新 spec 的磁盘 source 为新卷路径，其余设备复制；
+// UUID 与全部网卡 MAC 重新生成（二者都必须唯一，否则与源机冲突）。
+// 返回新 domain 名（对应 qemu-img create -b + virsh define）。
 func (v *Virt) CloneVMFromSpec(source *DomainSpec, newName string) (string, error) {
 	if source == nil {
 		return "", fmt.Errorf("源 DomainSpec 为空，无法克隆")
@@ -154,14 +230,7 @@ func (v *Virt) CloneVMFromSpec(source *DomainSpec, newName string) (string, erro
 		return "", fmt.Errorf("克隆虚拟机名称不能为空")
 	}
 
-	// 找首个 device=='disk' 的磁盘作为系统盘
-	cloneIdx := -1
-	for i := range source.Disks {
-		if source.Disks[i].Device == "disk" {
-			cloneIdx = i
-			break
-		}
-	}
+	cloneIdx := systemDiskIndex(source)
 	if cloneIdx < 0 {
 		return "", fmt.Errorf("源虚拟机 %s 无系统盘，无法克隆", source.Name)
 	}
@@ -178,21 +247,12 @@ func (v *Virt) CloneVMFromSpec(source *DomainSpec, newName string) (string, erro
 		return "", err
 	}
 
-	// 复制 spec：改名称 / 重新生成 UUID / 替换系统盘 source
-	spec := *source
-	uuid, err := randomUUIDV4()
+	spec, err := buildCloneSpec(source, newName, cloneIdx, newPath, srcPath)
 	if err != nil {
-		return "", fmt.Errorf("生成新 UUID 失败: %w", err)
+		return "", err
 	}
-	spec.Name = newName
-	spec.UUID = uuid
-	spec.Disks = make([]DiskSpec, len(source.Disks))
-	copy(spec.Disks, source.Disks)
-	spec.Disks[cloneIdx].Source = newPath
-	spec.Disks[cloneIdx].BackingFile = srcPath // 记录父盘（展示用）
-	spec.RawXML = ""                           // 克隆后 XML 由 BuildDomainXML 重建，raw_xml 不再适用
 
-	xmlstr, err := BuildDomainXML(&spec)
+	xmlstr, err := BuildDomainXML(spec)
 	if err != nil {
 		return "", fmt.Errorf("生成克隆虚拟机 %s XML 失败: %w", newName, err)
 	}

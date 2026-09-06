@@ -2,7 +2,9 @@
 # 运行：golangci-lint run ./...
 run:
   timeout: 3m
-  go: "1.21"
+  # 目标 Go 语言版本：必须与 go.mod 的 `go 1.25.0` 保持一致（此处取 major.minor），
+  # 否则 linter 会按旧版本语言规则检查，误报/漏报新语法
+  go: "1.25"
 
 linters:
   enable:
