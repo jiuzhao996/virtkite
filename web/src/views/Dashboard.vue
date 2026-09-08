@@ -197,7 +197,7 @@
             <span class="card-title">平台信息</span>
           </template>
           <div class="info-rows">
-            <div><span>平台</span><strong>vmops · KVM 私有云</strong></div>
+            <div><span>平台</span><strong>鸢航 VirtKite · KVM 私有云</strong></div>
             <div><span>后端</span><strong>Go + Gin + GORM + Libvirt</strong></div>
             <div><span>前端</span><strong>Vue 3 + Element Plus + ECharts</strong></div>
             <div><span>当前用户</span><strong>{{ userText }}</strong></div>

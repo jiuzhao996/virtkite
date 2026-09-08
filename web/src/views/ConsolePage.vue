@@ -184,7 +184,7 @@
             <!-- 倾斜水印 -->
             <div class="watermark">
               <div class="watermark-line">{{ vm ? vm.name : 'vm' }}</div>
-              <div class="watermark-line watermark-sub">vmops console</div>
+              <div class="watermark-line watermark-sub">VirtKite console</div>
             </div>
           </div>
 

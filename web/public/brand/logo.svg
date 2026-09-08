@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+  <defs>
+    <linearGradient id="s1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d2444"/><stop offset="1" stop-color="#1b3a62"/>
+    </linearGradient>
+    <linearGradient id="k1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6db6ff"/><stop offset="1" stop-color="#2e6bd6"/>
+    </linearGradient>
+  </defs>
+  <rect width="240" height="240" rx="48" fill="url(#s1)"/>
+  <g stroke-linecap="round" fill="none">
+    <!-- 两行静默代码 -->
+    <path d="M48,160 L102,160" stroke="#3a6ea8" stroke-width="10"/>
+    <path d="M48,192 L138,192" stroke="#33639e" stroke-width="10"/>
+    <!-- 断开起飞的行：留白 = 断口 -->
+    <path d="M48,128 L88,128" stroke="#5b9be0" stroke-width="10"/>
+  </g>
+  <!-- 断口飞出的鸢：切角纸鸢形，更大更锐 -->
+  <g transform="translate(150,74) rotate(-16)">
+    <path d="M0,-34 L30,-2 L12,34 L0,22 L-12,34 L-30,-2 Z" fill="url(#k1)"/>
+    <path d="M0,-34 L0,22 M-30,-2 L30,-2" stroke="#d8ecff" stroke-width="3.5" stroke-linecap="round" opacity="0.95"/>
+    <circle cx="0" cy="-2" r="5.5" fill="#ffd268"/>
+    <!-- 飘带：两笔，一金一蓝 -->
+    <path d="M0,22 q-12,16 -26,20" stroke="#ffd268" stroke-width="4" stroke-linecap="round"/>
+    <path d="M6,26 q10,16 4,34" stroke="#6db6ff" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
+  </g>
+  <!-- 断而未断的金色牵线：从断口到鸢 -->
+  <path d="M92,124 C 106,114 116,102 128,90" stroke="#ffd268" stroke-width="3.5" stroke-dasharray="1 8" stroke-linecap="round"/>
+</svg>

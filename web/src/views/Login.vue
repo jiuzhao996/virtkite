@@ -11,8 +11,8 @@
     />
     <el-card class="login-card" shadow="always">
       <div class="login-brand">
-        <el-icon class="logo"><Lock /></el-icon>
-        <h1>vmops</h1>
+        <img class="logo" src="/brand/logo.svg" alt="鸢航 VirtKite" />
+        <h1>鸢航 <span class="en">VirtKite</span></h1>
         <p>基于 KVM 的轻量级私有云管理平台</p>
       </div>
 
@@ -43,7 +43,7 @@
 import { reactive, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { InfoFilled, Lock } from '@element-plus/icons-vue'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import loginBg from '../assets/login-bg.jpg'
@@ -128,13 +128,22 @@ async function submit() {
   margin-bottom: 20px;
 }
 .logo {
-  font-size: 2.4rem;
-  color: var(--color-primary);
+  width: 84px;
+  height: 84px;
+  display: block;
+  margin: 0 auto;
 }
 .login-brand h1 {
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   color: var(--color-primary);
-  margin: 6px 0 2px;
+  margin: 10px 0 2px;
+  letter-spacing: 2px;
+}
+.login-brand h1 .en {
+  font-size: 1.05rem;
+  font-weight: 600;
+  opacity: 0.85;
+  letter-spacing: 1px;
 }
 .login-brand p {
   font-size: 0.9rem;

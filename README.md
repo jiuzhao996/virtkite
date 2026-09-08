@@ -1,6 +1,14 @@
-# vmops · 轻量级私有云管理平台
+# <img src="branding/virtkite-mark-64.png" width="36" align="top" alt="鸢航"> 鸢航 VirtKite · 基于 KVM 的轻量级私有云管理平台
 
-基于 **KVM 虚拟化**的轻量级私有云管理平台的设计与实现。以 Go 构建后端 API，Vue3 构建管理前端，实现虚拟机全生命周期、镜像模板、硬件热管理、操作审计与监控的统一管理。
+<p>
+  <img src="branding/virtkite-horizontal.png" alt="鸢航 VirtKite" width="520" />
+</p>
+
+**鸢航 VirtKite** —— 基于 **KVM 虚拟化**的轻量级私有云管理平台的设计与实现。以 Go 构建后端 API，Vue3 构建管理前端，实现虚拟机全生命周期、镜像模板、硬件热管理、操作审计与监控的统一管理。
+
+### 名字由来
+
+**VirtKite = virt（虚拟化生态词根：KVM / libvirt / virt-manager 一脉相承）+ kite（风筝）**——最轻的飞行器，线在你手里：虚拟机飘在云上，管理权收在平台中。中文名「**鸢航**」：鸢即纸鸢（风筝古称），亦指猛禽鸢鹰；航取掌舵远行之意。品牌口号一句话：**把你的私有云放上天，线始终在手中。**
 
 对标 virt-manager 核心功能（创建向导/硬件管理/控制台/存储池/网络/快照），辅以 PVE 式增量克隆（qcow2 backing chain）与 cloud-init 快速初始化。
 

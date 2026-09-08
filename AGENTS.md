@@ -52,6 +52,14 @@
     - 命中任一守卫即跳过并把中文原因写进日志 `[tasks] 保留卷（未删）` 与任务结果的 `kept_volumes` 数组。
     - 已知取舍：「先删父机、再删子机」顺序下父盘会残留为孤儿文件。**这是刻意选择**——宁可留一个垃圾文件，也不能损坏正在用的虚拟机磁盘。清理孤儿卷属后续工作，不要为了「删干净」把守卫拆掉。
 
+## 品牌规范（鸢航 VirtKite，勿当装饰图误删）
+
+- **正式名称**：鸢航 VirtKite（项目代号 vmops 仅存在于代码/目录/包名，UI 与文档一律用品牌名）。
+- **logo 语义**：代码行断口飞出一只纸鸢，金色虚线"断而未断"=管理通道；virt 词根（代码行）+ kite（鸢）双关。
+- **资产位置**：`web/public/brand/logo.svg`（主标 F1 深空蓝金）/ `web/public/brand/mark.svg`（纯鸢简化标，favicon 与侧栏用）/ `web/public/favicon.svg|favicon-32.png|favicon-16.png` / `branding/`（PPT 素材：512/256/128 PNG、白底 light 版、横版组合 logo-horizontal）。
+- **品牌色**：深空蓝底 `#0d2444→#1b3a62`、鸢蓝 `#6db6ff→#2e6bd6`、金 `#ffd268`（点缀色，只用于牵线/鸢眼/飘带）。
+- **已换标位置**：index.html（favicon 三件套+标题「鸢航 VirtKite · 基于 KVM 的轻量级私有云管理平台」）、Login.vue 品牌块、MainLayout 侧栏 brand 区（mark.svg + 「鸢航 VirtKite」）、Dashboard 平台信息卡、ConsolePage 水印（VirtKite console）、README 头部。
+
 ## 前端开发标准
 
 1. 用 `ui-ux-pro-max` 规范：统一间距（8px 栅格）、配色（覆盖 `--el-color-primary`）、组件质感，禁止 emoji 当图标、禁止硬编码散落颜色。

@@ -3,8 +3,8 @@
     <el-aside :width="collapsed ? '64px' : '180px'" class="aside">
       <div class="brand" :class="{ collapsed }">
         <template v-if="!collapsed">
-          <el-icon class="brand-icon"><Monitor /></el-icon>
-          <span class="brand-text">vmops</span>
+          <img class="brand-logo" src="/brand/mark.svg" alt="鸢航" />
+          <span class="brand-text">鸢航 VirtKite</span>
           <el-icon class="collapse-btn" @click="collapsed = true"><Fold /></el-icon>
         </template>
         <el-icon v-else class="collapse-btn center" @click="collapsed = false"><Expand /></el-icon>
@@ -274,9 +274,11 @@ function onUserCommand(cmd) {
   justify-content: center;
   padding: 0;
 }
-.brand-icon {
-  font-size: 1.3rem;
-  color: #fff;
+.brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 .brand-text {
   font-size: 1.15rem;
