@@ -217,9 +217,9 @@
 ## 远程推送注意（本机实测）
 
 - 双远程：`origin` = Gitee（分支名 **master**）、`github` = GitHub（分支名 **main**）；本地只有 `main`。
-- 推送命令：`git push origin main:master` + `git push github main`。
-- Gitee HTTPS token 认证的用户名是 `jiuzhao996`（无连字符，与仓库路径 `jiuzhao-996` 不同），
-  用错报「The token username invalid」。令牌真实用户名可用
+- **仓库已随品牌更名（2026-09）**：GitHub = `jiuzhao996/virtkite`、Gitee = `gitee.com/jiuzhao996/virtkite`（旧地址 vmops 自动 301/302 重定向，本地 remote 已同步改）。
+- 推送命令：`git push origin main:master` + `https_proxy=http://127.0.0.1:7890 git push github main`。
+- Gitee HTTPS token 认证用户名是 `jiuzhao996`；个人 namespace 同为 `jiuzhao996`（历史上的 `jiuzhao-996` 路径已随改名收敛）。令牌真实用户名可用
   `https://gitee.com/api/v5/user?access_token=<token>` 反查。
 - GitHub 直连经常超时/HTTP2 framing 错误，走本机 Clash 代理：
   `https_proxy=http://127.0.0.1:7890 git push github main`。
