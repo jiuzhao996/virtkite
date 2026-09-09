@@ -97,11 +97,28 @@ func main() {
 		r.GET("/", serveIndex)
 		r.NoRoute(serveIndex)
 
-		// 托管前端静态资源（js/css 等），避免被 NoRoute 兜底为 index.html。
-		// 目录必须取自上面探测命中的 webDir，不能硬编码相对路径（工作目录不确定）。
+		// 托管前端静态资源。目录必须取自上面探测命中的 webDir，不能硬编码相对路径（工作目录不确定）。
+		// /assets：Vite 打包产物（js/css/图片，文件名带 hash）
 		assetsDir := filepath.Join(webDir, "assets")
 		if info, statErr := os.Stat(assetsDir); statErr == nil && info.IsDir() {
 			r.Static("/assets", assetsDir)
+		}
+		// webRoot 其余根级静态文件：favicon 三件套 / brand/（鸢航 logo 与侧栏纯鸢标）。
+		// 之前只托管 /assets，brand/logo.svg 等被 NoRoute 兜底成 index.html，页面 logo 全裂。
+		// NoRoute 兜底只应处理 SPA 前端路由（无扩展名的路径），带扩展名的静态请求 404 就 404。
+		for _, sub := range []string{"brand"} {
+			dir := filepath.Join(webDir, sub)
+			if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
+				r.Static("/"+sub, dir)
+			}
+		}
+		for _, f := range []string{"favicon.svg", "favicon-32.png", "favicon-16.png"} {
+			fp := filepath.Join(webDir, f)
+			if _, statErr := os.Stat(fp); statErr == nil {
+				r.GET("/"+f, func(c *gin.Context) {
+					c.File(fp)
+				})
+			}
 		}
 	} else {
 		// 开发场景：后端 `go run main.go` + 前端 `npm run dev`（Vite 把 /api 代理到 8080），
