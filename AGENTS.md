@@ -55,8 +55,8 @@
 ## 品牌规范（鸢航 VirtKite，勿当装饰图误删）
 
 - **正式名称**：鸢航 VirtKite（项目代号 vmops 仅存在于代码/目录/包名，UI 与文档一律用品牌名）。
-- **logo 语义**：代码行断口飞出一只纸鸢，金色虚线"断而未断"=管理通道；virt 词根（代码行）+ kite（鸢）双关。
-- **资产位置**：`web/public/brand/logo.svg`（主标 F1 深空蓝金）/ `web/public/brand/mark.svg`（纯鸢简化标，favicon 与侧栏用）/ `web/public/favicon.svg|favicon-32.png|favicon-16.png` / `branding/`（PPT 素材：512/256/128 PNG、白底 light 版、横版组合 logo-horizontal）。
+- **logo 语义**：三道波浪线既是终端家目录符 `~` 也是海面，纸鸢掠浪而上；金色虚线"断而未断"=管理通道。virt 词根 + kite + 鸢航三关。
+- **资产位置**：`web/public/brand/logo.svg`（主标青绿底）/ `web/public/brand/mark-white.svg`（侧栏透明白鸢版）/ `web/public/brand/logo-teal.svg`（登录页透明版）/ `web/public/favicon.svg|favicon-32.png|favicon-16.png` / `branding/`（PPT 素材：virtkite-logo.svg 与 512/256/128 PNG、白底 light 版、横版组合 logo-horizontal）。
 - **品牌色**：深空蓝底 `#0d2444→#1b3a62`、鸢蓝 `#6db6ff→#2e6bd6`、金 `#ffd268`（点缀色，只用于牵线/鸢眼/飘带）。
 - **已换标位置**：index.html（favicon 三件套+标题「鸢航 VirtKite · 基于 KVM 的轻量级私有云管理平台」）、Login.vue 品牌块、MainLayout 侧栏 brand 区（mark.svg + 「鸢航 VirtKite」）、Dashboard 平台信息卡、ConsolePage 水印（VirtKite console）、README 头部。
 

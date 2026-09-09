@@ -1,13 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
-  <defs><linearGradient id="fv" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#2a9da5"/><stop offset="1" stop-color="#217d83"/>
+  <defs><linearGradient id="tl2" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#2a9da5"/><stop offset="1" stop-color="#1f7e84"/>
   </linearGradient></defs>
-  <rect width="240" height="240" rx="48" fill="url(#fv)"/>
-  <g transform="translate(120,116) rotate(-16) scale(1.55)">
-    <path d="M0,-34 L30,-2 L12,34 L0,22 L-12,34 L-30,-2 Z" fill="#ffffff" opacity="0.97"/>
-    <path d="M0,-34 L0,22 M-30,-2 L30,-2" stroke="#1f8389" stroke-width="3.5" stroke-linecap="round" opacity="0.9"/>
-    <circle cx="0" cy="-2" r="5.5" fill="#ffd268"/>
-    <path d="M0,22 q-12,16 -26,20" stroke="#ffd268" stroke-width="4" stroke-linecap="round"/>
-    <path d="M6,26 q10,16 4,34" stroke="#ffffff" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+  <rect width="240" height="240" rx="48" fill="url(#tl2)"/>
+  <!-- 三道 ~ 作为风（透明度渐变，营造远近） -->
+  <g stroke="#bfe3e6" stroke-width="8" fill="none" stroke-linecap="round">
+    <path d="M40,186 q13,-14 26,0 q13,14 26,0" opacity="0.85"/>
+    <path d="M64,160 q13,-14 26,0 q13,14 26,0" opacity="0.55"/>
+    <path d="M92,138 q11,-12 22,0 q11,12 22,0" opacity="0.3"/>
   </g>
+  <!-- 鸢乘风：切角纸鸢在右上 -->
+  <g transform="translate(150,78) rotate(-18)">
+    <path d="M0,-32 L28,-2 L11,32 L0,21 L-11,32 L-28,-2 Z" fill="#e8f4f5"/>
+    <path d="M0,-32 L0,21 M-28,-2 L28,-2" stroke="#1f7e84" stroke-width="3.5" stroke-linecap="round" opacity="0.9"/>
+    <circle cx="0" cy="-2" r="5.5" fill="#ffd268"/>
+    <path d="M0,21 q-12,16 -26,20" stroke="#ffd268" stroke-width="4" stroke-linecap="round"/>
+  </g>
+  <path d="M118,148 C 128,130 136,112 144,94" stroke="#ffd268" stroke-width="3.5" stroke-dasharray="1 8" stroke-linecap="round" fill="none"/>
 </svg>
