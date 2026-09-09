@@ -3,7 +3,7 @@
     <el-aside :width="collapsed ? '64px' : '180px'" class="aside">
       <div class="brand" :class="{ collapsed }">
         <template v-if="!collapsed">
-          <img class="brand-logo" src="/brand/mark.svg" alt="鸢航" />
+          <img class="brand-logo" src="/brand/mark-white.svg" alt="鸢航" />
           <span class="brand-text">鸢航 VirtKite</span>
           <el-icon class="collapse-btn" @click="collapsed = true"><Fold /></el-icon>
         </template>

@@ -11,7 +11,7 @@
     />
     <el-card class="login-card" shadow="always">
       <div class="login-brand">
-        <img class="logo" src="/brand/logo.svg" alt="鸢航 VirtKite" />
+        <img class="logo" src="/brand/logo-teal.svg" alt="鸢航 VirtKite" />
         <h1>鸢航 <span class="en">VirtKite</span></h1>
         <p>基于 KVM 的轻量级私有云管理平台</p>
       </div>
