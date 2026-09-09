@@ -1,25 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 240" width="760" height="240">
-  <defs>
-    <linearGradient id="hk" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#6db6ff"/><stop offset="1" stop-color="#2e6bd6"/>
-    </linearGradient>
-  </defs>
-  <g transform="translate(120,120) scale(0.9)">
-    <g stroke-linecap="round" fill="none" opacity="0.85">
-      <path d="M-72,40 L-18,40" stroke="#3a6ea8" stroke-width="10"/>
-      <path d="M-72,72 L18,72" stroke="#33639e" stroke-width="10"/>
-      <path d="M-72,8 L-32,8" stroke="#5b9be0" stroke-width="10"/>
-    </g>
-    <g transform="translate(30,-46) rotate(-16)">
-      <path d="M0,-34 L30,-2 L12,34 L0,22 L-12,34 L-30,-2 Z" fill="url(#hk)"/>
-      <path d="M0,-34 L0,22 M-30,-2 L30,-2" stroke="#d8ecff" stroke-width="3.5" stroke-linecap="round" opacity="0.95"/>
-      <circle cx="0" cy="-2" r="5.5" fill="#ffd268"/>
-      <path d="M0,22 q-12,16 -26,20" stroke="#ffd268" stroke-width="4" stroke-linecap="round"/>
-      <path d="M6,26 q10,16 4,34" stroke="#6db6ff" stroke-width="4" stroke-linecap="round" opacity="0.9"/>
-    </g>
-    <path d="M-28,-4 C -14,-14 -4,-26 8,-38" stroke="#ffd268" stroke-width="3.5" stroke-dasharray="1 8" stroke-linecap="round" fill="none"/>
+  <defs><linearGradient id="hk" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#3cb4bc"/><stop offset="1" stop-color="#1f8389"/>
+  </linearGradient></defs>
+  <!-- 波浪 + 鸢（定稿稿） -->
+  <g stroke="#9fc9d4" stroke-width="8" fill="none" stroke-linecap="round">
+    <path d="M34,196 q13,-14 26,0 q13,14 26,0" opacity="0.9"/>
+    <path d="M58,170 q13,-14 26,0 q13,14 26,0" opacity="0.6"/>
+    <path d="M86,148 q11,-12 22,0 q11,12 22,0" opacity="0.35"/>
   </g>
-  <text x="240" y="112" font-family="'PingFang SC','Microsoft YaHei',sans-serif" font-size="72" font-weight="700" fill="#122c4f">鸢航</text>
-  <text x="242" y="164" font-family="'Inter','Segoe UI',sans-serif" font-size="34" font-weight="600" fill="#4d9fff" letter-spacing="2">VirtKite</text>
-  <text x="244" y="200" font-family="'PingFang SC','Microsoft YaHei',sans-serif" font-size="20" fill="#7d93b5">基于 KVM 的轻量级私有云管理平台</text>
+  <g transform="translate(148,86) rotate(-18)">
+    <path d="M0,-32 L28,-2 L11,32 L0,21 L-11,32 L-28,-2 Z" fill="url(#hk)"/>
+    <path d="M0,-32 L0,21 M-28,-2 L28,-2" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" opacity="0.95"/>
+    <circle cx="0" cy="-2" r="5.5" fill="#ffd268"/>
+    <path d="M0,21 q-12,16 -26,20" stroke="#ffd268" stroke-width="4" stroke-linecap="round"/>
+  </g>
+  <path d="M112,156 C 122,138 130,120 138,102" stroke="#ffd268" stroke-width="3.5" stroke-dasharray="1 8" stroke-linecap="round" fill="none"/>
+  <text x="240" y="112" font-family="'PingFang SC','Microsoft YaHei',sans-serif" font-size="72" font-weight="700" fill="#1f5e64">鸢航</text>
+  <text x="242" y="164" font-family="'Inter','Segoe UI',sans-serif" font-size="34" font-weight="600" fill="#2a9da5" letter-spacing="2">VirtKite</text>
+  <text x="244" y="200" font-family="'PingFang SC','Microsoft YaHei',sans-serif" font-size="20" fill="#7d93a5">基于 KVM 的轻量级私有云管理平台</text>
 </svg>
