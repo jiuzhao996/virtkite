@@ -42,3 +42,7 @@ web/dist/
 .nfs*.zcode/
 
 .zcode/
+
+# TLS 私钥与证书（kpyun.fun）——绝不入库
+deploy/tls/
+

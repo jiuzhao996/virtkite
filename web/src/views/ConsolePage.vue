@@ -447,7 +447,12 @@ async function connectVNC() {
     // 使「只读运维」名副其实（VNC 协议本身没有只读模式，必须在客户端关掉输入）
     vncViewOnly.value = !!(res.data && res.data.view_only)
     const viewOnlyParam = vncViewOnly.value ? '&view_only=1' : ''
-    vncUrl.value = `http://${host}:6080/vnc.html?autoconnect=1&resize=scale${viewOnlyParam}&path=websockify?token=${token}`
+    // HTTPS 部署（如 https://kpyun.fun）下 http://host:6080 会被浏览器当混合内容拦截：
+    // 改走同源 /vnc/ 前缀（云端 nginx 反代 websockify 并做 wss 升级），本地 http 直连 6080 行为不变
+    const isHttps = window.location.protocol === 'https:'
+    const vncBase = isHttps ? `${window.location.origin}/vnc` : `http://${host}:6080`
+    const wsPath = isHttps ? 'vnc/websockify' : 'websockify'
+    vncUrl.value = `${vncBase}/vnc.html?autoconnect=1&resize=scale${viewOnlyParam}&path=${wsPath}?token=${token}`
     // 兜底：iframe onload 失败时 15s 后关闭 loading，避免无限转圈（onVncLoad 会清掉）
     if (vncTimer) clearTimeout(vncTimer)
     vncTimer = setTimeout(() => { vncFrameLoading.value = false; vncTimer = null }, 15000)
