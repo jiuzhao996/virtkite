@@ -86,6 +86,8 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+      # 本地长存（双存储架构：本地 90 天，云端 VictoriaMetrics 短存 1 个月，remote_write 推送）
+      - "--storage.tsdb.retention.time=90d"
       # 注意：Prometheus 2.x 已移除 --alertmanager.url 参数，告警对接在 prometheus.yml 的 alerting 段配置
 
   # Alertmanager：告警分组去重（UI :9093，通知通道见 deploy/alertmanager.yml 注释）

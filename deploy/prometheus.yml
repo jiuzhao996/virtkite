@@ -29,3 +29,16 @@ scrape_configs:
     file_sd_configs:
       - files: ["/etc/prometheus/file_sd/*.json"]
         refresh_interval: 30s
+
+# 双存储：本地 TSDB 长存 90d；vmops 业务指标 remote_write 推送到云端 VictoriaMetrics（短存 1 个月）
+# 端点 8081 已在安全组放行；云端 nginx TLS + Basic Auth（凭据见 deploy/tls/.vm_basic.secret，不入库）
+remote_write:
+  - url: "https://kpyun.fun:8081/api/v1/write"
+    basic_auth:
+      username: virtkite
+      password: "5138e87ed1e7f86e1e60ed2d"
+    write_relabel_configs:
+      # 只推平台业务指标（vmops_*），丢弃 go_/process_ 等运行时噪声
+      - source_labels: [job]
+        regex: vmops
+        action: keep
