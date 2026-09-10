@@ -303,8 +303,9 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 	}
 
 	// 删除磁盘文件（仅当位于镜像池/镜像目录下，防止误删系统文件）。
-	// 若该镜像已被 VM 引用（source_image_id 直接引用文件），libvirt 层 vol-delete 会因卷被占用报错，
-	// 需先删除引用 VM 再删镜像；此处不做外键检查，由 virt 层报错兜底。
+	// 删除前必须过引用守卫：该镜像可能正被 VM 以 source_image_id 直接引用（不拷贝），
+	// 或是其他卷的 backing 父盘——os.Remove 绕过 libvirt，没有任何报错兜底，删了就是不可逆损坏。
+	// 与 storage.DeleteVolume / shouldKeepVol 同一立场：宁可删不掉，不可损坏在用磁盘。
 	poolPath := ""
 	if p, err := h.Virt.GetPoolPath(imagePool); err == nil {
 		poolPath = p
@@ -313,6 +314,10 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 		inPool := poolPath != "" && strings.HasPrefix(img.Path, poolPath)
 		inDir := strings.HasPrefix(img.Path, config.GlobalConfig.ImageDir)
 		if inPool || inDir {
+			if refs, refErr := h.imageRefs(img.Path); refErr == nil && refs != "" {
+				Fail(c, http.StatusConflict, "镜像正被使用，拒绝删除："+refs)
+				return
+			}
 			if err := os.Remove(img.Path); err != nil && !os.IsNotExist(err) {
 				// 文件删除失败不阻断主流程，记录后继续
 				c.Error(err)
@@ -321,6 +326,36 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 	}
 
 	Success(c, gin.H{"message": "镜像已删除"})
+}
+
+// imageRefs 计算文件路径的在用引用：被 VM 挂载 / 被任何池内卷当 backing 父盘。
+// 返回空串 = 无引用。查不到的部分静默跳过（与删除守卫的保守取向一致——查不到引用时放行删除，
+// 但虚拟机侧挂载查询失败会记日志，避免完全盲删）。
+func (h *ImageHandler) imageRefs(path string) (string, error) {
+	var refs []string
+	sources, err := h.Virt.ListAllDomainDiskSources()
+	if err != nil {
+		return "", err
+	}
+	for dom, paths := range sources {
+		for _, p := range paths {
+			if p == path {
+				refs = append(refs, "被虚拟机 "+dom+" 挂载")
+			}
+		}
+	}
+	// backing 依赖：扫描常见池（base/images/exten），父盘路径命中即视为在用
+	for _, pool := range []string{"base", "images", "exten", imagePool} {
+		backing, err := h.Virt.ListBackingRefs(pool)
+		if err != nil {
+			continue
+		}
+		if children, ok := backing[path]; ok && len(children) > 0 {
+			refs = append(refs, fmt.Sprintf("被 %d 个卷当 backing 父盘", len(children)))
+			break
+		}
+	}
+	return strings.Join(refs, "、"), nil
 }
 
 // SetImageTemplate 标记/取消镜像为模板（body: {is_template}）。

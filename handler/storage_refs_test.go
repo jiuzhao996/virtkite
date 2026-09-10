@@ -65,7 +65,7 @@ func TestInferPoolRole(t *testing.T) {
 		{"img", "/home/jiuzhao/data/img", "安装镜像"},
 		{"default", "/var/lib/libvirt/images", "系统池"},
 		{"mystorage", "/srv/vm/disks", ""}, // 未命中约定：空 = 未分类，可在 UI 手动指定
-		{"base", "/srv/other", "模板基盘"}, // 池名命中即推断，不依赖路径
+		{"base", "/srv/other", "模板基盘"},     // 池名命中即推断，不依赖路径
 	}
 	for _, c := range cases {
 		if got := inferPoolRole(c.name, c.path); got != c.want {

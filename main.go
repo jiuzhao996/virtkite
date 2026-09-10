@@ -67,6 +67,7 @@ func main() {
 	// 置终态，避免重启后幽灵任务与幽灵会话（VNC 靠 last_seen 过期清扫收敛，无需处理）
 	sweepStaleRecords(db)
 	startAuditRetention(db)
+	startAlertRetention(db)
 
 	// Prometheus file_sd 目标文件写入（服务发现闭环：平台建 VM → VM 的 node_exporter
 	// 自动进抓取目标）。FILE_SD_PATH 未配置时内部直接不启动。
@@ -77,6 +78,11 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.Default()
+	// 只信任本机回环代理（frp 客户端在宿主机本机转发云 nginx 的回源流量）：
+	// gin 默认信任所有代理，客户端伪造 X-Forwarded-For 最左值即可绕过登录限流并污染审计 IP
+	if err := r.SetTrustedProxies([]string{"127.0.0.1"}); err != nil {
+		log.Printf("设置受信代理失败（沿用默认）: %v", err)
+	}
 
 	// 镜像上传走 multipart：超过该阈值的部分落磁盘临时文件，不再全量驻留内存，
 	// 避免多 GB 的 qcow2/ISO 把进程内存打满（显式声明 32MB 意图，勿改大）
@@ -407,6 +413,40 @@ func startAuditRetention(db *gorm.DB) {
 				res := db.Exec("DELETE FROM audit_logs WHERE created_at < ? LIMIT 10000", cutoff)
 				if res.Error != nil {
 					log.Printf("[audit] 保留期清理失败: %v", res.Error)
+					return
+				}
+				if res.RowsAffected < 10000 {
+					return
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+		}
+
+		cleanup()
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanup()
+		}
+	}()
+}
+
+// startAlertRetention 告警历史保留期清理：webhook 按 fingerprint upsert 本身有去重，
+// 但指纹空间无上限（公开端点被刷或长期运行都会涨），照审计同款策略删 30 天前的记录。
+func startAlertRetention(db *gorm.DB) {
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[alerts] 保留期清理 panic=%v\n%s", rec, debug.Stack())
+			}
+		}()
+
+		cleanup := func() {
+			cutoff := time.Now().AddDate(0, 0, -30)
+			for {
+				res := db.Exec("DELETE FROM alerts WHERE created_at < ? LIMIT 10000", cutoff)
+				if res.Error != nil {
+					log.Printf("[alerts] 保留期清理失败: %v", res.Error)
 					return
 				}
 				if res.RowsAffected < 10000 {

@@ -13,7 +13,7 @@ func TestValidate(t *testing.T) {
 		value   string
 		wantErr bool
 	}{
-		{"合法池名", KeyDefaultStoragePool, "vmops", false},
+		{"合法池名", KeyDefaultStoragePool, "images", false},
 		{"池名含点连字符", KeyDefaultStoragePool, "nvme-images.v2", false},
 		{"池名为空", KeyDefaultStoragePool, "", true},
 		{"池名含路径分隔", KeyDefaultStoragePool, "a/b", true},
@@ -43,7 +43,7 @@ func TestValidate(t *testing.T) {
 // TestDefaultResolvers 未接线时 resolver 必须返回与旧硬编码一致的默认值，
 // 保证「系统设置未配置」与「改造前」行为完全相同。
 func TestDefaultResolvers(t *testing.T) {
-	if DefaultStoragePoolFallback != "vmops" {
+	if DefaultStoragePoolFallback != "images" {
 		t.Errorf("DefaultStoragePoolFallback = %q, want vmops", DefaultStoragePoolFallback)
 	}
 	if VNCTokenTTLDefaultMin != 5 {

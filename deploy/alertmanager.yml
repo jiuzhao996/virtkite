@@ -21,7 +21,7 @@ receivers:
       # 平台告警网关：推送回 vmops 入库（监控中心可查告警历史）。
       # host.docker.internal 由 compose 的 extra_hosts(host-gateway) 解析到宿主机；
       # 平台设置了 ALERT_WEBHOOK_TOKEN 时，在 url 后追加 ?token=<值>，两侧必须一致。
-      - url: "http://host.docker.internal:8080/api/monitor/webhook"
+      - url: "http://host.docker.internal:8080/api/monitor/webhook?token=1e6195a909d858fc387f31a2be5f9d9e"
         send_resolved: true
     # 生产示例（钉钉群机器人，取消注释并填 key）：
     # - url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_KEY"

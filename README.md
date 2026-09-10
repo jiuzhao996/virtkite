@@ -52,7 +52,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] 存量 VM 导入 / 纳管
 - [x] **安全加固**（路径参数主键统一解析防 SQL 注入 / libvirt XML 全部走 `encoding/xml` / JWT 锁定 HS256 / SSH 目标白名单 / release 密钥强校验）
 - [x] E2E 回归脚本（`scripts/smoke.sh`，23 项断言）
-- [x] 单元测试（122 个顶层测试函数 / 约 890 个子用例 / 5 个包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
+- [x] 单元测试（140 个顶层测试函数 / 约 950 个子用例 / 7 个包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
 - [x] 前端工程化（路由懒加载 + manualChunks 分包：首屏下载量 −50%；`utils/format.js` 收敛 10 余处重复；图标全部换成 `@element-plus/icons-vue`）
 
 
@@ -138,12 +138,9 @@ npm run dev          # 访问 http://localhost:5173
 ### 4. 监控栈（可选）
 
 ```bash
-# 方式 A：二进制直跑（推荐本机）
-# Prometheus + Alertmanager + Grafana 二进制见 ~/monitor/（README 有启停命令）
-# 看板：http://127.0.0.1:3000/d/vmops-overview（admin/admin）
-
-# 方式 B：docker-compose 一键栈
+# docker-compose 一键栈（唯一方式；原生 ~/monitor 目录已废弃删除）
 docker compose up -d prometheus grafana alertmanager
+# 看板：http://127.0.0.1:3000/d/vmops-overview（admin/admin）
 # Prometheus :9090，Grafana :3000，Alertmanager :9093
 ```
 
@@ -160,7 +157,7 @@ docker compose up -d prometheus grafana alertmanager
 
 ```bash
 ./scripts/smoke.sh          # E2E 23 项：只读接口 + metrics + 创建/删除 task 全链路 + 硬件管理
-go test -race ./...         # 单元测试 122 个顶层函数 / 约 890 子用例 / 5 个包（必须带 -race）
+go test -race ./...         # 单元测试 140 个顶层函数 / 约 950 子用例 / 7 个包（必须带 -race）
 go build ./... && go vet ./... && gofmt -l .
 ```
 
@@ -293,7 +290,7 @@ vmops/
 │   └── vnc/             # VNC token 存储
 ├── scripts/             # init-db.sql / smoke.sh（E2E 回归）/ start-novnc.sh
 ├── deploy/              # prometheus.yml / alerts.yml / grafana 看板与 provisioning
-├── web/                 # Vue3 + Vite 前端（14 页面：Dashboard/VmList/VmDetail/向导/Host/Image/Storage/Network/Task/Session/Settings/Audit/Console/Login）
+├── web/                 # Vue3 + Vite 前端（17 页面：Dashboard/Monitor/VmList/VmDetail/向导/Host/Image/Storage/Network/Task/Audit(含Session)/Settings/UserList/Profile/Console/Login）
 │   ├── src/utils/format.js  # 状态文案/时间/尺寸/错误提取统一实现（收敛 10 余处重复）
 │   └── dist/            # 构建产物，由后端托管（路由懒加载 + manualChunks：首屏 −50%）
 └── docs/                # 设计 / 开发文档（含 api-contract / task-contract）
@@ -322,7 +319,7 @@ vmops/
 |---|---|---|
 | `POST /api/networks/xml`、`PUT /api/networks/:name`、`PUT /api/vms/:id/xml` | 接受调用方原始 XML 直接定义，无结构校验 | 仅 admin 可达 |
 | `GET /metrics` | 公开无鉴权（Prometheus 抓取需要） | 泄漏 VM 名与资源指标，需防火墙限制来源 |
-| `POST /api/auth/login` | 无失败次数限流 / 验证码 | 可离线爆破弱口令 |
+| `POST /api/auth/login` | ✅ 已限流（同 IP 1 分钟 5 次失败锁定）+ 无验证码 | 残余：无验证码，可换 IP 分布式爆破 |
 | CORS | `CORS_ORIGINS` 默认 `*` | 生产需收敛为具体来源 |
 | Web 终端 SSH | `HostKeyCallback` 为 `InsecureIgnoreHostKey()` | 目标已限私有网段，残余中间人风险 |
 | `golangci-lint` | 本机未安装，深度 lint 未执行 | 静态检查覆盖不完整（`go build`/`go vet`/`gofmt` 已过） |

@@ -14,6 +14,8 @@ alerting:
 
 scrape_configs:
   - job_name: vmops
+    authorization:
+      credentials: ba39ded15a584d4ac578cabf08143a6c
     static_configs:
       # host.docker.internal 经 compose 的 extra_hosts(host-gateway) 解析到宿主机网关，
       # 兼容两种形态：app 原生直跑（当前推荐形态）与 app 容器（端口已映射宿主机 8080）。
