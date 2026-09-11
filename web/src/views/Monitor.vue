@@ -176,8 +176,12 @@ const firingCount = computed(
 )
 
 // Grafana 看板 uid 与 deploy/grafana-dashboard.json 一致；kiosk 模式隐藏侧栏只留面板
-const grafanaEmbed = `http://${window.location.hostname}:3000/d/vmops-overview/?kiosk&refresh=15s`
-const grafanaFull = `http://${window.location.hostname}:3000/d/vmops-overview/`
+// HTTPS（公网 kpyun.fun）走云端 nginx 同源反代 /grafana/（https 页面嵌 http iframe 会被混合内容拦截）；
+// 本地 http 保持直连 3000
+const isHttps = window.location.protocol === 'https:'
+const grafanaBase = isHttps ? `${window.location.origin}/grafana` : `http://${window.location.hostname}:3000`
+const grafanaEmbed = `${grafanaBase}/d/vmops-overview/?kiosk&refresh=15s`
+const grafanaFull = `${grafanaBase}/d/vmops-overview/`
 
 async function loadAlerts() {
   if (alertsLoading.value) return

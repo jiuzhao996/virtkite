@@ -125,6 +125,9 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_SECURITY_ALLOW_EMBEDDING: "true"
+      # 公网同源反代（https://kpyun.fun/grafana/）：子路径服务 + 根 URL 指向公网路径
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SERVER_ROOT_URL: https://kpyun.fun/grafana/
     volumes:
       - ./deploy/grafana-datasource.yml:/etc/grafana/provisioning/datasources/vmops.yml:ro
       - ./deploy/grafana-dashboard-provider.yml:/etc/grafana/provisioning/dashboards/vmops.yml:ro
