@@ -1,6 +1,6 @@
 {
   "uid": "vmops-vms",
-  "title": "vmops 虚拟机性能明细",
+  "title": "vmops 虚拟机性能",
   "tags": [
     "vmops"
   ],
@@ -94,7 +94,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 7
       },
       "fieldConfig": {
         "defaults": {
@@ -130,7 +130,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 8
+        "y": 7
       },
       "fieldConfig": {
         "defaults": {
@@ -166,7 +166,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 14
       },
       "fieldConfig": {
         "defaults": {
@@ -202,7 +202,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 14
       },
       "fieldConfig": {
         "defaults": {

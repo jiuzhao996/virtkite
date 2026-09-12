@@ -47,3 +47,39 @@ groups:
           severity: warning
         annotations:
           summary: "虚拟机 {{ $labels.vm }} CPU {{ $value | printf \"%.1f\" }}% 持续 10 分钟超 90%"
+
+      # 平台自身失联（Prometheus 抓不到 /metrics，典型原因：vmops 进程挂了）
+      - alert: VmopsDown
+        expr: up{job="vmops"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "vmops 平台失联（Prometheus 抓取失败超 2 分钟）"
+
+      # 宿主机内存持续高位
+      - alert: HostMemHigh
+        expr: vmops_host_mem_used_kib / vmops_host_mem_total_kib > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "宿主机内存占用 {{ $value | printf \"%.1f\" }}（已用/总量比值超 0.9 持续 5 分钟）"
+
+      # 单 VM 内存持续高位
+      - alert: VMMemHigh
+        expr: vmops_vm_mem_used_kib / vmops_vm_mem_total_kib > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "虚拟机 {{ $labels.vm }} 内存占用超 90% 持续 10 分钟"
+
+      # VM 磁盘 IO 持续跑高（读+写 > 50MB/s，按需调阈值）
+      - alert: VMDiskIOHigh
+        expr: vmops_vm_disk_read_bps + vmops_vm_disk_write_bps > 52428800
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "虚拟机 {{ $labels.vm }} 磁盘 IO 超 50MB/s 持续 10 分钟"
