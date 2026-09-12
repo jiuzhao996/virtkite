@@ -128,8 +128,6 @@
           <!-- JumpServer 风格顶部信息栏 -->
           <div class="term-header">
             <div class="term-header-left">
-              <span class="term-logo"><el-icon><Lock /></el-icon>VMOps</span>
-              <span class="term-divider">|</span>
               <span v-if="connected" class="term-status online">● 已连接</span>
               <span v-else class="term-status offline">○ 未连接</span>
             </div>
@@ -181,11 +179,6 @@
           <!-- 终端主体（SSH / 串口共用） -->
           <div v-else-if="connected" class="term-body">
             <div ref="termEl" class="terminal-container" />
-            <!-- 倾斜水印 -->
-            <div class="watermark">
-              <div class="watermark-line">{{ vm ? vm.name : 'vm' }}</div>
-              <div class="watermark-line watermark-sub">VirtKite console</div>
-            </div>
           </div>
 
           <!-- 底部操作栏 -->
@@ -205,7 +198,6 @@
             </div>
             <div class="term-footer-right">
               <span class="text-muted"><el-icon><InfoFilled /></el-icon>鼠标选中复制，Ctrl+Shift+V 粘贴</span>
-              <span class="term-size">{{ connected ? termSize : '--' }}</span>
             </div>
           </div>
         </div>
@@ -227,7 +219,6 @@ import {
   Clock,
   Connection,
   InfoFilled,
-  Lock,
   Monitor,
   Platform,
   Refresh,
@@ -270,7 +261,6 @@ const connecting = ref(false)
 const termError = ref('')
 const termEl = ref(null)
 const clock = ref('')
-const termSize = ref('')
 const serialUnavailable = ref(false)
 const serialReason = ref('')
 
@@ -631,13 +621,8 @@ async function initTerminal() {
   term.focus()
 }
 
-function updateTermSize() {
-  if (term) termSize.value = `${term.cols}×${term.rows}`
-}
-
 function onResize() {
   if (fitAddon) fitAddon.fit()
-  updateTermSize()
   if (view.value === 'ssh' && ws && ws.readyState === WebSocket.OPEN && term) {
     ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
   }
@@ -991,7 +976,6 @@ onUnmounted(() => cleanupConnection())
 }
 .term-header-center { justify-content: center; }
 .term-header-right { justify-content: flex-end; flex-shrink: 0; }
-.term-logo { font-weight: 700; color: #58a6ff; font-size: 1rem; letter-spacing: 0.5px; white-space: nowrap; }
 .term-status { white-space: nowrap; }
 .term-divider { color: rgba(88, 166, 255, 0.2); }
 .term-status.online { color: #3fb950; font-weight: 600; }
@@ -1114,28 +1098,6 @@ onUnmounted(() => cleanupConnection())
   background: transparent !important;
 }
 
-.watermark {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 20px;
-  transform: rotate(-20deg);
-  opacity: 0.38;
-}
-.watermark-line {
-  font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
-  font-size: 2.6rem;
-  font-weight: 700;
-  color: #fff;
-  white-space: nowrap;
-  text-shadow: 0 0 10px rgba(0, 0, 0, 0.6), 0 0 60px rgba(255, 255, 255, 0.5);
-}
-.watermark-sub { font-size: 1.4rem; font-weight: 400; }
 
 /* ---------- 底部操作栏 ---------- */
 .term-footer {
@@ -1154,12 +1116,6 @@ onUnmounted(() => cleanupConnection())
 .term-footer-left { display: flex; gap: 8px; }
 .term-footer-right { display: flex; align-items: center; gap: 14px; }
 .text-muted { color: #8b949e; }
-.term-size {
-  font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
-  color: #79c0ff;
-  min-width: 52px;
-  text-align: right;
-}
 .ft-btn {
   color: #79c0ff;
   border-color: rgba(88, 166, 255, 0.3);
