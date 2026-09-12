@@ -47,8 +47,12 @@
             <div class="nc-row wide"><span class="nc-label">DHCP 范围</span><span class="mono">{{ row.dhcp_start && row.dhcp_end ? row.dhcp_start + ' - ' + row.dhcp_end : '—' }}</span></div>
           </div>
           <div class="nc-actions">
-            <el-button v-if="isAdmin" :icon="VideoPlay" :disabled="row.active" @click="act(row, 'start')">启动</el-button>
-            <el-button v-if="isAdmin" :icon="VideoPause" :disabled="!row.active" @click="act(row, 'stop')">停止</el-button>
+            <!-- 启动/停止状态切换钮：运行中显「停止」，停止态显「启动」 -->
+            <el-button
+              v-if="isAdmin"
+              :icon="row.active ? VideoPause : VideoPlay"
+              @click="act(row, row.active ? 'stop' : 'start')"
+            >{{ row.active ? '停止' : '启动' }}</el-button>
             <el-button v-if="isAdmin" :icon="Edit" @click="openEdit(row)">编辑 XML</el-button>
             <el-button v-if="isAdmin" type="danger" plain :icon="Delete" @click="remove(row)">删除</el-button>
           </div>
