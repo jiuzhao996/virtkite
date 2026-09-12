@@ -47,7 +47,7 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 			"time":        time.Now().Format("2006-01-02 15:04:05"),
 		},
 		"virt": gin.H{
-			"libvirt_uri": cfg.LibvirtURI,
+			"libvirt_uri": virt.URI,
 		},
 		"storage": gin.H{
 			"image_dir": cfg.ImageDir,

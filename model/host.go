@@ -9,7 +9,7 @@ import (
 // Host 宿主机模型。
 // 定位是「宿主机登记与状态采集」：登记 SSH 信息用于连通性探测（ping），
 // 关联 vms 做资源归属。跨宿主机的虚拟化操作不在本平台范围内——
-// 虚拟化连接由全局 LIBVIRT_URI（config.LibvirtURI，默认 qemu:///system）决定。
+// 虚拟化连接固定为 qemu:///system（service/virt.New 的 unix socket 直连）。
 // 早期版本曾在此放 libvirt_uri 字段冒充多宿主机纳管，因从未用于建立连接已移除。
 type Host struct {
 	ID          uint           `gorm:"primaryKey" json:"id"`
@@ -21,7 +21,6 @@ type Host struct {
 	CPUCores    int            `json:"cpu_cores"`
 	MemoryGB    float64        `json:"memory_gb"`
 	DiskGB      float64        `json:"disk_gb"`
-	OSVersion   string         `gorm:"size:100" json:"os_version"`
 	Description string         `gorm:"type:text" json:"description"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`

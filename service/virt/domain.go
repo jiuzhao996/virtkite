@@ -150,6 +150,8 @@ func (v *Virt) GetVNCInfo(name string) (int, error) {
 		return 0, fmt.Errorf("虚拟机 %s 未运行，无法连接控制台", name)
 	}
 
+	// 注意必须用运行时 XML（flag 0）：VNC 端口是 libvirt 启动域时分配并注入运行时 XML 的，
+	// INACTIVE 持久定义里没有端口，控制台会拿不到 display。
 	xmlstr, err := l.DomainGetXMLDesc(dom, 0)
 	if err != nil {
 		return 0, fmt.Errorf("获取虚拟机 XML 失败: %w", err)
@@ -244,7 +246,10 @@ func (v *Virt) GetDomainXML(name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("虚拟机 %s 不存在: %w", name, err)
 	}
-	xmlstr, err := l.DomainGetXMLDesc(dom, 0)
+	// INACTIVE（virsh dumpxml --inactive）：返回持久定义而非运行时副本。
+	// XML 编辑（整域/设备级）以持久配置为底稿——define 写入的修改只体现在持久配置中，
+	// 用运行时 XML 做底稿会出现"保存后读不回"的假象（运行时属性 index= 等也会混入）。
+	xmlstr, err := l.DomainGetXMLDesc(dom, libvirt.DomainXMLInactive)
 	if err != nil {
 		return "", fmt.Errorf("获取虚拟机 XML 失败: %w", err)
 	}

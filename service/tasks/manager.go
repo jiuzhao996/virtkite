@@ -186,26 +186,6 @@ func (m *Manager) Get(id uint) (*model.Task, error) {
 	return &task, nil
 }
 
-// List 按 id 倒序查询任务列表，status 为空查全部。
-func (m *Manager) List(limit int, status string) ([]model.Task, error) {
-	if limit <= 0 {
-		limit = defaultListLimit
-	}
-	if limit > maxListLimit {
-		limit = maxListLimit
-	}
-
-	items := []model.Task{}
-	q := m.DB.Order("id desc").Limit(limit)
-	if status != "" {
-		q = q.Where("status = ?", status)
-	}
-	if err := q.Find(&items).Error; err != nil {
-		return nil, fmt.Errorf("查询任务列表失败: %w", err)
-	}
-	return items, nil
-}
-
 // ListPaged 分页版任务列表：返回当前页与筛选条件下的真实总数。
 // page 从 1 起；pageSize 钳制到 [1, maxListLimit]。
 func (m *Manager) ListPaged(page, pageSize int, status string) ([]model.Task, int64, error) {

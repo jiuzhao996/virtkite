@@ -397,7 +397,7 @@ func RegisterVMTasks(m *Manager) {
 
 // execCreateVM 创建虚拟机（对应 virsh vol-create-as + virsh define）。
 // payload 复刻原 CreateVM 请求体：
-// {name*, host_id, template, storage_pool, vcpu, memory_mb, disk_gb,
+// {name*, host_id, storage_pool, vcpu, memory_mb, disk_gb,
 //
 //	disks[{create_gb,source,source_image_id,cloud_init}], interfaces[{type,source,mac,model}],
 //	network, iso_path, cloud_init{hostname,user,password,ssh_key,net_mode,ip,gateway,dns}}。
@@ -415,7 +415,6 @@ func execCreateVM(ctx *ExecContext) error {
 		return errors.New("虚拟机名称只允许字母、数字、下划线和连字符")
 	}
 
-	template, _ := strParam(payload, "template")
 	storagePool, _ := strParam(payload, "storage_pool")
 	network, _ := strParam(payload, "network")
 	isoPath, _ := strParam(payload, "iso_path")
@@ -675,7 +674,6 @@ func execCreateVM(ctx *ExecContext) error {
 		UUID:        uuid,
 		Name:        name,
 		HostID:      host.ID,
-		Template:    template,
 		StoragePool: storagePool,
 		VCPU:        vcpu,
 		MemoryMB:    memoryMB,
@@ -919,7 +917,6 @@ func execCloneVM(ctx *ExecContext) error {
 		UUID:        uuid,
 		Name:        name,
 		HostID:      src.HostID,
-		Template:    "clone",
 		StoragePool: pool,
 		VCPU:        source.VCPU,
 		MemoryMB:    source.MemoryMB,
@@ -1087,7 +1084,6 @@ func execCloneImageVM(ctx *ExecContext) error {
 		UUID:        uuid,
 		Name:        name,
 		HostID:      host.ID,
-		Template:    "image",
 		StoragePool: poolName, // 实际克隆卷落在镜像所在池
 		VCPU:        vcpu,
 		MemoryMB:    memoryMB,

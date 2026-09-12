@@ -24,7 +24,6 @@ type VM struct {
 	UUID        string         `gorm:"size:36;uniqueIndex" json:"uuid"`
 	Name        string         `gorm:"size:100;not null" json:"name"`
 	HostID      uint           `gorm:"not null;index" json:"host_id"`
-	Template    string         `gorm:"size:100" json:"template"`
 	StoragePool string         `gorm:"size:100;default:vmops" json:"storage_pool"`
 	VCPU        int            `gorm:"default:1" json:"vcpu"`
 	MemoryMB    int            `gorm:"default:1024" json:"memory_mb"`

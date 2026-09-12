@@ -24,14 +24,14 @@ type Config struct {
 	// CORS配置
 	CORSOrigins string
 
-	// 虚拟化配置
-	LibvirtURI string
-
 	// 镜像存储目录
 	ImageDir string
 
 	// cloud-init seed 镜像目录（需当前用户可写、qemu 进程可读；不依赖存储池目录权限）
 	SeedDir string
+
+	// Grafana 地址（监控中心看板 iframe 与探活用；compose 内为 http://grafana:3000）
+	GrafanaURL string
 
 	// Alertmanager 地址（监控中心代理查询告警用；docker compose 内为 http://alertmanager:9093）
 	AlertmanagerURL string
@@ -74,14 +74,14 @@ func Init() {
 		// CORS配置
 		CORSOrigins: getEnv("CORS_ORIGINS", "*"),
 
-		// 虚拟化配置
-		LibvirtURI: getEnv("LIBVIRT_URI", "qemu:///system"),
-
 		// 镜像存储目录
 		ImageDir: getEnv("IMAGE_DIR", "/var/lib/libvirt/images"),
 
 		// cloud-init seed 镜像目录
 		SeedDir: getEnv("SEED_DIR", "/home/jiuzhao/vmops/data/seed"),
+
+		// Grafana 地址
+		GrafanaURL: getEnv("GRAFANA_URL", "http://127.0.0.1:3000"),
 
 		// Alertmanager 地址
 		AlertmanagerURL: getEnv("ALERTMANAGER_URL", "http://127.0.0.1:9093"),

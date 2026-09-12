@@ -98,6 +98,9 @@ func main() {
 
 	if indexBytes != nil {
 		serveIndex := func(c *gin.Context) {
+			// index.html 必须禁缓存：内存中的 index 引用带 hash 的 assets（可长期缓存），
+			// 但 index 本身若被浏览器缓存，前端更新后会加载旧 chunk 出现"改了没生效/功能缺失"假象
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 			c.Data(http.StatusOK, "text/html; charset=utf-8", indexBytes)
 		}
 		r.GET("/", serveIndex)
@@ -238,6 +241,7 @@ func main() {
 			vms.GET("/:id", vmHandler.GetVM)
 			vms.GET("/:id/spec", vmHandler.GetVMSpec)
 			vms.PUT("/:id/spec", vmHandler.UpdateVMSpec)
+
 			vms.POST("/:id/clone", vmHandler.CloneVM)
 			vms.POST("/:id/pause", vmHandler.PauseVM)
 			vms.POST("/:id/resume", vmHandler.ResumeVM)
@@ -247,7 +251,6 @@ func main() {
 			vms.PUT("/:id/cpu", vmHandler.SetVcpu)
 			vms.PUT("/:id/memory", vmHandler.SetMemory)
 			vms.PUT("/:id/autostart", vmHandler.SetAutostart)
-			vms.PUT("/:id/boot", vmHandler.SetBoot)
 			vms.POST("/:id/devices/disks", vmHandler.AttachDisk)
 			vms.POST("/:id/devices/disks/quick", vmHandler.QuickAttachDisk)
 			vms.DELETE("/:id/devices/disks/:target", vmHandler.DetachDisk)
@@ -320,6 +323,7 @@ func main() {
 			monitor.GET("/alerts/history", monitorHandler.AlertHistory)
 			// file_sd 抓取目标预览（与后台落盘文件同源，调试/前端展示用）
 			monitor.GET("/file-sd", monitorHandler.PreviewFileSD)
+			monitor.GET("/grafana-status", monitorHandler.GrafanaStatus)
 		}
 
 		// 仪表盘（仅管理员）
@@ -327,6 +331,7 @@ func main() {
 		dashboard.Use(middleware.OperatorMiddleware())
 		{
 			dashboard.GET("/overview", dashboardHandler.Overview)
+			dashboard.GET("/capacity", dashboardHandler.Capacity)
 			dashboard.GET("/vm-status", dashboardHandler.VMStatusDistribution)
 			dashboard.GET("/host-stats", dashboardHandler.HostStats)
 			dashboard.GET("/vm-perf", dashboardHandler.VmPerf)
@@ -343,7 +348,6 @@ func main() {
 			audit.GET("", auditHandler.ListAuditLogs)
 			audit.GET("/actions", auditHandler.ListAuditActions)
 			audit.GET("/summary", auditHandler.AuditActionSummary)
-			audit.GET("/:id", auditHandler.GetAuditLog)
 		}
 
 		// 系统设置快照（仅管理员）

@@ -79,13 +79,36 @@ type diskTargetXML struct {
 }
 
 type diskXML struct {
-	XMLName  xml.Name       `xml:"disk"`
-	Type     string         `xml:"type,attr"`
-	Device   string         `xml:"device,attr"`
-	Driver   *diskDriverXML `xml:"driver"`
-	Source   *diskSourceXML `xml:"source"`
-	Target   diskTargetXML  `xml:"target"`
-	ReadOnly *emptyXML      `xml:"readonly"`
+	XMLName      xml.Name        `xml:"disk"`
+	Type         string          `xml:"type,attr"`
+	Device       string          `xml:"device,attr"`
+	Driver       *diskDriverXML  `xml:"driver"`
+	Source       *diskSourceXML  `xml:"source"`
+	BackingStore *backingStoreXML `xml:"backingStore"` // 增量盘的父盘链（qcow2 backing）
+	Target       diskTargetXML   `xml:"target"`
+	ReadOnly     *emptyXML       `xml:"readonly"`
+}
+
+// backingStoreXML 增量盘父盘（可多层嵌套：增量盘的父盘也可能是增量盘）。
+type backingStoreXML struct {
+	Type         string           `xml:"type,attr"`
+	Source       *diskSourceXML   `xml:"source"`
+	BackingStore *backingStoreXML `xml:"backingStore"`
+}
+
+// chain 返回父盘链的可读形式："base/Rocky.img"，多层用 " ← " 连接（子 ← 父）。
+func (b *backingStoreXML) chain() string {
+	if b == nil || b.Source == nil {
+		return ""
+	}
+	parent := b.Source.File
+	if parent == "" {
+		parent = b.Source.Dev
+	}
+	if rest := b.BackingStore.chain(); rest != "" {
+		return parent + " ← " + rest
+	}
+	return parent
 }
 
 type interfaceMacXML struct {
@@ -385,7 +408,8 @@ func ParseDomainXML(xmlstr string) (*DomainSpec, error) {
 					Dev string `xml:"dev,attr"`
 					Bus string `xml:"bus,attr"`
 				} `xml:"target"`
-				ReadOnly *emptyXML `xml:"readonly"`
+				BackingStore *backingStoreXML `xml:"backingStore"`
+				ReadOnly     *emptyXML        `xml:"readonly"`
 			} `xml:"disk"`
 			Interfaces []struct {
 				Type   string `xml:"type,attr"`
@@ -439,7 +463,8 @@ func ParseDomainXML(xmlstr string) (*DomainSpec, error) {
 			Bus:      d.Target.Bus,
 			Source:   src,
 			Target:   d.Target.Dev,
-			ReadOnly: d.ReadOnly != nil,
+			BackingFile: d.BackingStore.chain(),
+			ReadOnly:    d.ReadOnly != nil,
 		})
 	}
 	for _, n := range dx.Devices.Interfaces {

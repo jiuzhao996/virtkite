@@ -82,22 +82,6 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 	})
 }
 
-// GetAuditLog 获取单条审计日志详情
-func (h *AuditHandler) GetAuditLog(c *gin.Context) {
-	id, ok := paramID(c, "id")
-	if !ok {
-		return
-	}
-
-	var log model.AuditLog
-	if err := h.DB.First(&log, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "审计日志不存在")
-		return
-	}
-
-	Success(c, log)
-}
-
 // ActionLabels 审计操作类型 → 中文文案映射（供审计页筛选/展示、仪表盘统计标签使用）。
 // 与 middleware.AuditMiddleware 的 determineAction 产物保持一致。
 var ActionLabels = map[string]string{

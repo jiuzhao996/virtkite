@@ -60,9 +60,18 @@ func (h *VMHandler) syncVMIPs() {
 		log.Printf("[vm-ip-sync] 查询虚拟机列表失败: %v", err)
 		return
 	}
+	// QGA 探测逐域 RPC 成本高，且仅在"运行中 + 尚无 IP + DHCP 租约未命中"时才有意义：
+	// 典型场景是客户机内手工配置静态 IP（静态地址永远不出现在租约里），此时 guest-agent 是唯一自动途径
+	var qgaCandidates []model.VM
 	for i := range vms {
 		ip, ok := byMAC[strings.ToLower(vms[i].MACAddress)]
-		if !ok || ip == vms[i].IP {
+		if !ok {
+			if vms[i].Status == model.VMStatusRunning && vms[i].IP == "" {
+				qgaCandidates = append(qgaCandidates, vms[i])
+			}
+			continue
+		}
+		if ip == vms[i].IP {
 			continue
 		}
 		if err := h.DB.Model(&vms[i]).Update("ip", ip).Error; err != nil {
@@ -70,5 +79,17 @@ func (h *VMHandler) syncVMIPs() {
 			continue
 		}
 		vms[i].IP = ip
+	}
+	for _, vm := range qgaCandidates {
+		ips, err := h.Virt.ListGuestIPs(vm.Name)
+		if err != nil || len(ips) == 0 {
+			// agent 未安装/未运行属常态，静默跳过；IP 行在前端可由管理员手工维护
+			continue
+		}
+		if err := h.DB.Model(&model.VM{}).Where("id = ?", vm.ID).Update("ip", ips[0]).Error; err != nil {
+			log.Printf("[vm-ip-sync] QGA 回填 %s IP 失败: %v", vm.Name, err)
+			continue
+		}
+		log.Printf("[vm-ip-sync] 已通过 guest-agent 回填 %s IP=%s", vm.Name, ips[0])
 	}
 }

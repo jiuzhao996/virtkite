@@ -8,6 +8,10 @@ import (
 	"github.com/digitalocean/go-libvirt"
 )
 
+// URI 平台实际使用的 libvirt 连接地址（unix socket 直连系统守护进程）。
+// 早期由 LIBVIRT_URI 环境变量配置但从未接入连接逻辑，已删配置项，导出常量供设置页展示真实值。
+const URI = string(libvirt.QEMUSystem)
+
 // Virt 是对 digitalocean/go-libvirt 的封装，提供 libvirt RPC 直连能力。
 // 底层通过 unix socket 连接 qemu:///system，无需 CGO 与 C 头文件。
 type Virt struct {

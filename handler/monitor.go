@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/monitor"
 	"gorm.io/gorm"
@@ -63,6 +64,7 @@ func (h *MonitorHandler) ListAlerts(c *gin.Context) {
 
 // PreviewFileSD GET /api/monitor/file-sd → 实时查库计算当前将生成的 file_sd JSON，
 // 与 service/monitor.StartFileSDWriter 的落盘内容同源，便于前端/调试预览抓取目标。
+// 响应 {enabled, items}：enabled=FILE_SD_PATH 是否配置（未配置时后台 writer 不启动，仅此预览可用）。
 func (h *MonitorHandler) PreviewFileSD(c *gin.Context) {
 	var vms []model.VM
 	// 与 writer.writeFileSDOnce 保持同一查询条件：running 且 IP 非空（软删除自动排除）
@@ -70,7 +72,43 @@ func (h *MonitorHandler) PreviewFileSD(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusInternalServerError, "查询虚拟机失败", err)
 		return
 	}
-	Success(c, monitor.GenerateFileSD(vms))
+	Success(c, gin.H{
+		"enabled": config.GlobalConfig.FileSDPath != "",
+		"items":   monitor.GenerateFileSD(vms),
+	})
+}
+
+// grafanaHealthTimeout Grafana 探活超时：容器没起时连接快速失败，挂起时 3s 放弃。
+const grafanaHealthTimeout = 3 * time.Second
+
+// GrafanaStatus GET /api/monitor/grafana-status → 探活 Grafana（GET /api/health）。
+// iframe 指向跨端口地址读不到内部状态，且容器未启动时浏览器错误页同样触发 iframe 的 load 事件，
+// 前端无法自行判断白屏，只能由后端代探。root_url 带 /grafana 子路径时 /api/health 会被 301，
+// 故先试子路径前缀再试根路径；禁止跟随重定向（301 指向公网域名，跟随会绕隧道且结果失真）。
+func (h *MonitorHandler) GrafanaStatus(c *gin.Context) {
+	base := strings.TrimRight(config.GlobalConfig.GrafanaURL, "/")
+	client := &http.Client{
+		Timeout: grafanaHealthTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	for _, path := range []string{"/grafana/api/health", "/api/health"} {
+		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, base+path, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue // 连接失败（容器未启动等），试下一个路径
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			Success(c, gin.H{"ok": true})
+			return
+		}
+	}
+	Success(c, gin.H{"ok": false})
 }
 
 // AlertHistory GET /api/monitor/alerts/history → 告警历史分页查询（webhook 入库数据）。

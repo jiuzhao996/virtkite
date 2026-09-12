@@ -7,15 +7,6 @@ import (
 	"github.com/digitalocean/go-libvirt"
 )
 
-// DomainInfo 域运行信息摘要（对应 virsh domstats 的基础项）。
-type DomainInfo struct {
-	State     string `json:"state"`
-	MaxMemKiB uint64 `json:"max_mem_kib"`
-	MemKiB    uint64 `json:"mem_kib"`
-	VCPUs     uint64 `json:"vcpus"`
-	CPUTimeNS uint64 `json:"cpu_time_ns"`
-}
-
 // Device 域设备摘要（磁盘/网卡，来自 XML 解析）。
 type Device struct {
 	Type     string `json:"type"`
@@ -23,30 +14,6 @@ type Device struct {
 	Source   string `json:"source"`
 	Model    string `json:"model,omitempty"`
 	ReadOnly bool   `json:"read_only,omitempty"`
-}
-
-// GetDomainInfo 返回域运行信息（对应 virsh domstats）。
-// 未运行/失败时返回空信息与错误。
-func (v *Virt) GetDomainInfo(name string) (DomainInfo, error) {
-	l, err := v.getConn()
-	if err != nil {
-		return DomainInfo{}, err
-	}
-	dom, err := l.DomainLookupByName(name)
-	if err != nil {
-		return DomainInfo{}, fmt.Errorf("虚拟机 %s 不存在: %w", name, err)
-	}
-	state, maxMem, memory, vcpus, cpuTime, err := l.DomainGetInfo(dom)
-	if err != nil {
-		return DomainInfo{}, fmt.Errorf("获取虚拟机运行信息失败: %w", err)
-	}
-	return DomainInfo{
-		State:     StateToPlatform(int32(state)),
-		MaxMemKiB: maxMem,
-		MemKiB:    memory,
-		VCPUs:     uint64(vcpus),
-		CPUTimeNS: cpuTime,
-	}, nil
 }
 
 // GetMemoryStats 返回域 balloon 内存统计（对应 virsh dommemstat），单位 KiB。

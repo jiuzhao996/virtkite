@@ -55,20 +55,3 @@ func (v *Virt) SetAutostart(domain string, enabled bool) error {
 	}
 	return nil
 }
-
-// GetAutostart 查询虚拟机是否开机自启（对应 virsh dominfo 的 Autostart 行）。
-func (v *Virt) GetAutostart(domain string) (bool, error) {
-	l, err := v.getConn()
-	if err != nil {
-		return false, err
-	}
-	dom, err := l.DomainLookupByName(domain)
-	if err != nil {
-		return false, fmt.Errorf("虚拟机 %s 不存在: %w", domain, err)
-	}
-	autostart, err := l.DomainGetAutostart(dom)
-	if err != nil {
-		return false, fmt.Errorf("查询自动启动失败（对应 virsh dominfo）: %w", err)
-	}
-	return autostart == 1, nil
-}

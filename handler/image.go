@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -57,7 +58,10 @@ func (h *ImageHandler) ensureImagePool() (string, error) {
 	return h.Virt.GetPoolPath(imagePool)
 }
 
-// ListImages 获取镜像列表
+// ListImages 获取镜像列表。每个 item 附 pool 字段：镜像文件所属存储池名。
+// 归属规则：池路径（virsh pool-dumpxml 的 target/path）按目录前缀匹配 image.path，
+// 多个命中取最长前缀（防嵌套目录池误配），路径边界须落在目录分隔符上（/a 与 /a/b 两个池，/abc 不算命中）；
+// 匹配不到置空串，前端显示「—」。池枚举失败不阻断列表主流程（列表以 DB 为准，pool 只是展示性标注）。
 func (h *ImageHandler) ListImages(c *gin.Context) {
 	var images []model.Image
 	query := h.DB.Order("created_at desc")
@@ -72,9 +76,53 @@ func (h *ImageHandler) ListImages(c *gin.Context) {
 		return
 	}
 
+	// 池路径 → 池名映射：ListPools（virsh pool-list --all）+ GetPoolPath（virsh pool-dumpxml 取 target/path）
+	type poolPrefix struct {
+		name string
+		path string
+	}
+	prefixes := make([]poolPrefix, 0, 8)
+	pools, err := h.Virt.ListPools()
+	if err != nil {
+		// 归属标注失败不影响列表本身：完整错误进日志，pool 全部置空
+		LogError(c, fmt.Errorf("镜像归属存储池标注失败（枚举存储池）: %w", err))
+	}
+	for _, p := range pools {
+		if path, err := h.Virt.GetPoolPath(p); err == nil && path != "" {
+			prefixes = append(prefixes, poolPrefix{name: p, path: path})
+		}
+	}
+	// 长路径优先：嵌套目录池（/a 与 /a/b）时短前缀会抢先命中，先比长前缀
+	sort.Slice(prefixes, func(i, j int) bool { return len(prefixes[i].path) > len(prefixes[j].path) })
+
+	sep := string(filepath.Separator)
+	items := make([]gin.H, 0, len(images))
+	for _, img := range images {
+		pool := ""
+		for _, pp := range prefixes {
+			if img.Path == pp.path || strings.HasPrefix(img.Path, pp.path+sep) {
+				pool = pp.name
+				break
+			}
+		}
+		items = append(items, gin.H{
+			"id":          img.ID,
+			"name":        img.Name,
+			"path":        img.Path,
+			"os_version":  img.OSVersion,
+			"size_gb":     img.SizeGB,
+			"format":      img.Format,
+			"is_template": img.IsTemplate,
+			"description": img.Description,
+			"created_at":  img.CreatedAt,
+			"updated_at":  img.UpdatedAt,
+			"pool":        pool,
+		})
+	}
+
 	Success(c, gin.H{
 		"total": len(images),
-		"items": images,
+		"items": items,
 	})
 }
 
@@ -440,15 +488,6 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 		"message": "任务已提交",
 		"data":    gin.H{"task_id": task.ID},
 	})
-}
-
-// firstImageHost 返回平台登记的首台宿主机（镜像建 VM 的默认纳管目标）。
-func (h *ImageHandler) firstImageHost() (*model.Host, error) {
-	var host model.Host
-	if err := h.DB.Order("id ASC").First(&host).Error; err != nil {
-		return nil, err
-	}
-	return &host, nil
 }
 
 // sanitizeFileName 仅保留安全字符，过滤路径分隔符与特殊字符

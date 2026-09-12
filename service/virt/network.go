@@ -219,18 +219,6 @@ func (v *Virt) DefineNetwork(xml string) error {
 	return nil
 }
 
-// DefineNetworkXML 定义网络（含 XML 校验，供编辑用，不自动启动）。
-func (v *Virt) DefineNetworkXML(xml string) error {
-	l, err := v.getConn()
-	if err != nil {
-		return err
-	}
-	if _, err := l.NetworkDefineXML(xml); err != nil {
-		return fmt.Errorf("定义网络失败: %w", err)
-	}
-	return nil
-}
-
 // UpdateNetwork 编辑网络（对应 virsh net-destroy + net-undefine + net-define + net-start）。
 // 运行中的网络先停止再重建，并保留原 autostart 设置。
 func (v *Virt) UpdateNetwork(name, xml string) error {
@@ -451,4 +439,33 @@ func (v *Virt) ListDHCPLeases() ([]DhcpLease, error) {
 		}
 	}
 	return leases, nil
+}
+
+// ListGuestIPs 通过 qemu-guest-agent 查询虚拟机网卡 IPv4（对应 virsh domifaddr --source agent）。
+// 前提：域 XML 已含 guest-agent 通道（建机默认启用）且客户机内安装并运行了 qemu-guest-agent。
+// 静态 IP 的虚拟机不会出现在 DHCP 租约里，QGA 是获取其地址的唯一自动途径。
+// agent 未安装/未运行时 libvirt 返回错误，调用方静默降级即可。
+func (v *Virt) ListGuestIPs(name string) ([]string, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return nil, err
+	}
+	dom, err := l.DomainLookupByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("虚拟机 %s 不存在: %w", name, err)
+	}
+	ifaces, err := l.DomainInterfaceAddresses(dom, uint32(libvirt.DomainInterfaceAddressesSrcAgent), 0)
+	if err != nil {
+		return nil, fmt.Errorf("查询 guest-agent 接口失败（客户机内需安装并运行 qemu-guest-agent）: %w", err)
+	}
+	var ips []string
+	for _, it := range ifaces {
+		for _, a := range it.Addrs {
+			// Type 0 = IPv4；跳过环回
+			if a.Type == 0 && a.Addr != "" && a.Addr != "127.0.0.1" {
+				ips = append(ips, a.Addr)
+			}
+		}
+	}
+	return ips, nil
 }
