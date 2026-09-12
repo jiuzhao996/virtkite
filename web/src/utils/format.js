@@ -19,7 +19,7 @@
  * `stopped` 是历史遗留键（早期列表接口曾返回），合并各页面映射表时刻意保留，
  * 以免旧数据 / 旧缓存落到兜底分支直接显示英文。
  */
-export const VM_STATUS_TEXT = {
+const VM_STATUS_TEXT = {
   running: '运行中',
   'shut off': '已关机',
   stopped: '已关机',
@@ -76,7 +76,7 @@ export function vmStatusHex(status) {
 /* ==================== 任务状态 / 类型 ==================== */
 
 /** 任务状态 → 中文。后端 tasks.status 只有 pending / running / success / failed。 */
-export const TASK_STATUS_TEXT = {
+const TASK_STATUS_TEXT = {
   pending: '等待中',
   running: '执行中',
   success: '成功',
@@ -97,7 +97,7 @@ export function taskStatusTag(status) {
 }
 
 /** 任务类型 → 中文（后端 tasks.type，见 docs/task-contract.md）。 */
-export const TASK_TYPE_TEXT = {
+const TASK_TYPE_TEXT = {
   create_vm: '创建虚拟机',
   delete_vm: '删除虚拟机',
   clone_vm: '克隆虚拟机',
@@ -113,7 +113,9 @@ export function taskTypeText(type) {
 /* ==================== 宿主机状态 ==================== */
 
 /** 宿主机状态 → 中文（hosts.status）。与 VM 状态是不同域，刻意分表。 */
-export const HOST_STATUS_TEXT = {
+const HOST_STATUS_TEXT = {
+  reachable: '可达',
+  unreachable: '不可达',
   online: '在线',
   offline: '离线',
   unknown: '未知'
@@ -126,15 +128,15 @@ export function hostStatusText(status) {
 
 /** 宿主机状态 → el-tag 的 type。 */
 export function hostStatusTag(status) {
-  if (status === 'online') return 'success'
-  if (status === 'offline') return 'danger'
+  if (status === 'online' || status === 'reachable') return 'success'
+  if (status === 'offline' || status === 'unreachable') return 'danger'
   return 'info'
 }
 
 /* ==================== 控制台会话类型 ==================== */
 
 /** 会话连接方式 → 中文（sessions.type）。 */
-export const SESSION_TYPE_TEXT = {
+const SESSION_TYPE_TEXT = {
   vnc: '图形控制台',
   ssh: 'Web 终端',
   serial: '串口'

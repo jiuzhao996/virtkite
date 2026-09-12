@@ -13,10 +13,10 @@
       <template #header>
         <div class="card-head">
           <span class="card-title">运行参数</span>
-          <el-button size="small" type="primary" :loading="saving" @click="saveWritable">保存并生效</el-button>
+          <el-button type="primary" :loading="saving" @click="saveWritable">保存并生效</el-button>
         </div>
       </template>
-      <el-form label-width="170px" size="small" style="max-width: 560px">
+      <el-form label-width="170px" style="max-width: 560px">
         <el-form-item label="默认存储池">
           <el-input v-model="writable.default_storage_pool" placeholder="未指定池时创建/删除 VM 使用的池名" />
         </el-form-item>

@@ -2,59 +2,117 @@
   <div v-loading="loading">
     <div class="page-head">
       <h2 class="page-title">镜像管理</h2>
-      <span class="page-desc">统一管理镜像与模板，模板可直接用于创建虚拟机</span>
+      <span class="page-desc">云镜像模板与 ISO 安装镜像分类查看，模板可直接用于创建虚拟机</span>
     </div>
 
-    <el-card shadow="never">
-      <div class="toolbar">
-        <div class="toolbar-left">
-          <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-button v-if="isAdmin" type="success" :icon="Upload" @click="openUpload">上传镜像</el-button>
-          <el-select v-model="filter" placeholder="筛选" clearable style="width: 150px" @change="load">
-            <el-option label="全部镜像" value="" />
-            <el-option label="仅模板" value="true" />
-          </el-select>
-        </div>
-        <div class="toolbar-right">
-          <el-tag v-if="templateCount" type="success" effect="plain" size="small">模板 {{ templateCount }}</el-tag>
-          <span class="count">共 {{ total }} 个</span>
-        </div>
-      </div>
-
-      <el-table :data="items" stripe border style="width: 100%" empty-text="暂无镜像，可点击上传镜像添加">
-        <el-table-column prop="name" label="名称" min-width="150" />
-        <el-table-column prop="os_version" label="OS 版本" min-width="130" />
-        <el-table-column label="大小(GB)" width="110">
-          <template #default="{ row }">{{ fmtSizeGB(row.size_gb) }}</template>
-        </el-table-column>
-        <el-table-column label="格式" width="90">
-          <template #default="{ row }">
-            <el-tag effect="plain" size="small">{{ row.format || '—' }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="模板标记" width="100">
-          <template #default="{ row }">
-            <el-tag v-if="row.is_template" type="success" effect="light">模板</el-tag>
-            <el-tag v-else type="info" effect="plain">普通</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="上传时间" min-width="172">
-          <template #default="{ row }">
-            <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" min-width="300" fixed="right">
-          <template #default="{ row }">
-            <div class="ops">
-              <el-button v-if="isAdmin && row.is_template" size="small" type="primary" :icon="Cpu" @click="openClone(row)">基于此创建 VM</el-button>
-              <el-button v-if="isAdmin && row.is_template" size="small" :icon="StarFilled" @click="toggleTemplate(row)">取消模板</el-button>
-              <el-button v-if="isAdmin && !row.is_template" size="small" :icon="Star" @click="toggleTemplate(row)">标记为模板</el-button>
-              <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+    <el-tabs v-model="activeTab" @tab-change="onTabChange">
+      <!-- Tab 1 云镜像/模板盘：登记列表（创建 VM「云镜像」方式的数据源） -->
+      <el-tab-pane label="云镜像 / 模板盘" name="images">
+        <el-card shadow="never">
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+              <el-button v-if="isAdmin" type="primary" :icon="Upload" @click="openUpload">上传镜像</el-button>
+              <el-select v-model="filter" placeholder="筛选" clearable style="width: 150px" @change="load">
+                <el-option label="全部镜像" value="" />
+                <el-option label="仅模板" value="true" />
+              </el-select>
             </div>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+            <div class="toolbar-right">
+              <el-tag v-if="templateCount" type="success" effect="plain" size="small">模板 {{ templateCount }}</el-tag>
+              <span class="count">共 {{ total }} 个</span>
+            </div>
+          </div>
+
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 12px"
+            title="登记的是 qcow2 磁盘模板（增量克隆父盘）——创建 VM 选「云镜像 + cloud-init」时从这里选。"
+          />
+          <el-table :data="items" stripe border style="width: 100%">
+            <template #empty><el-empty description="暂无镜像，点击上方「上传镜像」或到存储池登记既有卷" :image-size="72" /></template>
+            <el-table-column prop="name" label="名称" min-width="150" />
+            <el-table-column prop="os_version" label="OS 版本" min-width="130" />
+            <el-table-column label="大小(GB)" width="110">
+              <template #default="{ row }">{{ fmtSizeGB(row.size_gb) }}</template>
+            </el-table-column>
+            <el-table-column label="格式" width="90">
+              <template #default="{ row }">
+                <el-tag effect="plain" size="small">{{ row.format || '—' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="来源存储池" width="120">
+              <template #default="{ row }">{{ row.pool || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="模板标记" width="100">
+              <template #default="{ row }">
+                <el-tag v-if="row.is_template" type="success" effect="light">模板</el-tag>
+                <el-tag v-else type="info" effect="plain">普通</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="上传时间" min-width="172">
+              <template #default="{ row }">
+                <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" min-width="300" fixed="right">
+              <template #default="{ row }">
+                <div class="ops">
+                  <el-button v-if="isAdmin && row.is_template" size="small" type="primary" :icon="Cpu" @click="openClone(row)">基于此创建 VM</el-button>
+                  <el-button v-if="isAdmin && row.is_template" size="small" :icon="StarFilled" @click="toggleTemplate(row)">取消模板</el-button>
+                  <el-button v-if="isAdmin && !row.is_template" size="small" :icon="Star" @click="toggleTemplate(row)">标记为模板</el-button>
+                  <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-tab-pane>
+
+      <!-- Tab 2 ISO 安装镜像：只读展示激活存储池中的 .iso 卷（创建 VM「本地安装介质」方式的数据源） -->
+      <el-tab-pane label="ISO 安装镜像" name="iso">
+        <el-card shadow="never">
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <el-button :icon="Refresh" :loading="isoLoading" @click="loadIso">刷新</el-button>
+              <span class="os-hint">ISO 为共享安装介质，管理（上传/删除）请到对应存储池</span>
+            </div>
+            <div class="toolbar-right">
+              <span class="count">共 {{ isoItems.length }} 个</span>
+            </div>
+          </div>
+
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 12px"
+            title="ISO 用于创建 VM 的「本地安装介质 (ISO)」方式：安装系统时从激活存储池选择 ISO 挂载光驱。"
+          />
+          <el-table v-loading="isoLoading" :data="isoItems" stripe border style="width: 100%">
+            <template #empty><el-empty description="激活存储池中未发现 .iso 卷" :image-size="72" /></template>
+            <el-table-column label="名称" min-width="200">
+              <template #default="{ row }">
+                <span class="mono">{{ row.name }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="大小" width="120">
+              <template #default="{ row }">{{ fmtSizeBytes(row.capacity) }}</template>
+            </el-table-column>
+            <el-table-column label="来源存储池" width="140">
+              <template #default="{ row }">{{ row.pool }}</template>
+            </el-table-column>
+            <el-table-column label="路径" min-width="280" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="mono">{{ row.path }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- 上传镜像 -->
     <el-dialog v-model="dialog" title="上传镜像" width="500px">
@@ -143,10 +201,11 @@ import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu } from '@e
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
-import { fmtSizeGB, fmtDateTime, errMsg, isCancel } from '../utils/format'
+import { fmtSizeGB, fmtSizeBytes, fmtDateTime, errMsg, isCancel } from '../utils/format'
 
 const { isAdmin } = useAuth()
 
+const activeTab = ref('images')
 const items = ref([])
 const total = ref(0)
 const loading = ref(false)
@@ -160,6 +219,9 @@ const poolOptions = ref(['img'])
 const cloneDialog = ref(false)
 const cloneImg = ref({})
 const cloning = ref(false)
+const isoItems = ref([])
+const isoLoading = ref(false)
+const isoLoaded = ref(false)
 
 const form = reactive({ name: '', os_version: '', is_template: false, pool: 'img' })
 const cloneForm = reactive({ name: '', vcpu: 1, memory_mb: 1024, network: 'default' })
@@ -185,6 +247,44 @@ async function load() {
     ElMessage.error(errMsg(e, '获取镜像列表失败'))
   } finally {
     loading.value = false
+  }
+}
+
+// ISO 安装镜像列表：listStoragePools 响应只有 vol_count 不含卷数组，
+// 对每个激活池逐个调 getStoragePool（与存储池页「浏览卷」同款接口）聚合 .iso 卷；
+// 单池查询失败不拖垮整个列表（allSettled 跳过该池，其余池照常展示）
+async function loadIso() {
+  isoLoading.value = true
+  try {
+    const res = await api.listStoragePools()
+    const actives = ((res.data && res.data.items) || []).filter((p) => p.active)
+    const results = await Promise.allSettled(
+      actives.map(async (p) => {
+        const r = await api.getStoragePool(p.name)
+        const vols = (r.data && r.data.volumes) || []
+        return vols
+          .filter((v) => (v.name || '').toLowerCase().endsWith('.iso'))
+          .map((v) => ({ ...v, pool: p.name }))
+      })
+    )
+    const list = []
+    for (const r of results) {
+      if (r.status === 'fulfilled') list.push(...r.value)
+    }
+    list.sort((a, b) => (a.pool + a.name).localeCompare(b.pool + b.name))
+    isoItems.value = list
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取 ISO 镜像列表失败'))
+  } finally {
+    isoLoading.value = false
+  }
+}
+
+// ISO 卷扫描要额外查 N 个池，首次切到该 tab 才拉数据
+function onTabChange(name) {
+  if (name === 'iso' && !isoLoaded.value) {
+    isoLoaded.value = true
+    loadIso()
   }
 }
 
@@ -335,5 +435,9 @@ onMounted(() => {
 }
 .clone-tip {
   margin-bottom: var(--space-lg);
+}
+.os-hint {
+  color: var(--color-muted-foreground);
+  font-size: 0.82rem;
 }
 </style>

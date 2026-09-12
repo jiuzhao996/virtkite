@@ -89,15 +89,17 @@ export const api = {
 
   // 虚拟机 - 配置模型 / 硬件管理 / 动作（virt-manager 对齐）
   getVMSpec: (id) => unwrap(http.get('/vms/' + id + '/spec')),
+  // 手动设置虚拟机 IP（覆盖 DHCP 回填值，传空字符串清除；仅管理员）
   pauseVM: (id) => unwrap(http.post('/vms/' + id + '/pause')),
   resumeVM: (id) => unwrap(http.post('/vms/' + id + '/resume')),
   getVMStats: (id) => unwrap(http.get('/vms/' + id + '/stats')),
   setVcpu: (id, vcpu) => unwrap(http.put('/vms/' + id + '/cpu', { vcpu })),
   setMemory: (id, memory_mb) => unwrap(http.put('/vms/' + id + '/memory', { memory_mb })),
   setAutostart: (id, enabled) => unwrap(http.put('/vms/' + id + '/autostart', { enabled })),
-  setBoot: (id, devices) => unwrap(http.put('/vms/' + id + '/boot', { devices })),
   attachDisk: (id, disk) => unwrap(http.post('/vms/' + id + '/devices/disks', { disk })),
-  detachDisk: (id, target) => unwrap(http.delete('/vms/' + id + '/devices/disks/' + target)),
+  // 分离磁盘：deleteVolume=true 时附带 query delete_volume，请求后端同时删除存储卷；
+  // 不传（undefined）时 axios 自动省略该参数，保持旧的「仅分离」语义（后端契约：{ vm, target, volume_deleted, keep_reason }）
+  detachDisk: (id, target, deleteVolume) => unwrap(http.delete('/vms/' + id + '/devices/disks/' + target, { params: { delete_volume: deleteVolume } })),
   attachInterface: (id, iface) => unwrap(http.post('/vms/' + id + '/devices/interfaces', { interface: iface })),
   quickAttachDisk: (id, opts = {}) => unwrap(http.post('/vms/' + id + '/devices/disks/quick', opts)),
   ensureStandardDevices: (id) => unwrap(http.post('/vms/' + id + '/devices/standard')),
@@ -152,6 +154,7 @@ export const api = {
   monitorAlertHistory: (params) => unwrap(http.get('/monitor/alerts/history', { params })),
   // file_sd 抓取目标预览（与后台落盘文件同源）
   monitorFileSD: () => unwrap(http.get('/monitor/file-sd')),
+  monitorGrafanaStatus: () => unwrap(http.get('/monitor/grafana-status')),
 
   // 池平台侧元数据（角色覆盖 + 描述；role 传空串 = 自动推断，description ≤500 字符）
   updatePoolMeta: (name, payload) => unwrap(http.put('/storage/pools/' + name + '/meta', payload)),
@@ -164,6 +167,7 @@ export const api = {
 
   // 仪表盘
   dashboardOverview: () => unwrap(http.get('/dashboard/overview')),
+  dashboardCapacity: () => unwrap(http.get('/dashboard/capacity')),
   vmStatus: () => unwrap(http.get('/dashboard/vm-status')),
   dashboardHostStats: () => unwrap(http.get('/dashboard/host-stats')),
   vmPerf: () => unwrap(http.get('/dashboard/vm-perf')),

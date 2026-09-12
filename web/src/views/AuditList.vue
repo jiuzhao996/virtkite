@@ -36,7 +36,8 @@
         <el-button :icon="RefreshLeft" @click="reset">重置</el-button>
       </div>
 
-      <el-table :data="items" stripe border style="width: 100%" empty-text="暂无审计记录">
+      <el-table :data="items" stripe border style="width: 100%">
+            <template #empty><el-empty description="暂无审计记录" :image-size="72" /></template>
         <el-table-column label="时间" min-width="172">
           <template #default="{ row }">
             <span class="mono">{{ fmtDateTime(row.created_at) }}</span>

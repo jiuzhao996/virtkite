@@ -7,13 +7,27 @@
         <div class="toolbar">
           <div class="toolbar-left">
             <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-            <el-button v-if="isAdmin" type="success" :icon="Plus" @click="router.push({ name: 'vm-create' })">新建虚拟机</el-button>
-            <el-button v-if="isAdmin" type="warning" :icon="Upload" @click="openImport">导入存量 VM</el-button>
+            <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="router.push({ name: 'vm-create' })">新建虚拟机</el-button>
+            <el-button v-if="isAdmin" type="warning" plain :icon="Upload" @click="openImport">导入存量 VM</el-button>
+            <!-- 批量操作条：勾选后出现；按选中状态智能禁用（全在运行时开机禁用、全已关机时关机禁用），
+                 按钮统一 plain 弱化视觉，避免一排实底彩钮压过主操作 -->
             <el-divider v-if="isAdmin && checked.length" direction="vertical" />
             <template v-if="isAdmin && checked.length">
-              <el-button size="default" type="success" :icon="VideoPlay" :loading="bulkBusy" @click="bulkAction('start')">批量开机 ({{ checked.length }})</el-button>
-              <el-button size="default" type="warning" :icon="SwitchButton" :loading="bulkBusy" @click="bulkAction('stop')">批量关机 ({{ checked.length }})</el-button>
-              <el-button size="default" type="danger" :icon="Delete" :loading="bulkBusy" @click="bulkAction('delete')">批量删除 ({{ checked.length }})</el-button>
+              <span class="bulk-count">已选 {{ checked.length }} 台</span>
+              <!-- 批量电源：全关机→批量开机，全运行→批量关机；混合状态按钮禁用并提示分开操作
+                   （混合时"批量开关机"没有单一语义，硬执行会既开机又关机） -->
+              <el-button
+                :icon="bulkPower === 'stop' ? SwitchButton : VideoPlay"
+                :loading="bulkBusy" plain type="primary"
+                :disabled="bulkPowerMixed"
+                :title="bulkPowerMixed ? '选中虚拟机电源状态不一致，请分开勾选后操作' : ''"
+                @click="bulkAction(bulkPower)"
+              >{{ bulkPower === 'stop' ? '批量关机' : '批量开机' }}</el-button>
+              <el-button
+                type="danger" plain :icon="Delete" :loading="bulkBusy"
+                @click="bulkAction('delete')"
+              >批量删除</el-button>
+              <el-button text :disabled="bulkBusy" @click="checked = []">取消选择</el-button>
             </template>
           </div>
           <span class="count">共 {{ total }} 台<span v-if="runningCount" class="running-hint"> · 运行中 {{ runningCount }} 台</span></span>
@@ -101,17 +115,18 @@
                 @click="action(vm, 'stop')"
               >关机</el-button>
               <el-button size="small" :icon="Monitor" :disabled="vm.status !== 'running'" @click="openConsole(vm)">控制台</el-button>
-              <el-dropdown v-if="isAdmin" trigger="click" @command="(cmd) => moreAction(vm, cmd)">
-                <el-button size="small">
-                  更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-                </el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="restart" :icon="RefreshRight" :disabled="vm.status !== 'running' || busy.has(vm.id)">重启</el-dropdown-item>
-                    <el-dropdown-item command="delete" :icon="Delete" divided :disabled="busy.has(vm.id)">删除</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+              <!-- 删除常驻（原「更多」下拉悬浮突兀，重启去详情页操作）：删除有输入名称确认弹窗兜底 -->
+              <el-button
+                v-if="isAdmin"
+                class="vm-delete"
+                size="small"
+                type="danger"
+                plain
+                :icon="Delete"
+                :disabled="busy.has(vm.id)"
+                :title="'删除 ' + vm.name"
+                @click="moreAction(vm, 'delete')"
+              />
             </div>
           </el-card>
         </div>
@@ -168,7 +183,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
-import { Refresh, Plus, Upload, VideoPlay, SwitchButton, RefreshRight, Monitor, Delete, Search, ArrowDown, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
+import { Refresh, Plus, Upload, VideoPlay, SwitchButton, Monitor, Delete, Search, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
@@ -189,6 +204,10 @@ const loading = ref(false)
 const busy = ref(new Set())
 const checked = ref([])
 const bulkBusy = ref(false)
+// 批量电源按钮：选中状态唯一时给出确定动作（全关机→start / 全运行→stop）；
+// 状态混合（含 paused/error 混入或运行关机并存）时无单一语义，禁用并提示分开操作
+const bulkPower = computed(() => checked.value.some((r) => r.status === 'running') ? 'stop' : 'start')
+const bulkPowerMixed = computed(() => new Set(checked.value.map((r) => r.status)).size > 1)
 // 实时性能：vm id → {cpu_percent, mem_pct}，随列表静默刷新
 const perfMap = ref({})
 // 折线历史：vm id → {t: [], cpu: [], mem: []}，上限 30 点
@@ -447,9 +466,11 @@ async function doImport() {
 
 // 批量操作：start 同步直调（快接口）；stop/delete 逐台走后台任务（提交→poll→汇总）
 async function bulkAction(type) {
+  // 目标过滤：开机只对非 running 生效、关机只对 running 生效，避免对不适用机器白跑接口
   const rows = checked.value.filter((r) => !busy.value.has(r.id))
+    .filter((r) => (type === 'start' ? r.status !== 'running' : type === 'stop' ? r.status === 'running' : true))
   if (!rows.length) {
-    ElMessage.warning('请选择虚拟机')
+    ElMessage.warning(type === 'start' ? '选中的虚拟机均在运行中' : type === 'stop' ? '选中的虚拟机均已关机' : '请选择虚拟机')
     return
   }
   const label = { start: '批量开机', stop: '批量关机', delete: '批量删除' }[type]
@@ -607,9 +628,18 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: 16px;
+  align-items: stretch; /* 同行卡片等高：运行中卡片内容多，其余卡片拉伸对齐 */
 }
 .vm-card {
+  display: flex;
+  flex-direction: column;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+/* el-card body 撑满卡片，让 actions margin-top:auto 生效（按钮行贴底对齐） */
+.vm-card :deep(.el-card__body) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 .vm-card.selected {
   border-color: var(--el-color-primary);
@@ -749,7 +779,11 @@ onUnmounted(() => {
   height: 64px;
 }
 .vm-perf-idle {
+  /* 与 .vm-perf（值行 + 64px 曲线）等高：未运行卡片占位撑起同样高度，保证所有卡片高度一致 */
+  height: 92px;
   margin-bottom: 12px;
+  display: flex;
+  align-items: center;
 }
 .idle-text {
   font-size: 0.8rem;
@@ -761,9 +795,15 @@ onUnmounted(() => {
   gap: 8px;
   padding-top: 12px;
   border-top: 1px solid var(--color-border);
+  margin-top: auto;
 }
-.xml-area :deep(textarea) {
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
+/* 删除钮右对齐独立：危险动作与常规操作分离（放不下时也单独成行靠右） */
+.vm-delete {
+  margin-left: auto;
+}
+.bulk-count {
+  font-size: 0.88rem;
+  color: var(--el-color-primary);
+  font-weight: 600;
 }
 </style>

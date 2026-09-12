@@ -86,6 +86,11 @@ body {
   font-size: 1.1rem;
   font-weight: 700;
 }
+/* 卡片标题统一层级：15px 加粗（腾讯云控制台卡片标题基准）；局部页有自己的 .card-title 时 scoped 覆盖 */
+.card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
 .page-desc {
   color: var(--color-muted-foreground);
   font-size: 0.9rem;

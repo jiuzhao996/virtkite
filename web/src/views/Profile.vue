@@ -55,10 +55,10 @@
           <template #header>
             <div class="card-head">
               <span class="card-title">界面轮询偏好</span>
-              <el-button size="small" type="primary" @click="savePoll">保存</el-button>
+              <el-button type="primary" @click="savePoll">保存</el-button>
             </div>
           </template>
-          <el-form label-width="140px" size="small">
+          <el-form label-width="140px">
             <el-form-item v-for="(label, key) in POLL_LABELS" :key="key" :label="label">
               <el-input-number v-model="pollForm[key]" :min="1000" :max="60000" :step="1000" controls-position="right" />
               <span class="unit">毫秒</span>

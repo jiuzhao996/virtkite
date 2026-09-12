@@ -6,11 +6,25 @@
       <span class="wizard-sub">对齐 virt-manager 创建向导 · 支持 ISO / 导入磁盘 / 云镜像 cloud-init / 克隆</span>
     </div>
 
+    <!-- 前置条件检查：缺网络/安装源/存储池时给出引导链接，不让用户走到中途才发现卡住（基建先行） -->
+    <!-- loading 期间 options 为空会误报"缺网络/缺镜像"，必须等数据加载完再判定 -->
+    <el-alert
+      v-if="!loading && precheckIssues.length"
+      type="warning"
+      :closable="false"
+      class="precheck"
+    >
+      <template #title>创建环境未就绪：{{ precheckIssues.join('；') }}</template>
+      <div class="precheck-links">
+        <el-button v-if="!options.networks.length" size="small" text type="primary" @click="$router.push('/networks')">去创建网络 →</el-button>
+        <el-button v-if="!hasInstallSource" size="small" text type="primary" @click="$router.push('/images')">去镜像管理登记云镜像 →</el-button>
+        <el-button v-if="!usablePools.length" size="small" text type="primary" @click="$router.push('/storage')">去存储池查看 →</el-button>
+      </div>
+    </el-alert>
     <el-steps :active="step" finish-status="success" align-center class="wizard-steps">
       <el-step title="安装方式" />
       <el-step title="计算资源" />
       <el-step title="磁盘与网络" />
-      <el-step title="cloud-init" />
       <el-step title="确认创建" />
     </el-steps>
 
@@ -32,56 +46,42 @@
         <el-divider />
 
         <el-form v-if="installMode === 'iso'" label-width="110px" class="step-form">
-          <el-form-item label="操作系统" required>
-            <el-select v-model="iso.osName" filterable placeholder="选择操作系统" style="width: 380px">
-              <el-option v-for="os in options.osList" :key="os.name" :label="os.name" :value="os.name">
-                <div class="opt-line">
-                  <span>{{ os.name }}</span>
-                  <span class="opt-hint">{{ os.disk_bus }} 磁盘 / {{ os.nic_model }} 网卡</span>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
+          <!-- 先选介质，再按 ISO 文件名自动识别系统（识别不出可手动改）——对齐 virt-manager 的介质优先顺序 -->
           <el-form-item label="安装介质" required>
             <div class="iso-pick">
-              <el-cascader
+              <el-select
                 v-if="!iso.manual"
                 v-model="iso.pick"
-                :options="isoVolumeTree"
-                :props="{ value: 'path', label: 'label', children: 'children' }"
-                placeholder="选择存储池 → ISO 文件"
+                placeholder="选择 ISO 安装镜像（全部存储池）"
                 style="width: 100%"
                 @change="onIsoPick"
-              />
+              >
+                <el-option
+                  v-for="c in isoFlatList"
+                  :key="c.path"
+                  :label="c.label"
+                  :value="c.path"
+                >
+                  <span>{{ c.name }}</span>
+                  <span class="opt-hint" style="float: right">{{ c.pool }} 池 · {{ c.sizeText }}</span>
+                </el-option>
+              </el-select>
               <el-input v-else v-model="iso.isoPath" placeholder="/path/to/install.iso" />
               <el-checkbox v-model="iso.manual" class="manual-toggle">手动输入路径</el-checkbox>
             </div>
           </el-form-item>
-          <el-alert type="info" :closable="false" show-icon title="安装介质将挂载为只读光驱，系统安装到新建的系统盘中。ISO 通常存放在「img」安装镜像池。" />
-        </el-form>
-
-        <el-form v-if="installMode === 'import'" label-width="110px" class="step-form">
-          <el-form-item label="现有磁盘" required>
-            <div class="iso-pick">
-              <el-cascader
-                v-if="!importDisk.manual"
-                v-model="importDisk.pick"
-                :options="diskVolumeTree"
-                :props="{ value: 'path', label: 'label', children: 'children' }"
-                placeholder="选择存储池 → 磁盘卷"
-                style="width: 100%"
-                @change="onImportPick"
-              />
-              <el-input v-else v-model="importDisk.source" placeholder="/path/to/disk.qcow2" />
-              <el-checkbox v-model="importDisk.manual" class="manual-toggle">手动输入路径</el-checkbox>
+          <el-form-item label="操作系统" required>
+            <el-select v-model="iso.osName" filterable placeholder="选择操作系统（可按 ISO 文件名自动识别）" style="width: 380px">
+              <el-option v-for="os in options.osList" :key="os.name" :label="os.name" :value="os.name">
+                <span>{{ os.name }}</span>
+                <span class="opt-hint">{{ os.disk_bus }} 磁盘 / {{ os.nic_model }} 网卡</span>
+              </el-option>
+            </el-select>
+            <div v-if="isoAutoDetected" class="os-hint" style="color: var(--el-color-success)">
+              ✓ 已根据 ISO 文件名自动识别为「{{ iso.osName }}」，识别错误可手动更改
             </div>
           </el-form-item>
-          <el-form-item label="操作系统">
-            <el-select v-model="importDisk.osName" clearable filterable placeholder="选择操作系统（仅用于识别设备型号）" style="width: 380px">
-              <el-option v-for="os in options.osList" :key="os.name" :label="os.name" :value="os.name" />
-            </el-select>
-          </el-form-item>
-          <el-alert type="info" :closable="false" show-icon title="直接引用现有磁盘启动，不新建卷；系统盘通常在「images」池、数据盘在「exten」池。操作系统选择仅用于展示与设备型号推荐。" />
+          <el-alert type="info" :closable="false" show-icon title="安装介质将挂载为只读光驱，系统安装到新建的系统盘中。列表覆盖全部激活存储池中的 ISO。" />
         </el-form>
 
         <el-form v-if="installMode === 'cloudimage'" label-width="110px" class="step-form">
@@ -107,13 +107,18 @@
             </template>
             <span v-else class="os-hint">未匹配到已知系统，将使用默认设备型号（virtio）</span>
           </el-form-item>
-          <el-form-item label="cloud-init" required>
-            <el-switch v-model="cloudInitEnabled" active-text="启用" />
-            <span v-if="cloudImage.osName && cloudInitSupported" class="os-hint">该系统支持 cloud-init</span>
-            <span v-else class="os-hint">可手动启用，按需配置初始化</span>
+          <el-form-item v-if="cloudImage.imageId" label="系统盘">
+            <span class="os-hint">
+              将创建基于「{{ cloudImageName }}」的<b>增量盘</b>（qcow2 backing，不复制镜像文件，初始仅占用元数据级别空间；
+              第 2 步填写的容量是该盘的读写上限）
+            </span>
           </el-form-item>
-
-          <el-collapse v-if="cloudImage.imageId && cloudInitEnabled" v-model="ciPanels" class="ci-collapse">
+          <!-- cloud-init 只属于云镜像方式：镜像选中后就地展开配置（用户拍板：第 4 步对 ISO/导入方式显示 cloud-init 很乱） -->
+          <el-form-item v-if="cloudImage.imageId && cloudInitSupported" label="cloud-init">
+            <el-switch v-model="cloudInitEnabled" active-text="启用" />
+            <span class="os-hint">首次启动自动完成主机名 / 用户 / 密码 / SSH 初始化（下方展开配置）</span>
+          </el-form-item>
+          <el-collapse v-if="cloudImage.imageId && cloudInitSupported && cloudInitEnabled" v-model="ciPanels" class="ci-collapse">
             <el-collapse-item name="ci" title="cloud-init 配置">
               <el-form label-width="110px" class="ci-form">
                 <el-form-item label="主机名">
@@ -195,8 +200,11 @@
           </el-form-item>
           <el-form-item label="存储池">
             <el-select v-model="form.storagePool" style="width: 320px">
-              <el-option v-for="p in options.pools" :key="p" :label="p" :value="p" />
+              <el-option v-for="p in usablePools" :key="p.name" :label="poolLabel(p)" :value="p.name" />
             </el-select>
+            <div v-if="diskOverPool" class="os-hint" style="color: var(--el-color-danger)">
+              ⚠ 新系统盘 {{ form.diskGb }} GB 超出该池剩余空间（{{ poolAvailText(form.storagePool) }}），创建可能失败
+            </div>
           </el-form-item>
           <el-form-item label="机器类型">
             <el-select v-model="form.machine" style="width: 320px">
@@ -263,7 +271,15 @@
         <div v-for="(nic, idx) in nics" :key="nic.id" class="nic-row">
           <span class="nic-index">网卡 {{ idx + 1 }}</span>
           <el-select v-model="nic.source" placeholder="选择网络" style="width: 260px">
-            <el-option v-for="n in options.networks" :key="n" :label="n" :value="n" />
+            <!-- 按 libvirt 转发类型分组：NAT / 桥接 / 隔离，附网关提示 -->
+            <el-option-group v-for="g in networkGroups" :key="g.label" :label="g.label">
+              <el-option
+                v-for="n in g.items"
+                :key="n.name"
+                :label="n.gateway ? n.name + '（网关 ' + n.gateway + '）' : n.name"
+                :value="n.name"
+              />
+            </el-option-group>
           </el-select>
           <span class="os-hint">{{ nicModel }} 模型</span>
           <el-button v-if="nics.length > 1" size="small" type="danger" text :icon="Delete" @click="removeNic(idx)" />
@@ -271,55 +287,6 @@
       </div>
 
       <div v-else-if="step === 3" class="step-pane">
-        <div class="step-head">
-          <h3 class="step-title">cloud-init 初始化</h3>
-          <p class="step-desc">首次启动时自动完成主机名、用户与网络配置。</p>
-        </div>
-        <el-alert v-if="installMode === 'clone'" type="info" :closable="false" show-icon title="克隆方式不支持 cloud-init 初始化。" style="margin-bottom: var(--space-xl)" />
-        <template v-else>
-          <el-form label-width="140px" class="step-form">
-            <el-form-item label="启用 cloud-init">
-              <el-switch v-model="cloudInitEnabled" active-text="启用" />
-              <span class="os-hint">云镜像方式默认启用；其他方式可按需开启</span>
-            </el-form-item>
-          </el-form>
-          <template v-if="cloudInitEnabled">
-            <el-form label-width="140px" class="step-form">
-              <el-form-item label="主机名">
-                <el-input v-model="cloudInit.hostname" :placeholder="'默认：' + (form.name || '虚拟机名')" style="width: 320px" />
-              </el-form-item>
-              <el-form-item label="用户名">
-                <el-input v-model="cloudInit.user" placeholder="如 ubuntu / root，可选" style="width: 320px" />
-              </el-form-item>
-              <el-form-item label="密码">
-                <el-input v-model="cloudInit.password" type="password" show-password placeholder="可选" style="width: 320px" />
-              </el-form-item>
-              <el-form-item label="SSH 公钥">
-                <el-input v-model="cloudInit.sshKey" type="textarea" :rows="3" placeholder="粘贴 ssh-rsa / ssh-ed25519 公钥，可选" style="width: 480px" />
-              </el-form-item>
-              <el-form-item label="网络模式">
-                <el-radio-group v-model="cloudInit.netMode">
-                  <el-radio value="dhcp">DHCP（自动获取）</el-radio>
-                  <el-radio value="static">静态 IP</el-radio>
-                </el-radio-group>
-              </el-form-item>
-              <template v-if="cloudInit.netMode === 'static'">
-                <el-form-item label="IP 地址">
-                  <el-input v-model="cloudInit.ip" placeholder="如 192.168.122.10" style="width: 320px" />
-                </el-form-item>
-                <el-form-item label="网关">
-                  <el-input v-model="cloudInit.gateway" placeholder="如 192.168.122.1" style="width: 320px" />
-                </el-form-item>
-                <el-form-item label="DNS">
-                  <el-input v-model="cloudInit.dns" placeholder="逗号分隔，如 114.114.114.114" style="width: 320px" />
-                </el-form-item>
-              </template>
-            </el-form>
-          </template>
-        </template>
-      </div>
-
-      <div v-else class="step-pane">
         <div class="step-head">
           <h3 class="step-title">确认创建</h3>
           <p class="step-desc">核对配置后点击「创建虚拟机」，可随时返回上一步修改。</p>
@@ -370,7 +337,7 @@
     <div class="wizard-footer">
       <el-button v-if="step > 0" @click="step--">上一步</el-button>
       <div class="footer-right">
-        <el-button v-if="step < 4" type="primary" :icon="ArrowRight" @click="next">下一步</el-button>
+        <el-button v-if="step < 3" type="primary" :icon="ArrowRight" @click="next">下一步</el-button>
         <el-button v-else type="primary" :icon="Check" :loading="submitting" :disabled="submitting" @click="submit">{{ submitText }}</el-button>
       </div>
     </div>
@@ -406,10 +373,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, ArrowRight, Check, Plus, Delete, Monitor, Files, Cloudy, CopyDocument } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Check, Plus, Delete, Monitor, Cloudy, CopyDocument } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { fmtSizeBytes } from '../utils/format.js'
 import { useAuth } from '../store/auth'
@@ -442,7 +409,7 @@ const vms = ref([])
 
 const form = reactive({ name: '', storagePool: '', vcpu: 2, memoryMb: 2048, diskGb: 20, machine: '' })
 const iso = reactive({ osName: '', isoPath: '', pick: null, manual: false })
-const importDisk = reactive({ osName: '', source: '', pick: null, manual: false })
+watch(() => iso.isoPath, (v) => { if (iso.manual && v) detectOsFromIso(v) })
 const cloudImage = reactive({ imageId: null, osName: '' })
 const cloneVm = reactive({ sourceVmId: null })
 const extraDisks = reactive([])
@@ -456,7 +423,6 @@ const diskForm = reactive({ kind: 'create', createGb: 20, source: '', imageId: n
 
 const installModes = [
   { value: 'iso', icon: Monitor, label: '本地安装介质 (ISO)', desc: '从 ISO 镜像安装系统到新建磁盘' },
-  { value: 'import', icon: Files, label: '导入现有磁盘', desc: '直接使用现有磁盘镜像启动' },
   { value: 'cloudimage', icon: Cloudy, label: '云镜像 + cloud-init', desc: '基于云镜像 / 模板，支持 cloud-init 初始化' },
   { value: 'clone', icon: CopyDocument, label: '克隆现有 VM', desc: '从现有虚拟机创建链接克隆' }
 ]
@@ -474,43 +440,96 @@ const volumeTree = computed(() =>
       })),
     }))
 )
-// 安装介质树：只保留 ISO 文件
-const isoVolumeTree = computed(() =>
-  volumeTree.value
-    .map((p) => ({ ...p, children: p.children.filter((c) => c.path.toLowerCase().endsWith('.iso')) }))
-    .filter((p) => p.children.length)
-)
-// 现有磁盘树：排除光驱文件
-const diskVolumeTree = computed(() =>
-  volumeTree.value
-    .map((p) => ({ ...p, children: p.children.filter((c) => !c.path.toLowerCase().endsWith('.iso')) }))
-    .filter((p) => p.children.length)
-)
+// ISO 平铺列表：扫全部激活存储池中的 .iso 卷（不限定 img 池），标注所属池与大小
+const isoFlatList = computed(() => {
+  const out = []
+  for (const p of volumeTree.value) {
+    for (const c of p.children.filter((c) => c.path.toLowerCase().endsWith('.iso'))) {
+      const nameAndSize = (c.label || '').split(' · ')
+      out.push({
+        path: c.path,
+        name: nameAndSize[0] || c.path.split('/').pop(),
+        pool: (p.label || '').split('（')[0],
+        sizeText: nameAndSize[1] || ''
+      })
+    }
+  }
+  return out
+})
+// 按 ISO 文件名关键词自动识别操作系统：关键词命中后到 osList 里模糊匹配第一个含该词的系统名
+// （osList 是带版本号的完整名单如 "Rocky Linux 9"，没有裸名，须模糊匹配）。识别不出保持空由用户手选。
+const ISO_OS_KEYWORDS = ['ubuntu', 'rocky', 'centos', 'alma', 'debian', 'fedora', 'opensuse', 'arch',
+  'windows 11', 'windows 10', 'windows', 'win11', 'win10', 'kylin', 'uos', 'deepin', 'alpine']
+const isoAutoDetected = ref(false)
+function detectOsFromIso(path) {
+  const file = (path || '').toLowerCase()
+  for (const kw of ISO_OS_KEYWORDS) {
+    if (!file.includes(kw)) continue
+    const hit = options.osList.find((o) => o.name.toLowerCase().includes(kw))
+    if (hit) {
+      iso.osName = hit.name
+      isoAutoDetected.value = true
+      return
+    }
+  }
+  isoAutoDetected.value = false
+}
 
 function onIsoPick(val) {
-  iso.isoPath = (val && val[val.length - 1]) || ''
+  // 平铺 el-select 的 change 参数是路径字符串本身（旧级联才是数组）
+  iso.isoPath = val || ''
+  detectOsFromIso(iso.isoPath)
 }
-function onImportPick(val) {
-  importDisk.source = (val && val[val.length - 1]) || ''
-}const cloudImageList = computed(() => options.cloudImages.filter((i) => (i.format || '').toLowerCase() !== 'iso'))
-
-const activeOsName = computed(() => {
-  if (installMode.value === 'iso') return iso.osName
-  if (installMode.value === 'import') return importDisk.osName
-  if (installMode.value === 'cloudimage') return cloudImage.osName
-  return ''
+function poolLabel(p) {
+  return p.name + '（可用 ' + gbText(p.available) + '）'
+}
+function poolAvailText(name) {
+  const p = (options.storagePools || []).find((x) => x.name === name)
+  return p ? gbText(p.available) : '—'
+}
+// 新系统盘超出池剩余空间时预警（thin provisioning 下未必失败，但必须让用户看见）
+const diskOverPool = computed(() => {
+  const p = (options.storagePools || []).find((x) => x.name === form.storagePool)
+  if (!p || !p.available) return false
+  return Number(form.diskGb || 0) * 1024 ** 3 > Number(p.available)
+})
+// ── 网络下拉按 libvirt 转发类型分组 ──
+const networkGroups = computed(() => {
+  const infos = options.networkInfo || []
+  if (!infos.length) return [{ label: '可用网络', items: (options.networks || []).map((n) => ({ name: n })) }]
+  const gLabel = { nat: 'NAT 网络', bridge: '桥接网络', isolated: '隔离网络' }
+  const groups = {}
+  for (const n of infos) {
+    const key = gLabel[n.forward] || '隔离/其它'
+    ;(groups[key] = groups[key] || []).push(n)
+  }
+  return Object.keys(groups).map((label) => ({ label, items: groups[label] }))
+})
+const cloudImageName = computed(() => {
+  const img = (options.cloudImages || []).find((i) => i.id === cloudImage.value.imageId)
+  return img ? img.name : '所选镜像'
 })
 
-const selectedOs = computed(() => options.osList.find((o) => o.name === activeOsName.value) || null)
-const nicModel = computed(() => (selectedOs.value && selectedOs.value.nic_model) || 'virtio')
-const diskBus = computed(() => (selectedOs.value && selectedOs.value.disk_bus) || 'virtio')
+// ── 前置条件检查：基建先行，缺什么给引导链接而不是让用户走到中途发现下拉是空的 ──
+const usablePools = computed(() => (options.storagePools || []).filter((p) => p.active))
+const hasInstallSource = computed(() => {
+  if ((options.cloudImages || []).length) return true
+  if ((options.storagePools || []).some((p) => (p.volumes || []).length)) return true
+  return vms.value.length > 0
+})
+const precheckIssues = computed(() => {
+  const issues = []
+  if (!options.networks.length) issues.push('还没有可用的虚拟网络')
+  if (!usablePools.value.length) issues.push('没有可用（激活）的存储池')
+  if (!hasInstallSource.value) issues.push('没有任何安装来源（云镜像 / ISO 卷 / 存量虚拟机）')
+  return issues
+})
 const cloudInitSupported = computed(() => installMode.value === 'cloudimage' && !!(selectedOs.value && selectedOs.value.cloud_init))
 
 const cloneSource = computed(() => vms.value.find((v) => v.id === cloneVm.sourceVmId) || null)
 
 const systemDisk = computed(() => {
   if (installMode.value === 'iso') return [{ id: 'sys', kind: 'create', createGb: form.diskGb, isSystem: true }]
-  if (installMode.value === 'import') return [{ id: 'sys', kind: 'source', source: importDisk.source, isSystem: true }]
   if (installMode.value === 'cloudimage') {
     const img = options.cloudImages.find((i) => i.id === cloudImage.imageId)
     return [{ id: 'sys', kind: 'image', imageId: cloudImage.imageId, imageName: img ? img.name : '', sizeGb: img ? img.size_gb : 0, isSystem: true }]
@@ -761,8 +780,6 @@ function buildPayload() {
   if (installMode.value === 'iso') {
     payload.disks = buildDisks()
     payload.iso_path = isoPathLabel.value
-  } else if (installMode.value === 'import') {
-    payload.disks = buildDisks()
   } else if (installMode.value === 'cloudimage') {
     payload.disks = buildDisks()
   }
@@ -777,8 +794,6 @@ function next() {
     if (installMode.value === 'iso') {
       if (!iso.osName) return ElMessage.warning({ message: '请选择操作系统', grouping: true })
       if (!iso.isoPath) return ElMessage.warning('请选择安装介质（存储池 → ISO，或勾选手动输入路径）')
-    } else if (installMode.value === 'import') {
-      if (!importDisk.source) return ElMessage.warning('请填写磁盘路径')
     } else if (installMode.value === 'cloudimage') {
       if (!cloudImage.imageId) return ElMessage.warning('请选择云镜像')
     } else if (installMode.value === 'clone') {
@@ -789,7 +804,7 @@ function next() {
   if (step.value === 1 && installMode.value !== 'clone' && !form.name) {
     return ElMessage.warning('请填写虚拟机名称')
   }
-  if (step.value === 3 && cloudInitEnabled.value && cloudInit.netMode === 'static' && !cloudInit.ip) {
+  if (step.value === 0 && installMode.value === 'cloudimage' && cloudInitEnabled.value && cloudInit.netMode === 'static' && !cloudInit.ip) {
     return ElMessage.warning('静态网络模式请填写 IP 地址')
   }
   step.value++
@@ -976,12 +991,6 @@ onMounted(async () => {
   font-size: 0.82rem;
 }
 
-.iso-row {
-  display: flex;
-  gap: var(--space-lg);
-  width: 100%;
-}
-
 /* 池→卷级联选择器 + 手动输入开关（ISO / 导入磁盘共用） */
 .iso-pick {
   width: 520px;
@@ -994,14 +1003,6 @@ onMounted(async () => {
 .manual-toggle :deep(.el-checkbox__label) {
   font-size: 0.82rem;
   color: var(--el-text-color-secondary);
-}
-
-.iso-path {
-  flex: 1;
-}
-
-.iso-picker {
-  width: 220px;
 }
 
 .ci-collapse {
@@ -1141,5 +1142,13 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   margin-top: var(--space-2xl);
+}
+.precheck {
+  margin-bottom: var(--space-lg);
+}
+.precheck-links {
+  margin-top: 6px;
+  display: flex;
+  gap: 4px;
 }
 </style>

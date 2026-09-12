@@ -19,65 +19,42 @@
         </div>
       </div>
 
-      <el-table :data="networks" stripe border style="width: 100%" empty-text="暂无网络数据">
-        <el-table-column prop="name" label="名称" min-width="130">
-          <template #default="{ row }">
-            <span class="mono">{{ row.name }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.active ? 'success' : 'info'" effect="light">
-              {{ row.active ? '运行' : '停止' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="自动启动" width="110">
-          <template #default="{ row }">
-            <!-- admin 直接切换（对应 virsh net-autostart on|off）；viewer 只读展示 -->
-            <el-switch
-              v-if="isAdmin"
-              :model-value="row.autostart"
-              :loading="autostartBusy.has(row.name)"
-              @change="(v) => toggleAutostart(row, v)"
-            />
-            <el-tag v-else :type="row.autostart ? 'primary' : 'info'" effect="plain" size="small">
-              {{ row.autostart ? '启用' : '禁用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="bridge" label="网桥" width="130">
-          <template #default="{ row }">
-            <span class="mono">{{ row.bridge || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="转发模式" width="110">
-          <template #default="{ row }">
-            {{ row.forward || '—' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="网关" width="150">
-          <template #default="{ row }">
-            <span class="mono">{{ row.gateway || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="DHCP 范围" min-width="180">
-          <template #default="{ row }">
-            <span v-if="row.dhcp_start && row.dhcp_end" class="mono">
-              {{ row.dhcp_start }} - {{ row.dhcp_end }}
-            </span>
-            <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="370" fixed="right">
-          <template #default="{ row }">
-            <el-button v-if="isAdmin" size="small" type="success" :icon="VideoPlay" :disabled="row.active" @click="act(row, 'start')">启动</el-button>
-            <el-button v-if="isAdmin" size="small" :icon="VideoPause" :disabled="!row.active" @click="act(row, 'stop')">停止</el-button>
-            <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openEdit(row)">编辑 XML</el-button>
-            <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <!-- 网络卡片（腾讯云风格）：网络属性多（网桥/转发/网关/DHCP），少量对象时卡片比表格信息层次更好 -->
+      <el-empty v-if="!networks.length && !loading" description="暂无虚拟网络，点击「新建 NAT 网络」创建" :image-size="72" />
+      <el-row v-else :gutter="16">
+        <el-col v-for="row in networks" :key="row.name" :xs="24" :sm="12" :md="8">
+        <el-card shadow="hover" class="net-card" :class="{ inactive: !row.active }">
+          <div class="nc-head">
+            <span class="nc-name mono">{{ row.name }}</span>
+            <el-tag :type="row.active ? 'success' : 'info'" effect="light">{{ row.active ? '运行' : '停止' }}</el-tag>
+            <div class="nc-autostart">
+              <span class="nc-label">自启</span>
+              <el-switch
+                v-if="isAdmin"
+                :model-value="row.autostart"
+                :loading="autostartBusy.has(row.name)"
+                @change="(v) => toggleAutostart(row, v)"
+              />
+              <el-tag v-else :type="row.autostart ? 'primary' : 'info'" effect="plain" size="small">
+                {{ row.autostart ? '启用' : '禁用' }}
+              </el-tag>
+            </div>
+          </div>
+          <div class="nc-rows">
+            <div class="nc-row"><span class="nc-label">网桥</span><span class="mono">{{ row.bridge || '—' }}</span></div>
+            <div class="nc-row"><span class="nc-label">转发模式</span><span>{{ row.forward || '—' }}</span></div>
+            <div class="nc-row"><span class="nc-label">网关</span><span class="mono">{{ row.gateway || '—' }}</span></div>
+            <div class="nc-row wide"><span class="nc-label">DHCP 范围</span><span class="mono">{{ row.dhcp_start && row.dhcp_end ? row.dhcp_start + ' - ' + row.dhcp_end : '—' }}</span></div>
+          </div>
+          <div class="nc-actions">
+            <el-button v-if="isAdmin" :icon="VideoPlay" :disabled="row.active" @click="act(row, 'start')">启动</el-button>
+            <el-button v-if="isAdmin" :icon="VideoPause" :disabled="!row.active" @click="act(row, 'stop')">停止</el-button>
+            <el-button v-if="isAdmin" :icon="Edit" @click="openEdit(row)">编辑 XML</el-button>
+            <el-button v-if="isAdmin" type="danger" plain :icon="Delete" @click="remove(row)">删除</el-button>
+          </div>
+        </el-card>
+        </el-col>
+      </el-row>
     </el-card>
 
     <!-- 新建 NAT 网络 -->
@@ -313,5 +290,60 @@ onMounted(load)
   font-family: var(--font-mono);
   font-size: 0.82rem;
   line-height: 1.5;
+}
+.net-card {
+  margin-bottom: 16px;
+}
+.net-card.inactive {
+  opacity: 0.75;
+}
+.nc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.nc-name {
+  font-size: 1.02rem;
+  font-weight: 600;
+}
+.nc-autostart {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nc-label {
+  width: 64px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  color: var(--color-muted-foreground);
+}
+.nc-rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 20px;
+}
+.nc-row {
+  display: flex;
+  gap: 10px;
+  font-size: 0.88rem;
+}
+.nc-row .nc-label {
+  width: 60px;
+  flex-shrink: 0;
+}
+.nc-actions {
+  display: flex;
+  flex-wrap: wrap; /* 三列窄卡下四个操作按钮允许换行 */
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+/* DHCP 范围值较长，单独占满一行避免挤压换行 */
+.nc-row.wide {
+  grid-column: 1 / -1;
 }
 </style>

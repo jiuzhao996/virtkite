@@ -64,7 +64,7 @@
             {{ pool.description || '点击编辑添加描述' }}
           </div>
           <div class="pool-stats">
-            <span>已用 <b class="mono">{{ fmtSizeBytes(pool.allocation) }}</b></span>
+            <span title="dir 型池的容量统计是文件系统级的：同盘多个池显示同一口径，非池内卷独占占用">已用 <b class="mono">{{ fmtSizeBytes(pool.allocation) }}</b></span>
             <el-divider direction="vertical" />
             <span>卷数 <b class="mono">{{ pool.vol_count == null ? 0 : pool.vol_count }}</b></span>
           </div>

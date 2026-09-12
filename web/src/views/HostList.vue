@@ -12,26 +12,28 @@
         <span class="count">共 {{ total }} 台</span>
       </div>
 
-      <el-table :data="items" stripe border style="width: 100%" empty-text="暂无宿主机数据">
-        <el-table-column prop="name" label="名称" min-width="140" />
-        <el-table-column prop="ssh_ip" label="SSH IP" min-width="140" />
-        <el-table-column prop="ssh_user" label="SSH 用户" width="110" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="hostStatusTag(row.status)" effect="light">
-              {{ hostStatusText(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" min-width="280" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" :icon="Connection" :loading="testBusy.has(row.id)" @click="test(row)">测试连通</el-button>
-            <el-button size="small" :icon="DataLine" @click="showStats(row)">查看状态</el-button>
-            <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <!-- 宿主机健康大卡（腾讯云服务器概要风格）：单管理节点下对象少，一行表格太空；
+           每台一张大卡：头=名称/状态/操作，体=连接信息行 + 描述；实时资源仍走「查看状态」弹窗（SSH 采集） -->
+      <el-empty v-if="!items.length && !loading" description="暂无宿主机，点击右上角「添加宿主机」登记本机信息" :image-size="80" />
+      <div v-else class="host-cards">
+        <el-card v-for="row in items" :key="row.id" shadow="hover" class="host-card">
+          <div class="hc-head">
+            <span class="hc-name">{{ row.name }}</span>
+            <el-tag :type="hostStatusTag(row.status)" effect="light">{{ hostStatusText(row.status) }}</el-tag>
+          </div>
+          <div class="hc-rows">
+            <div class="hc-row"><span class="hc-label">SSH 连接</span><span class="mono">{{ row.ssh_user }}@{{ row.ssh_ip }}:{{ row.ssh_port || 22 }}</span></div>
+            <div class="hc-row"><span class="hc-label">描述</span><span>{{ row.description || '—' }}</span></div>
+            <div class="hc-row"><span class="hc-label">登记时间</span><span>{{ row.created_at ? new Date(row.created_at).toLocaleString() : '—' }}</span></div>
+          </div>
+          <div class="hc-actions">
+            <el-button :icon="Connection" :loading="testBusy.has(row.id)" @click="test(row)">测试连通</el-button>
+            <el-button :icon="DataLine" @click="showStats(row)">查看状态</el-button>
+            <el-button v-if="isAdmin" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="isAdmin" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+          </div>
+        </el-card>
+      </div>
     </el-card>
 
     <el-dialog v-model="statsDialog" :title="(statsTarget ? statsTarget.name : '') + ' · 资源状态'" width="460px">
@@ -213,5 +215,37 @@ onMounted(load)
   color: var(--color-muted-foreground);
   text-align: center;
   padding: 30px 0;
+}
+.hc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.hc-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+.hc-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hc-row {
+  display: flex;
+  gap: 12px;
+  font-size: 0.88rem;
+}
+.hc-label {
+  width: 64px;
+  flex-shrink: 0;
+  color: var(--color-muted-foreground);
+}
+.hc-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
 }
 </style>

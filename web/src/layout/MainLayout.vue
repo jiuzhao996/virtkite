@@ -5,9 +5,10 @@
         <template v-if="!collapsed">
           <img class="brand-logo" src="/brand/mark-white.svg" alt="鸢航" />
           <span class="brand-text">鸢航 VirtKite</span>
-          <el-icon class="collapse-btn" @click="collapsed = true"><Fold /></el-icon>
+          <!-- 收缩入口唯一化：只保留底部胶囊条，brand 角落的重复箭头已移除（用户要求） -->
         </template>
-        <el-icon v-else class="collapse-btn center" @click="collapsed = false"><Expand /></el-icon>
+        <!-- 折叠态只显示 logo：收起/展开统一走底部条，保证两个方向入口位置一致 -->
+        <img v-else class="brand-logo" src="/brand/mark-white.svg" alt="鸢航" style="margin: 0 auto" />
       </div>
       <el-menu
         v-if="!collapsed"
@@ -18,20 +19,29 @@
       >
         <!-- 分组折叠菜单：展开状态由本地 closedGroups 自管（el-menu 的 default-openeds 只在
              挂载瞬间生效，isAdmin 异步到达后重渲染的分组接不到，会出现刷新后全部收起的竞态） -->
-        <el-menu-item-group v-for="group in menuGroups" :key="group.name">
-          <template #title>
-            <span class="nav-group-title" @click="toggleGroup(group.name)">
-              <span class="group-title">{{ group.name }}</span>
-              <el-icon class="group-caret" :class="{ closed: closedGroups.has(group.name) }"><ArrowDown /></el-icon>
-            </span>
-          </template>
-          <template v-if="!closedGroups.has(group.name)">
+        <template v-for="group in menuGroups" :key="group.name">
+          <!-- 组内 >1 项才渲染分组标题与折叠；单项目组（如只剩仪表盘的总览组）直接平铺菜单项 -->
+          <el-menu-item-group v-if="group.items.length > 1">
+            <template #title>
+              <span class="nav-group-title" @click="toggleGroup(group.name)">
+                <span class="group-title">{{ group.name }}</span>
+                <el-icon class="group-caret" :class="{ closed: closedGroups.has(group.name) }"><ArrowDown /></el-icon>
+              </span>
+            </template>
+            <template v-if="!closedGroups.has(group.name)">
+              <el-menu-item v-for="item in group.items" :key="item.index" :index="item.index">
+                <el-icon><component :is="item.icon" /></el-icon>
+                <span>{{ item.label }}</span>
+              </el-menu-item>
+            </template>
+          </el-menu-item-group>
+          <template v-else>
             <el-menu-item v-for="item in group.items" :key="item.index" :index="item.index">
               <el-icon><component :is="item.icon" /></el-icon>
               <span>{{ item.label }}</span>
             </el-menu-item>
           </template>
-        </el-menu-item-group>
+        </template>
       </el-menu>
       <div v-else class="collapse-nav">
         <template v-for="item in navItems" :key="item.index">
@@ -50,6 +60,14 @@
         </el-tooltip>
         </template>
       </div>
+      <!-- 底部常驻收起/展开条：顶部 brand 角落的收缩键太隐蔽（用户反馈"压根看不出来"），这里给全宽可点的显式入口 -->
+      <!-- 折叠态只剩图标，必须给 tooltip 提示（用户反馈"没有任何提示"）；展开态有文字，tooltip 关掉 -->
+      <el-tooltip :content="collapsed ? '展开侧栏' : '收起侧栏'" placement="right" :disabled="!collapsed" :show-after="200">
+        <div class="aside-collapse-bar" @click="collapsed = !collapsed">
+          <el-icon class="bar-arrow"><component :is="collapsed ? ArrowRight : ArrowLeft" /></el-icon>
+          <span v-if="!collapsed">收起侧栏</span>
+        </div>
+      </el-tooltip>
     </el-aside>
 
     <el-container>
@@ -130,9 +148,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, Bell, FullScreen, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, FullScreen, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { vmStatusText, vmStatusTag } from '../utils/format'
@@ -149,7 +167,6 @@ const collapsed = ref(false)
 // 个人资料/改密码/轮询偏好收进顶栏「个人中心」（对标 JumpServer 审计模块与云控制台顶栏分工）。
 const navItems = [
   { index: '/dashboard', label: '仪表盘', icon: 'DataLine', group: '总览' },
-  { index: '/monitor', label: '监控中心', icon: 'Odometer', group: '总览' },
   { index: '/vms', label: '虚拟机', icon: 'Monitor', group: '资源' },
   { index: '/images', label: '镜像管理', icon: 'Picture', group: '资源' },
   { index: '/hosts', label: '宿主机', icon: 'Cpu', group: '基础设施' },
@@ -286,19 +303,6 @@ function onUserCommand(cmd) {
   color: #fff;
   letter-spacing: 0.3px;
   white-space: nowrap;
-}
-.collapse-btn {
-  margin-left: auto;
-  font-size: 1.1rem;
-  color: rgba(255, 255, 255, 0.85);
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 4px;
-  transition: all 0.2s ease;
-}
-.collapse-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
 }
 .collapse-btn.center {
   margin: auto;
@@ -512,5 +516,23 @@ function onUserCommand(cmd) {
 .main {
   background: var(--color-background);
   padding: 20px;
+}
+.aside-collapse-bar {
+  margin: auto 12px 12px;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 18px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.85rem;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+  transition: all 0.2s ease;
+}
+.aside-collapse-bar:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 </style>

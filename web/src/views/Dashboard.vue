@@ -8,15 +8,22 @@
       <el-button :icon="Refresh" circle text @click="loadAll" />
     </div>
 
-    <!-- Row 1: 统计卡片 -->
+    <!-- 概览 / 监控 两个 tab：概览是状态摘要（含即时时序快照），监控收敛全部深度分析
+         （Grafana 双看板 + 实时告警 + 告警历史 + file_sd 服务发现）。监控 tab 用 lazy：
+         首次激活才挂载（Grafana iframe 首载约 3MB），挂载后常驻不销毁。 -->
+    <el-tabs v-model="activeTab" class="dash-tabs" @tab-change="onTabChange">
+      <el-tab-pane label="概览" name="overview">
+        <!-- Row 1: 统计卡片 -->
     <el-row :gutter="16">
       <el-col :xs="12" :sm="8" :md="3" v-for="s in stats" :key="s.label">
-        <el-card shadow="hover" class="stat-card">
+        <!-- 腾讯云控制台风格：大数字 + 名称 + 整卡可点跳转对应页面 -->
+        <el-card shadow="hover" class="stat-card clickable" @click="$router.push(s.to)">
           <el-icon class="stat-icon" :style="{ color: s.color }">
             <component :is="s.icon" />
           </el-icon>
-          <el-statistic :value="s.value" :value-style="{ color: 'var(--color-foreground)', fontWeight: 700 }" />
+          <el-statistic :value="s.value" :value-style="{ color: 'var(--color-foreground)', fontWeight: 700, fontSize: '1.7rem' }" />
           <div class="stat-label">{{ s.label }}</div>
+          <el-icon class="stat-arrow"><ArrowRight /></el-icon>
         </el-card>
       </el-col>
     </el-row>
@@ -68,7 +75,10 @@
       <el-col :md="10">
         <el-card shadow="hover">
           <template #header>
-            <span class="card-title">虚拟机状态</span>
+            <div class="alert-card-head">
+              <span class="card-title">虚拟机状态</span>
+              <el-link type="primary" :underline="false" @click="$router.push('/vms')">查看全部</el-link>
+            </div>
           </template>
           <div v-if="vmStatus.length === 0" class="empty">暂无数据</div>
           <div v-else class="donut-wrap">
@@ -92,6 +102,35 @@
               />
             </div>
           </div>
+        </el-card>
+
+        <!-- 资源容量（超分视角）：已分配 vs 宿主机物理容量。云平台核心指标——
+             一台宿主机"装下"了多少申请出来的资源，ratio>1 即超分（KVM 只分配不预留） -->
+        <el-card shadow="hover" class="mt">
+          <template #header>
+            <span class="card-title">资源容量</span>
+          </template>
+          <div v-if="!capacity.has_host" class="empty">暂无宿主机记录，无法对比物理容量</div>
+          <template v-else>
+            <div class="cap-row">
+              <span class="cap-label">vCPU</span>
+              <div class="cap-track"><div class="cap-fill" :class="{ over: capacity.cpu_ratio > 1 }" :style="{ width: capBar(capacity.cpu_ratio) }" /></div>
+              <span class="cap-num">{{ capacity.allocated_vcpu }} / {{ capacity.physical_cores }} 核</span>
+            </div>
+            <div class="cap-row">
+              <span class="cap-label">内存</span>
+              <div class="cap-track"><div class="cap-fill" :class="{ over: capacity.mem_ratio > 1 }" :style="{ width: capBar(capacity.mem_ratio) }" /></div>
+              <span class="cap-num">{{ capGB(capacity.allocated_mem_mb) }} / {{ (capacity.physical_mem_mb / 1024).toFixed(1) }} GB</span>
+            </div>
+            <div class="cap-ratio">
+              <span>超分比</span>
+              <b :class="{ over: capacity.cpu_ratio > 1 }">CPU {{ capacity.cpu_ratio }}×</b>
+              <b :class="{ over: capacity.mem_ratio > 1 }">内存 {{ capacity.mem_ratio }}×</b>
+              <el-tooltip content="KVM 只分配不预留：超分是云平台的常态设计，前提是负载不同时跑满" placement="top">
+                <el-icon class="cap-help"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </template>
         </el-card>
       </el-col>
     </el-row>
@@ -154,7 +193,10 @@
       <el-col v-if="isAdmin" :md="12">
         <el-card shadow="hover">
           <template #header>
-            <span class="card-title">操作类型分布</span>
+            <div class="alert-card-head">
+              <span class="card-title">操作类型分布</span>
+              <el-link type="primary" :underline="false" @click="$router.push('/audit')">进审计中心</el-link>
+            </div>
           </template>
           <div v-if="topActions.length === 0" class="empty">暂无数据</div>
           <div v-for="a in topActions" :key="a.action" class="action-row">
@@ -167,11 +209,16 @@
         </el-card>
       </el-col>
       <el-col :md="isAdmin ? 12 : 24">
-        <el-card shadow="hover">
+        <el-card shadow="hover" class="alert-overview-card" :class="{ firing: firingAlerts.length }">
           <template #header>
             <div class="alert-card-head">
               <span class="card-title">告警概览</span>
-              <el-link type="primary" :underline="false" @click="$router.push('/monitor')">前往监控中心</el-link>
+              <div class="alert-head-actions">
+                <el-tag v-if="!alertsError && firingAlerts.length" type="danger" effect="light" size="small">
+                  {{ firingAlerts.length }} 条待处理
+                </el-tag>
+                <el-link type="primary" :underline="false" @click="activeTab = 'monitor'">前往监控中心</el-link>
+              </div>
             </div>
           </template>
           <div v-if="alertsError" class="empty">监控栈未连接（docker compose up -d 启动 Prometheus / Alertmanager）</div>
@@ -211,14 +258,22 @@
         </el-card>
       </el-col>
     </el-row>
+      </el-tab-pane>
+      <el-tab-pane label="监控" name="monitor" lazy>
+        <!-- ⚠️ 必须用 MonitorView：Monitor 已被 @element-plus/icons-vue 的显示器图标占用 -->
+        <MonitorView v-if="visitedTabs.has('monitor')" embedded />
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, reactive } from 'vue'
 import * as echarts from 'echarts'
-import { Refresh, Cpu, Monitor, VideoPlay, FolderOpened, Connection, Picture, User, Document } from '@element-plus/icons-vue'
+import { ArrowRight, Refresh, Cpu, InfoFilled, Monitor, VideoPlay, FolderOpened, Connection, Picture, User, Document } from '@element-plus/icons-vue'
+import MonitorView from './Monitor.vue'
 import { api } from '../api'
+import { useRoute } from 'vue-router'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 import {
@@ -290,17 +345,41 @@ let hostTimer = null
 let vmTimer = null
 let alertTimer = null
 
+// 概览/监控 tab：visitedTabs 记录已激活过的监控 tab（配合 lazy，首次激活挂载后常驻）。
+// 切回概览时 echarts 容器从 display:none 恢复，需要手动 resize 一次否则图不渲染。
+const activeTab = ref('overview')
+const visitedTabs = reactive(new Set(['overview']))
+const route = useRoute()
+function onTabChange(name) {
+  if (name === 'monitor') visitedTabs.add('monitor')
+  else nextTick(() => chart && chart.resize())
+}
+const capacity = ref({ has_host: false, vm_count: 0, allocated_vcpu: 0, allocated_mem_mb: 0, physical_cores: 0, physical_mem_mb: 0, cpu_ratio: 0, mem_ratio: 0 })
+async function loadCapacity() {
+  try {
+    const res = await api.dashboardCapacity()
+    capacity.value = res.data || capacity.value
+  } catch (e) { /* 静默：容量卡降级为空态 */ }
+}
+// 超分条宽度：以 4× 超分为满格封顶，1×（不超分）= 25%；超分时条变橙
+function capBar(ratio) {
+  return Math.min(100, (ratio || 0) * 25) + '%'
+}
+function capGB(mb) {
+  return (mb / 1024).toFixed(1) + ' GB'
+}
+
 const stats = computed(() => {
   const o = overview.value || {}
   return [
-    { label: '宿主机', icon: Cpu, color: 'var(--color-primary)', value: o.host_count || 0 },
-    { label: '虚拟机', icon: Monitor, color: 'var(--color-primary)', value: o.vm_count || 0 },
-    { label: '运行中', icon: VideoPlay, color: 'var(--color-accent)', value: o.running_vm_count || 0 },
-    { label: '存储池', icon: FolderOpened, color: 'var(--color-warning)', value: o.pool_count || 0 },
-    { label: '网络', icon: Connection, color: '#2563eb', value: o.network_count || 0 },
-    { label: '镜像', icon: Picture, color: '#7c3aed', value: o.image_count || 0 },
-    { label: '用户', icon: User, color: '#0891b2', value: o.user_count || 0 },
-    { label: '审计', icon: Document, color: 'var(--color-info)', value: o.audit_count || 0 }
+    { label: '宿主机', icon: Cpu, color: 'var(--color-primary)', value: o.host_count || 0, to: '/hosts' },
+    { label: '虚拟机', icon: Monitor, color: 'var(--color-primary)', value: o.vm_count || 0, to: '/vms' },
+    { label: '运行中', icon: VideoPlay, color: 'var(--color-accent)', value: o.running_vm_count || 0, to: '/vms' },
+    { label: '存储池', icon: FolderOpened, color: 'var(--color-warning)', value: o.pool_count || 0, to: '/storage' },
+    { label: '网络', icon: Connection, color: '#2563eb', value: o.network_count || 0, to: '/networks' },
+    { label: '镜像', icon: Picture, color: '#7c3aed', value: o.image_count || 0, to: '/images' },
+    { label: '用户', icon: User, color: '#0891b2', value: o.user_count || 0, to: '/users' },
+    { label: '审计', icon: Document, color: 'var(--color-info)', value: o.audit_count || 0, to: '/audit' }
   ]
 })
 
@@ -497,6 +576,11 @@ function initChart() {
 const onResize = () => chart && chart.resize()
 
 onMounted(async () => {
+  // 兼容旧书签：/monitor 重定向到 /dashboard?tab=monitor 时直达监控 tab
+  if (route.query.tab === 'monitor') {
+    activeTab.value = 'monitor'
+    visitedTabs.add('monitor')
+  }
   await loadAll()
   await nextTick()
   initChart()
@@ -506,6 +590,7 @@ onMounted(async () => {
   // 告警概览与平台信息：进页拉一次，告警随仪表盘节奏轮询
   loadAlerts()
   loadSysInfo()
+  loadCapacity()
   alertTimer = setInterval(loadAlerts, ms)
   // 历史曲线预填：先画满过去一小时，再由轮询无缝追加
   prefillHostHistory()
@@ -525,6 +610,99 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 资源容量卡（超分视角）：分配/物理 横条，ratio>1 超分变橙 */
+.cap-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.cap-label {
+  width: 40px;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: var(--el-text-color-secondary);
+}
+.cap-track {
+  flex: 1;
+  height: 8px;
+  background: var(--el-fill-color);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.cap-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--el-color-success);
+  transition: width 0.3s;
+}
+.cap-fill.over {
+  background: var(--el-color-warning);
+}
+.cap-num {
+  min-width: 116px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+.cap-ratio {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 2px;
+  font-size: 0.85rem;
+  color: var(--el-text-color-secondary);
+}
+.cap-ratio b {
+  font-family: var(--font-mono);
+  color: var(--el-color-success);
+}
+.cap-ratio b.over {
+  color: var(--el-color-warning);
+}
+.cap-help {
+  cursor: help;
+}
+.dash-tabs {
+  margin-bottom: var(--space-lg);
+}
+/* 概览/监控 tab 做大：16px 加粗、加高加间距，避免藏在页首不被发现 */
+.dash-tabs :deep(.el-tabs__item) {
+  font-size: 1.05rem;
+  font-weight: 600;
+  height: 46px;
+  line-height: 46px;
+  padding: 0 26px;
+  color: var(--el-text-color-secondary);
+}
+.dash-tabs :deep(.el-tabs__item.is-active) {
+  font-weight: 700;
+  color: var(--el-color-primary);
+}
+.dash-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
+}
+/* 统计卡：整体可点，右上角箭头 hover 才浮现（腾讯云控制台风格） */
+.stat-card.clickable {
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.15s ease;
+}
+.stat-card.clickable:hover {
+  transform: translateY(-2px);
+}
+.stat-arrow {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: var(--color-muted-foreground);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.stat-card.clickable:hover .stat-arrow {
+  opacity: 1;
+  color: var(--el-color-primary);
+}
 /* .page-head / .page-title 已收进 global.css（原本页 margin-bottom: 16px 与 var(--space-xl) 等值） */
 .head-left {
   display: flex;
@@ -813,5 +991,14 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   font-size: 0.85rem;
   color: var(--color-foreground);
+}
+/* 告警概览卡：有待处理告警时标题区标红边（对齐监控中心 alert-firing 模式） */
+.alert-overview-card.firing :deep(.el-card__header) {
+  border-top: 2px solid var(--el-color-danger);
+}
+.alert-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>

@@ -9,13 +9,25 @@
         <span v-if="vm && vm.ip" class="tb-ip">{{ vm.ip }}</span>
       </div>
       <div class="tb-actions">
-        <el-button size="small" type="primary" :icon="Monitor" :disabled="!isRunning" @click="goConsole">控制台</el-button>
-        <el-button v-if="isAdmin && vm" size="small" :icon="VideoPlay" :loading="busy === 'start'" :disabled="isRunning || isPaused" @click="act('start')">开机</el-button>
-        <el-button v-if="isAdmin && vm" size="small" :icon="VideoPause" :loading="busy === 'pause'" :disabled="!isRunning" @click="act('pause')">暂停</el-button>
-        <el-button v-if="isAdmin && vm" size="small" :icon="VideoPlay" :loading="busy === 'resume'" :disabled="!isPaused" @click="act('resume')">恢复</el-button>
-        <el-button v-if="isAdmin && vm" size="small" :icon="SwitchButton" :loading="busy === 'stop'" :disabled="!isRunning" @click="act('stop')">关机</el-button>
-        <el-button v-if="isAdmin && vm" size="small" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" @click="act('restart')">重启</el-button>
-        <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
+        <el-button type="primary" :icon="Monitor" :disabled="!isRunning" @click="goConsole">控制台</el-button>
+        <!-- 电源 / 挂起 状态切换按钮：一个按钮按当前状态显示对应动作（运行中→关机/暂停，关机→开机，暂停→恢复）。
+             语义保持与拆分版一致：暂停态须先恢复（电源钮禁用），关机态禁用挂起钮；busy 期间锁定防止动作切换闪烁 -->
+        <el-button
+          v-if="isAdmin && vm"
+          :icon="isRunning ? SwitchButton : VideoPlay"
+          :loading="busy === 'stop' || busy === 'start'"
+          :disabled="isPaused || (!!busy && busy !== 'resume')"
+          @click="act(isRunning ? 'stop' : 'start')"
+        >{{ isRunning ? '关机' : '开机' }}</el-button>
+        <el-button
+          v-if="isAdmin && vm"
+          :icon="isPaused ? VideoPlay : VideoPause"
+          :loading="busy === 'pause' || busy === 'resume'"
+          :disabled="(!isRunning && !isPaused) || (!!busy && busy !== 'stop' && busy !== 'start')"
+          @click="act(isPaused ? 'resume' : 'pause')"
+        >{{ isPaused ? '恢复' : '暂停' }}</el-button>
+        <el-button v-if="isAdmin && vm" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" @click="act('restart')">重启</el-button>
+        <el-button v-if="isAdmin" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
       </div>
     </div>
 
@@ -38,10 +50,6 @@
           <el-menu-item index="memory">
             <el-icon><Coin /></el-icon>
             <span>内存</span>
-          </el-menu-item>
-          <el-menu-item index="boot">
-            <el-icon><Sort /></el-icon>
-            <span>引导顺序</span>
           </el-menu-item>
           <el-menu-item-group title="磁盘">
             <el-menu-item v-for="item in diskMenuItems" :key="item.index" :index="item.index">
@@ -74,11 +82,12 @@
             <h3 class="panel-title">概览</h3>
           </div>
           <el-card shadow="never">
-            <el-descriptions :column="2" border size="small">
+            <!-- 腾讯云式信息行：无框线、label 灰色固定宽，一行一条信息，可读性优于带框表格 -->
+            <el-descriptions :column="2" class="ov-desc">
               <el-descriptions-item label="名称">{{ spec ? spec.name : '—' }}</el-descriptions-item>
               <el-descriptions-item label="UUID">{{ spec ? spec.uuid : '—' }}</el-descriptions-item>
               <el-descriptions-item label="状态">
-                <el-tag :type="vmStatusTag(vm ? vm.status : '')" size="small" effect="light">{{ vmStatusText(vm ? vm.status : '', '—') }}</el-tag>
+                <el-tag :type="vmStatusTag(vm ? vm.status : '')" effect="light">{{ vmStatusText(vm ? vm.status : '', '—') }}</el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="宿主机">{{ hostName }}</el-descriptions-item>
               <el-descriptions-item label="存储池">{{ vm ? vm.storage_pool || '—' : '—' }}</el-descriptions-item>
@@ -102,50 +111,6 @@
           </el-card>
         </section>
 
-        <!-- 性能 -->
-        <section v-show="activeView === 'perf'" class="panel">
-          <div class="panel-head">
-            <h3 class="panel-title">性能</h3>
-          </div>
-          <div v-if="!isRunning" class="panel-empty">
-            <el-empty description="虚拟机未运行，无实时性能指标" :image-size="90" />
-          </div>
-          <template v-else>
-            <div class="metric-grid">
-              <el-card shadow="never" class="metric">
-                <div class="metric-label">CPU 使用率</div>
-                <el-progress :percentage="Math.round(cpuPct)" :color="usageColor(cpuPct)" :format="() => cpuPct.toFixed(1) + '%'" />
-              </el-card>
-              <el-card shadow="never" class="metric">
-                <div class="metric-label">内存使用率{{ hasGuestMem ? '（客户机）' : '（分配）' }}</div>
-                <el-progress :percentage="Math.round(memPct)" :color="usageColor(memPct)" :format="() => memText()" />
-              </el-card>
-            </div>
-            <div class="metric-grid metric-grid-4">
-              <el-card shadow="never" class="metric">
-                <div class="metric-label">磁盘读取</div>
-                <div class="metric-val mono">{{ fmtRateBytes(stats && stats.disk_read_bps) }}</div>
-              </el-card>
-              <el-card shadow="never" class="metric">
-                <div class="metric-label">磁盘写入</div>
-                <div class="metric-val mono">{{ fmtRateBytes(stats && stats.disk_write_bps) }}</div>
-              </el-card>
-              <el-card shadow="never" class="metric">
-                <div class="metric-label">网络接收</div>
-                <div class="metric-val mono">{{ fmtRateBytes(stats && stats.net_rx_bps) }}</div>
-              </el-card>
-              <el-card shadow="never" class="metric">
-                <div class="metric-label">网络发送</div>
-                <div class="metric-val mono">{{ fmtRateBytes(stats && stats.net_tx_bps) }}</div>
-              </el-card>
-            </div>
-            <el-card shadow="never" class="chart-card">
-              <template #header><span class="card-title">性能曲线（近 60 个采样点：历史来自 Prometheus，之后每 {{ statsIntervalMs / 1000 }}s 实时追加）</span></template>
-              <div ref="perfChartEl" class="perf-chart"></div>
-            </el-card>
-          </template>
-        </section>
-
         <!-- 处理器 -->
         <section v-show="activeView === 'cpu'" class="panel">
           <div class="panel-head">
@@ -153,9 +118,9 @@
           </div>
           <el-card shadow="never" class="edit-card">
             <div class="field-row">
-              <span class="field-label">当前 vCPU</span>
-              <el-input-number v-model="vcpuInput" :min="1" :max="256" size="small" controls-position="right" :disabled="!isAdmin" />
-              <el-button v-if="isAdmin" size="small" type="primary" :loading="busy === 'vcpu'" :disabled="!spec" @click="applyVcpu">应用</el-button>
+              <span class="field-label">vCPU 数</span>
+              <el-input-number v-model="vcpuInput" :min="1" :max="256" controls-position="right" :disabled="!isAdmin" />
+              <el-button v-if="isAdmin" type="primary" :loading="busy === 'vcpu'" :disabled="!spec" @click="applyVcpu">应用</el-button>
             </div>
             <p class="field-tip">热调整：live + config 双生效，运行中即可在线增减 CPU 核数。</p>
           </el-card>
@@ -169,31 +134,13 @@
           <el-card shadow="never" class="edit-card">
             <div class="field-row">
               <span class="field-label">内存大小（MB）</span>
-              <el-input-number v-model="memInput" :min="256" :step="256" size="small" controls-position="right" :disabled="!isAdmin" />
-              <el-button v-if="isAdmin" size="small" type="primary" :loading="busy === 'memory'" :disabled="!spec" @click="applyMemory">应用</el-button>
+              <el-input-number v-model="memInput" :min="256" :step="256" controls-position="right" :disabled="!isAdmin" />
+              <el-button v-if="isAdmin" type="primary" :loading="busy === 'memory'" :disabled="!spec" @click="applyMemory">应用</el-button>
             </div>
             <p class="field-tip">热调整：需 ≥ 当前占用，运行中可在线调整（live + config）。</p>
           </el-card>
         </section>
 
-        <!-- 引导顺序 -->
-        <section v-show="activeView === 'boot'" class="panel">
-          <div class="panel-head">
-            <h3 class="panel-title">引导顺序</h3>
-          </div>
-          <el-card shadow="never" class="edit-card">
-            <div class="field-row">
-              <span class="field-label">引导设备</span>
-              <el-select v-model="bootInput" multiple placeholder="选择引导设备" size="small" style="width: 300px" :disabled="!isAdmin">
-                <el-option label="硬盘 (hd)" value="hd" />
-                <el-option label="光盘 (cdrom)" value="cdrom" />
-                <el-option label="网络 (network)" value="network" />
-              </el-select>
-              <el-button v-if="isAdmin" size="small" type="primary" :loading="busy === 'boot'" :disabled="!spec" @click="applyBoot">应用</el-button>
-            </div>
-            <p class="field-tip">列表顺序即启动优先级，先选择者优先引导；列表不能为空。</p>
-          </el-card>
-        </section>
 
         <!-- 磁盘 -->
         <section v-show="activeView === 'disk'" class="panel">
@@ -212,11 +159,8 @@
               <div class="dev-card-head">
                 <span class="dev-name mono">{{ disk.target || '—' }}</span>
                 <el-tag :type="disk.device === 'cdrom' ? 'warning' : 'info'" size="small" effect="light">{{ disk.device }}</el-tag>
-                <el-popconfirm v-if="isAdmin" :title="'确定移除磁盘「' + (disk.target || '') + '」？'" width="220" @confirm="removeDisk(disk)">
-                  <template #reference>
-                    <el-button size="small" type="danger" text :icon="Delete">移除</el-button>
-                  </template>
-                </el-popconfirm>
+                <!-- 移除：打开确认弹窗（可选择是否同时删除存储卷），替代原先的 popconfirm -->
+                <el-button v-if="isAdmin" size="small" type="danger" text class="dev-remove" :icon="Delete" @click="openRemoveDisk(disk)">移除</el-button>
               </div>
               <el-descriptions :column="2" size="small" class="dev-desc">
                 <el-descriptions-item label="目标">{{ disk.target || '—' }}</el-descriptions-item>
@@ -232,7 +176,9 @@
           </template>
           <div class="panel-actions">
             <el-button v-if="isAdmin" type="success" plain :icon="MagicStick" :loading="quickDiskLoading" @click="quickAddDisk">一键数据盘（20G）</el-button>
-            <el-button v-if="isAdmin" plain :icon="Connection" :loading="standardLoading" @click="ensureStandard">补齐标准设备（guest-agent/rng）</el-button>
+            <el-tooltip placement="top" content="自动检查并补齐两件标准配置：① guest-agent 通信通道——装了 qemu-guest-agent 的虚拟机靠它向平台上报 IP；② virtio-rng 随机数设备——提升虚拟机熵池，加快开机。已存在的会自动跳过，缺什么补什么。">
+              <el-button v-if="isAdmin" plain :icon="Connection" :loading="standardLoading" @click="ensureStandard">补齐标准设备</el-button>
+            </el-tooltip>
             <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openDiskDialog">添加磁盘</el-button>
           </div>
         </section>
@@ -278,7 +224,7 @@
         <section v-show="activeView === 'snapshots'" class="panel">
           <div class="panel-head">
             <h3 class="panel-title">快照</h3>
-            <el-button v-if="isAdmin" size="small" type="primary" :icon="Plus" @click="openSnapCreate">新建快照</el-button>
+            <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openSnapCreate">新建快照</el-button>
           </div>
           <el-card shadow="never">
             <el-table :data="snapshots" size="small" border style="width: 100%" v-loading="snapLoading">
@@ -293,7 +239,7 @@
                   <el-tag :type="row.stateTag" size="small" effect="light">{{ row.stateText }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="150" fixed="right">
+              <el-table-column label="操作" width="180" fixed="right">
                 <template #default="{ row }">
                   <el-button v-if="isAdmin" size="small" :icon="RefreshLeft" @click="revertSnap(row)">回滚</el-button>
                   <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="removeSnap(row)">删除</el-button>
@@ -316,8 +262,8 @@
           />
           <el-card shadow="never">
             <div class="xml-toolbar">
-              <el-button size="small" :icon="Refresh" @click="loadXML">重新加载</el-button>
-              <el-button v-if="isAdmin" size="small" type="primary" :loading="xmlSaving" @click="saveXML">保存</el-button>
+              <el-button :icon="Refresh" @click="loadXML">重新加载</el-button>
+              <el-button v-if="isAdmin" type="primary" :loading="xmlSaving" @click="saveXML">保存</el-button>
             </div>
             <el-input v-model="xmlText" type="textarea" :rows="18" class="xml-area" placeholder="加载中…" />
           </el-card>
@@ -354,6 +300,34 @@
       <template #footer>
         <el-button @click="diskDialog = false">取消</el-button>
         <el-button type="primary" :loading="diskSaving" @click="submitDisk">添加</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 移除磁盘确认弹窗：默认仅分离保留卷；「分离并删除存储卷」为危险项，cdrom（ISO 介质）不提供删卷 -->
+    <el-dialog v-model="removeDiskDialog" title="移除磁盘" width="480px">
+      <p class="rm-disk-tip">
+        磁盘「<span class="mono">{{ (removeDiskForm.disk && removeDiskForm.disk.target) || '—' }}</span>」将从此虚拟机移除（运行中为热分离，关机状态为改配置），请选择存储卷的处理方式：
+      </p>
+      <el-radio-group v-model="removeDiskForm.deleteVolume" class="rm-disk-options">
+        <el-radio :value="false" class="rm-opt">
+          <span class="rm-opt-text">
+            <span class="rm-opt-title">仅分离（保留存储卷）</span>
+            <span class="rm-opt-desc">只把磁盘从虚拟机配置中卸载，存储池中的卷文件原样保留，可再次挂载。</span>
+          </span>
+        </el-radio>
+        <el-radio :value="true" class="rm-opt" :disabled="removeDiskIsCdrom">
+          <span class="rm-opt-text">
+            <span class="rm-opt-title is-danger">分离并删除存储卷</span>
+            <span class="rm-opt-desc is-danger">
+              <el-icon class="rm-opt-icon"><WarningFilled /></el-icon>从存储池中删除该卷文件，不可恢复。
+            </span>
+            <span v-if="removeDiskIsCdrom" class="rm-opt-desc is-hint">ISO 安装介质为共享文件，不随分离删除。</span>
+          </span>
+        </el-radio>
+      </el-radio-group>
+      <template #footer>
+        <el-button @click="removeDiskDialog = false">取消</el-button>
+        <el-button type="danger" :loading="removeDiskSaving" :disabled="!removeDiskForm.disk || !removeDiskForm.disk.target" @click="confirmRemoveDisk">确认移除</el-button>
       </template>
     </el-dialog>
 
@@ -400,10 +374,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
-import {
-  ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Plus, Refresh,
-  RefreshLeft, Odometer, TrendCharts, Cpu, Coin, Sort, FolderOpened, Connection, CameraFilled, Document, MagicStick
-} from '@element-plus/icons-vue'
+import { ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Plus, Refresh, RefreshLeft, Odometer, TrendCharts, Cpu, Coin, FolderOpened, Connection, CameraFilled, Document, MagicStick, Edit, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
@@ -583,10 +554,14 @@ async function loadSpec() {
   }
 }
 
+/* ---------- IP 手动编辑（仅管理员） ---------- */
+// 简单格式校验：IPv4 点分十进制 / IPv6（含 :: 缩写，须含冒号；不做完整性语义检查，后端为准）
+const ipv4Re = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
+const ipv6Re = /^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$/
+
+
 const vcpuInput = ref(1)
 const memInput = ref(1024)
-const bootInput = ref([])
-
 watch(
   () => spec.value,
   (s) => {
@@ -594,13 +569,6 @@ watch(
       vcpuInput.value = s.vcpu
       memInput.value = s.memory_mb
     }
-  },
-  { immediate: true }
-)
-watch(
-  () => (spec.value && spec.value.boot && spec.value.boot.devices) || null,
-  (devs) => {
-    if (Array.isArray(devs)) bootInput.value = [...devs]
   },
   { immediate: true }
 )
@@ -810,22 +778,6 @@ async function applyMemory() {
   }
 }
 
-async function applyBoot() {
-  if (!bootInput.value.length) {
-    ElMessage.warning('引导设备列表不能为空')
-    return
-  }
-  busy.value = 'boot'
-  try {
-    await api.setBoot(id, [...bootInput.value])
-    ElMessage.success('引导顺序已更新')
-    await loadSpec()
-  } catch (e) {
-    ElMessage.error(taskErrorMessage(e, '保存失败'))
-  } finally {
-    busy.value = ''
-  }
-}
 
 async function onAutostartChange(val) {
   busy.value = 'autostart'
@@ -842,14 +794,37 @@ async function onAutostartChange(val) {
 }
 
 /* ---------- 磁盘 / 网卡 ---------- */
-async function removeDisk(disk) {
+// 移除磁盘弹窗：默认安全项「仅分离（保留存储卷）」；「分离并删除存储卷」为危险项，cdrom（ISO 介质）禁用
+const removeDiskDialog = ref(false)
+const removeDiskForm = reactive({ disk: null, deleteVolume: false })
+const removeDiskSaving = ref(false)
+// cdrom 为共享安装介质（ISO 文件可被多台虚拟机引用），不允许随分离删除
+const removeDiskIsCdrom = computed(() => !!(removeDiskForm.disk && removeDiskForm.disk.device === 'cdrom'))
+
+function openRemoveDisk(disk) {
+  removeDiskForm.disk = disk
+  removeDiskForm.deleteVolume = false // 每次打开都重置回默认项，避免上一次的选择残留
+  removeDiskDialog.value = true
+}
+
+// 确认移除：按单选结果附带 delete_volume 传给分离接口；后端契约 { vm, target, volume_deleted, keep_reason }
+async function confirmRemoveDisk() {
+  const disk = removeDiskForm.disk
   if (!disk || !disk.target) return
+  removeDiskSaving.value = true
   try {
-    await api.detachDisk(id, disk.target)
-    ElMessage.success('磁盘已移除')
+    // cdrom 的删卷选项已被禁用，这里再兜底一次，防止状态残留误传 true
+    const res = await api.detachDisk(id, disk.target, removeDiskForm.deleteVolume && !removeDiskIsCdrom.value)
+    const d = (res && res.data) || {}
+    if (d.volume_deleted) ElMessage.success('已分离并删除卷')
+    else if (d.keep_reason) ElMessage.success('已分离，卷保留：' + d.keep_reason)
+    else ElMessage.success('已分离，卷已保留')
+    removeDiskDialog.value = false
     await loadSpec()
   } catch (e) {
     ElMessage.error(taskErrorMessage(e, '移除磁盘失败'))
+  } finally {
+    removeDiskSaving.value = false
   }
 }
 
@@ -1232,6 +1207,61 @@ onUnmounted(() => {
 .dev-card-head :deep(.el-popconfirm) {
   margin-left: auto;
 }
+/* 磁盘移除按钮：右对齐（弹窗化后不再有 popconfirm 占位，由按钮自身右推；网卡卡仍走上面的 popconfirm 规则） */
+.dev-card-head .dev-remove {
+  margin-left: auto;
+}
+
+/* 移除磁盘弹窗：单选选项做成两张带边框的说明卡，标题 + 辅助描述分层 */
+.rm-disk-tip {
+  margin: 0 0 12px;
+  line-height: 1.7;
+  color: var(--color-foreground);
+}
+.rm-disk-options {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+.rm-opt {
+  height: auto;
+  align-items: flex-start;
+  margin-right: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.rm-opt :deep(.el-radio__label) {
+  padding-left: 8px;
+  white-space: normal;
+  line-height: 1.5;
+}
+.rm-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rm-opt-title {
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+.rm-opt-desc {
+  font-size: 0.82rem;
+  color: var(--color-muted-foreground);
+}
+.rm-opt-title.is-danger,
+.rm-opt-desc.is-danger {
+  color: var(--el-color-danger);
+}
+.rm-opt-desc.is-hint {
+  color: var(--el-color-warning);
+}
+.rm-opt-icon {
+  vertical-align: -2px;
+  margin-right: 2px;
+}
 .panel-actions {
   margin-top: 8px;
 }
@@ -1269,5 +1299,20 @@ onUnmounted(() => {
   .content {
     padding: 0;
   }
+}
+/* 概览信息行（腾讯云式）：label 灰色固定宽，值区留足行距 */
+.ov-desc :deep(.el-descriptions__label) {
+  color: var(--el-text-color-secondary);
+  min-width: 78px;
+}
+.ov-desc :deep(.el-descriptions__cell) {
+  padding-bottom: 16px;
+  vertical-align: middle;
+}
+/* IP 行内编辑按钮：紧跟文本、不撑高信息行 */
+.dev-xml :deep(.el-textarea__inner) {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.55;
 }
 </style>
