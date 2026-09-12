@@ -7,7 +7,7 @@
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
-  "refresh": "15s",
+  "refresh": "30s",
   "style": "light",
   "time": {
     "from": "now-1h",
@@ -23,10 +23,6 @@
         "w": 12,
         "x": 0,
         "y": 0
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "vmops"
       },
       "fieldConfig": {
         "defaults": {
@@ -50,7 +46,7 @@
         {
           "refId": "A",
           "expr": "vmops_vm_cpu_percent",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{vm}}"
         }
       ]
     },
@@ -63,10 +59,6 @@
         "w": 12,
         "x": 12,
         "y": 0
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "vmops"
       },
       "fieldConfig": {
         "defaults": {
@@ -90,7 +82,7 @@
         {
           "refId": "A",
           "expr": "100 * vmops_vm_mem_used_kib / vmops_vm_mem_total_kib",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{vm}}"
         }
       ]
     },
@@ -103,10 +95,6 @@
         "w": 12,
         "x": 0,
         "y": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "vmops"
       },
       "fieldConfig": {
         "defaults": {
@@ -130,7 +118,7 @@
         {
           "refId": "A",
           "expr": "vmops_vm_disk_read_bps",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{vm}}"
         }
       ]
     },
@@ -143,10 +131,6 @@
         "w": 12,
         "x": 12,
         "y": 8
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "vmops"
       },
       "fieldConfig": {
         "defaults": {
@@ -170,7 +154,7 @@
         {
           "refId": "A",
           "expr": "vmops_vm_disk_write_bps",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{vm}}"
         }
       ]
     },
@@ -183,10 +167,6 @@
         "w": 12,
         "x": 0,
         "y": 16
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "vmops"
       },
       "fieldConfig": {
         "defaults": {
@@ -210,7 +190,7 @@
         {
           "refId": "A",
           "expr": "vmops_vm_net_rx_bps",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{vm}}"
         }
       ]
     },
@@ -223,10 +203,6 @@
         "w": 12,
         "x": 12,
         "y": 16
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "vmops"
       },
       "fieldConfig": {
         "defaults": {
@@ -250,7 +226,7 @@
         {
           "refId": "A",
           "expr": "vmops_vm_net_tx_bps",
-          "legendFormat": "{{name}}"
+          "legendFormat": "{{vm}}"
         }
       ]
     }

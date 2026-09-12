@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h3 class="page-title">监控中心</h3>
-        <p class="page-desc">Alertmanager 实时告警 + Grafana 可视化看板（Prometheus 指标 15s 刷新）</p>
+        <p class="page-desc">Alertmanager 实时告警 + Grafana 可视化看板（Prometheus 指标 30s 刷新）</p>
       </div>
       <el-button :icon="Refresh" @click="loadAlerts">刷新告警</el-button>
     </div>
@@ -24,18 +24,25 @@
         <el-empty description="Grafana 看板加载失败（需在 docker compose 中启动 grafana 服务并映射 3000 端口）" :image-size="72" />
       </div>
       <div v-else class="grafana-wrap">
-        <!-- iframe 首次加载要拉完整 Grafana 前端，给个占位避免白/黑屏无反馈 -->
-        <div v-if="!frameReady" class="grafana-loading">
+        <!-- iframe 首次加载要拉完整 Grafana 前端（公网 gzip 后约 3MB，走云 nginx → frp 隧道），给个占位避免白/黑屏无反馈 -->
+        <div v-if="!frameReady[board]" class="grafana-loading">
           <el-icon class="is-loading"><Loading /></el-icon>
-          <span>看板加载中（首次约 3-5 秒）…</span>
+          <span>看板加载中（首次约 5-10 秒）…</span>
         </div>
-        <iframe
-          :key="board"
-          :src="grafanaEmbed"
-          class="grafana-frame"
-          frameborder="0"
-          @load="frameReady = true"
-        ></iframe>
+        <!-- 两个看板 iframe 常驻：首次激活时才挂载（v-if 过 mountedBoards），之后只 v-show 切换显隐、绝不销毁。
+             原实现 :key="board" 每次切换都重建 iframe → 每次都重拉一遍约 3MB 的 Grafana 前端 JS；
+             常驻后每个看板只承受一次首载成本，切换瞬时完成。两个 uid 已含文件名哈希的静态资源有 1 年强缓存，
+             重复加载纯属浪费带宽。 -->
+        <template v-for="b in ['overview', 'vms']" :key="b">
+          <iframe
+            v-if="mountedBoards.has(b)"
+            v-show="board === b"
+            :src="boardEmbed(b)"
+            class="grafana-frame"
+            frameborder="0"
+            @load="frameReady[b] = true"
+          ></iframe>
+        </template>
       </div>
     </el-card>
 
@@ -169,7 +176,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { AlarmClock, Refresh, Loading } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { fmtDateTime } from '../utils/format'
@@ -190,13 +197,21 @@ const firingCount = computed(
 // 本地 http 保持直连 3000
 const isHttps = window.location.protocol === 'https:'
 const grafanaBase = isHttps ? `${window.location.origin}/grafana` : `http://${window.location.hostname}:3000`
-// 看板 uid 对应 deploy/ 下两个 provisioned 看板；切换用 :key 强制 iframe 重载
+// 看板 uid 对应 deploy/ 下两个 provisioned 看板
 const board = ref('overview')
-const frameReady = ref(false)
-watch(board, () => { frameReady.value = false })
-const boardUid = computed(() => (board.value === 'vms' ? 'vmops-vms' : 'vmops-overview'))
-const grafanaEmbed = computed(() => `${grafanaBase}/d/${boardUid.value}/?kiosk&refresh=15s`)
-const grafanaFull = computed(() => `${grafanaBase}/d/${boardUid.value}/`)
+// 各看板 iframe 首载完成标记（key = 看板名），加载占位按当前激活看板判断
+const frameReady = reactive({ overview: false, vms: false })
+// 已挂载过的看板集合：首次激活才创建 iframe（避免进页面就并发拉两份 Grafana 前端抢带宽），
+// 挂载后常驻，切换只走 v-show 显隐
+const mountedBoards = reactive(new Set(['overview']))
+watch(board, (b) => { mountedBoards.add(b) })
+function boardUid(b) {
+  return b === 'vms' ? 'vmops-vms' : 'vmops-overview'
+}
+function boardEmbed(b) {
+  return `${grafanaBase}/d/${boardUid(b)}/?kiosk&refresh=30s`
+}
+const grafanaFull = computed(() => `${grafanaBase}/d/${boardUid(board.value)}/`)
 
 async function loadAlerts() {
   if (alertsLoading.value) return

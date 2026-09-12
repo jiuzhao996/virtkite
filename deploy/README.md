@@ -6,10 +6,14 @@
 
 架构：浏览器 → 腾讯云 nginx（TLS 终止，证书 /etc/nginx/kpyun/，vhost conf.d/kpyun.conf，存档 kpyun.conf）
 → frp 隧道（云端 frps.service :7000，家里 virtkite-frpc.service，`proxyBindAddr=127.0.0.1` 保证回源端口不裸奔公网）
-→ 家里 vmops(:8080) / websockify(:6080)。
+→ 家里 vmops(:8080) / websockify(:6080) / grafana(:3000)。
 
 - **4321 端口的原因**：kpyun.fun 尚未 ICP 备案，腾讯云对境内服务器 80/443 做 SNI 拦截（jzops.fun 已备案不受影响）；
   备案完成后 443 vhost 自动可用，无需改配置。控制台 noVNC 走同源 `/vnc/` 前缀（nginx wss 升级）。
+- **Grafana 看板**：监控中心 iframe 走同源 `/grafana/` 前缀（nginx 反代 → frp 云端 13000 → 家里 3000）。
+  **坑（已修）**：Grafana 开了 `GF_SERVER_SERVE_FROM_SUB_PATH=true`，若 `proxy_pass` 带尾斜杠会剥掉
+  `/grafana/` 前缀，与子路径服务冲突表现为 301 重定向死循环——必须去掉尾斜杠透传完整路径
+  （`proxy_pass http://127.0.0.1:13000;`，存档 kpyun.conf 即正确写法）。
 - **公网暴露加固**（.env）：SERVER_MODE=release + 强随机 JWT_SECRET_KEY + CORS_ORIGINS=kpyun.fun。
 - **隧道持久化**：两端 systemd（Restart=always，frp 心跳自动重连）；旧 SSH 反向隧道方案（virtkite-tunnel）已 disable 备用。
 
@@ -41,7 +45,10 @@ docker compose up -d mysql prometheus alertmanager grafana   # 容器侧
 
 说明：
 - Prometheus 容器经 `host.docker.internal:8080`（compose `extra_hosts: host-gateway`）抓取宿主机上的 app。
-- Grafana 已通过 compose 环境变量开启匿名只读 + iframe 嵌入（`GF_SECURITY_ALLOW_EMBEDDING` 等），产品「监控中心」页直接嵌 `:3000/d/vmops-overview/?kiosk`。
+- Grafana 已通过 compose 环境变量开启匿名只读 + iframe 嵌入（`GF_SECURITY_ALLOW_EMBEDDING` 等）+ 亮色主题 +
+  子路径服务（`GF_SERVER_SERVE_FROM_SUB_PATH`，`ROOT_URL=https://kpyun.fun/grafana/`），产品「监控中心」页嵌入
+  kiosk 看板：https 访问走同源 `/grafana/`（https 页面嵌 http iframe 会被混合内容拦截），http 访问直连 `:3000`；
+  页内「平台概览 / 虚拟机明细」单选切换两个 provisioned 看板（uid 与 deploy/ 下 JSON 一致）。
 - 告警链路：prometheus.yml 的 `alerting:` 段 → alertmanager:9093（Prometheus 2.x 无 `--alertmanager.url` 参数，勿回退）。
 
 ## 形态二：一键全容器（发布形态）
@@ -67,7 +74,8 @@ docker compose up -d   # 6 个容器：mysql + app + websockify + prometheus + a
 | alertmanager.yml | 告警分组/路由（占位 webhook + 平台告警网关 vmops-webhook，见下「告警网关」） |
 | grafana-datasource.yml | 预置 Prometheus 数据源 |
 | grafana-dashboard-provider.yml | 看板文件 provider |
-| grafana-dashboard.json | vmops 私有云监控看板（uid: vmops-overview，9 面板） |
+| grafana-dashboard.json | 平台概览看板（uid: vmops-overview，9 面板） |
+| grafana-dashboard-vms.json | 虚拟机明细看板（uid: vmops-vms，6 面板，按 VM 维度；只对运行中 VM 出数据——vmops_vm_* 由 GetDomainStats 采集，关机 VM 无指标属正确行为） |
 | file_sd/ | Prometheus file_sd 目标目录（平台自动生成 targets.json，见下「监控服务发现闭环」） |
 
 ## 监控服务发现闭环（file_sd）
