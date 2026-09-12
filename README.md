@@ -108,7 +108,6 @@ JWT_SECRET_KEY=vmops-jwt-secret-key-change-in-production
 JWT_EXPIRE_MINUTES=1440
 SERVER_PORT=8080
 SERVER_MODE=debug
-LIBVIRT_URI=qemu:///system
 IMAGE_DIR=/var/lib/libvirt/images
 SEED_DIR=/home/jiuzhao/vmops/data/seed
 ```
