@@ -13,20 +13,30 @@
     <el-card shadow="never" class="grafana-card">
       <template #header>
         <div class="alert-head">
-          <span>资源监控看板</span>
+          <el-radio-group v-model="board" size="small">
+            <el-radio-button value="overview">平台概览</el-radio-button>
+            <el-radio-button value="vms">虚拟机明细</el-radio-button>
+          </el-radio-group>
           <el-link type="primary" :href="grafanaFull" target="_blank">在新窗口打开 Grafana</el-link>
         </div>
       </template>
       <div v-if="grafanaError" class="grafana-fallback">
         <el-empty description="Grafana 看板加载失败（需在 docker compose 中启动 grafana 服务并映射 3000 端口）" :image-size="72" />
       </div>
-      <iframe
-        v-else
-        :src="grafanaEmbed"
-        class="grafana-frame"
-        frameborder="0"
-        @error="grafanaError = true"
-      ></iframe>
+      <div v-else class="grafana-wrap">
+        <!-- iframe 首次加载要拉完整 Grafana 前端，给个占位避免白/黑屏无反馈 -->
+        <div v-if="!frameReady" class="grafana-loading">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>看板加载中（首次约 3-5 秒）…</span>
+        </div>
+        <iframe
+          :key="board"
+          :src="grafanaEmbed"
+          class="grafana-frame"
+          frameborder="0"
+          @load="frameReady = true"
+        ></iframe>
+      </div>
     </el-card>
 
     <!-- 告警列表 -->
@@ -159,8 +169,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { AlarmClock, Refresh } from '@element-plus/icons-vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { AlarmClock, Refresh, Loading } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { fmtDateTime } from '../utils/format'
 import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
@@ -180,8 +190,13 @@ const firingCount = computed(
 // 本地 http 保持直连 3000
 const isHttps = window.location.protocol === 'https:'
 const grafanaBase = isHttps ? `${window.location.origin}/grafana` : `http://${window.location.hostname}:3000`
-const grafanaEmbed = `${grafanaBase}/d/vmops-overview/?kiosk&refresh=15s`
-const grafanaFull = `${grafanaBase}/d/vmops-overview/`
+// 看板 uid 对应 deploy/ 下两个 provisioned 看板；切换用 :key 强制 iframe 重载
+const board = ref('overview')
+const frameReady = ref(false)
+watch(board, () => { frameReady.value = false })
+const boardUid = computed(() => (board.value === 'vms' ? 'vmops-vms' : 'vmops-overview'))
+const grafanaEmbed = computed(() => `${grafanaBase}/d/${boardUid.value}/?kiosk&refresh=15s`)
+const grafanaFull = computed(() => `${grafanaBase}/d/${boardUid.value}/`)
 
 async function loadAlerts() {
   if (alertsLoading.value) return
@@ -274,12 +289,28 @@ onUnmounted(() => {
   justify-content: flex-end;
   margin-top: 12px;
 }
+.grafana-wrap {
+  position: relative;
+  min-height: 720px;
+}
 .grafana-frame {
   width: 100%;
   height: 720px;
   border: none;
   border-radius: 8px;
   background: #fff;
+}
+.grafana-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  color: var(--el-text-color-secondary);
+  font-size: 0.9rem;
+  background: var(--el-fill-color-lighter);
+  border-radius: 8px;
 }
 .grafana-fallback {
   padding: 24px 0;

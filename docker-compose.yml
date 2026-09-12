@@ -128,10 +128,14 @@ services:
       # 公网同源反代（https://kpyun.fun/grafana/）：子路径服务 + 根 URL 指向公网路径
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_SERVER_ROOT_URL: https://kpyun.fun/grafana/
+      # 匿名用户默认亮色主题（dark 是 Grafana 新版默认，与平台浅色 UI 不搭）
+      GF_USERS_DEFAULT_THEME: light
+      GF_AUTH_ANONYMOUS_DEVICE_THEME_LIMIT: light
     volumes:
       - ./deploy/grafana-datasource.yml:/etc/grafana/provisioning/datasources/vmops.yml:ro
       - ./deploy/grafana-dashboard-provider.yml:/etc/grafana/provisioning/dashboards/vmops.yml:ro
       - ./deploy/grafana-dashboard.json:/etc/grafana/provisioning/dashboards/vmops-overview.json:ro
+      - ./deploy/grafana-dashboard-vms.json:/etc/grafana/provisioning/dashboards/vmops-vms.json:ro
       - grafana-data:/var/lib/grafana
 
 volumes:
