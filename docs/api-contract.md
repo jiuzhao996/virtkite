@@ -1,6 +1,6 @@
 ---
 title: "API 契约"
-description: "vmops 对齐 virt-manager + PVE 改造：后端 virt 层 Go 函数签名与 REST 接口契约（Wave 1/Wave 2 唯一事实源）"
+description: "鸢航 VirtKite 对齐 virt-manager + PVE 改造：后端 virt 层 Go 函数签名与 REST 接口契约（Wave 1/Wave 2 唯一事实源）"
 tags: [契约, virt-manager, PVE, 后端, 前端]
 ---
 
