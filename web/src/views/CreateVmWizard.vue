@@ -385,8 +385,8 @@ import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
 const router = useRouter()
-const { isAdmin } = useAuth()
-if (!isAdmin.value) router.replace({ name: 'vms' })
+const { canOperate } = useAuth()
+if (!canOperate.value) router.replace({ name: 'vms' })
 
 const step = ref(0)
 const loading = ref(false)
@@ -569,7 +569,7 @@ const previewDisks = computed(() => {
       target: vd(),
       type: 'file',
       device: 'disk',
-      driver: d.kind === 'image' ? (findImage(d.imageId) ? findImage(d.imageId).format : 'qcow2') : d.kind === 'source' ? 'auto' : 'qcow2',
+      driver: d.kind === 'image' ? (findImage(d.imageId)?.format ?? 'qcow2') : d.kind === 'source' ? 'auto' : 'qcow2',
       bus: diskBus.value,
       source: diskSourceLabel(d),
       read_only: false
@@ -871,7 +871,7 @@ onMounted(async () => {
     nics[0].source = options.networks.includes('default') ? 'default' : options.networks[0] || 'default'
     vms.value = (vmsRes.data && vmsRes.data.items) || []
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.message) || '加载创建选项失败')
+    ElMessage.error(errMsg(e, '加载创建选项失败'))
   } finally {
     loading.value = false
   }

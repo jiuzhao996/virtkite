@@ -33,13 +33,17 @@ func main() {
 	// 初始化配置
 	config.Init()
 
-	// release 模式下必须显式配置 JWT_SECRET_KEY。
+	// release 模式下必须显式配置强随机 JWT_SECRET_KEY。
 	// 注意：config 包给该项兜了硬编码默认值，所以只判 `== ""` 永不成立（校验形同虚设），
-	// 必须同时拒绝「仍是内置默认值」的情况，否则线上密钥公开可见、Token 可被任意伪造。
-	const builtinJWTSecret = "vmops-jwt-secret-key-change-in-production"
-	if config.GlobalConfig.ServerMode == "release" &&
-		(config.GlobalConfig.JWTSecretKey == "" || config.GlobalConfig.JWTSecretKey == builtinJWTSecret) {
-		log.Fatalf("release 模式必须设置 JWT_SECRET_KEY 环境变量：当前为空或仍是内置默认值，存在 Token 伪造风险")
+	// 必须同时拒绝「弱密钥黑名单」：内置默认值 + 曾出现在 docker-compose 示例里的弱值，
+	// 否则线上密钥公开可见、Token 可被任意伪造（全量安全审计 P0）。
+	weakJWTSecrets := map[string]bool{
+		"": true,
+		"vmops-jwt-secret-key-change-in-production":   true,
+		"change-me-please-use-a-strong-random-secret": true,
+	}
+	if config.GlobalConfig.ServerMode == "release" && weakJWTSecrets[config.GlobalConfig.JWTSecretKey] {
+		log.Fatalf("release 模式必须设置强随机 JWT_SECRET_KEY 环境变量：当前为空或命中弱密钥黑名单（内置默认/示例值），存在 Token 伪造风险")
 	}
 
 	// release 模式禁止 CORS 通配符：* 等于允许任意站点携带凭据跨域调用全部 API。
@@ -267,6 +271,10 @@ func main() {
 			vms.POST("/:id/snapshots", vmHandler.CreateSnapshot)
 			vms.DELETE("/:id/snapshots/:snap", vmHandler.DeleteSnapshot)
 			vms.POST("/:id/snapshots/:snap/revert", vmHandler.RevertSnapshot)
+			// 资产授权（借鉴堡垒机 4A）：admin 分配/查看/收回；handler 内 requireAdminRole 二次收口
+			vms.GET("/:id/grants", vmHandler.ListVMGrants)
+			vms.POST("/:id/grants", vmHandler.GrantVM)
+			vms.DELETE("/:id/grants/:gid", vmHandler.RevokeVMGrant)
 			vms.POST("/:id/vnc-token", vncHandler.RequestToken)
 			vms.GET("/:id/terminal", terminalHandler.Connect)
 			vms.GET("/:id/serial", vmHandler.ConnectSerial)
@@ -307,7 +315,6 @@ func main() {
 		images.Use(middleware.OperatorMiddleware())
 		{
 			images.GET("", imageHandler.ListImages)
-			images.GET("/:id", imageHandler.GetImage)
 			images.POST("/upload", imageHandler.UploadImage)
 			images.POST("/register", imageHandler.RegisterImage)
 			images.POST("/:id/clone", imageHandler.CloneVM)
@@ -315,8 +322,9 @@ func main() {
 			images.DELETE("/:id", imageHandler.DeleteImage)
 		}
 
-		// 监控中心（登录即可看：告警列表 + Grafana 看板入口，与 dashboard 同级）
+		// 监控中心（操作员/管理员可见：告警与 file-sd 携带资产名单，viewer 403——全量审计 P0 收权）
 		monitor := api.Group("/monitor")
+		monitor.Use(middleware.NonViewerMiddleware())
 		{
 			monitor.GET("/alerts", monitorHandler.ListAlerts)
 			// 告警历史（webhook 入库数据的追溯查询，与实时列表互补）
@@ -427,7 +435,7 @@ func startRetentionLoop(db *gorm.DB, table, logPrefix string) {
 		cleanup := func() {
 			cutoff := time.Now().AddDate(0, 0, -30)
 			for {
-				res := db.Exec("DELETE FROM " + table + " WHERE created_at < ? LIMIT 10000", cutoff)
+				res := db.Exec("DELETE FROM "+table+" WHERE created_at < ? LIMIT 10000", cutoff)
 				if res.Error != nil {
 					log.Printf("%s 保留期清理失败: %v", logPrefix, res.Error)
 					return

@@ -597,6 +597,8 @@ func newGuardedRouter(guard gin.HandlerFunc, role interface{}, setRole bool) *gi
 	api.GET("/vms/:id/terminal", pass)
 	api.GET("/vms/:id/serial", pass)
 	api.POST("/vms/:id/vnc-token", pass)
+	api.GET("/storage/pools", pass)
+	api.POST("/storage/pools", pass)
 	api.GET("/users", pass)
 	api.POST("/users", pass)
 	api.DELETE("/users/:id", pass)
@@ -699,13 +701,16 @@ func gjsonMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
 	return msg
 }
 
-// TestOperatorMiddleware 覆盖 RBAC 第一阶段语义：admin 全放行、viewer 真只读。
+// TestOperatorMiddleware 覆盖 RBAC 三级角色语义：admin 全放行、operator 限 /api/vms 写、viewer 真只读。
 //
-// 风险点（P1 批次收紧的核心）：
+// 风险点（P1 批次收紧的核心 + operator 批次扩展）：
 //   - viewer 能到达全部 GET 接口，所以路径参数注入面对最低权限角色同样开放（见 handler/param.go）；
 //   - GET /terminal 与 GET /serial 虽是 GET，但建立的是对 guest 的**双向写入**通道
 //     （串口在多数云镜像上直接是 root TTY），必须对 viewer 关闭，否则「只读」名不副实；
-//   - POST /vnc-token 是唯一放行给 viewer 的写方法请求（图形控制台以 view_only 打开）。
+//     operator 因操作职责正常放行（SSH shell / 串口是其工作通道）；
+//   - operator 的写权限严格收敛在 /api/vms 前缀内：宿主机/存储/网络/镜像的写操作、
+//     /users 与 /audit（AdminMiddleware）均不可达；
+//   - POST /vnc-token 对 viewer 放行（图形控制台以 view_only 打开），对 operator 放行（可操作控制台）。
 func TestOperatorMiddleware(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -722,6 +727,22 @@ func TestOperatorMiddleware(t *testing.T) {
 		{"admin GET SSH 终端", "admin", true, http.MethodGet, "/api/vms/1/terminal", http.StatusOK},
 		{"admin GET 串口", "admin", true, http.MethodGet, "/api/vms/1/serial", http.StatusOK},
 		{"admin PUT 改 XML", "admin", true, http.MethodPut, "/api/vms/1/xml", http.StatusOK},
+
+		// —— operator：读全放 + /api/vms 前缀内写全放 + 三类控制台可用 ——
+		{"operator GET 列表放行", "operator", true, http.MethodGet, "/api/vms", http.StatusOK},
+		{"operator POST 创建虚拟机放行", "operator", true, http.MethodPost, "/api/vms", http.StatusOK},
+		{"operator POST 开机放行", "operator", true, http.MethodPost, "/api/vms/1/start", http.StatusOK},
+		{"operator DELETE 删虚拟机放行", "operator", true, http.MethodDelete, "/api/vms/1", http.StatusOK},
+		{"operator PUT 改 XML 放行", "operator", true, http.MethodPut, "/api/vms/1/xml", http.StatusOK},
+		{"operator GET SSH 终端放行", "operator", true, http.MethodGet, "/api/vms/1/terminal", http.StatusOK},
+		{"operator GET 串口放行", "operator", true, http.MethodGet, "/api/vms/1/serial", http.StatusOK},
+		{"operator POST vnc-token 放行（可操作控制台）", "operator", true, http.MethodPost, "/api/vms/1/vnc-token", http.StatusOK},
+		{"operator GET 存储池放行（读全放）", "operator", true, http.MethodGet, "/api/storage/pools", http.StatusOK},
+
+		// —— operator：/api/vms 之外的写操作一律拒 ——
+		{"operator POST 存储池拒绝", "operator", true, http.MethodPost, "/api/storage/pools", http.StatusForbidden},
+		{"operator POST 用户拒绝", "operator", true, http.MethodPost, "/api/users", http.StatusForbidden},
+		{"operator DELETE 用户拒绝", "operator", true, http.MethodDelete, "/api/users/1", http.StatusForbidden},
 
 		// —— viewer：GET 放行 ——
 		{"viewer GET 列表放行", "viewer", true, http.MethodGet, "/api/vms", http.StatusOK},

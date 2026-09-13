@@ -3,7 +3,7 @@
     <div class="page-head">
       <div class="head-left">
         <h2 class="page-title">仪表盘</h2>
-        <span class="live-tag"><span class="live-dot" />实时监控 · 3s</span>
+        <span class="live-tag"><span class="live-dot" />实时监控 · {{ pollSeconds }}s</span>
       </div>
       <!-- icon-only 按钮必须带 tooltip（ui-ux-pro-max §1 aria-labels）；仅动模板，不碰 script/echarts -->
       <el-tooltip content="刷新" placement="top">
@@ -19,8 +19,16 @@
         <!-- Row 1: 统计卡片 -->
     <el-row :gutter="16">
       <el-col :xs="12" :sm="8" :md="3" v-for="s in stats" :key="s.label">
-        <!-- 腾讯云控制台风格：大数字 + 名称 + 整卡可点跳转对应页面 -->
-        <el-card shadow="hover" class="stat-card clickable" @click="$router.push(s.to)">
+        <!-- 腾讯云控制台风格：大数字 + 名称 + 整卡可点跳转对应页面（键盘 Enter/空格同样可触发） -->
+        <el-card
+          shadow="hover"
+          class="stat-card clickable"
+          role="button"
+          tabindex="0"
+          @click="$router.push(s.to)"
+          @keydown.enter.prevent="$router.push(s.to)"
+          @keydown.space.prevent="$router.push(s.to)"
+        >
           <el-icon class="stat-icon" :style="{ color: s.color }">
             <component :is="s.icon" />
           </el-icon>
@@ -211,7 +219,7 @@
           </div>
         </el-card>
       </el-col>
-      <el-col :md="isAdmin ? 12 : 24">
+      <el-col v-if="canOperate" :md="isAdmin ? 12 : 24">
         <el-card shadow="hover" class="alert-overview-card" :class="{ firing: firingAlerts.length }">
           <template #header>
             <div class="alert-card-head">
@@ -291,7 +299,8 @@ import {
   cssVar
 } from '../utils/format'
 
-const { state, isAdmin } = useAuth()
+const { state, isAdmin, canOperate } = useAuth()
+const pollSeconds = computed(() => getPollInterval('dashboard', POLL_DEFAULTS.dashboard) / 1000)
 const loading = ref(false)
 const overview = ref(null)
 const vmStatus = ref([])
@@ -308,6 +317,7 @@ const firingAlerts = computed(
 const sysInfo = ref(null)
 
 async function loadAlerts() {
+  if (!canOperate.value) return // 监控数据仅操作员/管理员可见（viewer 不发请求）
   try {
     const res = await api.listAlerts()
     alerts.value = Array.isArray(res.data) ? res.data : []
@@ -630,12 +640,12 @@ onBeforeUnmount(() => {
   flex: 1;
   height: 8px;
   background: var(--el-fill-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 .cap-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--el-color-success);
   transition: width 0.3s;
 }
@@ -848,7 +858,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 .donut-center small {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--color-muted-foreground);
   margin-left: 2px;
 }
@@ -979,13 +989,13 @@ onBeforeUnmount(() => {
 .action-track {
   flex: 1;
   height: 10px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: #eef2f6;
   overflow: hidden;
 }
 .action-fill {
   height: 100%;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   transition: width 0.3s ease;
 }
 .action-count {

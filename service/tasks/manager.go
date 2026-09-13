@@ -103,7 +103,23 @@ func NewManager(db *gorm.DB) *Manager {
 	for i := 0; i < workerCount; i++ {
 		go m.loop()
 	}
+	m.sweepOrphanRunning()
 	return m
+}
+
+// sweepOrphanRunning 启动时把上一进程遗留的 running/pending 任务置为 failed：
+// 任务队列只在内存中（channel），进程重启后这些行永远不会被执行，不扫就是僵尸任务。
+func (m *Manager) sweepOrphanRunning() {
+	res := m.DB.Model(&model.Task{}).
+		Where("status IN ?", []string{statusRunning, statusPending}).
+		Updates(map[string]interface{}{"status": statusFailed, "error": "服务重启，任务已中断"})
+	if res.Error != nil {
+		log.Printf("[tasks] 清扫遗留任务失败 err=%v", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("[tasks] 已清扫上次进程遗留任务 %d 个（running/pending → failed）", res.RowsAffected)
+	}
 }
 
 // Register 注册任务类型的执行函数（启动时调用，worker 只读）。
@@ -250,7 +266,10 @@ func (m *Manager) run(id uint) {
 	if !ok {
 		task.Status = statusFailed
 		task.Error = fmt.Sprintf("未知任务类型: %s", task.Type)
-		_ = m.DB.Save(&task)
+		// 终态写入失败会导致任务永久卡 running（全量审计 P0），必须留痕
+		if err := m.DB.Save(&task).Error; err != nil {
+			log.Printf("[tasks] 任务置 failed 失败（将卡 running）id=%d err=%v", id, err)
+		}
 		return
 	}
 
@@ -261,7 +280,9 @@ func (m *Manager) run(id uint) {
 			log.Printf("[tasks] 任务参数损坏 id=%d type=%s err=%v", id, task.Type, err)
 			task.Status = statusFailed
 			task.Error = "任务参数损坏，无法执行"
-			_ = m.DB.Save(&task)
+			if err := m.DB.Save(&task).Error; err != nil {
+				log.Printf("[tasks] 任务置 failed 失败（将卡 running）id=%d err=%v", id, err)
+			}
 			return
 		}
 	}

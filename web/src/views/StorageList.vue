@@ -4,7 +4,7 @@
       <h2 class="page-title">存储管理</h2>
       <div class="page-actions">
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-        <el-button v-if="isAdmin" type="success" :icon="Plus" @click="openCreatePool">新建存储池</el-button>
+        <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreatePool">新建存储池</el-button>
       </div>
     </div>
 
@@ -107,7 +107,7 @@
     <el-drawer v-model="volDrawer" :title="curPool ? curPool + ' · ' + (curRole || '未分类') : '卷管理'" size="72%">
       <div class="toolbar">
         <div>
-          <el-button v-if="isAdmin" type="success" size="small" :icon="Plus" @click="openCreateVol">新建卷</el-button>
+          <el-button v-if="isAdmin" type="primary" size="small" :icon="Plus" @click="openCreateVol">新建卷</el-button>
           <el-button v-if="isAdmin" size="small" :icon="Brush" @click="cleanupOrphans">清理孤儿卷</el-button>
         </div>
       </div>

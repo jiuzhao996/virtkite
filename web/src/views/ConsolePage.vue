@@ -31,7 +31,7 @@
           <el-icon class="icon"><Monitor /></el-icon><span v-if="!collapsed" class="label">图形控制台 (VNC)</span>
         </button>
         <button
-          v-if="isAdmin"
+          v-if="canOperate"
           class="nav-item"
           :class="{ active: view === 'ssh' }"
           :title="collapsed ? 'Web 终端 (SSH)' : ''"
@@ -40,7 +40,7 @@
           <el-icon class="icon"><Platform /></el-icon><span v-if="!collapsed" class="label">Web 终端 (SSH)</span>
         </button>
         <button
-          v-if="isAdmin"
+          v-if="canOperate"
           class="nav-item serial-item"
           :class="{ active: view === 'serial' }"
           :title="collapsed ? '串口 Console（免IP）' : ''"
@@ -66,13 +66,13 @@
                 {{ vm && vm.status === 'running' ? '● 可用' : '● 需运行中' }}
               </div>
             </div>
-            <div v-if="isAdmin" class="card" @click="select('ssh')">
+            <div v-if="canOperate" class="card" @click="select('ssh')">
               <div class="card-icon"><el-icon><Platform /></el-icon></div>
               <div class="card-title">Web 终端 (SSH)</div>
               <div class="card-desc">字符 SSH 终端（xterm.js），比 VNC 更顺滑。需 VM IP 与账号密码。</div>
               <div class="card-badge ok">● 需网络可达</div>
             </div>
-            <div v-if="isAdmin" class="card serial" @click="select('serial')">
+            <div v-if="canOperate" class="card serial" @click="select('serial')">
               <div class="card-icon"><el-icon><Connection /></el-icon></div>
               <div class="card-title">串口 Console</div>
               <div class="card-desc">免 IP 直连 VM 串口（virsh console），无网卡 / 未配置 IP 也能进系统。</div>
@@ -82,8 +82,8 @@
               </div>
             </div>
           </div>
-          <p v-if="!isAdmin" class="pick-note">
-            当前为只读角色：SSH 终端与串口 Console 会向虚拟机内部写入，已限定为管理员使用；
+          <p v-if="!canOperate" class="pick-note">
+            当前为只读角色：SSH 终端与串口 Console 会向虚拟机内部写入，已限定为管理员与操作角色使用；
             图形控制台以只读模式打开（可查看画面，键鼠输入禁用）。
           </p>
         </div>
@@ -237,13 +237,14 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { api, TOKEN_KEY } from '../api'
+import { errMsg } from '../utils/format'
 import { useAuth } from '../store/auth'
 import consoleBg from '../assets/console-bg.jpg'
 
 const route = useRoute()
 const id = route.params.id
 const auth = useAuth()
-const { isAdmin } = auth
+const { canOperate } = auth
 
 const vm = ref(null)
 const loading = ref(true)
@@ -281,7 +282,7 @@ let probeTimer = null
 let vncTimer = null
 let powerCancelled = false
 
-const currentUser = computed(() => auth.state.user?.username || 'admin')
+const currentUser = computed(() => auth.state.user?.username || '—')
 const hostLabel = computed(() => {
   if (view.value === 'ssh') {
     if (!sshForm.value.host) return '-'
@@ -316,13 +317,13 @@ async function load() {
     restoreSshForm()
     // 智能默认：VM 运行中先自动尝试串口 Console（免 IP 最轻），失败再回到选择页。
     // 只读角色没有串口权限（后端 403），直接留在选择页只展示图形控制台。
-    if (vm.value && vm.value.status === 'running' && isAdmin.value) autoEnterSerial()
+    if (vm.value && vm.value.status === 'running' && canOperate.value) autoEnterSerial()
     else if (vm.value) {
       serialUnavailable.value = true
-      serialReason.value = isAdmin.value ? 'VM 未运行' : '仅管理员可用'
+      serialReason.value = canOperate.value ? 'VM 未运行' : '只读角色不可用串口'
     }
   } catch (e) {
-    ElMessage.error('虚拟机不存在')
+    ElMessage.error(errMsg(e, '虚拟机加载失败'))
   } finally {
     loading.value = false
   }
@@ -406,7 +407,7 @@ function cleanupConnection() {
 function select(v) {
   if (view.value === v) return
   // 兜底：SSH / 串口是对 guest 的写入通道，只读角色由后端 403 拦，前端不给入口
-  if ((v === 'ssh' || v === 'serial') && !isAdmin.value) {
+  if ((v === 'ssh' || v === 'serial') && !canOperate.value) {
     ElMessage.warning('只读角色不能使用 SSH 终端与串口控制台，请使用图形控制台查看')
     return
   }
@@ -454,7 +455,7 @@ async function connectVNC() {
     if (vncTimer) clearTimeout(vncTimer)
     vncTimer = setTimeout(() => { vncFrameLoading.value = false; vncTimer = null }, 15000)
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && (e.response.data.message || e.response.data.error)) || '获取控制台失败')
+    ElMessage.error(errMsg(e, '获取控制台失败'))
   } finally {
     vncLoading.value = false
   }
@@ -492,7 +493,7 @@ async function powerOnAndConnect() {
     ElMessage.warning('等待超时，请确认虚拟机状态后手动连接')
     await load()
   } catch (e) {
-    ElMessage.error((e.response && e.response.data && e.response.data.message) || '开机失败')
+    ElMessage.error(errMsg(e, '开机失败'))
   } finally {
     powerLoading.value = false
   }
@@ -702,10 +703,6 @@ onUnmounted(() => cleanupConnection())
 .term-error .el-icon,
 .form-title .el-icon,
 .card-badge .el-icon,
-.text-muted .el-icon {
-  margin-right: 4px;
-  vertical-align: -0.15em;
-}
 
 /* ========== 顶部条 ========== */
 .topbar {
@@ -748,7 +745,7 @@ onUnmounted(() => cleanupConnection())
   height: 30px;
   margin-bottom: 6px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #8ab4ff;
   cursor: pointer;
@@ -763,7 +760,7 @@ onUnmounted(() => cleanupConnection())
   width: 100%;
   padding: 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: #9db1c8;
   cursor: pointer;
@@ -792,7 +789,7 @@ onUnmounted(() => cleanupConnection())
   color: #7c4a03;
   background: #f0b90b;
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-weight: 600;
 }
 
@@ -816,7 +813,7 @@ onUnmounted(() => cleanupConnection())
   margin: 24px auto 0;
   padding: 12px 16px;
   border: 1px solid #fde68a;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: #fffbeb;
   color: #92400e;
   font-size: 0.85rem;
@@ -833,7 +830,7 @@ onUnmounted(() => cleanupConnection())
 .card {
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 26px 22px;
   text-align: center;
   cursor: pointer;
@@ -862,7 +859,7 @@ onUnmounted(() => cleanupConnection())
   display: inline-block;
   margin-top: 12px;
   padding: 2px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -905,14 +902,14 @@ onUnmounted(() => cleanupConnection())
   position: absolute;
   inset: 0;
   z-index: 2;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: #f5f7fa;
 }
 .vnc {
   flex: 1;
   width: 100%;
   border: 1px solid #d1d5db;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: #000;
 }
 .vnc-bar {
@@ -1005,7 +1002,7 @@ onUnmounted(() => cleanupConnection())
   z-index: 3;
   margin: 8px 16px 0;
   padding: 8px 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: rgba(248, 81, 73, 0.1);
   border: 1px solid rgba(248, 81, 73, 0.2);
   color: #f85149;
@@ -1027,7 +1024,7 @@ onUnmounted(() => cleanupConnection())
   width: 440px;
   max-width: 100%;
   padding: 26px 30px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background: rgba(8, 14, 24, 0.75);
   border: 1px solid rgba(88, 166, 255, 0.2);
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
@@ -1096,7 +1093,7 @@ onUnmounted(() => cleanupConnection())
 .serial-hint .el-icon { margin-top: 0.3em; flex: none; }
 .serial-hint code {
   padding: 0 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: rgba(240, 185, 11, 0.12);
   color: #f0b90b;
   font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
@@ -1110,7 +1107,7 @@ onUnmounted(() => cleanupConnection())
   flex: 1;
   min-height: 0;
   margin: 6px 12px 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: transparent;
 }
@@ -1142,7 +1139,6 @@ onUnmounted(() => cleanupConnection())
 }
 .term-footer-left { display: flex; gap: 8px; }
 .term-footer-right { display: flex; align-items: center; gap: 14px; }
-.text-muted { color: #8b949e; }
 .ft-btn {
   color: #79c0ff;
   border-color: rgba(88, 166, 255, 0.3);
@@ -1174,8 +1170,7 @@ onUnmounted(() => cleanupConnection())
     padding: 8px 12px;
   }
   .term-footer-right { flex-wrap: wrap; row-gap: 4px; }
-  .term-footer .text-muted { display: none; }
-  .pick-panel { padding: 16px; }
+  .term-footer   .pick-panel { padding: 16px; }
   /* 窄屏卡片单列：minmax(230px,290px) 在 390px 下会横向溢出 */
   .cards { grid-template-columns: 1fr; max-width: 340px; width: 100%; }
   .card .card-desc { min-height: 0; }

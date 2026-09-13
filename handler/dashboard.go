@@ -3,6 +3,7 @@ package handler
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -44,12 +45,23 @@ func NewDashboardHandler(db *gorm.DB) *DashboardHandler {
 func (h *DashboardHandler) Overview(c *gin.Context) {
 	var hostCount, vmCount, runningVMCount, imageCount, userCount, auditCount int64
 
-	h.DB.Model(&model.Host{}).Count(&hostCount)
-	h.DB.Model(&model.VM{}).Count(&vmCount)
-	h.DB.Model(&model.VM{}).Where("status = ?", "running").Count(&runningVMCount)
-	h.DB.Model(&model.Image{}).Count(&imageCount)
-	h.DB.Model(&model.User{}).Count(&userCount)
-	h.DB.Model(&model.AuditLog{}).Count(&auditCount)
+	// 仪表盘计数 best-effort：单个失败不阻断，但留痕避免"静默全 0"被当成无负载
+	counts := []struct {
+		name string
+		err  error
+	}{
+		{"hosts", h.DB.Model(&model.Host{}).Count(&hostCount).Error},
+		{"vms", h.DB.Model(&model.VM{}).Count(&vmCount).Error},
+		{"running", h.DB.Model(&model.VM{}).Where("status = ?", model.VMStatusRunning).Count(&runningVMCount).Error},
+		{"images", h.DB.Model(&model.Image{}).Count(&imageCount).Error},
+		{"users", h.DB.Model(&model.User{}).Count(&userCount).Error},
+		{"audit", h.DB.Model(&model.AuditLog{}).Count(&auditCount).Error},
+	}
+	for _, c := range counts {
+		if c.err != nil {
+			log.Printf("[dashboard] 计数查询失败 %s: %v", c.name, c.err)
+		}
+	}
 
 	// 存储池 / 网络计数（实时从 libvirt 获取，失败则置 0）
 	poolCount := 0
@@ -130,10 +142,16 @@ func (h *DashboardHandler) VMStatusDistribution(c *gin.Context) {
 	}
 
 	var result []statusCount
-	h.DB.Model(&model.VM{}).
+	if err := h.DB.Model(&model.VM{}).
 		Select("status, count(*) as count").
 		Group("status").
-		Scan(&result)
+		Scan(&result).Error; err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	if result == nil {
+		result = []statusCount{}
+	}
 
 	Success(c, result)
 }

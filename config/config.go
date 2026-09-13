@@ -67,9 +67,10 @@ func Init() {
 		JWTSecretKey:     getEnv("JWT_SECRET_KEY", "vmops-jwt-secret-key-change-in-production"),
 		JWTExpireMinutes: getEnvAsInt("JWT_EXPIRE_MINUTES", 1440),
 
-		// 服务器配置
+		// 服务器配置。默认 release（安全默认）：裸部署不再落入"默认 JWT 密钥 + CORS *"
+		// 的可伪造态；本地开发由 start.sh 显式 export SERVER_MODE=debug。
 		ServerPort: getEnv("SERVER_PORT", "8080"),
-		ServerMode: getEnv("SERVER_MODE", "debug"),
+		ServerMode: getEnv("SERVER_MODE", "release"),
 
 		// CORS配置
 		CORSOrigins: getEnv("CORS_ORIGINS", "*"),

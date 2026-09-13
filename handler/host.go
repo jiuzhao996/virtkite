@@ -48,6 +48,9 @@ func (h *HostHandler) ListHosts(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusInternalServerError, "查询宿主机失败", err)
 		return
 	}
+	if hosts == nil {
+		hosts = []model.Host{}
+	}
 
 	Success(c, gin.H{
 		"total": len(hosts),
@@ -173,7 +176,11 @@ func (h *HostHandler) DeleteHost(c *gin.Context) {
 
 	// 检查是否有虚拟机关联
 	var vmCount int64
-	h.DB.Model(&model.VM{}).Where("host_id = ?", id).Count(&vmCount)
+	// 守卫数据读取失败按"有关联"处理会误拦、按"无关联"处理会带 VM 删宿主机——直接失败最稳
+	if err := h.DB.Model(&model.VM{}).Where("host_id = ?", id).Count(&vmCount).Error; err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
 	if vmCount > 0 {
 		Fail(c, http.StatusBadRequest, "宿主机下还有虚拟机，不能删除")
 		return

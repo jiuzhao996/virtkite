@@ -26,6 +26,9 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "查询用户失败")
 		return
 	}
+	if users == nil {
+		users = []model.User{}
+	}
 
 	Success(c, gin.H{
 		"total": len(users),

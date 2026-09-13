@@ -72,6 +72,9 @@ func (h *MonitorHandler) PreviewFileSD(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusInternalServerError, "查询虚拟机失败", err)
 		return
 	}
+	if vms == nil {
+		vms = []model.VM{}
+	}
 	Success(c, gin.H{
 		"enabled": config.GlobalConfig.FileSDPath != "",
 		"items":   monitor.GenerateFileSD(vms),

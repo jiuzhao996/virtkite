@@ -163,19 +163,33 @@ func AdminMiddleware() gin.HandlerFunc {
 	}
 }
 
-// OperatorMiddleware 运维权限中间件（RBAC 第一阶段：只读 viewer）。
-// admin 放行全部；viewer 放行读操作（GET）与图形控制台 token 签发（VNC 以 view_only 模式打开），
-// 其余变更操作（POST/PUT/DELETE）一律 403。
+// OperatorMiddleware 运维权限中间件（RBAC 三级角色：admin / operator / viewer）。
+// admin 放行全部；operator 可操作虚拟机全生命周期（/api/vms 下所有方法，含三类控制台
+// —— SSH 终端/串口是其职责内的操作通道）与全部读操作，其余模块（宿主机/存储/网络/
+// 镜像）的写操作一律 403；viewer 只读（GET）+ 图形控制台观看（vnc-token 下发 view_only）。
 // /users 与 /audit 组继续用 AdminMiddleware（用户哈希与审计敏感）。
 //
 // 例外：SSH 终端与串口控制台虽然是 GET，但建立的是对 guest 的**双向写入**通道
 // （/terminal 是 SSH shell，/serial 直连虚拟机串口，多数云镜像上即 root TTY），
-// 与「只读」语义冲突，因此对 viewer 关闭，只留图形控制台的只读观看。
+// 与「只读」语义冲突，因此对 viewer 关闭——operator 因操作职责正常放行。
 func OperatorMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role, _ := c.Get("role")
 		if roleStr, ok := role.(string); ok && roleStr == "admin" {
 			c.Next()
+			return
+		}
+		// operator：读全放；写仅限 /api/vms 前缀（虚拟机全生命周期，含 vnc-token）
+		if roleStr, ok := role.(string); ok && roleStr == "operator" {
+			if c.Request.Method == http.MethodGet {
+				c.Next()
+				return
+			}
+			if strings.HasPrefix(c.FullPath(), "/api/vms") {
+				c.Next()
+				return
+			}
+			abortJSON(c, http.StatusForbidden, "仅可操作虚拟机，宿主机/存储/网络/镜像的变更需要管理员权限")
 			return
 		}
 		// viewer 只读 + 图形控制台观看
@@ -193,6 +207,19 @@ func OperatorMiddleware() gin.HandlerFunc {
 			return
 		}
 		abortJSON(c, http.StatusForbidden, "需要管理员权限")
+	}
+}
+
+// NonViewerMiddleware 监控可见级别闸（全量审计 P0：file-sd 会枚举全部 running VM 的名称与 IP，
+// 实时告警 labels 同样携带资产标识——viewer 不得见）。operator/admin 放行，viewer 一律 403。
+func NonViewerMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role, _ := c.Get("role")
+		if roleStr, ok := role.(string); ok && (roleStr == "admin" || roleStr == "operator") {
+			c.Next()
+			return
+		}
+		abortJSON(c, http.StatusForbidden, "监控数据仅操作员与管理员可见")
 	}
 }
 

@@ -329,6 +329,21 @@ func (h *StorageHandler) poolVolumeRefs(poolName string) (map[string]*VolumeRefs
 	backing, _ := h.Virt.ListBackingRefs(poolName)
 	disks, _ := h.Virt.ListAllDomainDiskSources()
 
+	// 镜像库登记一次查回（原循环内逐卷查是 N+1，卷多时 volume-refs 明显变慢）
+	imgByPath := map[string][]string{}
+	if h.DB != nil && len(pool.Volumes) > 0 {
+		paths := make([]string, 0, len(pool.Volumes))
+		for _, vol := range pool.Volumes {
+			paths = append(paths, vol.Path)
+		}
+		var images []model.Image
+		if err := h.DB.Where("path IN ?", paths).Find(&images).Error; err == nil {
+			for _, im := range images {
+				imgByPath[im.Path] = append(imgByPath[im.Path], im.Name)
+			}
+		}
+	}
+
 	refs := make(map[string]*VolumeRefs, len(pool.Volumes))
 	for _, vol := range pool.Volumes {
 		r := &VolumeRefs{}
@@ -342,14 +357,7 @@ func (h *StorageHandler) poolVolumeRefs(poolName string) (map[string]*VolumeRefs
 			}
 		}
 		// 镜像库登记：images.path 保存的是落盘绝对路径，精确匹配
-		if h.DB != nil {
-			var images []model.Image
-			if err := h.DB.Where("path = ?", vol.Path).Find(&images).Error; err == nil {
-				for _, im := range images {
-					r.Images = append(r.Images, im.Name)
-				}
-			}
-		}
+		r.Images = imgByPath[vol.Path]
 		// 增量克隆子卷
 		r.Children = backing[vol.Path]
 		refs[vol.Name] = r

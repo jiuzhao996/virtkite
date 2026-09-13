@@ -4,6 +4,14 @@ import (
 	"time"
 )
 
+// 任务状态常量（tasks 包内有同值非导出常量；metrics 等外部消费方从这里取）。
+const (
+	TaskStatusPending = "pending"
+	TaskStatusRunning = "running"
+	TaskStatusSuccess = "success"
+	TaskStatusFailed  = "failed"
+)
+
 // Task 异步任务模型（对应 JumpServer/PVE task 队列语义）。
 type Task struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
@@ -16,7 +24,7 @@ type Task struct {
 	Error     string    `gorm:"size:500" json:"error,omitempty"`
 	UserID    *uint     `json:"user_id"`
 	Username  string    `gorm:"size:100" json:"username"`
-	VMID      *uint     `json:"vm_id,omitempty"`
+	VMID      *uint     `gorm:"index" json:"vm_id,omitempty"`
 	VMName    string    `gorm:"size:100" json:"vm_name,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

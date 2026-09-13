@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -124,22 +125,6 @@ func (h *ImageHandler) ListImages(c *gin.Context) {
 		"total": len(images),
 		"items": items,
 	})
-}
-
-// GetImage 获取镜像详情
-func (h *ImageHandler) GetImage(c *gin.Context) {
-	id, ok := paramID(c, "id")
-	if !ok {
-		return
-	}
-
-	var img model.Image
-	if err := h.DB.First(&img, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "镜像不存在")
-		return
-	}
-
-	Success(c, img)
 }
 
 // UploadImage 上传镜像（multipart；form 字段：name/file/os_version/is_template/pool）。
@@ -267,6 +252,22 @@ func (h *ImageHandler) UploadImage(c *gin.Context) {
 // 用于把 base 等池里已存在的模板/云镜像纳入镜像库，打通「基于云镜像创建」链路——
 // 这些文件是 VM 正在引用或将被 backing 的共享盘，登记只是建目录索引，不复制不移动。
 // body: {name*, path*, os_version?, description?, is_template?}；同路径重复登记返回 409。
+// pathInAnyPool 判断绝对路径是否落在任一已登记存储池目录内（带分隔符边界）。
+func (h *ImageHandler) pathInAnyPool(path string) bool {
+	names, err := h.Virt.ListPools()
+	if err != nil {
+		return false
+	}
+	for _, name := range names {
+		if poolPath, err := h.Virt.GetPoolPath(name); err == nil && poolPath != "" {
+			if strings.HasPrefix(path, strings.TrimRight(poolPath, "/")+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (h *ImageHandler) RegisterImage(c *gin.Context) {
 	var req struct {
 		Name        string `json:"name" binding:"required"`
@@ -282,6 +283,11 @@ func (h *ImageHandler) RegisterImage(c *gin.Context) {
 	// path 必须是存在的常规文件：登记的是磁盘索引，指向不存在文件的记录只会制造悬挂引用
 	if !filepath.IsAbs(req.Path) || !poolPathRegex.MatchString(req.Path) {
 		Fail(c, http.StatusBadRequest, "路径必须是绝对路径且只含合法字符")
+		return
+	}
+	// 路径必须落在已登记存储池内（全量审计：任意绝对路径登记后可挂进 VM 读宿主机文件）
+	if !h.pathInAnyPool(req.Path) {
+		Fail(c, http.StatusBadRequest, "路径必须位于已登记的存储池目录内")
 		return
 	}
 	st, err := os.Stat(req.Path)
@@ -359,16 +365,17 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 		poolPath = p
 	}
 	if img.Path != "" {
-		inPool := poolPath != "" && strings.HasPrefix(img.Path, poolPath)
-		inDir := strings.HasPrefix(img.Path, config.GlobalConfig.ImageDir)
+		// 前缀必须带分隔符边界：否则 /var/lib/libvirt/images-evil/x.qcow2 会命中 /var/lib/libvirt/images（全量审计 P2）
+		inPool := poolPath != "" && strings.HasPrefix(img.Path, strings.TrimRight(poolPath, "/")+"/")
+		inDir := strings.HasPrefix(img.Path, strings.TrimRight(config.GlobalConfig.ImageDir, "/")+"/")
 		if inPool || inDir {
 			if refs, refErr := h.imageRefs(img.Path); refErr == nil && refs != "" {
 				Fail(c, http.StatusConflict, "镜像正被使用，拒绝删除："+refs)
 				return
 			}
 			if err := os.Remove(img.Path); err != nil && !os.IsNotExist(err) {
-				// 文件删除失败不阻断主流程，记录后继续
-				c.Error(err)
+				// 文件删除失败不阻断主流程，但必须留痕（gin 无 Error Handler 消费 c.Errors，原写法=完全静默）
+				log.Printf("[image] 删除镜像文件失败 path=%s err=%v", img.Path, err)
 			}
 		}
 	}

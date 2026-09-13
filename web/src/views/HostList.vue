@@ -7,7 +7,7 @@
       <div class="toolbar">
         <div>
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-button v-if="isAdmin" type="success" :icon="Plus" @click="openCreate">添加宿主机</el-button>
+          <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">添加宿主机</el-button>
         </div>
         <span class="count">共 {{ total }} 台</span>
       </div>

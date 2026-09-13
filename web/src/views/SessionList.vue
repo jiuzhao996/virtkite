@@ -211,8 +211,4 @@ onUnmounted(() => {
   margin-right: 4px;
   animation: breathe 1.6s ease-in-out infinite;
 }
-@keyframes breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
 </style>

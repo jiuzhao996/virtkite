@@ -7,12 +7,12 @@
         <div class="toolbar">
           <div class="toolbar-left">
             <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-            <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="router.push({ name: 'vm-create' })">新建虚拟机</el-button>
-            <el-button v-if="isAdmin" type="warning" plain :icon="Upload" @click="openImport">导入存量 VM</el-button>
+            <el-button v-if="canOperate" type="primary" :icon="Plus" @click="router.push({ name: 'vm-create' })">新建虚拟机</el-button>
+            <el-button v-if="canOperate" type="warning" plain :icon="Upload" @click="openImport">导入存量 VM</el-button>
             <!-- 批量操作条：勾选后出现；按选中状态智能禁用（全在运行时开机禁用、全已关机时关机禁用），
                  按钮统一 plain 弱化视觉，避免一排实底彩钮压过主操作 -->
-            <el-divider v-if="isAdmin && checked.length" direction="vertical" />
-            <template v-if="isAdmin && checked.length">
+            <el-divider v-if="canOperate && checked.length" direction="vertical" />
+            <template v-if="canOperate && checked.length">
               <span class="bulk-count">已选 {{ checked.length }} 台</span>
               <!-- 批量电源：全关机→批量开机，全运行→批量关机；混合状态按钮禁用并提示分开操作
                    （混合时"批量开关机"没有单一语义，硬执行会既开机又关机） -->
@@ -69,7 +69,7 @@
               />
               <span class="vm-name" :title="vm.name">{{ vm.name }}</span>
               <!-- 腾讯云式状态：圆点 + 文字，运行态呼吸灯 -->
-              <span class="vm-status" :class="'st-' + (vm.status || 'unknown').replace(' ', '-')">
+              <span class="vm-status" :class="statusClass(vm.status)">
                 <span class="status-dot" />
                 {{ vmStatusText(vm.status) }}
               </span>
@@ -101,14 +101,14 @@
             <div class="vm-actions">
               <el-button size="small" :icon="Search" @click="router.push({ name: 'vm-detail', params: { id: vm.id } })">详情</el-button>
               <el-button
-                v-if="isAdmin && vm.status !== 'running'"
+                v-if="canOperate && vm.status !== 'running'"
                 size="small"
                 :icon="VideoPlay"
                 :disabled="busy.has(vm.id)"
                 @click="action(vm, 'start')"
               >开机</el-button>
               <el-button
-                v-else-if="isAdmin"
+                v-else-if="canOperate"
                 size="small"
                 :icon="SwitchButton"
                 :disabled="busy.has(vm.id)"
@@ -117,7 +117,7 @@
               <el-button size="small" :icon="Monitor" :disabled="vm.status !== 'running'" @click="openConsole(vm)">控制台</el-button>
               <!-- 删除常驻（原「更多」下拉悬浮突兀，重启去详情页操作）：删除有输入名称确认弹窗兜底 -->
               <el-button
-                v-if="isAdmin"
+                v-if="canOperate"
                 class="vm-delete"
                 size="small"
                 type="danger"
@@ -191,7 +191,7 @@ import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { vmStatusText, vmStatusTag, usageColor, nowClock, errMsg, isCancel, cssVar } from '../utils/format'
 
 const router = useRouter()
-const { isAdmin } = useAuth()
+const { canOperate } = useAuth()
 
 // echarts 不解析 var()，需要真实色值：挂载时读一次 CSS 变量（避免散落 hex）
 const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2a9da5')
@@ -508,6 +508,10 @@ async function bulkAction(type) {
   await load()
 }
 
+function statusClass(status) {
+  return 'st-' + (status || 'unknown').replace(' ', '-')
+}
+
 async function action(vm, type) {
   busy.value.add(vm.id)
   busy.value = new Set(busy.value)
@@ -535,10 +539,9 @@ async function action(vm, type) {
       ElMessage.success('关机成功')
       await load()
     } else {
-      // start / restart 为快接口，保持同步直调
+      // start 为快接口，同步直调（restart 入口已收敛到详情页顶栏）
       await api[type + 'VM'](vm.id)
-      const label = { start: '开机', restart: '重启' }[type]
-      ElMessage.success(label + '指令已执行')
+      ElMessage.success('开机指令已执行')
       await load()
     }
   } catch (e) {
@@ -685,7 +688,7 @@ onUnmounted(() => {
   color: #16a34a;
 }
 .vm-status.st-running .status-dot {
-  animation: breathe 1.6s ease-in-out infinite;
+  animation: breathe-ring 1.6s ease-in-out infinite;
 }
 .vm-status.st-paused {
   background: #fffbeb;
@@ -700,7 +703,7 @@ onUnmounted(() => {
   background: #f1f5f9;
   color: #64748b;
 }
-@keyframes breathe {
+@keyframes breathe-ring {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); }
   50% { opacity: 0.65; box-shadow: 0 0 0 4px rgba(22, 163, 74, 0); }
 }
@@ -753,7 +756,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: #16a34a;
   letter-spacing: 0.5px;
@@ -763,11 +766,11 @@ onUnmounted(() => {
   height: 6px;
   border-radius: 50%;
   background: #16a34a;
-  animation: breathe 1.6s ease-in-out infinite;
+  animation: breathe 1.6s ease-in-out infinite; /* 全局纯透明度版（global.css） */
 }
 .perf-time {
   margin-left: auto;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--color-muted-foreground);
   font-family: var(--font-mono);
 }

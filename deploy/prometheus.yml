@@ -38,7 +38,8 @@ remote_write:
   - url: "https://kpyun.fun:8081/api/v1/write"
     basic_auth:
       username: virtkite
-      password: "5138e87ed1e7f86e1e60ed2d"
+      # 密码不入库：见 deploy/tls/.vm_basic.secret（gitignore），容器内经 compose 只读挂载可见
+      password_file: /etc/prometheus/.vm_basic.secret
     write_relabel_configs:
       # 只推平台业务指标（vmops_*），丢弃 go_/process_ 等运行时噪声
       - source_labels: [job]

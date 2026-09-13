@@ -26,9 +26,15 @@ func Init() {
 		cfg.DBName,
 	)
 
+	// SQL 日志级别按模式切分：debug 保留 Info（开发可见全量 SQL）；release 降 Warn——
+	// Info 会把绑定值（任务 payload、审计明细）打进 stdout，量大且敏感（全量审计 P2）
+	logLevel := logger.Warn
+	if cfg.ServerMode == "debug" {
+		logLevel = logger.Info
+	}
 	var err error
 	DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: logger.Default.LogMode(logLevel),
 	})
 	if err != nil {
 		log.Fatalf("连接数据库失败: %v", err)
@@ -42,6 +48,7 @@ func Init() {
 	sqlDB.SetMaxOpenConns(50)
 	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetConnMaxLifetime(time.Hour)
+	sqlDB.SetConnMaxIdleTime(10 * time.Minute) // 防 MySQL wait_timeout 边界撞闲置死链
 
 	// 自动迁移
 	err = DB.AutoMigrate(
@@ -55,6 +62,7 @@ func Init() {
 		&model.Setting{},
 		&model.Alert{},
 		&model.PoolMeta{},
+		&model.VMGrant{},
 	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)

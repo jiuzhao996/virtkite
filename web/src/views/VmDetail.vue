@@ -13,21 +13,21 @@
         <!-- 电源 / 挂起 状态切换按钮：一个按钮按当前状态显示对应动作（运行中→关机/暂停，关机→开机，暂停→恢复）。
              语义保持与拆分版一致：暂停态须先恢复（电源钮禁用），关机态禁用挂起钮；busy 期间锁定防止动作切换闪烁 -->
         <el-button
-          v-if="isAdmin && vm"
+          v-if="canOperate && vm"
           :icon="isRunning ? SwitchButton : VideoPlay"
           :loading="busy === 'stop' || busy === 'start'"
           :disabled="isPaused || (!!busy && busy !== 'resume')"
           @click="act(isRunning ? 'stop' : 'start')"
         >{{ isRunning ? '关机' : '开机' }}</el-button>
         <el-button
-          v-if="isAdmin && vm"
+          v-if="canOperate && vm"
           :icon="isPaused ? VideoPlay : VideoPause"
           :loading="busy === 'pause' || busy === 'resume'"
           :disabled="(!isRunning && !isPaused) || (!!busy && busy !== 'stop' && busy !== 'start')"
           @click="act(isPaused ? 'resume' : 'pause')"
         >{{ isPaused ? '恢复' : '暂停' }}</el-button>
-        <el-button v-if="isAdmin && vm" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" @click="act('restart')">重启</el-button>
-        <el-button v-if="isAdmin" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
+        <el-button v-if="canOperate && vm" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" @click="act('restart')">重启</el-button>
+        <el-button v-if="canOperate" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
       </div>
     </div>
 
@@ -71,6 +71,10 @@
             <el-icon><Document /></el-icon>
             <span>XML 定义</span>
           </el-menu-item>
+          <el-menu-item v-if="isAdmin" index="grants">
+            <el-icon><User /></el-icon>
+            <span>授权管理</span>
+          </el-menu-item>
         </el-menu>
       </el-aside>
 
@@ -103,7 +107,7 @@
                 <el-switch
                   :model-value="!!(spec && spec.autostart)"
                   :loading="busy === 'autostart'"
-                  :disabled="!spec || !isAdmin"
+                  :disabled="!spec || !canOperate"
                   @change="onAutostartChange"
                 />
               </el-descriptions-item>
@@ -163,8 +167,8 @@
           <el-card shadow="never" class="edit-card">
             <div class="field-row">
               <span class="field-label">vCPU 数</span>
-              <el-input-number v-model="vcpuInput" :min="1" :max="256" controls-position="right" :disabled="!isAdmin" />
-              <el-button v-if="isAdmin" type="primary" :loading="busy === 'vcpu'" :disabled="!spec" @click="applyVcpu">应用</el-button>
+              <el-input-number v-model="vcpuInput" :min="1" :max="256" controls-position="right" :disabled="!canOperate" />
+              <el-button v-if="canOperate" type="primary" :loading="busy === 'vcpu'" :disabled="!spec" @click="applyVcpu">应用</el-button>
             </div>
             <p class="field-tip">热调整：live + config 双生效，运行中即可在线增减 CPU 核数。</p>
           </el-card>
@@ -178,8 +182,8 @@
           <el-card shadow="never" class="edit-card">
             <div class="field-row">
               <span class="field-label">内存大小（MB）</span>
-              <el-input-number v-model="memInput" :min="256" :step="256" controls-position="right" :disabled="!isAdmin" />
-              <el-button v-if="isAdmin" type="primary" :loading="busy === 'memory'" :disabled="!spec" @click="applyMemory">应用</el-button>
+              <el-input-number v-model="memInput" :min="256" :step="256" controls-position="right" :disabled="!canOperate" />
+              <el-button v-if="canOperate" type="primary" :loading="busy === 'memory'" :disabled="!spec" @click="applyMemory">应用</el-button>
             </div>
             <p class="field-tip">热调整：需 ≥ 当前占用，运行中可在线调整（live + config）。</p>
           </el-card>
@@ -204,7 +208,7 @@
                 <span class="dev-name mono">{{ disk.target || '—' }}</span>
                 <el-tag :type="disk.device === 'cdrom' ? 'warning' : 'info'" size="small" effect="light">{{ disk.device }}</el-tag>
                 <!-- 移除：打开确认弹窗（可选择是否同时删除存储卷），替代原先的 popconfirm -->
-                <el-button v-if="isAdmin" size="small" type="danger" text class="dev-remove" :icon="Delete" @click="openRemoveDisk(disk)">移除</el-button>
+                <el-button v-if="canOperate" size="small" type="danger" text class="dev-remove" :icon="Delete" @click="openRemoveDisk(disk)">移除</el-button>
               </div>
               <el-descriptions :column="2" size="small" class="dev-desc">
                 <el-descriptions-item label="目标">{{ disk.target || '—' }}</el-descriptions-item>
@@ -219,11 +223,11 @@
             </div>
           </template>
           <div class="panel-actions">
-            <el-button v-if="isAdmin" type="success" plain :icon="MagicStick" :loading="quickDiskLoading" @click="quickAddDisk">一键数据盘（20G）</el-button>
+            <el-button v-if="canOperate" type="primary" plain :icon="MagicStick" :loading="quickDiskLoading" @click="quickAddDisk">一键数据盘（20G）</el-button>
             <el-tooltip placement="top" content="自动检查并补齐两件标准配置：① guest-agent 通信通道——装了 qemu-guest-agent 的虚拟机靠它向平台上报 IP；② virtio-rng 随机数设备——提升虚拟机熵池，加快开机。已存在的会自动跳过，缺什么补什么。">
-              <el-button v-if="isAdmin" plain :icon="Connection" :loading="standardLoading" @click="ensureStandard">补齐标准设备</el-button>
+              <el-button v-if="canOperate" plain :icon="Connection" :loading="standardLoading" @click="ensureStandard">补齐标准设备</el-button>
             </el-tooltip>
-            <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openDiskDialog">添加磁盘</el-button>
+            <el-button v-if="canOperate" type="primary" :icon="Plus" @click="openDiskDialog">添加磁盘</el-button>
           </div>
         </section>
 
@@ -244,7 +248,7 @@
               <div class="dev-card-head">
                 <span class="dev-name mono">{{ nic.mac || '—' }}</span>
                 <el-tag type="info" size="small" effect="light">{{ nic.model }}</el-tag>
-                <el-popconfirm v-if="isAdmin" :title="'确定移除网卡「' + (nic.mac || '') + '」？'" width="220" @confirm="removeNic(nic)">
+                <el-popconfirm v-if="canOperate" :title="'确定移除网卡「' + (nic.mac || '') + '」？'" width="220" @confirm="removeNic(nic)">
                   <template #reference>
                     <el-button size="small" type="danger" text :icon="Delete">移除</el-button>
                   </template>
@@ -259,8 +263,8 @@
             </div>
           </template>
           <div class="panel-actions">
-            <el-button v-if="isAdmin" type="success" plain :icon="MagicStick" :loading="quickNicLoading" @click="quickAddNic">一键网卡（default）</el-button>
-            <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openNicDialog">添加网卡</el-button>
+            <el-button v-if="canOperate" type="primary" plain :icon="MagicStick" :loading="quickNicLoading" @click="quickAddNic">一键网卡（default）</el-button>
+            <el-button v-if="canOperate" type="primary" :icon="Plus" @click="openNicDialog">添加网卡</el-button>
           </div>
         </section>
 
@@ -268,7 +272,7 @@
         <section v-show="activeView === 'snapshots'" class="panel">
           <div class="panel-head">
             <h3 class="panel-title">快照</h3>
-            <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openSnapCreate">新建快照</el-button>
+            <el-button v-if="canOperate" type="primary" :icon="Plus" @click="openSnapCreate">新建快照</el-button>
           </div>
           <el-card shadow="never">
             <el-table :data="snapshots" size="small" border style="width: 100%" v-loading="snapLoading">
@@ -285,8 +289,8 @@
               </el-table-column>
               <el-table-column label="操作" width="180" fixed="right">
                 <template #default="{ row }">
-                  <el-button v-if="isAdmin" size="small" :icon="RefreshLeft" @click="revertSnap(row)">回滚</el-button>
-                  <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="removeSnap(row)">删除</el-button>
+                  <el-button v-if="canOperate" size="small" :icon="RefreshLeft" @click="revertSnap(row)">回滚</el-button>
+                  <el-button v-if="canOperate" size="small" type="danger" :icon="Delete" @click="removeSnap(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -307,9 +311,55 @@
           <el-card shadow="never">
             <div class="xml-toolbar">
               <el-button :icon="Refresh" @click="loadXML">重新加载</el-button>
-              <el-button v-if="isAdmin" type="primary" :loading="xmlSaving" @click="saveXML">保存</el-button>
+              <el-button v-if="canOperate" type="primary" :loading="xmlSaving" @click="saveXML">保存</el-button>
             </div>
             <el-input v-model="xmlText" type="textarea" :rows="18" class="xml-area" placeholder="加载中…" />
+          </el-card>
+        </section>
+
+        <!-- 授权管理（借鉴堡垒机 4A：分配是一等实体，授权决定可见性；未授权用户查无此项） -->
+        <section v-show="activeView === 'grants'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">授权管理</h3>
+          </div>
+          <el-alert
+            type="info"
+            :closable="false"
+            class="xml-alert"
+            title="把这台虚拟机授权给学生/教师后，对方登录即可在列表中看到并操作它；未授权用户完全看不到（查无此项）。到期时间留空 = 长期有效，可配合实验周期设置到期自动收回。"
+          />
+          <el-card shadow="never">
+            <div class="grant-form">
+              <el-select v-model="grantForm.userId" filterable placeholder="选择要授权的用户" style="width: 260px">
+                <el-option v-for="u in grantUsers" :key="u.id" :label="u.username + '（' + u.role + '）'" :value="u.id" />
+              </el-select>
+              <el-date-picker
+                v-model="grantForm.expiresAt"
+                type="datetime"
+                placeholder="到期时间（留空 = 长期有效）"
+                value-format="YYYY-MM-DDTHH:mm:ssZ"
+                style="width: 260px"
+              />
+              <el-button type="primary" :disabled="!grantForm.userId" @click="submitGrant">授权</el-button>
+            </div>
+            <el-table :data="grants" size="small" border style="width: 100%" v-loading="grantsLoading">
+              <template #empty><el-empty description="暂无授权（该虚拟机当前仅管理员可见）" :image-size="70" /></template>
+              <el-table-column prop="username" label="用户" min-width="140" />
+              <el-table-column label="有效期" min-width="180">
+                <template #default="{ row }">
+                  <el-tag v-if="!row.expires_at" size="small" effect="light">长期有效</el-tag>
+                  <span v-else>{{ grantExpiryText(row.expires_at) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="授权时间" min-width="170">
+                <template #default="{ row }">{{ grantExpiryText(row.created_at) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="100" fixed="right">
+                <template #default="{ row }">
+                  <el-button size="small" type="danger" :icon="Delete" @click="revokeGrant(row)">收回</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
           </el-card>
         </section>
       </el-main>
@@ -418,7 +468,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import echarts from '../utils/echarts'
-import { ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Plus, Refresh, RefreshLeft, Odometer, TrendCharts, Cpu, Coin, FolderOpened, Connection, CameraFilled, Document, MagicStick, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Plus, Refresh, RefreshLeft, Odometer, TrendCharts, Cpu, Coin, FolderOpened, Connection, CameraFilled, Document, MagicStick, WarningFilled, User } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
@@ -427,7 +477,7 @@ import { vmStatusText, vmStatusTag, usageColor, fmtRateBytes, nowClock, isCancel
 
 const route = useRoute()
 const router = useRouter()
-const { isAdmin } = useAuth()
+const { isAdmin, canOperate } = useAuth()
 const id = route.params.id
 
 // echarts 不解析 var()，实时曲线需要真实色值：挂载时读一次 CSS 变量
@@ -772,6 +822,10 @@ watch(activeView, (v) => {
     initPerfChart()
     renderPerfChart()
   })
+  if (v === 'grants') {
+    loadGrants()
+    loadGrantUsers()
+  }
 })
 watch(isRunning, (r) => {
   if (r && activeView.value === 'perf') nextTick(() => {
@@ -923,7 +977,9 @@ async function openNicDialog() {
     try {
       const res = await api.vmOptions()
       networks.value = (res.data && res.data.networks) || []
-    } catch (e) {}
+    } catch (e) {
+      ElMessage.warning('网络列表获取失败，可手动输入网络名')
+    }
   }
   nicDialog.value = true
 }
@@ -950,6 +1006,76 @@ async function submitNic() {
 }
 
 /* ---------- 快照 ---------- */
+/* ---------- 授权管理（借鉴堡垒机 4A：分配是一等实体，授权决定可见性） ---------- */
+const grants = ref([])
+const grantsLoading = ref(false)
+const grantUsers = ref([])
+const grantForm = ref({ userId: null, expiresAt: null })
+
+async function loadGrants() {
+  grantsLoading.value = true
+  try {
+    const res = await api.listVMGrants(id)
+    grants.value = (res.data && res.data.items) || []
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '获取授权列表失败'))
+  } finally {
+    grantsLoading.value = false
+  }
+}
+
+async function loadGrantUsers() {
+  if (grantUsers.value.length) return
+  try {
+    const res = await api.listUsers()
+    grantUsers.value = (res.data && res.data.items) || []
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '获取用户列表失败'))
+  }
+}
+
+async function submitGrant() {
+  if (!grantForm.value.userId) {
+    ElMessage.warning('请选择要授权的用户')
+    return
+  }
+  try {
+    const payload = { user_id: grantForm.value.userId }
+    if (grantForm.value.expiresAt) payload.expires_at = grantForm.value.expiresAt
+    const res = await api.grantVM(id, payload)
+    ElMessage.success((res && res.message) || '已授权')
+    grantForm.value = { userId: null, expiresAt: null }
+    await loadGrants()
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '授权失败'))
+  }
+}
+
+async function revokeGrant(row) {
+  try {
+    await ElMessageBox.confirm(
+      '确定收回 ' + row.username + ' 对该虚拟机的授权？收回后对方立即不可见、不可操作。',
+      '收回授权',
+      { type: 'warning', confirmButtonText: '收回', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await api.revokeVMGrant(id, row.id)
+    ElMessage.success('已收回授权')
+    await loadGrants()
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '收回授权失败'))
+  }
+}
+
+function grantExpiryText(v) {
+  if (!v) return '—'
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? v : d.toLocaleString('zh-CN', { hour12: false })
+}
+
 async function loadSnapshots() {
   snapLoading.value = true
   try {
@@ -963,6 +1089,7 @@ async function loadSnapshots() {
     }))
   } catch (e) {
     snapshots.value = []
+    ElMessage.error(taskErrorMessage(e, '获取快照列表失败'))
   } finally {
     snapLoading.value = false
   }
@@ -1044,8 +1171,8 @@ async function saveXML() {
 
 /* ---------- 生命周期 ---------- */
 onMounted(async () => {
-  await loadSpec()
-  await loadSnapshots()
+  await Promise.all([loadSpec(), loadSnapshots()])
+  
   await loadXML()
   prefillStatsHistory()
   statsTimer = setInterval(pollStats, statsIntervalMs)
@@ -1307,6 +1434,12 @@ onUnmounted(() => {
 
 /* 快照 / XML */
 .xml-alert {
+  margin-bottom: 12px;
+}
+.grant-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   margin-bottom: 12px;
 }
 .xml-toolbar {

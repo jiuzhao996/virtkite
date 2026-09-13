@@ -182,7 +182,7 @@
           :page-size="historyPageSize"
           :total="historyTotal"
           layout="total, prev, pager, next"
-          small
+          size="small"
           background
           @current-change="loadHistory"
         />
@@ -308,7 +308,10 @@ async function probeGrafana() {
     const res = await api.monitorGrafanaStatus()
     const ok = res.data && res.data.ok === true
     frameStuck.overview = frameStuck.vms = !ok
-    if (ok) clearTimeout(frameTimers.overview)
+    if (ok) {
+      clearTimeout(frameTimers.overview)
+      clearTimeout(frameTimers.vms)
+    }
   } catch (e) {
     frameStuck.overview = frameStuck.vms = true
   }
@@ -495,7 +498,7 @@ onUnmounted(() => {
 .grafana-frame {
   width: 100%;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: #fff;
 }
 .grafana-loading {
@@ -508,7 +511,7 @@ onUnmounted(() => {
   color: var(--el-text-color-secondary);
   font-size: 0.9rem;
   background: var(--el-fill-color-lighter);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 .grafana-fallback {
   padding: 24px 0;

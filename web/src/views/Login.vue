@@ -30,9 +30,11 @@
         </el-button>
       </el-form>
 
-      <div class="demo-tip">
+      <!-- 演示账号提示：构建时 VITE_SHOW_DEMO_TIP=false 可隐藏（公开演示/截图归档时不应暴露口令） -->
+      <div v-if="showDemoTip" class="demo-tip">
         <el-icon><InfoFilled /></el-icon>演示账号：<br />
         管理员 <code>admin</code> / <code>password</code><br />
+        操作员 <code>stu</code> / <code>123456</code><br />
         普通用户 <code>user</code> / <code>123456</code>
       </div>
     </el-card>
@@ -45,6 +47,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { InfoFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { errMsg } from '../utils/format'
 import { useAuth } from '../store/auth'
 import loginBg from '../assets/login-bg.jpg'
 
@@ -56,6 +59,8 @@ const error = ref('')
 const submitting = ref(false)
 const bgOk = ref(false)
 const bgImg = ref(null)
+// 演示账号提示开关：默认显示（开发/答辩演示用），构建时 VITE_SHOW_DEMO_TIP=false 隐藏
+const showDemoTip = import.meta.env.VITE_SHOW_DEMO_TIP !== 'false'
 
 onMounted(() => {
   // 登录页禁止页面级滚动（内容居中，不应出现右侧滚动条）
@@ -85,7 +90,7 @@ async function submit() {
       error.value = res.message || '登录失败'
     }
   } catch (e) {
-    error.value = (e.response && e.response.data && e.response.data.message) || '网络错误，请稍后重试'
+    error.value = errMsg(e, '网络错误，请稍后重试')
   } finally {
     submitting.value = false
   }
@@ -119,7 +124,7 @@ async function submit() {
   position: relative;
   width: 100%;
   max-width: 400px;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: #fff;
   z-index: 2;
 }
@@ -162,7 +167,7 @@ async function submit() {
   padding: 12px 14px;
   background: var(--el-color-primary-light-9);
   border: 1px solid var(--el-color-primary-light-5);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 0.85rem;
   color: var(--color-primary);
   line-height: 1.9;

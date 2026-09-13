@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/console"
+	"gorm.io/gorm"
 )
 
 // ConnectSerial 处理串口控制台（等价 virsh console，免 IP）：
@@ -32,7 +33,7 @@ func (h *VMHandler) ConnectSerial(c *gin.Context) {
 		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "虚拟机 ID 非法"})
 		return
 	}
-	name, err := h.vmNameByID(vmID)
+	name, err := h.vmNameByID(c, vmID)
 	if err != nil {
 		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "虚拟机不存在"})
 		return
@@ -67,7 +68,8 @@ func (h *VMHandler) ConnectSerial(c *gin.Context) {
 	select {
 	case err := <-errCh:
 		if err != nil {
-			_ = conn.WriteJSON(gin.H{"type": "error", "msg": err.Error()})
+			log.Printf("[serial] 串口打开失败 err=%v", err)
+			_ = conn.WriteJSON(gin.H{"type": "error", "msg": "虚拟机不存在或串口不可用"})
 		}
 		return
 	default:
@@ -116,10 +118,14 @@ func (h *VMHandler) ConnectSerial(c *gin.Context) {
 }
 
 // vmNameByID 根据 DB id 返回 VM 名称（id 由 parseID 解析后传入，走参数化查询）。
-func (h *VMHandler) vmNameByID(id uint) (string, error) {
+// visible=是否做授权可见性校验（WS 升级后无法写 HTTP 响应，未授权按「不存在」返回错误）。
+func (h *VMHandler) vmNameByID(c *gin.Context, id uint) (string, error) {
 	var vm model.VM
 	if err := h.DB.Select("name").First(&vm, id).Error; err != nil {
 		return "", err
+	}
+	if !vmVisible(c, h.DB, vm.ID) {
+		return "", gorm.ErrRecordNotFound
 	}
 	return vm.Name, nil
 }

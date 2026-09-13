@@ -43,6 +43,11 @@ func (h *VNCHandler) RequestToken(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "虚拟机不存在")
 		return
 	}
+	// 授权决定可见性：非 admin 未持有效授权与不存在同响应
+	if !vmVisible(c, h.DB, vm.ID) {
+		Fail(c, http.StatusNotFound, "虚拟机不存在")
+		return
+	}
 
 	// 获取 VM VNC 端口
 	port, err := h.Virt.GetVNCInfo(vm.Name)
@@ -59,7 +64,7 @@ func (h *VNCHandler) RequestToken(c *gin.Context) {
 		h.Sessions.OpenVNC(vm.ID, vm.Name, uname, uid, c.ClientIP(), token)
 	}
 
-	// 非 admin 一律只读观看
+	// 仅 viewer（及无法识别的角色）只读观看；operator 是操作角色，控制台键鼠可用
 	role, _ := c.Get("role")
 	roleStr, _ := role.(string)
 
@@ -67,7 +72,7 @@ func (h *VNCHandler) RequestToken(c *gin.Context) {
 		"token":     token,
 		"host":      "127.0.0.1",
 		"port":      port,
-		"view_only": roleStr != "admin",
+		"view_only": roleStr != "admin" && roleStr != "operator",
 	})
 }
 

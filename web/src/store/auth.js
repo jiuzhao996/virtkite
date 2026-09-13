@@ -33,12 +33,20 @@ export function logout() {
 }
 
 const isAdmin = computed(() => state.user && state.user.role === 'admin')
+// canOperate：可操作虚拟机的角色（admin 全量 + operator=VM 全生命周期与三类控制台）。
+// 与 isAdmin 分级对应后端 OperatorMiddleware：VM 操作看 canOperate，
+// 平台管理（用户/审计/设置/宿主机/存储/网络/镜像的变更）看 isAdmin。
+const canOperate = computed(() => {
+  const r = state.user && state.user.role
+  return r === 'admin' || r === 'operator'
+})
 const isLoggedIn = computed(() => !!state.token)
 
 export function useAuth() {
   return {
     state,
     isAdmin,
+    canOperate,
     isLoggedIn,
     setToken,
     setUser,

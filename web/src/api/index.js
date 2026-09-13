@@ -111,6 +111,10 @@ export const api = {
   createSnapshot: (id, name, description) => unwrap(http.post('/vms/' + id + '/snapshots', { name, description })),
   deleteSnapshot: (id, snap) => unwrap(http.delete('/vms/' + id + '/snapshots/' + snap)),
   revertSnapshot: (id, snap) => unwrap(http.post('/vms/' + id + '/snapshots/' + snap + '/revert')),
+  // 资产授权（借鉴堡垒机 4A：admin 把 VM 分配给用户，授权决定可见性，未授权查无此项）
+  listVMGrants: (id) => unwrap(http.get('/vms/' + id + '/grants')),
+  grantVM: (id, payload) => unwrap(http.post('/vms/' + id + '/grants', payload)),
+  revokeVMGrant: (id, gid) => unwrap(http.delete('/vms/' + id + '/grants/' + gid)),
   vncToken: (id) => unwrap(http.post('/vms/' + id + '/vnc-token')),
   scanImportVMs: () => unwrap(http.get('/vms/import/scan')),
   importVMs: (hostId, names) => unwrap(http.post('/vms/import', { host_id: hostId, names })),

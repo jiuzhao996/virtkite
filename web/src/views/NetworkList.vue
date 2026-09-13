@@ -9,7 +9,7 @@
       <div class="toolbar">
         <div class="toolbar-left">
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-button v-if="isAdmin" type="success" :icon="Plus" @click="openCreate">新建 NAT 网络</el-button>
+          <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">新建 NAT 网络</el-button>
           <el-button v-if="isAdmin" :icon="Document" @click="openXML">从 XML 定义</el-button>
         </div>
         <div class="toolbar-right">
@@ -51,12 +51,13 @@
                  请求进行中 :loading 禁用，防连点重复提交（ui-ux-pro-max §2 loading-buttons） -->
             <el-button
               v-if="isAdmin"
+              size="small"
               :icon="row.active ? VideoPause : VideoPlay"
               :loading="rowBusy.has(row.name)"
               @click="act(row, row.active ? 'stop' : 'start')"
             >{{ row.active ? '停止' : '启动' }}</el-button>
-            <el-button v-if="isAdmin" :icon="Edit" @click="openEdit(row)">编辑 XML</el-button>
-            <el-button v-if="isAdmin" type="danger" plain :icon="Delete" @click="remove(row)">删除</el-button>
+            <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openEdit(row)">编辑 XML</el-button>
+            <el-button v-if="isAdmin" size="small" type="danger" plain :icon="Delete" @click="remove(row)">删除</el-button>
           </div>
         </el-card>
         </el-col>

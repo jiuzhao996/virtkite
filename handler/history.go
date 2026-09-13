@@ -187,6 +187,11 @@ func (h *HistoryHandler) VMStatsHistory(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "虚拟机不存在")
 		return
 	}
+	// 授权决定可见性：非 admin 未持有效授权与不存在同响应
+	if !vmVisible(c, h.DB, id) {
+		Fail(c, http.StatusNotFound, "虚拟机不存在")
+		return
+	}
 
 	minutes := clampMinutes(c.Query("minutes"), 30)
 	// vm 标签值经 Prometheus 转义后拼进 PromQL 选择器（名称白名单已在创建时约束，此处再防御）

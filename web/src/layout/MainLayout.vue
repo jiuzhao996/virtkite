@@ -126,7 +126,8 @@
             <el-button text type="primary" class="task-pop-more" @click="router.push('/tasks')">前往任务中心</el-button>
           </el-popover>
           <el-tag v-if="isAdmin" type="warning" effect="dark" size="small">管理员</el-tag>
-          <el-tag v-else type="info" effect="plain" size="small">普通用户</el-tag>
+          <el-tag v-else-if="state.user && state.user.role === 'operator'" type="primary" effect="plain" size="small">操作员</el-tag>
+          <el-tag v-else type="info" effect="plain" size="small">只读用户</el-tag>
           <!-- 用户中心：资料/改密码/轮询偏好集中在个人中心页（对标云控制台顶栏分工） -->
           <el-dropdown trigger="click" @command="onUserCommand">
             <span class="user-entry">
@@ -158,7 +159,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, ArrowLeft, ArrowRight, Bell, FullScreen, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, Connection, Cpu, DataLine, Document, FolderOpened, FullScreen, List, Monitor, Picture, Setting, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { vmStatusText, vmStatusTag } from '../utils/format'
@@ -174,16 +175,16 @@ const collapsed = ref(false)
 // 宿主机与存储池/网络同属基础设施（提供算力/存储/网络）；会话管理并入审计中心（审计页 tab）；
 // 个人资料/改密码/轮询偏好收进顶栏「个人中心」（对标 JumpServer 审计模块与云控制台顶栏分工）。
 const navItems = [
-  { index: '/dashboard', label: '仪表盘', icon: 'DataLine', group: '总览' },
-  { index: '/vms', label: '虚拟机', icon: 'Monitor', group: '资源' },
-  { index: '/images', label: '镜像管理', icon: 'Picture', group: '资源' },
-  { index: '/hosts', label: '宿主机', icon: 'Cpu', group: '基础设施' },
-  { index: '/storage', label: '存储池', icon: 'FolderOpened', group: '基础设施' },
-  { index: '/networks', label: '网络', icon: 'Connection', group: '基础设施' },
-  { index: '/tasks', label: '任务中心', icon: 'List', group: '运维' },
-  { index: '/audit', label: '审计中心', icon: 'Document', group: '运维' },
-  { index: '/users', label: '用户管理', icon: 'User', group: '管理', adminOnly: true },
-  { index: '/settings', label: '系统设置', icon: 'Setting', group: '管理', adminOnly: true }
+  { index: '/dashboard', label: '仪表盘', icon: DataLine, group: '总览' },
+  { index: '/vms', label: '虚拟机', icon: Monitor, group: '资源' },
+  { index: '/images', label: '镜像管理', icon: Picture, group: '资源' },
+  { index: '/hosts', label: '宿主机', icon: Cpu, group: '基础设施' },
+  { index: '/storage', label: '存储池', icon: FolderOpened, group: '基础设施' },
+  { index: '/networks', label: '网络', icon: Connection, group: '基础设施' },
+  { index: '/tasks', label: '任务中心', icon: List, group: '运维' },
+  { index: '/audit', label: '审计中心', icon: Document, group: '运维' },
+  { index: '/users', label: '用户管理', icon: User, group: '管理', adminOnly: true },
+  { index: '/settings', label: '系统设置', icon: Setting, group: '管理', adminOnly: true }
 ]
 
 const menuGroups = computed(() => {
@@ -248,7 +249,8 @@ async function loadActiveTasks() {
       api.listTasks({ status: 'running', page_size: 100 }),
       api.listTasks({ status: 'pending', page_size: 100 })
     ])
-    activeTasks.value = [...(run.items || []), ...(pend.items || [])]
+    // unwrap 后是 {code,message,data} 包体，items 在 .data 里（审计 P0：原写法恒 undefined，任务铃从未工作）
+    activeTasks.value = [...(run.data?.items || []), ...(pend.data?.items || [])]
   } catch (e) {
     /* 静默 */
   }

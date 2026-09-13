@@ -152,9 +152,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// 更新最后登录时间
+	// 更新最后登录时间（best-effort：登录已成功，回写失败不值得中断响应，留注释声明意图）
 	now := time.Now()
-	h.DB.Model(&user).Update("last_login", &now)
+	_ = h.DB.Model(&user).Update("last_login", &now).Error
 
 	Created(c, "登录成功", LoginResponse{
 		AccessToken: token,

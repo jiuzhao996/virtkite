@@ -11,6 +11,10 @@ BACKEND="${VMOPS_BACKEND:-http://127.0.0.1:8080}"
 
 start_backend() {
   echo "▶ 启动 vmops 后端 (:8080)..."
+  # 原生直跑也加载 .env（METRICS_TOKEN/ALERT_WEBHOOK_TOKEN 等此前只在 compose 形态生效）
+  if [ -f .env ]; then set -a; . ./.env; set +a; fi
+  # 本地开发默认 debug 模式（config 默认已改为 release；release 要求强随机 JWT_SECRET_KEY 才能启动）
+  export SERVER_MODE="${SERVER_MODE:-debug}"
   ./vmops > vmops.log 2>&1 &
   echo $! > vmops.pid
   echo "   PID: $(cat vmops.pid)"

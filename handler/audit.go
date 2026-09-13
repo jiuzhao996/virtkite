@@ -73,6 +73,9 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "查询审计日志失败")
 		return
 	}
+	if logs == nil {
+		logs = []model.AuditLog{}
+	}
 
 	Success(c, gin.H{
 		"total":     total,
@@ -124,11 +127,17 @@ func (h *AuditHandler) AuditActionSummary(c *gin.Context) {
 	}
 
 	var result []actionCount
-	h.DB.Model(&model.AuditLog{}).
+	if err := h.DB.Model(&model.AuditLog{}).
 		Select("action, count(*) as count").
 		Group("action").
 		Order("count desc").
-		Scan(&result)
+		Scan(&result).Error; err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	if result == nil {
+		result = []actionCount{}
+	}
 
 	Success(c, result)
 }

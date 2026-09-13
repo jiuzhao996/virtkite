@@ -100,6 +100,8 @@ func (r *Registry) Open(vmID uint, vmName, typ, username string, userID *uint, c
 		Status: "active", StartedAt: now, LastSeen: now,
 	}
 	if err := r.DB.Create(s).Error; err != nil {
+		// 登记失败会让管理员强断与会话审计对该会话失效，必须留痕（全量审计 P1）
+		log.Printf("[console] 会话登记失败 vm=%s type=%s err=%v", vmName, typ, err)
 		return nil
 	}
 	r.mu.Lock()
@@ -117,6 +119,7 @@ func (r *Registry) OpenVNC(vmID uint, vmName, username string, userID *uint, cli
 		Status: "active", StartedAt: now, LastSeen: now, Token: token,
 	}
 	if err := r.DB.Create(s).Error; err != nil {
+		log.Printf("[console] VNC 会话登记失败 vm=%s err=%v", vmName, err)
 		return nil
 	}
 	r.mu.Lock()
@@ -134,9 +137,12 @@ func (r *Registry) TouchByToken(token string) {
 		return
 	}
 	now := time.Now()
-	_ = r.DB.Model(&model.ConsoleSession{ID: id}).Updates(map[string]interface{}{
+	if err := r.DB.Model(&model.ConsoleSession{ID: id}).Updates(map[string]interface{}{
 		"last_seen": now,
-	})
+	}).Error; err != nil {
+		// 刷新失败可能导致清扫器把活跃会话误判过期，留痕（全量审计 P1）
+		log.Printf("[console] 刷新 VNC 会话存活失败 id=%d err=%v", id, err)
+	}
 }
 
 // Close 标记会话关闭并释放持有资源（WS 关闭/连接断开时调用，幂等）。

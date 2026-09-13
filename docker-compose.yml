@@ -34,7 +34,7 @@ services:
       DB_PASSWORD: vmops123
       DB_NAME: vmops
       # ⚠️ 生产环境请务必改掉下面的 JWT 密钥
-      JWT_SECRET_KEY: change-me-please-use-a-strong-random-secret
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?请在 .env 中设置强随机 JWT_SECRET_KEY（openssl rand -hex 32）}
       SERVER_PORT: "8080"
       # 监控中心代理查询告警用（compose 网络内用服务名；宿主机直跑默认 127.0.0.1:9093）
       ALERTMANAGER_URL: http://alertmanager:9093
@@ -79,6 +79,8 @@ services:
       - "9090:9090"
     volumes:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # remote_write Basic Auth 密码文件（密码本体不入库，见 deploy/tls/.vm_basic.secret）
+      - ./deploy/tls/.vm_basic.secret:/etc/prometheus/.vm_basic.secret:ro
       - ./deploy/alerts.yml:/etc/prometheus/alerts.yml:ro
       # file_sd 动态抓取目标（服务发现闭环）：平台侧 FILE_SD_PATH 写入该目录，30s 自动重载
       - ./deploy/file_sd:/etc/prometheus/file_sd

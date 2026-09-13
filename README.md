@@ -28,8 +28,9 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 ## 功能清单
 
 - [x] 基础框架（配置 / 数据库 / 中间件 / 启动收敛）
-- [x] 认证与授权（JWT + bcrypt + admin/viewer 角色 + 修改密码）
-- [x] RBAC 第一阶段（**viewer 完全只读**：读接口放行 + 图形控制台只读观看；变更操作、SSH 终端、串口控制台一律 403，前端按钮级隐藏）
+- [x] 认证与授权（JWT + bcrypt + **三级角色 admin/operator/viewer** + 修改密码）
+- [x] RBAC 第一阶段（**viewer 完全只读**：读接口放行 + 图形控制台只读观看；变更操作、SSH 终端、串口控制台一律 403，前端按钮级隐藏；**operator** = VM 全生命周期 + 三类控制台，`/api/vms` 之外写操作 403）
+- [x] **资产授权（堡垒机 4A 轻量版）**（`vm_grants` 授权表：把 VM 分配给用户、`expires_at` 到期自动失效；**授权决定可见性**——非 admin 未授权访问一律 404 查无此项；VM 详情页「授权管理」面板（admin）；建机/克隆自动授权发起人，删 VM 回收授权；监控中心四端点对 viewer 收权 403）
 - [x] 宿主机管理（纳管 / 连通性测试回写状态 / /proc 实时状态 + 中文时长）
 - [x] 虚拟机生命周期（卡片列表 / 详情 / 真实 KVM 建机 / 启停重启 / 暂停恢复 / 删除带存储清理；IP 经 DHCP 租约 + qemu-guest-agent 双通道自动回填）
 - [x] **异步任务系统**（创建/删除/克隆/优雅关机走后台 worker，202 + 轮询，任务中心可见；入队有界 + 两层 panic 兜底）
@@ -41,7 +42,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **cloud-init**（纯 Go 生成 seed ISO，用户/密码/SSH key/静态 IP）
 - [x] 存储池管理（池/卷 CRUD + 卷列表刷新修复 + 建盘多池选择 + 池路径/卷格式校验）
 - [x] 网络管理（CRUD / 启停 / XML 编辑 / DHCP 范围 / NAT 模板 + 网关 IPv4 校验）
-- [x] 网页控制台（admin 三入口：VNC 图形 / SSH 终端 / 免 IP 串口；viewer 仅 VNC 只读；页内一键开机闭环；SSH 参数记忆）
+- [x] 网页控制台（admin/operator 三入口：VNC 图形 / SSH 终端 / 免 IP 串口；viewer 仅 VNC 只读；页内一键开机闭环；SSH 参数记忆）
 - [x] **控制台会话跟踪**（谁连了哪台 VM，SSH/串口可服务端强制断开；WS 写入经 `console.Conn` 串行化）
 - [x] 快照管理（名称+描述 / 列表含时间状态 / 删除 / 回滚）
 - [x] 镜像管理（上传到池 / 既有池卷登记 / 模板标记 / 基于模板 linked clone 建机；页面双 tab：云镜像/模板盘 + ISO 安装镜像只读展示（管理在存储池页），带来源存储池标注）
@@ -54,7 +55,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **监控闭环**（Prometheus file_sd 服务发现自动下发 running 且已知 IP 的 VM 目标；Alertmanager webhook 告警网关按 fingerprint 去重入库 + 分页历史；`vms.ip` DHCP 租约 + QGA 双通道回填）
 - [x] **安全加固**（路径参数主键统一解析防 SQL 注入 / libvirt XML 全部走 `encoding/xml` / JWT 锁定 HS256 / SSH 目标白名单 / release 密钥强校验）
 - [x] E2E 回归脚本（`scripts/smoke.sh`，23 项断言）
-- [x] 单元测试（138 个顶层测试函数 / 约 950 个子用例 / 7 个包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
+- [x] 单元测试（142 个顶层测试函数 / 约 950 个子用例 / 7 个包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
 - [x] 前端工程化（路由懒加载 + manualChunks 分包：首屏下载量 −50%；`utils/format.js` 收敛 10 余处重复；图标全部换成 `@element-plus/icons-vue`）
 
 
@@ -109,13 +110,17 @@ DB_NAME=vmops
 JWT_SECRET_KEY=vmops-jwt-secret-key-change-in-production
 JWT_EXPIRE_MINUTES=1440
 SERVER_PORT=8080
+# SERVER_MODE 默认 release（安全默认）；本地开发用 ./start.sh（自动 export debug）或显式设为 debug
 SERVER_MODE=debug
 IMAGE_DIR=/var/lib/libvirt/images
 SEED_DIR=/home/jiuzhao/vmops/data/seed
 ```
 
-> ⚠️ `SERVER_MODE=release` 时**必须**把 `JWT_SECRET_KEY` 改成自定义值：仍为空或仍等于上面的内置默认值
-> 时进程启动即被拒绝（默认值公开可见，任何人都能据此伪造 admin token）。
+> ⚠️ `SERVER_MODE` 默认值即 **release**（安全默认）。release 模式下**必须**设置 `JWT_SECRET_KEY`：
+> 为空、等于内置默认值或命中弱密钥黑名单（含 compose 示例弱值）时进程启动即被拒绝（默认值公开可见，
+> 任何人都能据此伪造 admin token）；同时 release 下 `CORS_ORIGINS` 不能为 `*`。本地开发用
+> `./start.sh` 启动（已自动 `export SERVER_MODE=debug`）；**手动重启后端必须带 `SERVER_MODE=debug`**，
+> 否则按 release 校验拒绝启动。
 
 > 服务首次启动会自动 `AutoMigrate` 建表（含 tasks / console_sessions），写入种子账号，并收敛上次残留的任务与会话。
 
@@ -149,16 +154,18 @@ docker compose up -d prometheus grafana alertmanager
 
 | 账号 | 密码 | 角色 | 权限 |
 |------|------|------|------|
-| `admin` | `password` | 管理员 | 全部权限，含 SSH 终端与串口控制台 |
-| `user` | `123456` | 只读运维（viewer） | 只读接口 + 图形控制台**只读观看**；变更操作、SSH 终端、串口控制台一律 403 |
+| `admin` | `password` | 管理员（admin） | 全部权限，含 SSH 终端与串口控制台、用户/设置/授权管理 |
+| `stu` | `123456` | 操作员（operator） | VM 全生命周期 + 三类控制台；`/api/vms` 之外写操作 403；**仅能看到被授权的 VM**（经「授权管理」面板分配） |
+| `user` | `123456` | 只读运维（viewer） | 只读接口 + 图形控制台**只读观看**；变更操作、SSH 终端、串口控制台、监控中心四端点一律 403 |
 
+> 登录页有演示账号提示条，构建时 `VITE_SHOW_DEMO_TIP=false` 可整体隐藏（公开演示/截图归档时不应暴露口令）。
 > 种子口令不再写入启动日志（只打用户名与角色），首次登录后请立即修改。
 
 ### 6. 回归验证
 
 ```bash
 ./scripts/smoke.sh          # E2E 23 项：只读接口 + metrics + 创建/删除 task 全链路 + 硬件管理
-go test -race ./...         # 单元测试 138 个顶层函数 / 约 950 子用例 / 7 个包（必须带 -race）
+go test -race ./...         # 单元测试 142 个顶层函数 / 约 950 子用例 / 7 个包（必须带 -race）
 go build ./... && go vet ./... && gofmt -l .
 ```
 
@@ -183,6 +190,8 @@ Dockerfile 关键点（均为实测踩坑后固定下来的）：
 | 运行镜像 | `alpine:3.24` | `alpine:3.19` 已停止维护 |
 | 前端产物 | 从 builder 阶段 `COPY --from` + `mkdir -p` 兜底空目录 | `web/dist/` 被 gitignore，干净克隆里直接 `COPY web/dist` 会构建失败 |
 
+如用 docker compose 一键部署：`JWT_SECRET_KEY` 已改为 `${JWT_SECRET_KEY:?请在 .env 中设置强随机 JWT_SECRET_KEY}` 强制外部注入——未在 `.env` 设置时 compose 直接报错退出。
+
 ## API 接口
 
 统一响应格式：`{"code":200,"message":"success","data":{...}}`；除登录与 `/metrics`、`/health`、
@@ -196,8 +205,10 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 |---|---|---|
 | 400 | `ID 参数非法` | 路径参数 `:id` 非正整数（如 `/api/vms/abc`）。**主键先解析再入库查询，不再落到 404** |
 | 401 | `未提供认证信息` / `认证格式错误` / `Token 无效或已过期` / `用户不存在` | 鉴权失败；签名算法非 HS256 也归入「Token 无效或已过期」 |
-| 403 | `账号已被禁用` / `需要管理员权限` | 账号停用；viewer 发起变更或访问 admin 组 |
+| 403 | `账号已被禁用` / `需要管理员权限` | 账号停用；viewer/operator 发起越权变更或访问 admin 组 |
 | 403 | `只读角色不能使用 SSH 终端与串口控制台，请使用图形控制台查看` | viewer 访问 `/terminal` 或 `/serial` |
+| 403 | `监控数据仅操作员与管理员可见` | viewer 访问监控中心四端点（alerts / alerts/history / file-sd / grafana-status） |
+| 404 | `虚拟机不存在` | **非 admin 访问未授权的 VM**（资产授权：授权决定可见性，未授权与不存在同响应） |
 
 
 ### 认证
@@ -218,7 +229,8 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 
 ### 虚拟机管理
 
-- `GET /api/vms` — 列表（含 perf 实时聚合，一次请求渲染指标）
+- `GET /api/vms` — 列表（含 perf 实时聚合，一次请求渲染指标；**非 admin 只返回其持有有效授权的 VM**）
+- `GET /api/vms/:id/grants` `POST /api/vms/:id/grants`（`{user_id, expires_at?}`） `DELETE /api/vms/:id/grants/:gid` — 资产授权（admin；授权决定可见性，到期自动失效）
 - `GET /api/vms/options` — 创建向导选项（池/网络/镜像/OS）
 - `GET  /api/vms/:id` `POST /api/vms`（202 task） `DELETE /api/vms/:id`（202 task，任务结果可能带 `kept_volumes`：被守卫保留的共享卷及中文原因）
 - `GET  /api/vms/import/scan` — 扫描未纳管存量 VM
@@ -272,10 +284,10 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 - `GET /api/dashboard/host-history` `GET /api/dashboard/vm-history` — 历史曲线（Prometheus query_range，大盘与列表迷你图预填）
 - `GET /api/audit`（action/object_type/username/status/日期/分页） `GET /api/audit/summary` `GET /api/audit/actions`
 - `GET /api/settings`（admin，运行参数与快照） `PUT /api/settings`（admin，写库即生效）
-- `GET  /api/monitor/alerts` — 实时告警（代理 Alertmanager，AM 不可达 502）
-- `GET  /api/monitor/alerts/history` — 告警历史（webhook 入库，status/fingerprint 过滤 + 分页）
-- `GET  /api/monitor/file-sd` — file_sd 抓取目标预览（`{enabled, items}`）
-- `GET  /api/monitor/grafana-status` — Grafana 探活（前端据此亮「未连接」兜底层）
+- `GET  /api/monitor/alerts` — 实时告警（代理 Alertmanager，AM 不可达 502；**viewer 403**，下同）
+- `GET  /api/monitor/alerts/history` — 告警历史（webhook 入库，status/fingerprint 过滤 + 分页；viewer 403）
+- `GET  /api/monitor/file-sd` — file_sd 抓取目标预览（`{enabled, items}`；viewer 403）
+- `GET  /api/monitor/grafana-status` — Grafana 探活（前端据此亮「未连接」兜底层；viewer 403）
 - `POST /api/monitor/webhook` — Alertmanager 告警网关（公开路由，env `ALERT_WEBHOOK_TOKEN` 可选鉴权；按 fingerprint 去重入库）
 - `GET /metrics` — Prometheus exposition（env `METRICS_TOKEN` 非空时要求 Bearer/`?token=`，未设置保持公开）
 - `GET /api/health` — 健康检查
@@ -337,7 +349,10 @@ vmops/
 | CORS | `CORS_ORIGINS` 默认 `*`（release 模式下为 `*` 拒绝启动） | 生产需收敛为具体来源 |
 | Web 终端 SSH | `HostKeyCallback` 为 `InsecureIgnoreHostKey()` | 目标已限私有网段，残余中间人风险 |
 | `golangci-lint` | 本机未安装，深度 lint 未执行 | 静态检查覆盖不完整（`go build`/`go vet`/`gofmt` 已过） |
-| 状态字面量 | `service/tasks/vm_tasks.go` 仍有 5 处 `"shut off"` 字面量未换成常量 | 一致性隐患，行为正确 |
+| 状态字面量 | 全仓库仍有 7 处状态字面量未换成常量 | 一致性隐患，行为正确 |
+| deploy 明文密钥 | `deploy/prometheus.yml`（remote_write BasicAuth）与 `deploy/alertmanager.yml` 含明文凭据入库 | 仓库可见，需轮换并改环境变量注入 |
+| Grafana iframe | 匿名只读 + allow_embedding 下，viewer 在监控 tab 仍能看到看板画面（告警/file-sd 四端点已对 viewer 收权 403，看板画面属部署层收权） | viewer 可见监控看板 |
+| 批 B/C 审计修复 | 已完成（详见 AGENTS.md 同名批次）：null→[]、WS 帧固定文案、回写/守卫检查、路径边界、RegisterImage 限池内、启动清扫、日志降噪、N+1、webhook token 轮换、前端清理。残留小项见 AGENTS.md | 大部分闭环 |
 | 导入失败原因 | `POST /api/vms/import` 响应的 `errors` 数组前端 `VmList.vue` 未消费（只读 `imported`/`skipped`/`failed`） | 单台导入失败时用户看不到具体原因 |
 | 多宿主机 | 多宿主机纳管空壳已砍除（`hosts.libvirt_uri` 字段已删），宿主机模块定位为「登记与状态采集」，虚拟化连接固定本机 `qemu:///system` | 跨宿主机虚拟化操作（`qemu+ssh://` 等）列为后续工作 |
 

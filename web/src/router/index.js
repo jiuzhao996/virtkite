@@ -18,7 +18,7 @@ const routes = [
     children: [
       { path: 'dashboard', name: 'dashboard', component: () => import('../views/Dashboard.vue') },
       { path: 'vms', name: 'vms', component: () => import('../views/VmList.vue') },
-      { path: 'vms/new', name: 'vm-create', component: () => import('../views/CreateVmWizard.vue'), meta: { requiresAdmin: true } },
+      { path: 'vms/new', name: 'vm-create', component: () => import('../views/CreateVmWizard.vue'), meta: { requiresOperate: true } },
       { path: 'vms/:id', name: 'vm-detail', component: () => import('../views/VmDetail.vue') },
       { path: 'hosts', name: 'hosts', component: () => import('../views/HostList.vue') },
       { path: 'images', name: 'images', component: () => import('../views/ImageList.vue') },
@@ -40,7 +40,7 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
-  const { isLoggedIn, isAdmin } = useAuth()
+  const { isLoggedIn, isAdmin, canOperate } = useAuth()
   if (!to.meta.public && !isLoggedIn.value) {
     return { name: 'login' }
   }
@@ -49,6 +49,10 @@ router.beforeEach((to) => {
   }
   // 管理员专属页：viewer 直输 URL 也进不去
   if (to.meta.requiresAdmin && !isAdmin.value) {
+    return { name: 'dashboard' }
+  }
+  // 操作页（如创建向导）：operator/admin 可进，viewer 重定向
+  if (to.meta.requiresOperate && !canOperate.value) {
     return { name: 'dashboard' }
   }
   return true

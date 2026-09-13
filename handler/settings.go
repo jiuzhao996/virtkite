@@ -84,22 +84,37 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 
 	updated := make([]string, 0, 3)
 	if req.DefaultStoragePool != nil {
+		if err := setting.Validate(setting.KeyDefaultStoragePool, *req.DefaultStoragePool); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error()) // 校验错误是固定中文文案，可回显
+			return
+		}
 		if err := h.Settings.Set(setting.KeyDefaultStoragePool, *req.DefaultStoragePool); err != nil {
-			Fail(c, http.StatusBadRequest, err.Error())
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存默认存储池失败")
 			return
 		}
 		updated = append(updated, "默认存储池")
 	}
 	if req.VNCTokenTTLMin != nil {
+		if err := setting.Validate(setting.KeyVNCTokenTTLMin, strconv.Itoa(*req.VNCTokenTTLMin)); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error()) // 校验错误是固定中文文案，可回显
+			return
+		}
 		if err := h.Settings.Set(setting.KeyVNCTokenTTLMin, strconv.Itoa(*req.VNCTokenTTLMin)); err != nil {
-			Fail(c, http.StatusBadRequest, err.Error())
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存VNC token 有效期失败")
 			return
 		}
 		updated = append(updated, "VNC token 有效期")
 	}
 	if req.VNCStaleMin != nil {
+		if err := setting.Validate(setting.KeyVNCStaleMin, strconv.Itoa(*req.VNCStaleMin)); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error()) // 校验错误是固定中文文案，可回显
+			return
+		}
 		if err := h.Settings.Set(setting.KeyVNCStaleMin, strconv.Itoa(*req.VNCStaleMin)); err != nil {
-			Fail(c, http.StatusBadRequest, err.Error())
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存VNC 会话过期判定时长失败")
 			return
 		}
 		updated = append(updated, "VNC 会话过期判定时长")

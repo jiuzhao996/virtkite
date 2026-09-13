@@ -60,6 +60,11 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "虚拟机不存在"})
 		return
 	}
+	// 授权决定可见性：非 admin 未持有效授权与不存在同响应（错误经 WS 帧回送）
+	if !vmVisible(c, h.DB, vm.ID) {
+		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "虚拟机不存在"})
+		return
+	}
 
 	// 读取首个消息：SSH 连接参数
 	_, raw, err := conn.ReadMessage()
@@ -91,7 +96,7 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 	if err := validateSSHTarget(&vm, auth.Host, port); err != nil {
 		log.Printf("[terminal] 目标被拒 vm=%s(%d) target=%s:%d user=%s from=%s reason=%v",
 			vm.Name, vm.ID, auth.Host, port, auth.User, c.ClientIP(), err)
-		_ = conn.WriteJSON(gin.H{"type": "error", "msg": err.Error()})
+		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "连接目标未通过安全校验（仅允许该虚拟机已记录 IP 或私有网段地址）"})
 		return
 	}
 	// 留痕：谁、从哪、连了哪个目标（口令不记录）
@@ -111,7 +116,8 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 	client, err := ssh.Dial("tcp", net.JoinHostPort(auth.Host, itoa(port)), sshConfig)
 	if err != nil {
 		log.Printf("[terminal] SSH 拨号失败 host=%s:%d err=%v", auth.Host, port, err)
-		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "SSH 连接失败: " + err.Error()})
+		// 完整错误（可能含内网拓扑/banner）只进服务端日志，WS 帧给固定文案（全量审计 P1）
+		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "SSH 连接失败，请确认虚拟机已开机且 SSH 服务可用"})
 		return
 	}
 	defer client.Close()
@@ -131,7 +137,8 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
 	}); err != nil {
-		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "申请 PTY 失败: " + err.Error()})
+		log.Printf("[terminal] 申请 PTY 失败 err=%v", err)
+		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "申请终端会话失败"})
 		return
 	}
 
@@ -152,7 +159,8 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 	}
 
 	if err := session.Shell(); err != nil {
-		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "启动 shell 失败: " + err.Error()})
+		log.Printf("[terminal] 启动 shell 失败 err=%v", err)
+		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "启动 shell 失败"})
 		return
 	}
 

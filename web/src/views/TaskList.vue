@@ -145,7 +145,6 @@ const router = useRouter()
 const { isAdmin } = useAuth()
 
 const items = ref([])
-const total = ref(0)
 const serverTotal = ref(0)
 const loading = ref(false)
 const q = ref({ status: '', page: 1, page_size: 50 })
@@ -178,18 +177,23 @@ const finishedCount = computed(() => items.value.filter((t) => t.status === 'suc
 async function load() {
   loading.value = true
   try {
-    const params = { page: q.value.page, page_size: q.value.page_size }
-    // 后端 status 精确匹配；"进行中"需合并 pending+running，故传空按页拉取再前端过滤
-    const res = await api.listTasks(params)
-    let list = (res.data && res.data.items) || []
-    serverTotal.value = (res.data && res.data.total) || list.length
+    // "进行中"= pending+running 两请求并发合并（原"整页拉取再前端过滤"分页数与可见条数漂移）
     if (q.value.status === 'active') {
-      list = list.filter((t) => t.status === 'pending' || t.status === 'running')
-    } else if (q.value.status) {
-      list = list.filter((t) => t.status === q.value.status)
+      const [run, pend] = await Promise.all([
+        api.listTasks({ page: q.value.page, page_size: q.value.page_size, status: 'running' }),
+        api.listTasks({ page: q.value.page, page_size: q.value.page_size, status: 'pending' })
+      ])
+      const rl = (run.data && run.data.items) || []
+      const pl = (pend.data && pend.data.items) || []
+      items.value = [...rl, ...pl]
+      serverTotal.value = ((run.data && run.data.total) || 0) + ((pend.data && pend.data.total) || 0)
+    } else {
+      const params = { page: q.value.page, page_size: q.value.page_size }
+      if (q.value.status) params.status = q.value.status
+      const res = await api.listTasks(params)
+      items.value = (res.data && res.data.items) || []
+      serverTotal.value = (res.data && res.data.total) || items.value.length
     }
-    items.value = list
-    total.value = list.length
   } catch (e) {
     ElMessage.error('获取任务列表失败')
   } finally {
@@ -226,12 +230,19 @@ async function clearFinished() {
   if (!done.length) return
   try {
     await ElMessageBox.confirm(`确定清理 ${done.length} 条已完成任务记录？`, '确认清理', { type: 'warning' })
+    let failed = 0
     for (const t of done) {
       try {
         await api.deleteTask(t.id)
-      } catch (e) {}
+      } catch (e) {
+        failed++
+      }
     }
-    ElMessage.success('已清理')
+    if (failed) {
+      ElMessage.warning(`已清理 ${done.length - failed} 条，${failed} 条失败`)
+    } else {
+      ElMessage.success('已清理')
+    }
     await load()
   } catch (e) {
     if (!isCancel(e)) ElMessage.error('清理失败')
@@ -267,16 +278,12 @@ onUnmounted(() => {
   margin-right: 4px;
   animation: breathe 1.6s ease-in-out infinite;
 }
-@keyframes breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
 .err-text {
   color: var(--el-color-danger);
   font-size: 0.85rem;
 }
 .ok-text {
-  color: var(--el-color-success);
+  color: var(--color-success);
   font-size: 0.85rem;
 }
 .muted-text {
@@ -299,7 +306,7 @@ onUnmounted(() => {
 .detail-error {
   margin-top: 12px;
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--el-color-danger-light-9);
   color: var(--el-color-danger);
   font-size: 0.85rem;

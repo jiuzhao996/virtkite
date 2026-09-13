@@ -136,7 +136,7 @@ body {
 }
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
@@ -150,6 +150,23 @@ button,
 [role='button'],
 .clickable {
   cursor: pointer;
+}
+
+/* 键盘焦点环：鼠标点击不显示，Tab 导航可见（可访问性基线） */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.el-button:focus-visible,
+.el-input__wrapper:focus-within {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 0;
+}
+
+/* 呼吸灯动画（纯透明度版）：TaskList/SessionList 等共用；VmList 的光晕版为 breathe-ring */
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 /* 动效偏好：尊重系统减少动效 */

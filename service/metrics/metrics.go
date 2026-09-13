@@ -298,8 +298,8 @@ func (c *Collector) updatePools() {
 
 func (c *Collector) updateTasks() {
 	var pending, running int64
-	c.DB.Model(&model.Task{}).Where("status = ?", "pending").Count(&pending)
-	c.DB.Model(&model.Task{}).Where("status = ?", "running").Count(&running)
+	c.DB.Model(&model.Task{}).Where("status = ?", model.TaskStatusPending).Count(&pending)
+	c.DB.Model(&model.Task{}).Where("status = ?", model.TaskStatusRunning).Count(&running)
 	tasksPending.Set(float64(pending))
 	tasksRunning.Set(float64(running))
 }

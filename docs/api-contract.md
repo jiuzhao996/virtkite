@@ -329,6 +329,15 @@ func (v *Virt) UpdateNetwork(name, xml string) error        // 停→net-undefin
 | GET | `/api/vms/:id/snapshots` | 返回 `SnapshotInfo[]`（含 description/creation_time/state） |
 | POST | `/api/vms/:id/snapshots` | body `{name, description?}` |
 
+### 资产授权（新增，借鉴堡垒机 4A：分配是一等实体，授权决定可见性）
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/api/vms/:id/grants` | **admin**。该 VM 的授权列表 `{total, items:[{id,user_id,vm_id,expires_at,granted_by,created_at,username}]}` |
+| POST | `/api/vms/:id/grants` | **admin**。body `{user_id*, expires_at?（RFC3339，省略=长期有效）}`；(user_id,vm_id) 已存在则改为更新有效期；过去时间 400 |
+| DELETE | `/api/vms/:id/grants/:gid` | **admin**。收回授权 |
+
+**可见性语义（重要）**：非 admin 用户对 VM 的一切访问（列表/详情/规格/克隆源/快照/三控制台/历史曲线）都要求持有**未过期授权**，未授权一律 **404 查无此项**（不泄露资产存在性，对齐堡垒机）；admin 不受授权约束。授权过期即时失效（查询时判定，无清扫协程）。建机/克隆任务自动给发起人授一条长期授权；删 VM 时随资产回收全部授权。终端/串口对 viewer 仍 403（角色闸在授权闸之外）；operator 对 `/api/vms/:id/grants*` 的写请求被 handler 内 `requireAdminRole` 二次收口为仅 admin。
+
 ### 镜像 / 存储池
 | Method | Path | 说明 |
 |---|---|---|
