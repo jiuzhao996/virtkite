@@ -15,6 +15,14 @@ start_backend() {
   if [ -f .env ]; then set -a; . ./.env; set +a; fi
   # 本地开发默认 debug 模式（config 默认已改为 release；release 要求强随机 JWT_SECRET_KEY 才能启动）
   export SERVER_MODE="${SERVER_MODE:-debug}"
+  # 等 MySQL 就绪（docker start 后 InnoDB 初始化需数秒，抢跑会导致 vmops 连库失败退出、8080 无响应）
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^vmops-mysql$'; then
+    for i in $(seq 1 15); do
+      docker exec vmops-mysql mysqladmin ping -uvmops -p"${DB_PASSWORD:-vmops123}" --silent 2>/dev/null && break
+      [ "$i" = 1 ] && echo "   等待 MySQL 就绪…"
+      sleep 1
+    done
+  fi
   ./vmops > vmops.log 2>&1 &
   echo $! > vmops.pid
   echo "   PID: $(cat vmops.pid)"
