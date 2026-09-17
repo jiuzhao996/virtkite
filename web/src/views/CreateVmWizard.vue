@@ -71,7 +71,7 @@
             </div>
           </el-form-item>
           <el-form-item label="操作系统" required>
-            <el-select v-model="iso.osName" filterable placeholder="选择操作系统（可按 ISO 文件名自动识别）" style="width: 380px">
+            <el-select v-model="iso.osName" filterable placeholder="选择操作系统（可按 ISO 文件名自动识别）" style="width: 380px" @change="isoAutoDetected = false">
               <el-option v-for="os in options.osList" :key="os.name" :label="os.name" :value="os.name">
                 <span>{{ os.name }}</span>
                 <span class="opt-hint">{{ os.disk_bus }} 磁盘 / {{ os.nic_model }} 网卡</span>
@@ -199,8 +199,12 @@
             <el-input-number v-model="form.diskGb" :min="1" :max="500" controls-position="right" />
             <span class="os-hint">新建空白系统盘容量，默认 20 GB</span>
           </el-form-item>
+          <el-form-item v-if="installMode === 'iso'" label="系统盘卷名">
+            <el-input v-model="form.sysVolName" :placeholder="'默认 ' + (form.name || '虚拟机名') + '.qcow2，可自定义'" style="width: 320px" clearable />
+            <div class="os-hint">留空自动命名；仅允许字母、数字、下划线和连字符</div>
+          </el-form-item>
           <el-form-item label="存储池">
-            <el-select v-model="form.storagePool" style="width: 320px">
+            <el-select v-model="form.storagePool" style="width: 320px" placeholder="选择存储池">
               <el-option v-for="p in usablePools" :key="p.name" :label="poolLabel(p)" :value="p.name" />
             </el-select>
             <div v-if="diskOverPool" class="os-hint" style="color: var(--el-color-danger)">
@@ -353,6 +357,9 @@
             <el-radio value="image">引用云镜像</el-radio>
           </el-radio-group>
         </el-form-item>
+        <el-form-item v-if="diskForm.kind === 'create'" label="卷名">
+          <el-input v-model="diskForm.volName" placeholder="可选，留空自动命名（虚拟机名-dN）" clearable />
+        </el-form-item>
         <el-form-item v-if="diskForm.kind === 'create'" label="容量 (GB)" required>
           <el-input-number v-model="diskForm.createGb" :min="1" :max="500" controls-position="right" />
         </el-form-item>
@@ -409,7 +416,7 @@ const options = reactive({
 })
 const vms = ref([])
 
-const form = reactive({ name: '', storagePool: '', vcpu: 2, memoryMb: 2048, diskGb: 20, machine: '' })
+const form = reactive({ name: '', storagePool: '', vcpu: 2, memoryMb: 2048, diskGb: 20, machine: '', sysVolName: '' })
 const iso = reactive({ osName: '', isoPath: '', pick: null, manual: false })
 watch(() => iso.isoPath, (v) => { if (iso.manual && v) detectOsFromIso(v) })
 const cloudImage = reactive({ imageId: null, osName: '' })
@@ -421,7 +428,48 @@ const cloudInitEnabled = ref(false)
 const cloudInit = reactive({ hostname: '', user: '', password: '', sshKey: '', netMode: 'dhcp', ip: '', gateway: '', dns: '' })
 
 const diskDialog = ref(false)
-const diskForm = reactive({ kind: 'create', createGb: 20, source: '', imageId: null })
+const diskForm = reactive({ kind: 'create', createGb: 20, source: '', imageId: null, volName: '' })
+
+// ── 向导草稿持久化（sessionStorage）：中途切到别的模块再回来不丢已填内容（2026-09 用户反馈） ──
+const DRAFT_KEY = 'vmops_wizard_draft_v1'
+function saveDraft() {
+  try {
+    sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+      step: step.value,
+      installMode: installMode.value,
+      form: { ...form },
+      iso: { ...iso },
+      cloudImage: { ...cloudImage },
+      cloneVm: { ...cloneVm },
+      cloudInitEnabled: cloudInitEnabled.value,
+      cloudInit: { ...cloudInit },
+      extraDisks: JSON.parse(JSON.stringify(extraDisks)),
+      nics: JSON.parse(JSON.stringify(nics))
+    }))
+  } catch { /* 存储不可用静默 */ }
+}
+function restoreDraft() {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null')
+    if (!d) return false
+    step.value = d.step ?? 0
+    installMode.value = d.installMode ?? 'iso'
+    Object.assign(form, d.form || {})
+    Object.assign(iso, d.iso || {})
+    Object.assign(cloudImage, d.cloudImage || {})
+    Object.assign(cloneVm, d.cloneVm || {})
+    cloudInitEnabled.value = !!d.cloudInitEnabled
+    Object.assign(cloudInit, d.cloudInit || {})
+    if (Array.isArray(d.extraDisks)) extraDisks.splice(0, extraDisks.length, ...d.extraDisks)
+    if (Array.isArray(d.nics) && d.nics.length) nics.splice(0, nics.length, ...d.nics)
+    return true
+  } catch { return false }
+}
+watch(
+  [step, installMode, form, iso, cloudImage, cloneVm, cloudInitEnabled, cloudInit, extraDisks, nics],
+  () => saveDraft(),
+  { deep: true }
+)
 
 const installModes = [
   { value: 'iso', icon: Monitor, label: '本地安装介质 (ISO)', desc: '从 ISO 镜像安装系统到新建磁盘' },
@@ -460,14 +508,28 @@ const isoFlatList = computed(() => {
 })
 // 按 ISO 文件名关键词自动识别操作系统：关键词命中后到 osList 里模糊匹配第一个含该词的系统名
 // （osList 是带版本号的完整名单如 "Rocky Linux 9"，没有裸名，须模糊匹配）。识别不出保持空由用户手选。
-const ISO_OS_KEYWORDS = ['ubuntu', 'rocky', 'centos', 'alma', 'debian', 'fedora', 'opensuse', 'arch',
-  'windows 11', 'windows 10', 'windows', 'win11', 'win10', 'kylin', 'uos', 'deepin', 'alpine']
+// ISO 文件名关键词 → osList 精确条目（顺序即优先级，长词在前防短词抢先）。
+// 此前用 includes 双向匹配，"win10" 无法命中 "Windows 10"（互不包含）导致识别静默失败。
+const ISO_OS_KEYWORDS = [
+  ['windows server 2022', 'Windows Server 2022'], ['win2k22', 'Windows Server 2022'],
+  ['windows server 2019', 'Windows Server 2019'], ['win2k19', 'Windows Server 2019'],
+  ['windows 11', 'Windows 11'], ['win11', 'Windows 11'],
+  ['windows 10', 'Windows 10'], ['win10', 'Windows 10'],
+  ['ubuntu 24.04', 'Ubuntu 24.04 LTS'], ['ubuntu 22.04', 'Ubuntu 22.04 LTS'],
+  ['ubuntu 20.04', 'Ubuntu 20.04 LTS'], ['ubuntu', 'Ubuntu 24.04 LTS'],
+  ['rocky', 'Rocky Linux 9'], ['almalinux', 'Rocky Linux 9'], ['alma', 'Rocky Linux 9'],
+  ['centos', 'CentOS Stream 9'], ['debian 12', 'Debian 12'], ['debian', 'Debian 12'],
+  ['fedora', 'Fedora 40'], ['opensuse', 'SUSE SLES 15'], ['arch', 'Arch Linux'],
+  ['windows', 'Windows 10'],
+  ['kylin', 'Kylin V10 (银河麒麟)'], ['uos', 'UOS V20 (统信)'], ['deepin', 'Kylin V10 (银河麒麟)'],
+  ['alpine', 'Generic Linux']
+]
 const isoAutoDetected = ref(false)
 function detectOsFromIso(path) {
   const file = (path || '').toLowerCase()
-  for (const kw of ISO_OS_KEYWORDS) {
+  for (const [kw, name] of ISO_OS_KEYWORDS) {
     if (!file.includes(kw)) continue
-    const hit = options.osList.find((o) => o.name.toLowerCase().includes(kw))
+    const hit = options.osList.find((o) => o.name === name)
     if (hit) {
       iso.osName = hit.name
       isoAutoDetected.value = true
@@ -481,6 +543,13 @@ function onIsoPick(val) {
   // 平铺 el-select 的 change 参数是路径字符串本身（旧级联才是数组）
   iso.isoPath = val || ''
   detectOsFromIso(iso.isoPath)
+}
+// 字节 → 可读 GB（2026-09 修复：函数在历次编辑中丢失，存储池下拉因 ReferenceError 渲染成 No data）
+function gbText(bytes) {
+  const n = Number(bytes || 0)
+  if (!n) return '0 GB'
+  const gb = n / 1024 ** 3
+  return (gb >= 100 ? gb.toFixed(0) : gb.toFixed(1).replace(/\.0$/, '')) + ' GB'
 }
 function poolLabel(p) {
   return p.name + '（可用 ' + gbText(p.available) + '）'
@@ -546,7 +615,7 @@ const cloudInitSupported = computed(() => installMode.value === 'cloudimage' && 
 const cloneSource = computed(() => vms.value.find((v) => v.id === cloneVm.sourceVmId) || null)
 
 const systemDisk = computed(() => {
-  if (installMode.value === 'iso') return [{ id: 'sys', kind: 'create', createGb: form.diskGb, isSystem: true }]
+  if (installMode.value === 'iso') return [{ id: 'sys', kind: 'create', createGb: form.diskGb, volName: form.sysVolName.trim(), isSystem: true }]
   if (installMode.value === 'cloudimage') {
     const img = options.cloudImages.find((i) => i.id === cloudImage.imageId)
     return [{ id: 'sys', kind: 'image', imageId: cloudImage.imageId, imageName: img ? img.name : '', sizeGb: img ? img.size_gb : 0, isSystem: true }]
@@ -679,11 +748,30 @@ function diskCapacityLabel(d) {
   return '—'
 }
 
+// 常见 ISO 文件名别名 → osList 精确条目（virsh 风格缩写如 Win10_22H2 / rocky10 无法被 first-word 匹配）
+const OS_ALIAS = [
+  ['win10', 'Windows 10'], ['win11', 'Windows 11'],
+  ['win2k22', 'Windows Server 2022'], ['win2k19', 'Windows Server 2019'],
+  ['winserver', 'Windows Server 2022'],
+  ['rocky', 'Rocky Linux 9'], ['almalinux', 'Rocky Linux 9'],
+  ['centos', 'CentOS Stream 9'], ['ubuntu', 'Ubuntu 24.04 LTS'],
+  ['debian', 'Debian 12'], ['openeuler', 'openEuler 22.03'],
+  ['kylin', 'Kylin V10 (银河麒麟)'], ['uos', 'UOS V20 (统信)'],
+  ['fedora', 'Fedora 40'], ['suse', 'SUSE SLES 15'], ['arch', 'Arch Linux']
+]
 function autoMatchOs(text) {
   const t = (text || '').toLowerCase()
+  // 1) 原逻辑：OS 名首词被文件名包含（如 ubuntu/kylin 全名出现时可直接命中）
   for (const os of options.osList) {
     const first = os.name.toLowerCase().split(' ')[0]
     if (first && t.includes(first)) return os
+  }
+  // 2) 别名兜底：Win10 → Windows 10 等（2026-09 修复：Win10_22H2.iso 此前识别不出）
+  for (const [alias, name] of OS_ALIAS) {
+    if (t.includes(alias)) {
+      const os = options.osList.find((o) => o.name === name)
+      if (os) return os
+    }
   }
   return null
 }
@@ -737,7 +825,7 @@ function confirmDisk() {
   }
   const row = { id: Date.now(), isSystem: false }
   if (diskForm.kind === 'create') {
-    Object.assign(row, { kind: 'create', createGb: diskForm.createGb })
+    Object.assign(row, { kind: 'create', createGb: diskForm.createGb, volName: diskForm.volName.trim() })
   } else if (diskForm.kind === 'source') {
     Object.assign(row, { kind: 'source', source: diskForm.source })
   } else {
@@ -773,12 +861,12 @@ function buildCloudInit() {
 function buildDisks() {
   const arr = []
   for (const d of systemDisk.value) {
-    if (d.kind === 'create') arr.push({ create_gb: d.createGb })
+    if (d.kind === 'create') arr.push({ create_gb: d.createGb, ...(d.volName ? { vol_name: d.volName } : {}) })
     else if (d.kind === 'source') arr.push({ source: d.source })
     else if (d.kind === 'image') arr.push({ source_image_id: d.imageId })
   }
   for (const d of extraDisks) {
-    if (d.kind === 'create') arr.push({ create_gb: d.createGb })
+    if (d.kind === 'create') arr.push({ create_gb: d.createGb, ...(d.volName ? { vol_name: d.volName } : {}) })
     else if (d.kind === 'source') arr.push({ source: d.source })
     else if (d.kind === 'image') arr.push({ source_image_id: d.imageId })
   }
@@ -848,6 +936,7 @@ async function submit() {
       }
     })
     ElMessage.success(isClone ? '克隆创建成功' : '虚拟机创建成功')
+    sessionStorage.removeItem(DRAFT_KEY) // 创建成功清草稿
     router.push({ name: 'vms' })
   } catch (e) {
     ElMessage.error(taskErrorMessage(e, '创建失败'))
@@ -875,6 +964,8 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  // 草稿恢复必须放在选项加载之后：覆盖 pickDefaultPool 的存储池预填
+  restoreDraft()
 })
 </script>
 

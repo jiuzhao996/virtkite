@@ -151,9 +151,19 @@ func execCreateVM(ctx *ExecContext) error {
 		var source string
 		switch {
 		case d.CreateGB > 0:
-			volName := name
-			if i > 0 {
-				volName = fmt.Sprintf("%s-d%d", name, i+1)
+			volName := ""
+			if d.VolName != "" {
+				// 自定义卷名：合法性校验（与 VM 名同规则），冲突靠 libvirt 建卷报错兜底
+				if !validateVMName(d.VolName) {
+					cleanup()
+					return fmt.Errorf("磁盘卷名 %s 不合法（只允许字母、数字、下划线和连字符）", d.VolName)
+				}
+				volName = d.VolName
+			} else {
+				volName = name
+				if i > 0 {
+					volName = fmt.Sprintf("%s-d%d", name, i+1)
+				}
 			}
 			if _, err := ctx.Virt.CreateVolume(storagePool, volName, d.CreateGB); err != nil {
 				cleanup()
@@ -331,6 +341,7 @@ type createDiskReq struct {
 	Source        string
 	SourceImageID uint
 	CloudInit     *virt.CloudInitSpec
+	VolName       string // 自定义卷名（可空=自动命名 <vm名>[-dN]）
 }
 
 // parseTaskCloudInit 从 payload 子项安全解析 cloud-init 配置（非 map 时返回 nil）。
@@ -393,6 +404,9 @@ func parseTaskDisks(v interface{}) []createDiskReq {
 		}
 		if s, ok := strParam(m, "source"); ok {
 			d.Source = s
+		}
+		if s, ok := strParam(m, "vol_name"); ok {
+			d.VolName = s
 		}
 		if n, ok := intParam(m, "source_image_id"); ok && n > 0 {
 			d.SourceImageID = uint(n)

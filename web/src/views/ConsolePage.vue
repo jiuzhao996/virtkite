@@ -104,7 +104,7 @@
           </div>
           <div v-else class="vnc-frame">
             <div v-if="vncFrameLoading" class="vnc-loading" v-loading="true" element-loading-text="图形桌面加载中…" />
-            <iframe :src="vncUrl" class="vnc" @load="onVncLoad" />
+            <iframe :src="vncUrl" class="vnc" allow="fullscreen" @load="onVncLoad" />
             <div class="vnc-bar">
               <span><el-icon><Monitor /></el-icon>图形控制台已连接</span>
               <el-tag v-if="vncViewOnly" type="warning" size="small" effect="dark">只读观看（键鼠已禁用）</el-tag>
