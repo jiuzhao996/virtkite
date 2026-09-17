@@ -17,6 +17,9 @@
       <el-form-item>
         <el-button type="primary" :loading="connecting" @click="connect">连接</el-button>
       </el-form-item>
+      <el-form-item>
+        <el-button :loading="mounting" :disabled="connected" @click="mountOffline">挂载磁盘浏览（关机 VM · 只读）</el-button>
+      </el-form-item>
     </el-form>
     <el-alert
       type="info" :closable="false" class="fb-tip"
@@ -32,9 +35,13 @@
           </el-breadcrumb-item>
         </el-breadcrumb>
         <div class="fb-tools">
+          <el-tag v-if="offline" type="warning" effect="plain" size="small">离线只读模式</el-tag>
           <el-button size="small" :icon="Refresh" @click="load">刷新</el-button>
-          <el-button size="small" :icon="FolderAdd" @click="mkdir">新建目录</el-button>
-          <el-button size="small" type="primary" plain :icon="Upload" @click="pickUpload">上传文件</el-button>
+          <template v-if="!offline">
+            <el-button size="small" :icon="FolderAdd" @click="mkdir">新建目录</el-button>
+            <el-button size="small" type="primary" plain :icon="Upload" @click="pickUpload">上传文件</el-button>
+          </template>
+          <el-button v-if="offline" size="small" type="warning" plain @click="unmount">卸载磁盘</el-button>
           <input ref="uploadInput" type="file" class="fb-upload-input" @change="doUpload" />
         </div>
       </div>
@@ -62,7 +69,7 @@
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button v-if="!row.is_dir" size="small" :icon="Download" @click="download(row)">下载</el-button>
-            <el-button size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+            <el-button v-if="!offline" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -85,6 +92,8 @@ const props = defineProps({
 const conn = reactive({ host: props.ip || '', port: 22, user: 'root', password: '' })
 const connecting = ref(false)
 const connected = ref(false)
+const offline = ref(false) // 离线挂载模式：guestmount 只读，不支持上传/删除/建目录
+const mounting = ref(false)
 const loading = ref(false)
 const path = ref('/root')
 const items = ref([])
@@ -125,12 +134,43 @@ async function connect() {
 async function load() {
   loading.value = true
   try {
-    const res = await http.post(`/vms/${props.id}/files/list`, { ...creds(), path: path.value })
+    const res = offline.value
+      ? await http.post(`/vms/${props.id}/files/offline/list`, { path: path.value })
+      : await http.post(`/vms/${props.id}/files/list`, { ...creds(), path: path.value })
     items.value = (res.data && res.data.data && res.data.data.items) || []
   } catch (e) {
     ElMessage.error(errMsg(e, '读取目录失败'))
   } finally {
     loading.value = false
+  }
+}
+
+// 离线挂载浏览：guestmount 只读挂关机 VM 系统盘（无需 VM 内 SSH/开机）
+async function mountOffline() {
+  mounting.value = true
+  try {
+    await http.post(`/vms/${props.id}/files/offline/mount`)
+    offline.value = true
+    connected.value = true
+    path.value = '/'
+    await load()
+    ElMessage.success('已挂载系统盘（只读）')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '挂载失败（需虚拟机关机；首次运行较慢）'))
+  } finally {
+    mounting.value = false
+  }
+}
+
+async function unmount() {
+  try {
+    await http.post(`/vms/${props.id}/files/offline/unmount`)
+    offline.value = false
+    connected.value = false
+    items.value = []
+    ElMessage.success('已卸载')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '卸载失败'))
   }
 }
 
@@ -152,7 +192,9 @@ function openRow(row) {
 
 async function download(row) {
   try {
-    const res = await http.post(`/vms/${props.id}/files/download`, { ...creds(), path: join(row.name) })
+    const res = offline.value
+      ? await http.get(`/vms/${props.id}/files/offline/download`, { params: { path: join(row.name) } })
+      : await http.post(`/vms/${props.id}/files/download`, { ...creds(), path: join(row.name) })
     // 该接口直接返回文件内容（octet-stream）；适合文本/配置文件
     const blob = new Blob([res.data], { type: 'application/octet-stream' })
     const a = document.createElement('a')

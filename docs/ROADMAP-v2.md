@@ -1,4 +1,18 @@
-# 鸢航 VirtKite 大版本升级规划（v2：从虚拟机管理平台到轻量服务器管理平台）
+# 鸢航 VirtKite 大版本升级 v2（已实现，待验收）
+
+> **状态：五个批次全部落地，本地已提交（3ef45e8 之后的追加提交），未推送远端。**
+> 验收方式：`docker start vmops-mysql vmops-prometheus vmops-alertmanager vmops-grafana && ./start.sh`，新入口在侧栏「资源 → Docker 管理」「应用 → 应用商店」「运维 → 计划任务」，VmDetail 左栏新增「文件管理」。
+> 回退方式：`git reset --hard 47276ad`（v2 前的最后状态）后 `go build -o vmops . && cd web && npm run build` 再重启即可。
+
+## 落地清单（与批次一一对应）
+
+| 批次 | 交付物 | 验证 |
+|---|---|---|
+| 1 Docker 管理 | `service/dockerx`（CLI 封装）+ `handler/docker.go` + `DockerList.vue`；/api/docker NonViewerMiddleware | 容器/镜像 API 实测 4 容器 10 镜像；viewer 403/operator 200 |
+| 2 文件管理 | `service/vmssh`（SSH 执行）+ `handler/vm_files.go`（在线通道）+ `handler/vm_files_offline.go`（guestmount 离线只读，含 LVM 根分区自动识别与 FUSE 权限 sudo 读取）+ `VmFileBrowser.vue`（双模式切换） | 离线挂载 Docker VM：列 /root 27 文件、下载 /etc/hostname 内容正确、路径穿越 400、运行中拒挂、卸载 ✓；SSH 通道错误密码中文提示、stu 未授权 404 |
+| 3 应用商店 | `service/apps`（10 款幂等脚本）+ `app_install` executor + `AppStore.vue` | 目录 API 实测 10 应用；安装走异步任务（SSH 执行、进度/输出入任务结果） |
+| 4 计划任务 | `model.ScheduledTask` + `service/cron`（手写 cron 解析/调度器，44 子用例）+ `CronList.vue`；动作 vm_snapshot/db_backup | CRUD/toggle/run API 实测；cron 解析测试全绿 |
+| 5 信息架构 | 侧栏新增「应用」组；资源组 +Docker；运维组 +计划任务(adminOnly)；审计对象类型补 docker/app/cron | 前端构建通过 |
 
 > 定位升级：管理 KVM 虚拟机的平台 → **管理"虚拟机 + 容器 + 应用"的一体化服务器管理平台**（对标宝塔面板的使用心智：浏览器点一点，搞定服务器）。
 > 本批次为实验性大版本：**完成后仅本地提交，不推送远端**，用户验收后决定合入或回退。

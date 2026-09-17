@@ -293,6 +293,11 @@ func main() {
 			vms.POST("/:id/files/delete", vmFilesHandler.Delete)
 			vms.POST("/:id/files/mkdir", vmFilesHandler.Mkdir)
 			vms.GET("/:id/files/offline-capability", vmFilesHandler.OfflineCapability)
+			// 离线挂载通道（guestmount 只读挂关机 VM 系统盘，不依赖 VM 内 SSH）
+			vms.POST("/:id/files/offline/mount", vmFilesHandler.OfflineMount)
+			vms.POST("/:id/files/offline/list", vmFilesHandler.OfflineList)
+			vms.GET("/:id/files/offline/download", vmFilesHandler.OfflineDownload)
+			vms.POST("/:id/files/offline/unmount", vmFilesHandler.OfflineUnmount)
 			// 应用商店安装（v2 批次 3：挂 vms 前缀让 operator 放行——往自己 VM 装软件属操作语义）
 			vms.POST("/apps/install", appsHandler.Install)
 			vms.POST("/:id/vnc-token", vncHandler.RequestToken)
