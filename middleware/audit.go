@@ -257,5 +257,14 @@ func determineObjectType(path string) string {
 	if strings.Contains(path, "/api/users") {
 		return "user"
 	}
+	if strings.Contains(path, "/api/docker") {
+		return "docker"
+	}
+	if strings.Contains(path, "/api/apps") || strings.Contains(path, "/apps/install") {
+		return "app"
+	}
+	if strings.Contains(path, "/api/crons") {
+		return "cron"
+	}
 	return "system"
 }

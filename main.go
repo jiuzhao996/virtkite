@@ -16,9 +16,11 @@ import (
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/console"
+	"github.com/jiuzhao/vmops/service/cron"
 	monitor "github.com/jiuzhao/vmops/service/monitor"
 	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
+	"github.com/jiuzhao/vmops/service/virt"
 	"github.com/jiuzhao/vmops/service/vnc"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
@@ -158,6 +160,7 @@ func main() {
 	// 异步任务管理器单例：耗时操作（创建/删除/克隆/优雅关机）走后台 worker
 	taskMgr := tasks.NewManager(db)
 	tasks.RegisterVMTasks(taskMgr)
+	tasks.RegisterAppTasks(taskMgr) // v2：应用商店安装任务（SSH 到 VM 内执行）
 	// 控制台会话注册表单例：VNC/SSH/串口连接跟踪 + 服务端强制断开 + VNC 过期清扫
 	consoleRegistry := console.NewRegistry(db)
 	consoleRegistry.StartSweeper()
@@ -176,6 +179,14 @@ func main() {
 	monitorHandler := handler.NewMonitorHandler(db, config.GlobalConfig.AlertmanagerURL)
 	alertWebhookHandler := handler.NewAlertWebhookHandler(db, config.GlobalConfig.AlertWebhookToken)
 	historyHandler := handler.NewHistoryHandler(db, config.GlobalConfig.PrometheusURL)
+
+	// v2 大升级：Docker 管理 / 应用商店 / 计划任务 / VM 文件管理
+	dockerHandler := handler.NewDockerHandler()
+	appsHandler := handler.NewAppsHandler(db, taskMgr)
+	vmFilesHandler := handler.NewVMFilesHandler(db)
+	cronScheduler := &cron.Scheduler{DB: db, Virt: virt.New(), BackupDir: ""}
+	cronScheduler.Start() // 内部自起 goroutine（整分 tick）
+	cronsHandler := handler.NewCronsHandler(db, cronScheduler)
 
 	// 公开接口（无需认证）
 	r.POST("/api/auth/login", authHandler.Login)
@@ -275,6 +286,15 @@ func main() {
 			vms.GET("/:id/grants", vmHandler.ListVMGrants)
 			vms.POST("/:id/grants", vmHandler.GrantVM)
 			vms.DELETE("/:id/grants/:gid", vmHandler.RevokeVMGrant)
+			// VM 文件管理（v2 批次 2：SSH 在线通道，凭据请求期内存透传不落盘）
+			vms.POST("/:id/files/list", vmFilesHandler.List)
+			vms.POST("/:id/files/download", vmFilesHandler.Download)
+			vms.POST("/:id/files/upload", vmFilesHandler.Upload)
+			vms.POST("/:id/files/delete", vmFilesHandler.Delete)
+			vms.POST("/:id/files/mkdir", vmFilesHandler.Mkdir)
+			vms.GET("/:id/files/offline-capability", vmFilesHandler.OfflineCapability)
+			// 应用商店安装（v2 批次 3：挂 vms 前缀让 operator 放行——往自己 VM 装软件属操作语义）
+			vms.POST("/apps/install", appsHandler.Install)
 			vms.POST("/:id/vnc-token", vncHandler.RequestToken)
 			vms.GET("/:id/terminal", terminalHandler.Connect)
 			vms.GET("/:id/serial", vmHandler.ConnectSerial)
@@ -320,6 +340,39 @@ func main() {
 			images.POST("/:id/clone", imageHandler.CloneVM)
 			images.PUT("/:id/template", imageHandler.SetImageTemplate)
 			images.DELETE("/:id", imageHandler.DeleteImage)
+		}
+
+		// Docker 容器/镜像管理（v2 大升级批次 1：admin/operator 可用，viewer 403——
+		// 容器清单含内网端口映射与镜像列表，与监控中心同口径走 NonViewerMiddleware）
+		docker := api.Group("/docker")
+		docker.Use(middleware.NonViewerMiddleware())
+		{
+			docker.GET("/containers", dockerHandler.ListContainers)
+			docker.POST("/containers/:id/:action", dockerHandler.ContainerAction)
+			docker.DELETE("/containers/:id", dockerHandler.RemoveContainer)
+			docker.GET("/containers/:id/logs", dockerHandler.ContainerLogs)
+			docker.GET("/images", dockerHandler.ListImages)
+			docker.DELETE("/images/:id", dockerHandler.RemoveImage)
+		}
+
+		// 应用商店目录（登录可浏览；安装走 /api/vms/apps/install——挂在 vms 组让 operator 放行）
+		apps := api.Group("/apps")
+		apps.Use(middleware.OperatorMiddleware())
+		{
+			apps.GET("", appsHandler.List)
+			apps.GET("/:id", appsHandler.Get)
+		}
+
+		// 计划任务（平台管理语义，仅管理员）
+		crons := api.Group("/crons")
+		crons.Use(middleware.AdminMiddleware())
+		{
+			crons.GET("", cronsHandler.List)
+			crons.POST("", cronsHandler.Create)
+			crons.PUT("/:id", cronsHandler.Update)
+			crons.DELETE("/:id", cronsHandler.Delete)
+			crons.POST("/:id/toggle", cronsHandler.Toggle)
+			crons.POST("/:id/run", cronsHandler.RunNow)
 		}
 
 		// 监控中心（操作员/管理员可见：告警与 file-sd 携带资产名单，viewer 403——全量审计 P0 收权）

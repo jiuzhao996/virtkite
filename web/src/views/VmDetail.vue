@@ -71,6 +71,10 @@
             <el-icon><Document /></el-icon>
             <span>XML 定义</span>
           </el-menu-item>
+          <el-menu-item v-if="canOperate" index="files">
+            <el-icon><FolderOpened /></el-icon>
+            <span>文件管理</span>
+          </el-menu-item>
           <el-menu-item v-if="isAdmin" index="grants">
             <el-icon><User /></el-icon>
             <span>授权管理</span>
@@ -317,6 +321,16 @@
           </el-card>
         </section>
 
+        <!-- 文件管理（v2：SSH 在线通道，浏览/下载/上传/删除 VM 内文件） -->
+        <section v-show="activeView === 'files'" class="panel">
+          <div class="panel-head">
+            <h3 class="panel-title">文件管理</h3>
+          </div>
+          <el-card shadow="never">
+            <VmFileBrowser v-if="vm" :id="vm.id" :ip="vm.ip || ''" />
+          </el-card>
+        </section>
+
         <!-- 授权管理（借鉴堡垒机 4A：分配是一等实体，授权决定可见性；未授权用户查无此项） -->
         <section v-show="activeView === 'grants'" class="panel">
           <div class="panel-head">
@@ -470,6 +484,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import echarts from '../utils/echarts'
 import { ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Plus, Refresh, RefreshLeft, Odometer, TrendCharts, Cpu, Coin, FolderOpened, Connection, CameraFilled, Document, MagicStick, WarningFilled, User } from '@element-plus/icons-vue'
 import { api } from '../api'
+import VmFileBrowser from '../components/VmFileBrowser.vue'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'

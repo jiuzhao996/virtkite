@@ -159,7 +159,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, ArrowLeft, ArrowRight, Bell, Connection, Cpu, DataLine, Document, FolderOpened, FullScreen, List, Monitor, Picture, Setting, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, Connection, Cpu, DataLine, Document, FolderOpened, FullScreen, Goods, List, Monitor, Picture, Setting, SwitchButton, Timer, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { vmStatusText, vmStatusTag } from '../utils/format'
@@ -178,18 +178,21 @@ const navItems = [
   { index: '/dashboard', label: '仪表盘', icon: DataLine, group: '总览' },
   { index: '/vms', label: '虚拟机', icon: Monitor, group: '资源' },
   { index: '/images', label: '镜像管理', icon: Picture, group: '资源' },
+  { index: '/docker', label: 'Docker 管理', icon: Box, group: '资源' },
+  { index: '/apps', label: '应用商店', icon: Goods, group: '应用' },
   { index: '/hosts', label: '宿主机', icon: Cpu, group: '基础设施' },
   { index: '/storage', label: '存储池', icon: FolderOpened, group: '基础设施' },
   { index: '/networks', label: '网络', icon: Connection, group: '基础设施' },
   { index: '/tasks', label: '任务中心', icon: List, group: '运维' },
   { index: '/audit', label: '审计中心', icon: Document, group: '运维' },
+  { index: '/crons', label: '计划任务', icon: Timer, group: '运维', adminOnly: true },
   { index: '/users', label: '用户管理', icon: User, group: '管理', adminOnly: true },
   { index: '/settings', label: '系统设置', icon: Setting, group: '管理', adminOnly: true }
 ]
 
 const menuGroups = computed(() => {
   const visible = navItems.filter((it) => !it.adminOnly || isAdmin.value)
-  const order = ['总览', '资源', '基础设施', '运维', '管理']
+  const order = ['总览', '资源', '应用', '基础设施', '运维', '管理']
   return order
     .map((name) => ({ name, items: visible.filter((it) => it.group === name) }))
     .filter((g) => g.items.length > 0)

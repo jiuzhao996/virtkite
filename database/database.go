@@ -63,6 +63,7 @@ func Init() {
 		&model.Alert{},
 		&model.PoolMeta{},
 		&model.VMGrant{},
+		&model.ScheduledTask{},
 	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)
