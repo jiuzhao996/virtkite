@@ -1,0 +1,8 @@
+# Uptime Kuma 应用包 —— 应用级元数据
+name: uptime-kuma
+title: Uptime Kuma
+category: ops
+tags:
+  - ops
+  - 监控
+description: 自托管服务可用性监控（拨测），支持 HTTP/TCP/Ping/DNS 等探针与告警通知，数据落在安装目录 data/ 下。

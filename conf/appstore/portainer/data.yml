@@ -1,0 +1,8 @@
+# Portainer CE 应用包 —— 应用级元数据
+name: portainer
+title: Portainer CE
+category: ops
+tags:
+  - ops
+  - docker
+description: Docker 图形化管理面板（社区版）。挂载 docker.sock 管理本机容器，首次访问 https://宿主机IP:端口 设置管理员密码。

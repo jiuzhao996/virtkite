@@ -1,0 +1,109 @@
+# Promtail 采集配置（grafana/promtail:2.9.x 语法），推送到 Loki 服务（compose 网络内服务名）。
+# 说明：
+#   - ${HOSTNAME} 变量展开依赖 promtail 启动参数 -config.expand-env=true（见 docker-compose.loki.yml），
+#     Docker 容器内该环境变量即容器主机名，用于给日志打 host 标签。
+#   - 容器日志默认走 Docker 服务发现（docker_sd_configs，经 /var/run/docker.sock 读取），
+#     好处是天然带 container 容器名标签（如 vmops-app），LogQL 可写 {container=~"vmops-.*"}。
+#     无法挂载 docker.sock 的环境请改用文末注释的 docker-files 纯文件方案（拿不到容器名，只有容器 ID）。
+#   - journal 采集默认关闭（依赖宿主机 journal 目录与 machine-id 挂载），启用方法见文末注释。
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+# 采集位点文件：记录每个文件/journal 读到哪里，promtail 重启后从断点续采（不丢不重）
+positions:
+  filename: /positions/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # 1) 宿主机传统文本日志（/var/log 顶层；syslog/messages 按发行版分别声明，缺省不存在的路径自动挂起无副作用）
+  - job_name: varlogs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: varlogs
+          host: ${HOSTNAME}
+          __path__: /var/log/*.log
+      - targets:
+          - localhost
+        labels:
+          job: varlogs
+          host: ${HOSTNAME}
+          __path__: /var/log/syslog
+      - targets:
+          - localhost
+        labels:
+          job: varlogs
+          host: ${HOSTNAME}
+          __path__: /var/log/messages
+
+  # 2) Docker 容器日志（经 docker.sock 服务发现，自动附加 container/compose 标签）
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        # 只采运行中的容器（默认行为）；如需按标签白名单采集，可加：
+        # filters:
+        #   - name: label
+        #     values: ["logging=promtail"]
+    relabel_configs:
+      # 容器名（Docker 元标签带前导 /，正则去掉）：vmops-app / vmops-grafana …
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: container
+      # 容器 ID（排障对照 docker ps 用）
+      - source_labels: ["__meta_docker_container_id"]
+        target_label: container_id
+      # docker compose 的项目/服务名（vmops 栈自带这两个 label）
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_project"]
+        target_label: compose_project
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: compose_service
+    # docker_sd 经 Docker API 读取日志时已按 stdout/stderr 分流并附 stream 标签，无需 pipeline 解析。
+
+  # 3) （可选）systemd journal：需在 docker-compose.loki.yml 的 promtail 服务追加挂载
+  #      - /var/log/journal:/var/log/journal:ro
+  #      - /run/log/journal:/run/log/journal:ro
+  #      - /etc/machine-id:/etc/machine-id:ro
+  #    然后取消本段注释并重启 promtail。
+  # - job_name: journal
+  #   journal:
+  #     max_age: 12h
+  #     labels:
+  #       job: journal
+  #   relabel_configs:
+  #     - source_labels: ["__journal__hostname"]
+  #       target_label: host
+  #     - source_labels: ["__journal__systemd_unit"]
+  #       target_label: unit
+  #     - source_labels: ["__journal_priority_keyword"]
+  #       target_label: level
+
+  # 4) （备选）直接读容器原始 json 日志文件（不依赖 docker.sock，但拿不到容器名——
+  #    文件名只有容器 ID，需自行去 docker ps 对照）。启用时须注释掉上面的 docker job，避免双份采集。
+  # - job_name: docker-files
+  #   static_configs:
+  #     - targets:
+  #         - localhost
+  #       labels:
+  #         job: docker
+  #         host: ${HOSTNAME}
+  #         __path__: /var/lib/docker/containers/*/*.log
+  #   pipeline_stages:
+  #     # docker json-file 格式单行：{"log":"...","stream":"stdout","time":"RFC3339Nano"}
+  #     - json:
+  #         expressions:
+  #           output: log
+  #           stream: stream
+  #           timestamp: time
+  #     - timestamp:
+  #         source: timestamp
+  #         format: RFC3339Nano
+  #     - labels:
+  #         stream:
+  #     - output:
+  #         source: output

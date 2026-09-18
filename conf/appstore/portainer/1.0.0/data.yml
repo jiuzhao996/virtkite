@@ -1,0 +1,9 @@
+# Portainer 1.0.0 —— 版本级表单定义
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT_HTTPS
+      label: HTTPS 端口
+      type: number
+      default: 9443
+      required: true
+      rule: paramPort

@@ -1,0 +1,10 @@
+# Nginx —— 相对路径 ./data 挂载落在安装目录 data/apps/nginx/ 下；
+# 端口变量经 --env-file .env 由 compose 原生插值（无模板引擎）
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${PANEL_APP_PORT_HTTP}:80"
+    volumes:
+      - ./data/html:/usr/share/nginx/html
+    restart: unless-stopped

@@ -1,0 +1,27 @@
+# WordPress 1.0.0 —— 版本级表单定义（密码字段跨服务串联：同一 envKey 同时喂 wordpress 与 db）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT
+      label: 站点端口
+      type: number
+      default: 8080
+      required: true
+      rule: paramPort
+    - envKey: PANEL_WP_DB_NAME
+      label: 数据库名
+      type: text
+      default: wordpress
+      required: false
+    - envKey: PANEL_WP_DB_USER
+      label: 数据库用户名
+      type: text
+      default: wordpress
+      required: false
+    - envKey: PANEL_WP_DB_PASSWORD
+      label: 数据库密码
+      type: password
+      required: true
+    - envKey: PANEL_WP_DB_ROOT_PASSWORD
+      label: 数据库 root 密码
+      type: password
+      required: true

@@ -1,0 +1,9 @@
+# Nginx 1.0.0 —— 版本级表单定义（前端据此动态渲染安装表单，值写入安装目录 .env）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT_HTTP
+      label: HTTP 端口
+      type: number
+      default: 80
+      required: true
+      rule: paramPort

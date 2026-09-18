@@ -50,6 +50,9 @@ type Config struct {
 	// Alertmanager webhook 令牌（非空时 POST /api/monitor/webhook 要求 ?token= 或
 	// Authorization: Bearer 匹配；为空则公开，与 deploy/alertmanager.yml 的 webhook_config 配对）
 	AlertWebhookToken string
+
+	// Loki 日志栈地址（监控中心日志查询代理用；compose 内 http://loki:3100）
+	LokiURL string
 }
 
 var GlobalConfig *Config

@@ -1,0 +1,18 @@
+# MySQL 1.0.0 —— 版本级表单定义（required 无 default 的密码项：用户必须填写）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT
+      label: 服务端口
+      type: number
+      default: 3306
+      required: true
+      rule: paramPort
+    - envKey: PANEL_MYSQL_ROOT_PASSWORD
+      label: root 密码
+      type: password
+      required: true
+    - envKey: PANEL_MYSQL_DATABASE
+      label: 初始化数据库名（可选）
+      type: text
+      default: appdb
+      required: false

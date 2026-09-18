@@ -1,0 +1,19 @@
+# Redis —— 密码经 environment 注入容器，启动命令按是否设了密码分支；
+# $$ 是 compose 的字面 $ 转义（由容器内 shell 展开），单层 $ 会被 compose 先行插值
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${PANEL_APP_PORT}:6379"
+    environment:
+      PANEL_REDIS_PASSWORD: ${PANEL_REDIS_PASSWORD}
+      PANEL_REDIS_AOF: ${PANEL_REDIS_AOF}
+    volumes:
+      - ./data:/data
+    command: >
+      sh -c 'if [ -n "$$PANEL_REDIS_PASSWORD" ]; then
+               exec redis-server --appendonly "$$PANEL_REDIS_AOF" --requirepass "$$PANEL_REDIS_PASSWORD";
+             else
+               exec redis-server --appendonly "$$PANEL_REDIS_AOF";
+             fi'
+    restart: unless-stopped

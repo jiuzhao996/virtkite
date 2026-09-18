@@ -172,6 +172,7 @@ func main() {
 		PrometheusURL:     config.GlobalConfig.PrometheusURL,
 		AlertWebhookToken: config.GlobalConfig.AlertWebhookToken,
 		MetricsToken:      config.GlobalConfig.MetricsToken,
+		LokiURL:           config.GlobalConfig.LokiURL,
 	}
 	handler.RegisterPublic(r, deps)
 

@@ -13,6 +13,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/service/console"
 	"github.com/jiuzhao/vmops/service/cron"
@@ -33,6 +34,7 @@ type Deps struct {
 	PrometheusURL     string
 	AlertWebhookToken string
 	MetricsToken      string
+	LokiURL           string
 }
 
 // RegisterPublic 公开路由（无需认证，注册在引擎根上）。
@@ -91,6 +93,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	vmFilesHandler := NewVMFilesHandler(deps.DB)
 	vmHandler := NewVMHandler(deps.DB, deps.Tasks, deps.Sessions)
 	aiHandler := NewAIHandler(deps.DB, deps.SettingMgr)
+	vmCredHandler := NewVMCredentialHandler(deps.DB, config.GlobalConfig.JWTSecretKey)
+	lokiHandler := NewLokiHandler(deps.LokiURL)
+	appStoreV2 := NewAppStoreV2Handler()
 	cronScheduler := &cron.Scheduler{DB: deps.DB, Virt: deps.Virt, BackupDir: ""}
 	cronScheduler.Start() // 内部自起 goroutine（整分 tick）
 	cronsHandler := NewCronsHandler(deps.DB, cronScheduler)
@@ -177,6 +182,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.GET("/:id/files/offline/download", vmFilesHandler.OfflineDownload)
 		vms.POST("/:id/files/offline/unmount", vmFilesHandler.OfflineUnmount)
 		// 应用商店安装（v2 批次 3：挂 vms 前缀让 operator 放行——往自己 VM 装软件属操作语义）
+		vms.POST("/:id/credentials", vmCredHandler.Save)
+		vms.GET("/:id/credentials", vmCredHandler.Get)
+		vms.DELETE("/:id/credentials", vmCredHandler.Delete)
 		vms.POST("/apps/install", appsHandler.Install)
 		vms.POST("/:id/vnc-token", vncHandler.RequestToken)
 		vms.GET("/:id/terminal", terminalHandler.Connect)
@@ -254,6 +262,17 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		apps.GET("/:id", appsHandler.Get)
 	}
 
+	// 应用商店 v2（声明式 compose 应用包，1Panel 对标）
+	v2 := api.Group("/appstore")
+	v2.Use(middleware.NonViewerMiddleware())
+	{
+		v2.GET("", appStoreV2.ListV2)
+		v2.GET("/status", appStoreV2.StatusV2)
+		v2.GET("/:key", appStoreV2.GetV2)
+		v2.POST("/:key/install", appStoreV2.InstallV2)
+		v2.POST("/:key/uninstall", appStoreV2.UninstallV2)
+	}
+
 	// 计划任务（平台管理语义，仅管理员）
 	crons := api.Group("/crons")
 	crons.Use(middleware.AdminMiddleware())
@@ -264,6 +283,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		crons.DELETE("/:id", cronsHandler.Delete)
 		crons.POST("/:id/toggle", cronsHandler.Toggle)
 		crons.POST("/:id/run", cronsHandler.RunNow)
+		crons.GET("/:id/runs", cronsHandler.ListRuns)
 	}
 
 	// 监控中心（操作员/管理员可见：告警与 file-sd 携带资产名单，viewer 403——全量审计 P0 收权）
@@ -276,6 +296,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		// file_sd 抓取目标预览（与后台落盘文件同源，调试/前端展示用）
 		monitor.GET("/file-sd", monitorHandler.PreviewFileSD)
 		monitor.GET("/grafana-status", monitorHandler.GrafanaStatus)
+		// Loki 日志查询（v3 批次 G：指标+日志+告警完整可观测性）
+		monitor.GET("/loki/query", lokiHandler.Query)
+		monitor.GET("/loki/labels", lokiHandler.Labels)
 	}
 
 	// 仪表盘（仅管理员）

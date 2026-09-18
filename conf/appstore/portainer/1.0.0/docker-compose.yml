@@ -1,0 +1,10 @@
+# Portainer CE —— 挂载 docker.sock 纳管本机容器，数据落安装目录 data/
+services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    ports:
+      - "${PANEL_APP_PORT_HTTPS}:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    restart: unless-stopped

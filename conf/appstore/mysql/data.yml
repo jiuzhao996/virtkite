@@ -1,0 +1,8 @@
+# MySQL 应用包 —— 应用级元数据
+name: mysql
+title: MySQL
+category: database
+tags:
+  - database
+  - 中间件
+description: MySQL 8.0 关系型数据库。root 密码在安装时指定，可选初始化一个业务库，数据落在安装目录 data/ 下。

@@ -1,0 +1,66 @@
+# ⚠️ Loki 日志栈——独立增量部署文件，不并入主 docker-compose.yml（日志栈可独立启停/升级）。
+#
+# 部署：docker compose -f deploy/docker-compose.loki.yml up -d
+# 说明文档：deploy/README-loki.md
+#
+# 网络：引用主 compose（/home/jiuzhao/vmops/docker-compose.yml）创建的默认网络 vmops_default
+#       （external，不重复创建）。Grafana 在同一网络内经 http://loki:3100 访问本栈。
+#       若主栈从未启动过（网络不存在），先 `docker network create vmops_default` 或先启动主栈。
+#
+# 端口：3100 只绑定宿主机 127.0.0.1——供宿主机原生直跑的 vmops 后端（LOKI_URL 默认
+#       http://127.0.0.1:3100）访问，不向局域网暴露。容器间访问不经过该映射。
+#
+# ⚠️ 权限说明：promtail 需读取宿主机 /var/log 与 /var/run/docker.sock（后者等价于宿主机 root
+#       权限），因此以 root 运行（官方镜像默认即 root）。日志栈只应部署在可信管理节点上。
+
+name: vmops-loki
+
+networks:
+  vmops_default:
+    external: true
+
+services:
+  loki:
+    image: grafana/loki:2.9.14
+    container_name: vmops-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - vmops_default
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  promtail:
+    image: grafana/promtail:2.9.14
+    container_name: vmops-promtail
+    restart: unless-stopped
+    depends_on:
+      - loki
+    # -config.expand-env=true：允许配置里的 ${HOSTNAME} 展开（容器主机名，打 host 标签用）
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    user: root
+    volumes:
+      - ./loki/promtail-config.yml:/etc/promtail/config.yml:ro
+      # 采集位点（断点续采，避免重启后重复推送）
+      - promtail-positions:/positions
+      # 宿主机文本日志（/var/log/*.log、syslog/messages）
+      - /var/log:/var/log:ro
+      # 容器原始 json 日志（docker_sd 主方案不依赖它，仅备用 docker-files 采集方案需要）
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Docker 服务发现（容器名标签的来源；socket 等价 root 权限，见文件头说明）
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - vmops_default
+
+volumes:
+  loki-data:
+  promtail-positions:

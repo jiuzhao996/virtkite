@@ -1,0 +1,12 @@
+# MySQL —— 数据目录 ./data:/var/lib/mysql；MYSQL_DATABASE 留空则不初始化业务库
+services:
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "${PANEL_APP_PORT}:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${PANEL_MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${PANEL_MYSQL_DATABASE}
+    volumes:
+      - ./data:/var/lib/mysql
+    restart: unless-stopped

@@ -1,0 +1,9 @@
+# Uptime Kuma —— 单服务，数据（SQLite + 上传文件）落安装目录 data/
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    ports:
+      - "${PANEL_APP_PORT}:3001"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

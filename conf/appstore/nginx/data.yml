@@ -1,0 +1,8 @@
+# Nginx 应用包 —— 应用级元数据（1Panel 式声明式应用包，由 service/appstore 解析）
+name: nginx
+title: Nginx
+category: web
+tags:
+  - web
+  - 反向代理
+description: 高性能 Web 服务器与反向代理。安装后把静态站点文件放进 data/html，即可通过「宿主机 IP:端口」访问。

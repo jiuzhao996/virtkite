@@ -1,0 +1,23 @@
+# Redis 1.0.0 —— 版本级表单定义（select 演示：values 为 label/value 选项对）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT
+      label: 服务端口
+      type: number
+      default: 6379
+      required: true
+      rule: paramPort
+    - envKey: PANEL_REDIS_PASSWORD
+      label: 访问密码（留空免密）
+      type: password
+      required: false
+    - envKey: PANEL_REDIS_AOF
+      label: AOF 持久化
+      type: select
+      default: "yes"
+      required: false
+      values:
+        - label: 开启（重启不丢数据）
+          value: "yes"
+        - label: 关闭（纯缓存场景）
+          value: "no"

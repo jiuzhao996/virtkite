@@ -1,0 +1,8 @@
+# WordPress 应用包 —— 应用级元数据
+name: wordpress
+title: WordPress
+category: cms
+tags:
+  - cms
+  - 建站
+description: 博客/CMS 套件：WordPress + 内置 MySQL 8 双服务。数据库账号密码经表单统一注入两个服务，站点与库数据分别落在 data/wordpress 与 data/db。

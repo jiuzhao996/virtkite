@@ -1,0 +1,67 @@
+# Loki 单机配置（grafana/loki:2.9.x 语法，对应 virsh 无关的日志栈存储层）
+# 验证：docker run --rm -v $PWD/loki-config.yml:/etc/loki/local-config.yaml \
+#         grafana/loki:2.9.14 -config.file=/etc/loki/local-config.yaml -verify-config=true
+# 等价 virsh 概念：无（Loki 属监控栈，与 libvirt 无关）
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+# schema v13 + tsdb：2.9.x 单机推荐的索引形态（等价 virsh 命令：无）
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# tsdb 索引 shipper：活动索引目录 + 查询缓存
+storage_config:
+  tsdb_shipper:
+    active_index_directory: /loki/tsdb-index
+    cache_location: /loki/tsdb-cache
+
+# compactor：开启保留期清理（过期日志的真正删除在 compactor 压实期完成）。
+# delete_request_store 必须与 retention_enabled 同时设置，否则 2.9 启动报
+# "delete request store must be set when retention is enabled"。
+compactor:
+  working_directory: /loki/compactor
+  shared_store: filesystem
+  delete_request_store: filesystem
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+
+limits_config:
+  # 保留 7 天（168h），过期由 compactor 删除
+  retention_period: 168h
+  # 拒绝过早的历史样本（promtail 首次采集旧日志时防止把几个月前的行灌进来）
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+# 关闭使用情况上报（私有化部署不外联）
+analytics:
+  reporting_enabled: false
+
+# 可选：用 Loki 直接对日志做告警规则（经下方 alertmanager 推送）。
+# 需要时取消注释并在 deploy/alertmanager.yml 谨慎评估是否新增接收分组。
+# ruler:
+#   alertmanager_url: http://alertmanager:9093

@@ -1,0 +1,8 @@
+# Redis 应用包 —— 应用级元数据
+name: redis
+title: Redis
+category: cache
+tags:
+  - cache
+  - 中间件
+description: 内存键值数据库/缓存。可选访问密码（留空免密）与 AOF 持久化，数据落在安装目录 data/ 下。
