@@ -71,6 +71,54 @@
 - 仪表盘顶部加系统信息大卡（OS/内核/uptime/负载）
 - 容器/应用状态聚合卡
 
+## 增补批次（第二轮研究 + 用户补充确认后追加）
+
+### 背景补充
+1Panel「高级功能」中的虚拟机管理（专业版，基于容器化方案）、网站防篡改、WAF、高可用为企业版能力；我们的 KVM 原生 libvirt 直连相对其是**更完整的主航道能力**（答辩差异化论证点）。
+
+### 批次 G：日志栈（Loki 路线，替代 ELK）
+- 技术决策：**Loki + Promtail**（Grafana 原生，内存 <500MB）替代 ES+Logstash+Kibana+Kafka+Filebeat（5 组件 6-8GB，毕设机器跑不动）——形成「指标 Prometheus + 日志 Loki + 告警 Alertmanager + 可视化 Grafana」完整可观测性四件套
+- 落地：应用商店 v2 内置「Loki 日志栈」compose 包（loki+promtail，采集宿主机与容器日志）；监控中心新增「日志」查询入口（Grafana Explore 嵌入或 LogQL API）
+- ELK/Kafka 写入论文「企业级日志方案对比」节（选型论证即答辩加分）
+
+### 批次 H：云镜像市场（KVM 平台特色）
+- 内置主流发行版 cloud image 下载源（Ubuntu/Rocky/Debian/Alma 官方 URL 清单）
+- 一键下载到 base 池（后台任务带进度）→ 自动登记进镜像库（复用 RegisterImage）
+- 前端：镜像管理页新增「镜像市场」tab（卡片 + 下载按钮 + 进度）
+
+### 批次 I：SSH 凭据托管（提升应用商店/文件管理体验）
+- 新表 vm_credentials（vm_id 唯一，password AES-GCM 加密落盘，密钥派生自 JWT_SECRET + 随机盐）
+- 应用商店安装/文件管理连接时可勾选「使用已保存凭据」免输入
+- 仅 admin/operator 可写；凭据永不回传前端（掩码显示）
+
+### 批次 J：VM 导出/导入
+- 导出：关机 VM 的 qcow2 + domain XML 打包 tar.gz，浏览器下载（大文件流式）
+- 导入：上传 tar.gz → 恢复卷 + define（复用 ImportVMs 思路）
+- 定位：VM 迁移与备份的兜底手段
+
+### 批次 K：VM 拓扑可视化
+- echarts graph：宿主机—虚拟机—网络—存储池连线图（节点 = 资源，边 = 挂载/连接关系）
+- 数据：现有 API 聚合（VM 列表 + 网络列表 + 存储池列表），无新后端
+- 入口：仪表盘新 tab「拓扑」
+
+### 批次 L：cloud-init 模板管理
+- 新表 cloud_init_templates（name + CloudInitSpec JSON）
+- 建机向导 cloud-init 块加「套用模板」下拉；模板 CRUD 入口在镜像管理或设置页
+- 解决「每次建机重复填 hostname/user/password」的体验问题
+
+### 与 1Panel 高级功能的对位（答辩用）
+| 1Panel（专业版/企业版能力） | 本平台 | 对位说明 |
+|---|---|---|
+| 虚拟机管理（容器化方案） | KVM 原生 libvirt 直连（主功能） | 我们更贴近 KVM 本质，无容器化中间层 |
+| 网站防篡改 / WAF / 高可用 | 不做 | 建站与企业高可用赛道，与 KVM 私有云定位冲突，写展望 |
+| 日志审计（6 类） | 操作审计 + v3 批次 G 日志栈 | 打平并形成完整可观测性 |
+| AI（MaxKB 等应用） | 批次 B 内置 AI 运维助手（环境感知） | 我们是平台内生能力，非外挂应用 |
+
+### 题目建议（供决策，改题需走教务流程）
+1. 基于 KVM 与 Docker 的私有云管理与智能运维平台设计与实现（体现容器 + AI）
+2. 保持原题「基于 KVM 的轻量级私有云管理平台设计与实现」，扩展能力在摘要与章节体现（零流程成本，内容已足够支撑）
+建议 2：题目保守、内容惊艳。
+
 ## 明确不做（理由记录，防跑偏）
 
 - Core/Agent 多机架构（单机定位；多宿主机已砍，写展望）
