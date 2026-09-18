@@ -21,6 +21,7 @@ const routes = [
       { path: 'vms/new', name: 'vm-create', component: () => import('../views/CreateVmWizard.vue'), meta: { requiresOperate: true } },
       { path: 'docker', name: 'docker', component: () => import('../views/DockerList.vue'), meta: { requiresOperate: true } },
       { path: 'apps', name: 'apps', component: () => import('../views/AppStore.vue'), meta: { requiresOperate: true } },
+      { path: 'ai', name: 'ai', component: () => import('../views/AiChat.vue'), meta: { requiresOperate: true } },
       { path: 'crons', name: 'crons', component: () => import('../views/CronList.vue'), meta: { requiresAdmin: true } },
       { path: 'vms/:id', name: 'vm-detail', component: () => import('../views/VmDetail.vue') },
       { path: 'hosts', name: 'hosts', component: () => import('../views/HostList.vue') },

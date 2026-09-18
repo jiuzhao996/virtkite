@@ -159,7 +159,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, Connection, Cpu, DataLine, Document, FolderOpened, FullScreen, Goods, List, Monitor, Picture, Setting, SwitchButton, Timer, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Document, FolderOpened, FullScreen, Goods, List, Monitor, Picture, Setting, SwitchButton, Timer, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { vmStatusText, vmStatusTag } from '../utils/format'
@@ -179,6 +179,7 @@ const navItems = [
   { index: '/vms', label: '虚拟机', icon: Monitor, group: '资源' },
   { index: '/images', label: '镜像管理', icon: Picture, group: '资源' },
   { index: '/docker', label: 'Docker 管理', icon: Box, group: '资源' },
+  { index: '/ai', label: 'AI 助手', icon: ChatDotRound, group: '应用' },
   { index: '/apps', label: '应用商店', icon: Goods, group: '应用' },
   { index: '/hosts', label: '宿主机', icon: Cpu, group: '基础设施' },
   { index: '/storage', label: '存储池', icon: FolderOpened, group: '基础设施' },
