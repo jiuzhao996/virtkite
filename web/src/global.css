@@ -50,6 +50,17 @@
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
+
+  /* ── 1Panel 对标设计 tokens（批次 M1，值取自 1Panel frontend/src/styles/element.scss 实测）── */
+  --table-header-h: 50px;
+  --table-header-bg: #fafafa;
+  --table-header-fs: 15px;
+  --table-row-h: 52px;
+  --dialog-radius: 5px;
+  --stat-num-fs: 24px;
+  --stat-label-fs: 14px;
+  --help-fs: 12px;
+  --card-shadow-soft: 0 1px 4px rgba(31, 35, 41, 0.08);
 }
 
 html,
@@ -178,4 +189,36 @@ button,
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* ── 批次 M1：1Panel 对标全站规范 ──
+   表格：表头 #fafafa/50px/15px 加粗，行高 52px；卡片去边框改浅阴影；对话框圆角；帮助文字 12px */
+.el-table th.el-table__cell {
+  height: var(--table-header-h);
+  background: var(--table-header-bg);
+  font-size: var(--table-header-fs);
+  font-weight: 600;
+}
+.el-table .el-table__cell {
+  padding: 8px 0;
+}
+.el-dialog {
+  border-radius: var(--dialog-radius);
+}
+.el-card {
+  border: none;
+  box-shadow: var(--card-shadow-soft);
+}
+.input-help {
+  font-size: var(--help-fs);
+  color: var(--color-muted-foreground);
+  line-height: 1.5;
+}
+.stat-number {
+  font-size: var(--stat-num-fs);
+  font-weight: 700;
+}
+.stat-caption {
+  font-size: var(--stat-label-fs);
+  color: var(--color-muted-foreground);
 }
