@@ -63,6 +63,8 @@ func Init() {
 		&model.Alert{},
 		&model.PoolMeta{},
 		&model.VMGrant{},
+		&model.CronRun{},
+		&model.VMCredential{},
 		&model.ScheduledTask{},
 	)
 	if err != nil {

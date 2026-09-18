@@ -90,6 +90,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	appsHandler := NewAppsHandler(deps.DB, deps.Tasks)
 	vmFilesHandler := NewVMFilesHandler(deps.DB)
 	vmHandler := NewVMHandler(deps.DB, deps.Tasks, deps.Sessions)
+	aiHandler := NewAIHandler(deps.DB, deps.SettingMgr)
 	cronScheduler := &cron.Scheduler{DB: deps.DB, Virt: deps.Virt, BackupDir: ""}
 	cronScheduler.Start() // 内部自起 goroutine（整分 tick）
 	cronsHandler := NewCronsHandler(deps.DB, cronScheduler)
@@ -235,6 +236,14 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		docker.GET("/containers/:id/logs", dockerHandler.ContainerLogs)
 		docker.GET("/images", dockerHandler.ListImages)
 		docker.DELETE("/images/:id", dockerHandler.RemoveImage)
+	}
+
+	// AI 运维助手（viewer 403：消耗 API 配额且注入平台上下文属资产信息）
+	ai := api.Group("/ai")
+	ai.Use(middleware.NonViewerMiddleware())
+	{
+		ai.GET("/status", aiHandler.Status)
+		ai.POST("/chat", aiHandler.Chat)
 	}
 
 	// 应用商店目录（登录可浏览；安装走 /api/vms/apps/install——挂在 vms 组让 operator 放行）

@@ -32,6 +32,7 @@
         <el-table-column label="参数" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ paramsText(row) }}</template>
         </el-table-column>
+        <el-table-column prop="keep" label="保留" width="70" align="center" />
         <el-table-column label="启用" width="80">
           <template #default="{ row }">
             <el-switch
@@ -46,13 +47,24 @@
             <span class="mono">{{ row.last_run ? fmtDateTime(row.last_run) : '从未执行' }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="最近执行" width="96" align="center">
+          <template #default="{ row }">
+            <!-- 列表接口内嵌 recent_runs（最近 3 条、倒序），首条即最近一次 -->
+            <el-tooltip v-if="latestRun(row)" :content="latestRunTip(row)" placement="top">
+              <el-tag :type="runStatusTag(latestRun(row).status)" effect="light" size="small">
+                {{ runStatusText(latestRun(row).status) }}
+              </el-tag>
+            </el-tooltip>
+            <span v-else class="mono">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="下次执行" width="170">
           <template #default="{ row }">
             <span class="mono">{{ row.next_run ? fmtDateTime(row.next_run) : '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="run_count" label="次数" width="70" align="center" />
-        <el-table-column label="操作" width="190" fixed="right">
+        <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <el-button
               size="small"
@@ -62,6 +74,7 @@
               :disabled="!!runningId && runningId !== row.id"
               @click="runNow(row)"
             >立即运行</el-button>
+            <el-button size="small" text type="primary" @click="openHistory(row)">历史</el-button>
             <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" text type="danger" @click="remove(row)">删除</el-button>
           </template>
@@ -97,7 +110,11 @@
           <div class="field-tip">保存后参数自动生成为 {{ snapshotParamsPreview }}</div>
         </el-form-item>
         <el-form-item v-else-if="form.action === 'db_backup'" label="说明">
-          <div class="field-tip">备份数据库到主机 backup 目录，保留最近 7 份</div>
+          <div class="field-tip">备份数据库到主机 backup 目录，按保留份数自动清理旧备份</div>
+        </el-form-item>
+        <el-form-item label="保留份数">
+          <el-input-number v-model="form.keep" :min="1" :max="365" controls-position="right" style="width: 160px" />
+          <div class="field-tip">快照 / 备份只保留最近 N 份，超出后自动清理最旧的</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" active-text="启用" inactive-text="停用" />
@@ -108,6 +125,39 @@
         <el-button type="primary" :loading="saving" @click="save">{{ editingId ? '保存' : '创建' }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- 执行历史抽屉（50% 宽）：GET /crons/:id/runs 分页倒序 -->
+    <el-drawer v-model="drawerVisible" :title="drawerTitle" size="50%">
+      <el-table v-loading="runsLoading" :data="runs" stripe size="small">
+        <template #empty>
+          <el-empty description="该任务还没有执行记录" :image-size="80" />
+        </template>
+        <el-table-column label="开始时间" width="170">
+          <template #default="{ row }">
+            <span class="mono">{{ fmtDateTime(row.started_at) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag :type="runStatusTag(row.status)" effect="light" size="small">
+              {{ runStatusText(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="结果摘要" min-width="240" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.output || '—' }}</template>
+        </el-table-column>
+      </el-table>
+      <el-pagination
+        class="runs-pager"
+        layout="total, prev, pager, next"
+        size="small"
+        :total="runsTotal"
+        :page-size="runsPageSize"
+        :current-page="runsPage"
+        @current-change="onRunsPageChange"
+      />
+    </el-drawer>
   </div>
 </template>
 
@@ -128,6 +178,28 @@ function actionText(a) {
 }
 function actionTag(a) {
   return { vm_snapshot: 'primary', db_backup: 'success' }[a] || 'info'
+}
+
+// 执行状态 → 中文 / tag 颜色（success 绿 / failed 红 / running 蓝）
+function runStatusText(s) {
+  return { success: '成功', failed: '失败', running: '执行中' }[s] || s || '未知'
+}
+function runStatusTag(s) {
+  return { success: 'success', failed: 'danger', running: 'primary' }[s] || 'info'
+}
+
+// 最近一次执行记录（recent_runs 倒序，首条最新）
+function latestRun(row) {
+  return (row.recent_runs && row.recent_runs[0]) || null
+}
+function latestRunTip(row) {
+  const r = latestRun(row)
+  if (!r) return ''
+  // 摘要过长截断，避免 tooltip 撑爆屏幕
+  const out = r.output
+    ? '；结果：' + (r.output.length > 80 ? r.output.slice(0, 80) + '…' : r.output)
+    : ''
+  return `时间：${fmtDateTime(r.started_at)}${out}`
 }
 
 // 参数列：JSON 字符串解析后给中文摘要（vm_id 尽量翻译成虚拟机名）
@@ -152,6 +224,8 @@ async function load() {
   try {
     const res = await http.get('/crons')
     items.value = (res.data.data && res.data.data.items) || []
+    // 列表刷新后同步刷新已打开的历史抽屉（保留当前页码）
+    if (drawerVisible.value && drawerTask.value) loadRuns()
   } catch (e) {
     ElMessage.error(errMsg(e, '获取计划任务列表失败'))
   } finally {
@@ -194,7 +268,9 @@ const PRESETS = [
   { label: '每月 1 日 04:00', expr: '0 4 1 * *' }
 ]
 
-const form = ref({ name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, enabled: true })
+// keep：保留份数（快照/备份只留最近 N 份），后端校验 1-365，默认 7
+const DEFAULT_KEEP = 7
+const form = ref({ name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, keep: DEFAULT_KEEP, enabled: true })
 
 // vm_snapshot 时参数预览：未选虚拟机用 ? 占位，选中后即最终提交的 JSON 字符串
 const snapshotParamsPreview = computed(() =>
@@ -208,7 +284,7 @@ function applyPreset(expr) {
 function openCreate() {
   editingId.value = null
   preset.value = ''
-  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, enabled: true }
+  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, keep: DEFAULT_KEEP, enabled: true }
   dialog.value = true
   if (vms.value.length === 0) loadVMs()
 }
@@ -228,6 +304,7 @@ function openEdit(row) {
     cron_expr: row.cron_expr,
     action: row.action,
     vm_id: vmId,
+    keep: Number(row.keep) || DEFAULT_KEEP,
     enabled: !!row.enabled
   }
   dialog.value = true
@@ -240,6 +317,9 @@ async function save() {
   if (form.value.action === 'vm_snapshot' && form.value.vm_id == null) {
     return ElMessage.warning('请选择要快照的虚拟机')
   }
+  if (!form.value.keep || form.value.keep < 1) {
+    return ElMessage.warning('保留份数必须是 1-365 的整数')
+  }
   // params 是 JSON 字符串：vm_snapshot 带 {"vm_id":N}，db_backup 空对象
   const params = form.value.action === 'vm_snapshot'
     ? JSON.stringify({ vm_id: form.value.vm_id })
@@ -249,6 +329,7 @@ async function save() {
     cron_expr: form.value.cron_expr.trim(),
     action: form.value.action,
     params,
+    keep: form.value.keep,
     enabled: form.value.enabled
   }
   saving.value = true
@@ -303,6 +384,51 @@ async function runNow(row) {
   }
 }
 
+// ===== 执行历史抽屉 =====
+const drawerVisible = ref(false)
+const drawerTask = ref(null)
+const runs = ref([])
+const runsLoading = ref(false)
+const runsTotal = ref(0)
+const runsPage = ref(1)
+const runsPageSize = 20 // 与后端 ListRuns 默认页大小一致
+
+const drawerTitle = computed(() =>
+  drawerTask.value ? `执行历史 · ${drawerTask.value.name}` : '执行历史'
+)
+
+function openHistory(row) {
+  drawerTask.value = row
+  drawerVisible.value = true
+  runsPage.value = 1
+  runs.value = [] // 先清上一任务的残留，避免换任务时闪旧数据
+  loadRuns()
+}
+
+// 列表刷新（load）也会带着当前页码调这里，抽屉开着即同步最新历史
+async function loadRuns() {
+  if (!drawerTask.value) return
+  runsLoading.value = true
+  try {
+    // 返回 {total, page, page_size, items:[{id,task_name,started_at,finished_at,status,output}]}
+    const res = await http.get(`/crons/${drawerTask.value.id}/runs`, {
+      params: { page: runsPage.value, page_size: runsPageSize }
+    })
+    const d = (res.data && res.data.data) || {}
+    runs.value = d.items || []
+    runsTotal.value = Number(d.total) || 0
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取执行历史失败'))
+  } finally {
+    runsLoading.value = false
+  }
+}
+
+function onRunsPageChange(p) {
+  runsPage.value = p
+  loadRuns()
+}
+
 // ===== 删除 =====
 async function remove(row) {
   try {
@@ -342,5 +468,9 @@ onMounted(() => {
   color: var(--el-text-color-secondary, #909399);
   line-height: 1.5;
   margin-top: 4px;
+}
+.runs-pager {
+  margin-top: 12px;
+  justify-content: flex-end;
 }
 </style>

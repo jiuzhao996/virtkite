@@ -11,7 +11,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/virt"
@@ -37,13 +40,30 @@ const (
 const (
 	// defaultBackupDir 数据库备份默认输出目录（Scheduler.BackupDir 为空时使用）。
 	defaultBackupDir = "/home/jiuzhao/vmops/data/backup"
-	// backupKeep 保留最近 N 份备份，更老的按文件名（含时间戳，字典序即时间序）删除。
-	backupKeep = 7
 	// dbBackupTimeout mysqldump 最长执行时间，防容器假死把调度协程吊死。
 	dbBackupTimeout = 10 * time.Minute
 	// maxLookaheadDays Next 逐分钟探测的最大天数，防「永不匹配的表达式」（如 2 月 31 日）死循环。
 	maxLookaheadDays = 366
+	// snapshotPrefix 定时快照的命名前缀；保留份数清理只针对该前缀，手工快照不受影响。
+	snapshotPrefix = "cron-"
+	// maxRunOutput cron_runs.output 摘要的最大字符数（超出截断，与 model.CronRun 注释一致）。
+	maxRunOutput = 2000
+	// notifyErrLimit 失败通知消息里错误摘要的最大字符数。
+	notifyErrLimit = 200
+	// notifyTimeout 失败通知 webhook 的 HTTP 超时，防通知端挂死拖住调度协程。
+	notifyTimeout = 10 * time.Second
 )
+
+// DefaultKeep 保留份数默认值：任务未配置 Keep（<=0，含历史行零值）时的兜底，
+// 与 model.ScheduledTask.Keep 的 gorm default:7 一致。导出供 handler 创建任务时
+// 取同一默认值，避免两处硬编码漂移。
+const DefaultKeep = 7
+
+// NotifyURL 计划任务失败通知的 webhook 地址（飞书/钉钉等自定义机器人的 incoming 地址，
+// 收 {msg_type:"text", content:{text:...}} 结构）。由 main 启动时注入（如环境变量
+// CRON_NOTIFY_URL），为空表示不通知。用包级变量而非 Scheduler 字段：注入点与
+// routes.go 内部的调度器构造解耦，main 一行即可接线。
+var NotifyURL string
 
 // Spec 解析后的 cron 表达式，五个字段各自是「允许值」的升序去重集合。
 type Spec struct {
@@ -287,21 +307,51 @@ func (s *Scheduler) ExecuteNow(st model.ScheduledTask) error {
 	return s.execute(st)
 }
 
-// execute 执行单个任务并更新执行统计（LastRun/RunCount），返回业务错误供调用方记日志/回显。
-// 执行全程持锁（见 execMu），统计更新失败只记日志不阻断——下次执行仍会正常累计。
+// execute 执行单个任务：更新执行统计（LastRun/RunCount），写执行历史（cron_runs：
+// 开始插一行 running、结束回写 status/output 摘要），失败时经 NotifyURL 推送通知。
+// 执行全程持锁（见 execMu）；统计/历史写失败只记日志不阻断——下次执行仍会正常累计。
 func (s *Scheduler) execute(st model.ScheduledTask) error {
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
 
 	log.Printf("[cron] 执行计划任务 id=%d name=%s action=%s", st.ID, st.Name, st.Action)
+
+	// 执行历史：开始插一行 running（进程中断时残留的 running 行即中断痕迹，finished_at 为空）
+	run := model.CronRun{
+		TaskID:    st.ID,
+		TaskName:  st.Name,
+		StartedAt: time.Now(),
+		Status:    model.CronRunStatusRunning,
+	}
+	if cerr := s.DB.Create(&run).Error; cerr != nil {
+		log.Printf("[cron] 写执行历史（开始）失败 id=%d: %v", st.ID, cerr)
+	}
+
+	var summary string
 	var err error
 	switch st.Action {
 	case ActionVMSnapshot:
-		err = s.runVMSnapshot(st)
+		summary, err = s.runVMSnapshot(st)
 	case ActionDBBackup:
-		err = s.runDBBackup()
+		summary, err = s.runDBBackup(st)
 	default:
 		err = fmt.Errorf("未知动作类型 %q", st.Action)
+	}
+
+	finishedAt := time.Now()
+	run.FinishedAt = &finishedAt
+	if err != nil {
+		run.Status = model.CronRunStatusFailed
+		run.Output = truncateRunes(err.Error(), maxRunOutput)
+	} else {
+		run.Status = model.CronRunStatusSuccess
+		run.Output = truncateRunes(summary, maxRunOutput)
+	}
+	// 初始 Create 失败时 run.ID 为 0，Save 会退化成重新 INSERT 半截记录，故跳过
+	if run.ID != 0 {
+		if uerr := s.DB.Save(&run).Error; uerr != nil {
+			log.Printf("[cron] 写执行历史（结束）失败 id=%d run_id=%d: %v", st.ID, run.ID, uerr)
+		}
 	}
 
 	updates := map[string]interface{}{
@@ -311,49 +361,100 @@ func (s *Scheduler) execute(st model.ScheduledTask) error {
 	if uerr := s.DB.Model(&model.ScheduledTask{}).Where("id = ?", st.ID).Updates(updates).Error; uerr != nil {
 		log.Printf("[cron] 更新执行统计失败 id=%d: %v", st.ID, uerr)
 	}
+
+	if err != nil {
+		notifyFailure(st.Name, err.Error())
+	}
 	return err
 }
 
 // runVMSnapshot 执行定时快照：params JSON 形如 {"vm_id":14}，快照名 cron-<时间戳>。
-func (s *Scheduler) runVMSnapshot(st model.ScheduledTask) error {
+// 成功后按保留份数（st.Keep，<=0 视为 7）清理更老的 cron- 前缀快照。
+// 返回成果摘要供执行历史 output 使用。
+func (s *Scheduler) runVMSnapshot(st model.ScheduledTask) (string, error) {
 	var params struct {
 		VMID uint `json:"vm_id"`
 	}
 	if strings.TrimSpace(st.Params) == "" {
-		return fmt.Errorf("参数为空，vm_snapshot 需要 {\"vm_id\":N}")
+		return "", fmt.Errorf("参数为空，vm_snapshot 需要 {\"vm_id\":N}")
 	}
 	if err := json.Unmarshal([]byte(st.Params), &params); err != nil {
-		return fmt.Errorf("解析参数失败: %w", err)
+		return "", fmt.Errorf("解析参数失败: %w", err)
 	}
 	if params.VMID == 0 {
-		return fmt.Errorf("参数缺少有效的 vm_id")
+		return "", fmt.Errorf("参数缺少有效的 vm_id")
 	}
 	var vm model.VM
 	if err := s.DB.First(&vm, params.VMID).Error; err != nil {
-		return fmt.Errorf("虚拟机 %d 不存在: %w", params.VMID, err)
+		return "", fmt.Errorf("虚拟机 %d 不存在: %w", params.VMID, err)
 	}
-	snapName := "cron-" + time.Now().Format("20060102-150405")
+	snapName := snapshotPrefix + time.Now().Format("20060102-150405")
 	if err := s.Virt.CreateSnapshot(vm.Name, snapName, "计划任务自动快照"); err != nil {
-		return fmt.Errorf("创建快照失败: %w", err)
+		return "", fmt.Errorf("创建快照失败: %w", err)
 	}
 	log.Printf("[cron] 快照创建成功 vm=%s(%d) snapshot=%s", vm.Name, vm.ID, snapName)
-	return nil
+
+	summary := fmt.Sprintf("快照 %s 创建成功", snapName)
+	// 保留份数：超出部分的旧 cron- 快照按创建时间从老到新删除（best-effort，不阻断成功语义）
+	if removed := s.pruneVMSnapshots(vm.Name, keepOrDefault(st.Keep)); removed > 0 {
+		summary += fmt.Sprintf("，已清理过期快照 %d 份", removed)
+	}
+	return summary, nil
+}
+
+// pruneVMSnapshots 只保留最近 keep 份 cron- 前缀快照，更老的按创建时间从新到旧排序后
+// 删除（即最老的先删）。只动 snapshotPrefix 前缀，手工创建的快照不受影响。
+// 清理属 best-effort：列举失败或单个删除失败只记日志继续，不清理干净不影响本次
+// 快照已成功的语义。返回实际删除份数（供摘要文案）。
+func (s *Scheduler) pruneVMSnapshots(vmName string, keep int) int {
+	snaps, err := s.Virt.ListSnapshots(vmName)
+	if err != nil {
+		log.Printf("[cron] 列举快照失败 vm=%s: %v", vmName, err)
+		return 0
+	}
+	cronSnaps := make([]virt.SnapshotInfo, 0, len(snaps))
+	for _, sn := range snaps {
+		if strings.HasPrefix(sn.Name, snapshotPrefix) {
+			cronSnaps = append(cronSnaps, sn)
+		}
+	}
+	if len(cronSnaps) <= keep {
+		return 0
+	}
+	// 创建时间倒序（新的在前）；同秒冲突按名字字典序兜底，保证删除顺序确定
+	sort.Slice(cronSnaps, func(i, j int) bool {
+		if cronSnaps[i].CreationTime != cronSnaps[j].CreationTime {
+			return cronSnaps[i].CreationTime > cronSnaps[j].CreationTime
+		}
+		return cronSnaps[i].Name > cronSnaps[j].Name
+	})
+	removed := 0
+	for _, sn := range cronSnaps[keep:] {
+		if err := s.Virt.DeleteSnapshot(vmName, sn.Name); err != nil {
+			log.Printf("[cron] 清理过期快照失败 vm=%s snapshot=%s: %v", vmName, sn.Name, err)
+			continue
+		}
+		log.Printf("[cron] 已清理过期快照 vm=%s snapshot=%s", vmName, sn.Name)
+		removed++
+	}
+	return removed
 }
 
 // runDBBackup 执行数据库备份：docker exec 进 MySQL 容器跑 mysqldump，
-// 输出落 BackupDir/vmops-YYYYMMDD-HHMM.sql，并只保留最近 backupKeep 份。
-func (s *Scheduler) runDBBackup() error {
+// 输出落 BackupDir/vmops-YYYYMMDD-HHMM.sql，并只保留最近 keep（st.Keep，<=0 视为 7）份。
+// 返回成果摘要供执行历史 output 使用。
+func (s *Scheduler) runDBBackup(st model.ScheduledTask) (string, error) {
 	dir := s.BackupDir
 	if dir == "" {
 		dir = defaultBackupDir
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("创建备份目录失败: %w", err)
+		return "", fmt.Errorf("创建备份目录失败: %w", err)
 	}
 	outPath := filepath.Join(dir, "vmops-"+time.Now().Format("20060102-1504")+".sql")
 	f, err := os.Create(outPath)
 	if err != nil {
-		return fmt.Errorf("创建备份文件失败: %w", err)
+		return "", fmt.Errorf("创建备份文件失败: %w", err)
 	}
 	defer f.Close()
 
@@ -367,17 +468,18 @@ func (s *Scheduler) runDBBackup() error {
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("mysqldump 执行失败: %w（stderr: %s）", err, strings.TrimSpace(errBuf.String()))
+		return "", fmt.Errorf("mysqldump 执行失败: %w（stderr: %s）", err, strings.TrimSpace(errBuf.String()))
 	}
 	log.Printf("[cron] 数据库备份完成 file=%s", outPath)
 
-	s.pruneBackups(dir)
-	return nil
+	keep := keepOrDefault(st.Keep)
+	s.pruneBackups(dir, keep)
+	return fmt.Sprintf("备份完成 %s（已保留最近 %d 份）", outPath, keep), nil
 }
 
-// pruneBackups 只保留最近 backupKeep 份备份（文件名内嵌时间戳，字典序即时间序）。
+// pruneBackups 只保留最近 keep 份备份（文件名内嵌时间戳，字典序即时间序）。
 // 清理属 best-effort，失败只记日志——删不掉旧文件不影响本次备份的有效性。
-func (s *Scheduler) pruneBackups(dir string) {
+func (s *Scheduler) pruneBackups(dir string, keep int) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		log.Printf("[cron] 读取备份目录失败 dir=%s: %v", dir, err)
@@ -390,15 +492,64 @@ func (s *Scheduler) pruneBackups(dir string) {
 			backups = append(backups, name)
 		}
 	}
-	if len(backups) <= backupKeep {
+	if len(backups) <= keep {
 		return
 	}
 	sort.Strings(backups) // vmops-YYYYMMDD-HHMM.sql 字典序 == 时间序
-	for _, name := range backups[:len(backups)-backupKeep] {
+	for _, name := range backups[:len(backups)-keep] {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil {
 			log.Printf("[cron] 清理过期备份失败 file=%s: %v", name, err)
 			continue
 		}
 		log.Printf("[cron] 已清理过期备份 file=%s", name)
 	}
+}
+
+// keepOrDefault 归一化保留份数：未配置（<=0，含 gorm default 未生效的历史行零值）回退 DefaultKeep。
+func keepOrDefault(keep int) int {
+	if keep <= 0 {
+		return DefaultKeep
+	}
+	return keep
+}
+
+// truncateRunes 按字符（rune）数截断到 limit，超限以省略号收尾——错误消息常含中文，
+// 按字节截会切出半个字符的乱码。limit<=0 原样返回（防御）。
+func truncateRunes(s string, limit int) string {
+	if limit <= 0 || utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	rs := []rune(s)
+	return string(rs[:limit-1]) + "…"
+}
+
+// notifyFailure 任务失败时向 NotifyURL 推送文本消息（{msg_type:"text", content:{text:...}}，
+// 飞书自定义机器人的 text 格式，钉钉机器人加签名参数后兼容同一结构的最小子集）。
+// best-effort：任何失败只记日志，绝不影响任务执行结果与返回值；10 秒超时防通知端
+// 挂死拖住调度协程；日志不打印 URL（可能内嵌机器人 token 等凭据）。
+func notifyFailure(taskName, errMsg string) {
+	if NotifyURL == "" {
+		return
+	}
+	payload, err := json.Marshal(map[string]interface{}{
+		"msg_type": "text",
+		"content": map[string]string{
+			"text": fmt.Sprintf("[鸢航VirtKite] 计划任务失败: %s %s",
+				taskName, truncateRunes(errMsg, notifyErrLimit)),
+		},
+	})
+	if err != nil {
+		log.Printf("[cron] 失败通知报文序列化失败: %v", err)
+		return
+	}
+	client := &http.Client{Timeout: notifyTimeout}
+	resp, err := client.Post(NotifyURL, "application/json", bytes.NewReader(payload))
+	if err != nil {
+		log.Printf("[cron] 失败通知推送失败 task=%s: %v", taskName, err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// 读掉响应体归还连接（内容不关心，只记状态码供排障）
+	_, _ = io.Copy(io.Discard, resp.Body)
+	log.Printf("[cron] 失败通知已推送 task=%s status=%d", taskName, resp.StatusCode)
 }

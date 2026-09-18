@@ -16,6 +16,7 @@ import (
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/console"
+	"github.com/jiuzhao/vmops/service/cron"
 	monitor "github.com/jiuzhao/vmops/service/monitor"
 	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
@@ -156,6 +157,7 @@ func main() {
 	taskMgr := tasks.NewManager(db)
 	tasks.RegisterVMTasks(taskMgr)
 	tasks.RegisterAppTasks(taskMgr)
+	cron.NotifyURL = os.Getenv("CRON_NOTIFY_URL") // 计划任务失败通知（机器人 webhook，可空）
 	consoleRegistry := console.NewRegistry(db)
 	consoleRegistry.StartSweeper() // 启动过期清扫协程（内部 recover 兜底）
 

@@ -34,6 +34,35 @@
       </el-form>
       <p class="tip">以上配置持久化在数据库中，保存后立即生效，无需重启后端。</p>
     </el-card>
+
+    <!-- AI 设置（运维助手）：与「运行参数」独立保存，只提交 ai_* 三个键 -->
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">AI 设置（运维助手）</span>
+          <el-button type="primary" :loading="savingAI" @click="saveAI">保存</el-button>
+        </div>
+      </template>
+      <el-form label-width="170px" style="max-width: 560px">
+        <el-form-item label="API 地址">
+          <el-input v-model="ai.base_url" placeholder="如 https://api.deepseek.com/v1" clearable />
+        </el-form-item>
+        <el-form-item label="API Key">
+          <!-- GET 返回明文，表单用密码框掩码展示；new-password 防浏览器把 Key 当登录口令自动填充 -->
+          <el-input
+            v-model="ai.api_key"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            placeholder="粘贴服务商提供的 API Key"
+          />
+        </el-form-item>
+        <el-form-item label="模型名">
+          <el-input v-model="ai.model" placeholder="如 deepseek-chat" clearable />
+        </el-form-item>
+      </el-form>
+      <p class="tip">配置后可在「AI 助手」页使用智能问答；Key 保存在服务端，不会下发到浏览器。</p>
+    </el-card>
   </div>
 </template>
 
@@ -54,6 +83,10 @@ const writable = reactive({
   vnc_stale_min: 60
 })
 
+// AI 设置（运维助手）：ai_base_url / ai_api_key / ai_model 三个键，独立保存
+const savingAI = ref(false)
+const ai = reactive({ base_url: '', api_key: '', model: '' })
+
 async function load() {
   loading.value = true
   try {
@@ -62,6 +95,12 @@ async function load() {
     if (w.default_storage_pool) writable.default_storage_pool = w.default_storage_pool
     if (w.vnc_token_ttl_min) writable.vnc_token_ttl_min = Number(w.vnc_token_ttl_min) || writable.vnc_token_ttl_min
     if (w.vnc_stale_min) writable.vnc_stale_min = Number(w.vnc_stale_min) || writable.vnc_stale_min
+    // 快照含 ai_* 当前值（api_key 为明文，表单以密码框掩码展示）；
+    // 兼容键位于 writable 节或快照顶层两种返回形态
+    const snap = res.data || {}
+    ai.base_url = w.ai_base_url ?? snap.ai_base_url ?? ''
+    ai.api_key = w.ai_api_key ?? snap.ai_api_key ?? ''
+    ai.model = w.ai_model ?? snap.ai_model ?? ''
   } catch (e) {
     ElMessage.error('获取系统设置失败')
   } finally {
@@ -87,6 +126,32 @@ async function saveWritable() {
     ElMessage.error(errMsg(e, '保存失败'))
   } finally {
     saving.value = false
+  }
+}
+
+// AI 设置单独保存：只提交 ai_* 三个键，不携带「运行参数」，互不覆盖
+async function saveAI() {
+  const baseUrl = ai.base_url.trim()
+  const apiKey = ai.api_key.trim()
+  const model = ai.model.trim()
+  if (!baseUrl && !apiKey && !model) {
+    ElMessage.warning('请先填写 AI 配置')
+    return
+  }
+  // 三项为一组生效配置，缺任一项时后端校验也会 400，这里提前给出可读提示
+  if (!baseUrl || !apiKey || !model) {
+    ElMessage.warning('API 地址、API Key、模型名需完整填写')
+    return
+  }
+  savingAI.value = true
+  try {
+    await api.updateSettings({ ai_base_url: baseUrl, ai_api_key: apiKey, ai_model: model })
+    ElMessage.success('AI 设置已保存并生效')
+    load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存 AI 设置失败'))
+  } finally {
+    savingAI.value = false
   }
 }
 

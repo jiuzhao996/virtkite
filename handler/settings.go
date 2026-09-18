@@ -76,13 +76,53 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		DefaultStoragePool *string `json:"default_storage_pool"`
 		VNCTokenTTLMin     *int    `json:"vnc_token_ttl_min"`
 		VNCStaleMin        *int    `json:"vnc_stale_min"`
+		AIBaseURL          *string `json:"ai_base_url"`
+		AIAPIKey           *string `json:"ai_api_key"`
+		AIModel            *string `json:"ai_model"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
 
-	updated := make([]string, 0, 3)
+	updated := make([]string, 0, 6)
+	// AI 三键（v3 批次 B）：同样的「Validate 400 固定文案 / Set DB 错误收口」分层
+	if req.AIBaseURL != nil {
+		if err := setting.Validate(setting.KeyAIBaseURL, *req.AIBaseURL); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.Settings.Set(setting.KeyAIBaseURL, *req.AIBaseURL); err != nil {
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存 AI 设置失败")
+			return
+		}
+		updated = append(updated, "AI 地址")
+	}
+	if req.AIAPIKey != nil {
+		if err := setting.Validate(setting.KeyAIAPIKey, *req.AIAPIKey); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.Settings.Set(setting.KeyAIAPIKey, *req.AIAPIKey); err != nil {
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存 AI 设置失败")
+			return
+		}
+		updated = append(updated, "AI Key")
+	}
+	if req.AIModel != nil {
+		if err := setting.Validate(setting.KeyAIModel, *req.AIModel); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.Settings.Set(setting.KeyAIModel, *req.AIModel); err != nil {
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存 AI 设置失败")
+			return
+		}
+		updated = append(updated, "AI 模型")
+	}
 	if req.DefaultStoragePool != nil {
 		if err := setting.Validate(setting.KeyDefaultStoragePool, *req.DefaultStoragePool); err != nil {
 			Fail(c, http.StatusBadRequest, err.Error()) // 校验错误是固定中文文案，可回显
