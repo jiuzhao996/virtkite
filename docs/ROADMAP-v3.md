@@ -73,8 +73,32 @@
 
 ## 批次 M：UI 设计对标升级（1Panel 前端设计系统）★用户点名
 
-- 研究中（子代理正在提取 1Panel 前端设计 tokens 与页面范式），结论回来后细化
-- 初步方向：概览页大卡布局、应用商店卡片与分类筛选交互、列表页工具栏范式、暗色模式可行性
+> 子代理已从 1Panel 前端源码（frontend/src/styles/element.scss 等）提取实测设计 tokens。
+
+### M1：设计 tokens 覆盖层（一个 global.scss，全站质感一次到位，零逻辑风险）
+- 品牌青绿 #2a9da5 做满 `--el-color-primary-light-1~9` 九档梯度（1Panel 用 #005eeb 做满整套，是其质感的核心来源）
+- 表格规范：表头 50px 高 / 15px 加粗 / #fafafa 底；行高 52px；分页右对齐
+- dialog 圆角 5px；抽屉头 17px 加粗 + 下边框；`.input-help` 帮助文字 12px；统计数字 24px / 标签 14px
+- el-card **去边框改浅阴影**（1Panel 卡片无边框）
+
+### M2：列表页三段式统一（PageShell 组件）
+- 封 `PageShell.vue`：标题 + 左「新建/批量操作」右「搜索/刷新」+ 主体三段式，套 VmList/ImageList/TaskList/SessionList——一致性收益最大
+- 工具栏规范：左侧 primary 新建 + el-button-group 批量（无选中禁用），右侧搜索 + 刷新
+
+### M3：应用商店卡片与筛选交互（对齐批次 A 一起做）
+- 顶部横排分类按钮（激活 primary/未激活 plain）+ 右侧搜索框
+- 卡片：60px 方图标 hover 放大、名称 + 已安装 tag、右上角 plain 安装钮、描述 2 行截断
+- 详情用 **50% 宽 el-drawer**（destroy-on-close），安装再开子抽屉——确立「详情/复杂表单用抽屉、轻确认用 dialog」分工
+
+### M4：统计卡 token 化
+- 24px 数字 + 14px 标签 + 整卡可点 + hover 箭头（Dashboard 统计行已有雏形，补齐梯度色与字号规范）
+
+### M5：页内导航 RouterButton 化
+- 设置页 / AuditList 的 el-tabs 统一为「顶部按钮组切换」小组件（对齐 1Panel 设置页模式）
+
+### 明确不做
+- 暗色模式（需全站变量梳理，投入产出低）
+- 多标签页导航体系（大重构）
 
 ## 增补批次（第二轮研究 + 用户补充确认后追加）
 
