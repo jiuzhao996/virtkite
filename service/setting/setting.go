@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,9 @@ const (
 	KeyDefaultStoragePool = "default_storage_pool" // 未指定存储池时使用的默认池名
 	KeyVNCTokenTTLMin     = "vnc_token_ttl_min"    // VNC 访问 token 有效期（分钟）
 	KeyVNCStaleMin        = "vnc_stale_min"        // VNC 会话无活动判定过期时长（分钟）
+	KeyAIBaseURL          = "ai_base_url"          // OpenAI 兼容 API 地址（如 https://api.deepseek.com/v1）
+	KeyAIAPIKey           = "ai_api_key"           // AI 服务 API Key（服务端保存，永不下发前端）
+	KeyAIModel            = "ai_model"             // 模型名（如 deepseek-chat / glm-4）
 )
 
 // 各键默认值（与配置化之前的硬编码行为一致）。
@@ -131,6 +135,16 @@ func Validate(key, value string) error {
 		return validateRange(value, 1, 60, "VNC token 有效期")
 	case KeyVNCStaleMin:
 		return validateRange(value, 5, 1440, "VNC 会话过期判定时长")
+	case KeyAIBaseURL, KeyAIModel:
+		if len(strings.TrimSpace(value)) == 0 || len(value) > 300 {
+			return fmt.Errorf("取值长度需在 1-300 之间")
+		}
+		return nil
+	case KeyAIAPIKey:
+		if len(strings.TrimSpace(value)) == 0 || len(value) > 300 {
+			return fmt.Errorf("取值长度需在 1-300 之间")
+		}
+		return nil
 	default:
 		return fmt.Errorf("不支持的配置项: %s", key)
 	}
