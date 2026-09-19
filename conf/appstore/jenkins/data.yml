@@ -1,0 +1,8 @@
+# Jenkins 应用包 —— 应用级元数据
+name: jenkins
+title: Jenkins
+category: devops
+tags:
+  - devops
+  - CI/CD
+description: Jenkins LTS 持续集成/持续交付服务。以普通容器运行（不挂 docker.sock、不提权），数据落命名卷 jenkins_home；首次访问用容器日志里的初始密码解锁。

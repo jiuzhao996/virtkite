@@ -1,0 +1,17 @@
+# Open WebUI 1.0.0 —— 版本级表单定义（OpenAI 两项留空即先当纯聊天界面用，进入设置再补）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT
+      label: 服务端口
+      type: number
+      default: 8080
+      required: true
+      rule: paramPort
+    - envKey: PANEL_OPENAI_API_BASE_URL
+      label: OpenAI 兼容 API 地址（可留空后配）
+      type: text
+      required: false
+    - envKey: PANEL_OPENAI_API_KEY
+      label: OpenAI API Key（可留空后配）
+      type: password
+      required: false

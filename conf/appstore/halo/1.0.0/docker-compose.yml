@@ -1,0 +1,16 @@
+# Halo —— 工作目录 /root/.halo2 落安装目录 data/（H2 库/主题/附件/备份全在里面）；
+# 健康检查探测 actuator readiness（官方 compose 同款）
+services:
+  halo:
+    image: halohub/halo:2.20
+    ports:
+      - "${PANEL_APP_PORT}:8090"
+    volumes:
+      - ./data:/root/.halo2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/actuator/health/readiness"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped

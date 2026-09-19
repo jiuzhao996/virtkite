@@ -1,0 +1,8 @@
+# qBittorrent 应用包 —— 应用级元数据
+name: qbittorrent
+title: qBittorrent
+category: media
+tags:
+  - media
+  - BT 下载
+description: qBittorrent BT/磁力下载工具（LinuxServer 打包，WebUI 操作）。6881 为 BT 传输端口（TCP/UDP），下载内容落在安装目录 data/downloads 下；首次登录的临时密码见容器日志。

@@ -1,0 +1,9 @@
+# Memos 1.0.0 —— 版本级表单定义（SQLite 免外部数据库，仅暴露一个端口）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT
+      label: 服务端口
+      type: number
+      default: 5230
+      required: true
+      rule: paramPort

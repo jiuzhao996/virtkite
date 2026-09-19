@@ -1,0 +1,8 @@
+# code-server 应用包 —— 应用级元数据
+name: code-server
+title: code-server
+category: devtools
+tags:
+  - devtools
+  - 在线 IDE
+description: 浏览器里的 VS Code（LinuxServer 打包）。默认工作目录 /config/workspace，数据与配置落在安装目录 data/ 下。

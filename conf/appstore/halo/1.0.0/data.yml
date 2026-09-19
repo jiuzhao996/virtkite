@@ -1,0 +1,9 @@
+# Halo 1.0.0 —— 版本级表单定义（内置 H2 数据库，工作目录 ~/.halo2 映射到安装目录 data/）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT
+      label: 服务端口
+      type: number
+      default: 8090
+      required: true
+      rule: paramPort

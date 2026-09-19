@@ -1,0 +1,24 @@
+# PostgreSQL 1.0.0 —— 版本级表单定义（密码项预置随机占位串，安装时可改）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT
+      label: 服务端口
+      type: number
+      default: 5432
+      required: true
+      rule: paramPort
+    - envKey: PANEL_POSTGRES_USER
+      label: 超级用户名
+      type: text
+      default: postgres
+      required: true
+    - envKey: PANEL_POSTGRES_PASSWORD
+      label: 超级用户密码
+      type: password
+      default: Pg7kXw2Qm9Rv4NbT
+      required: true
+    - envKey: PANEL_POSTGRES_DB
+      label: 初始化数据库名（可选）
+      type: text
+      default: appdb
+      required: false

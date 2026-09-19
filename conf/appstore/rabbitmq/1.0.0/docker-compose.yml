@@ -1,0 +1,20 @@
+# RabbitMQ —— management 镜像自带管理插件；账号仅在数据目录为空时创建，
+# 健康检查 rabbitmq-diagnostics ping 就绪后才算健康
+services:
+  rabbitmq:
+    image: rabbitmq:4-management
+    ports:
+      - "${PANEL_APP_PORT_AMQP}:5672"
+      - "${PANEL_APP_PORT_MGMT}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${PANEL_RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${PANEL_RABBITMQ_DEFAULT_PASS}
+    volumes:
+      - ./data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped

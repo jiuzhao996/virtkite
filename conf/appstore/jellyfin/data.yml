@@ -1,0 +1,8 @@
+# Jellyfin 应用包 —— 应用级元数据
+name: jellyfin
+title: Jellyfin
+category: media
+tags:
+  - media
+  - 影音库
+description: 自由开源的多媒体服务器，管理/转码/串流本地电影剧集音乐。媒体目录默认挂安装目录 data/media，可在安装表单改为宿主机任意媒体路径。

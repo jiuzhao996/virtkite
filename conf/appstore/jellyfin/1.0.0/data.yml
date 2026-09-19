@@ -1,0 +1,14 @@
+# Jellyfin 1.0.0 —— 版本级表单定义（媒体目录默认安装目录 data/media，可改宿主机绝对路径）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT_HTTP
+      label: HTTP 端口
+      type: number
+      default: 8096
+      required: true
+      rule: paramPort
+    - envKey: PANEL_MEDIA_DIR
+      label: 媒体目录（宿主机路径）
+      type: text
+      default: ./data/media
+      required: false

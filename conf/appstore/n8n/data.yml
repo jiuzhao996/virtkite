@@ -1,0 +1,8 @@
+# n8n 应用包 —— 应用级元数据
+name: n8n
+title: n8n
+category: devops
+tags:
+  - devops
+  - 工作流自动化
+description: 开源工作流自动化平台，400+ 节点串联 API 与服务。内置 SQLite 存储，数据落在安装目录 data/ 下。

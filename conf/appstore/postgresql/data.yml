@@ -1,0 +1,8 @@
+# PostgreSQL 应用包 —— 应用级元数据
+name: postgresql
+title: PostgreSQL
+category: database
+tags:
+  - database
+  - 关系型数据库
+description: PostgreSQL 16 关系型数据库。超级用户与业务库在安装时指定，数据落在安装目录 data/ 下。

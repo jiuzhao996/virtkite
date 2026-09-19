@@ -1,0 +1,9 @@
+# Memos —— SQLite 数据落容器内 /var/opt/memos，映射到安装目录 data/
+services:
+  memos:
+    image: neosmemo/memos:stable
+    ports:
+      - "${PANEL_APP_PORT}:5230"
+    volumes:
+      - ./data:/var/opt/memos
+    restart: unless-stopped

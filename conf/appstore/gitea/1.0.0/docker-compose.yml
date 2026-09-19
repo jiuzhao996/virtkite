@@ -1,0 +1,15 @@
+# Gitea —— 官方社区镜像（非商业版），SQLite 数据与仓库全部落安装目录 data/；
+# SSH_PORT 告知 Web 界面对外展示的 git SSH 端口（容器内固定 22，由宿主机端口映射对外）
+services:
+  gitea:
+    image: gitea/gitea:latest
+    environment:
+      USER_UID: "1000"
+      USER_GID: "1000"
+      GITEA__server__SSH_PORT: ${PANEL_APP_PORT_SSH}
+    ports:
+      - "${PANEL_APP_PORT_HTTP}:3000"
+      - "${PANEL_APP_PORT_SSH}:22"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

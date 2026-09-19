@@ -1,0 +1,25 @@
+# MinIO 1.0.0 —— 版本级表单定义（Root 用户至少 3 位、密码至少 8 位，为镜像强制约束）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT_API
+      label: API 端口
+      type: number
+      default: 9000
+      required: true
+      rule: paramPort
+    - envKey: PANEL_APP_PORT_CONSOLE
+      label: 控制台端口
+      type: number
+      default: 9001
+      required: true
+      rule: paramPort
+    - envKey: PANEL_MINIO_ROOT_USER
+      label: Root 用户名
+      type: text
+      default: minioadmin
+      required: true
+    - envKey: PANEL_MINIO_ROOT_PASSWORD
+      label: Root 密码（至少 8 位）
+      type: password
+      default: Mn8sJh3Wq6Zp5KdF
+      required: true

@@ -88,6 +88,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	recycleHandler := NewVMRecycleHandler(deps.DB, deps.Virt)
 	toolboxHandler := NewToolboxHandler(deps.DB, dockerx.New(), "/home/jiuzhao/vmops/data")
 	imageMarketHandler := NewImageMarketHandler(deps.DB, deps.Tasks)
+	containerTerminalHandler := NewContainerTerminalHandler(deps.Sessions)
 	hostHandler := NewHostHandler(deps.DB)
 	imageHandler := NewImageHandler(deps.DB, deps.Tasks)
 	taskHandler := NewTaskHandler(deps.DB, deps.Tasks)
@@ -261,6 +262,25 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		docker.POST("/containers/:id/:action", dockerHandler.ContainerAction)
 		docker.DELETE("/containers/:id", dockerHandler.RemoveContainer)
 		docker.GET("/containers/:id/logs", dockerHandler.ContainerLogs)
+		// 容器终端（v3.2 R2：WS ↔ Docker Engine API exec TTY 流；viewer 由组内 NonViewerMiddleware 403）
+		docker.GET("/containers/:id/terminal", containerTerminalHandler.Connect)
+		// 容器详情 / 实时统计 / 全量统计（v3.2 R1/R4）
+		docker.GET("/containers/:id/inspect", dockerHandler.InspectContainer)
+		docker.GET("/containers/:id/stats", dockerHandler.ContainerStats)
+		docker.GET("/stats", dockerHandler.StatsAll)
+		docker.POST("/images/pull", dockerHandler.PullImage)
+		docker.POST("/prune", dockerHandler.Prune)
+		// 网络与卷管理（v3.2 R9/R10）
+		docker.GET("/networks", dockerHandler.ListNetworks)
+		docker.POST("/networks", dockerHandler.CreateNetwork)
+		docker.DELETE("/networks/:name", dockerHandler.RemoveNetwork)
+		docker.GET("/volumes", dockerHandler.ListVolumes)
+		docker.POST("/volumes", dockerHandler.CreateVolume)
+		docker.POST("/volumes/prune", dockerHandler.PruneVolumes)
+		docker.DELETE("/volumes/:name", dockerHandler.RemoveVolume)
+		// 编排项目（v3.2：compose ls + 项目级启停）
+		docker.GET("/compose", dockerHandler.ComposeList)
+		docker.POST("/compose/:name/:action", dockerHandler.ComposeAction)
 		docker.GET("/images", dockerHandler.ListImages)
 		docker.DELETE("/images/:id", dockerHandler.RemoveImage)
 	}

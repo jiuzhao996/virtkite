@@ -1,0 +1,8 @@
+# Halo 应用包 —— 应用级元数据
+name: halo
+title: Halo
+category: cms
+tags:
+  - cms
+  - 博客
+description: 一款好用的开源建站工具（博客/文档/社区站）。默认内置 H2 数据库免外部依赖，数据落在安装目录 data/ 下；首次访问 Web 完成初始化向导。

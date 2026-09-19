@@ -1,0 +1,8 @@
+# Open WebUI 应用包 —— 应用级元数据
+name: open-webui
+title: Open WebUI
+category: ai
+tags:
+  - ai
+  - 大模型
+description: 自托管 AI 对话前端（原 Ollama WebUI）。OpenAI 兼容 API 可留空待装后在界面里补配，数据落在安装目录 data/ 下。

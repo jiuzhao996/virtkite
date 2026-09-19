@@ -1,0 +1,8 @@
+# RabbitMQ 应用包 —— 应用级元数据
+name: rabbitmq
+title: RabbitMQ
+category: middleware
+tags:
+  - middleware
+  - 消息队列
+description: RabbitMQ 4 消息队列（自带管理插件）。5672 为 AMQP 客户端端口，15672 为 Web 管理控制台，数据落在安装目录 data/ 下。

@@ -1,0 +1,8 @@
+# Memos 应用包 —— 应用级元数据
+name: memos
+title: Memos
+category: tools
+tags:
+  - tools
+  - 笔记
+description: 轻量级自托管备忘录/笔记（类 Flomo），内置 SQLite 秒级启动，数据落在安装目录 data/ 下。

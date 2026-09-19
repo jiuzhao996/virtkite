@@ -1,0 +1,16 @@
+# code-server —— /config 整目录落安装目录 data/（含工作区 workspace 与用户配置）；
+# DEFAULT_WORKSPACE 指定打开时的默认工作目录
+services:
+  code-server:
+    image: linuxserver/code-server:latest
+    ports:
+      - "${PANEL_APP_PORT}:8443"
+    environment:
+      PUID: ${PANEL_PUID}
+      PGID: ${PANEL_PGID}
+      TZ: ${PANEL_TZ}
+      PASSWORD: ${PANEL_CODE_SERVER_PASSWORD}
+      DEFAULT_WORKSPACE: /config/workspace
+    volumes:
+      - ./data:/config
+    restart: unless-stopped

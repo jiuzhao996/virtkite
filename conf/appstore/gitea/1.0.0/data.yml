@@ -1,0 +1,15 @@
+# Gitea 1.0.0 —— 版本级表单定义（首次访问 Web 进入安装向导，数据库选 SQLite 即零依赖起步）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT_HTTP
+      label: HTTP 端口
+      type: number
+      default: 3000
+      required: true
+      rule: paramPort
+    - envKey: PANEL_APP_PORT_SSH
+      label: SSH 端口
+      type: number
+      default: 222
+      required: true
+      rule: paramPort

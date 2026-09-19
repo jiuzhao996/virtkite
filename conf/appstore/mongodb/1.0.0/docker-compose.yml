@@ -1,0 +1,18 @@
+# MongoDB —— root 账号仅在数据目录为空时初始化；健康检查经 mongosh ping 探活
+services:
+  mongodb:
+    image: mongo:8
+    ports:
+      - "${PANEL_APP_PORT}:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${PANEL_MONGO_ROOT_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${PANEL_MONGO_ROOT_PASSWORD}
+    volumes:
+      - ./data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped

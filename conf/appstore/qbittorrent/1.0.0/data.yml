@@ -1,0 +1,30 @@
+# qBittorrent 1.0.0 —— 版本级表单定义（首次登录密码为容器日志打印的临时密码）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT_WEBUI
+      label: WebUI 端口
+      type: number
+      default: 8085
+      required: true
+      rule: paramPort
+    - envKey: PANEL_APP_PORT_TORRENTING
+      label: BT 传输端口
+      type: number
+      default: 6881
+      required: true
+      rule: paramPort
+    - envKey: PANEL_PUID
+      label: PUID（运行用户 UID）
+      type: text
+      default: 1000
+      required: false
+    - envKey: PANEL_PGID
+      label: PGID（运行用户 GID）
+      type: text
+      default: 1000
+      required: false
+    - envKey: PANEL_TZ
+      label: 时区
+      type: text
+      default: Asia/Shanghai
+      required: false

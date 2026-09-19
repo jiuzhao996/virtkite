@@ -1,0 +1,24 @@
+# n8n 1.0.0 —— 版本级表单定义（安全 Cookie 默认关闭以支持 http 直连，走 https/反代时开启）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT
+      label: 服务端口
+      type: number
+      default: 5678
+      required: true
+      rule: paramPort
+    - envKey: PANEL_N8N_SECURE_COOKIE
+      label: 安全 Cookie
+      type: select
+      default: "false"
+      required: false
+      values:
+        - label: 关闭（HTTP 直接访问，默认）
+          value: "false"
+        - label: 开启（HTTPS 或反向代理访问）
+          value: "true"
+    - envKey: PANEL_TIMEZONE
+      label: 时区
+      type: text
+      default: Asia/Shanghai
+      required: false

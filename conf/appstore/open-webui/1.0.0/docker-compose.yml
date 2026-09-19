@@ -1,0 +1,13 @@
+# Open WebUI —— 数据（SQLite + 上传文件 + 向量库）落安装目录 data/；
+# OpenAI 两项留空不影响启动，进入 Web 界面「设置 - 外部连接」可随时补配
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    ports:
+      - "${PANEL_APP_PORT}:8080"
+    environment:
+      OPENAI_API_BASE_URL: ${PANEL_OPENAI_API_BASE_URL}
+      OPENAI_API_KEY: ${PANEL_OPENAI_API_KEY}
+    volumes:
+      - ./data:/app/backend/data
+    restart: unless-stopped

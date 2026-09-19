@@ -1,0 +1,8 @@
+# Gitea 应用包 —— 应用级元数据
+name: gitea
+title: Gitea
+category: devops
+tags:
+  - devops
+  - 代码托管
+description: 轻量级自托管 Git 服务（官方社区版），内置 SQLite 免外部数据库。HTTP 端口访问 Web，SSH 端口用于 git clone/push，数据落在安装目录 data/ 下。

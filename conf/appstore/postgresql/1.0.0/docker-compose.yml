@@ -1,0 +1,20 @@
+# PostgreSQL —— 数据目录 ./data:/var/lib/postgresql/data；
+# 健康检查经 pg_isready 探活（$$ 由容器内 shell 展开，避免被 compose 先行插值）
+services:
+  postgresql:
+    image: postgres:16-alpine
+    ports:
+      - "${PANEL_APP_PORT}:5432"
+    environment:
+      POSTGRES_USER: ${PANEL_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${PANEL_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${PANEL_POSTGRES_DB}
+    volumes:
+      - ./data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped

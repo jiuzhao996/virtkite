@@ -1,0 +1,12 @@
+# Jellyfin —— config/cache 落安装目录 data/ 下，媒体目录以只读方式挂进 /media；
+# 镜像自带健康检查，无需另配
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    ports:
+      - "${PANEL_APP_PORT_HTTP}:8096"
+    volumes:
+      - ./data/config:/config
+      - ./data/cache:/cache
+      - ${PANEL_MEDIA_DIR}:/media:ro
+    restart: unless-stopped

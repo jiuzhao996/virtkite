@@ -1,0 +1,13 @@
+# Jenkins 1.0.0 —— 版本级表单定义（初始管理员密码见容器日志 / secrets/initialAdminPassword）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT
+      label: 服务端口
+      type: number
+      default: 8080
+      required: true
+      rule: paramPort
+    - envKey: PANEL_JENKINS_JAVA_OPTS
+      label: JVM 参数（可留空）
+      type: text
+      required: false

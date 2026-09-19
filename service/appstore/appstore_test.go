@@ -1,5 +1,5 @@
 // appstore_test.go 覆盖：迷你 yaml 解析器、ValidateFields 各分支、版本比较、
-// 以及 conf/appstore 内置 6 应用包的完整性（可解析/compose 存在/字段规范）。
+// 以及 conf/appstore 内置 20 应用包的完整性（可解析/compose 存在/字段规范）。
 package appstore
 
 import (
@@ -294,7 +294,7 @@ func TestLatestVersion(t *testing.T) {
 	}
 }
 
-// TestRepoPackagesCompleteness 内置 6 应用包完整性：可解析、compose 存在、字段规范。
+// TestRepoPackagesCompleteness 内置 20 应用包完整性：可解析、compose 存在、字段规范。
 // 这是磁盘目录契约的回归测试，新增应用包时应把 key 加进 expectedKeys。
 func TestRepoPackagesCompleteness(t *testing.T) {
 	chdirRepoRoot(t)
@@ -306,6 +306,21 @@ func TestRepoPackagesCompleteness(t *testing.T) {
 		"wordpress":   "WordPress",
 		"portainer":   "Portainer CE",
 		"uptime-kuma": "Uptime Kuma",
+		// v3.2 批次 S 新增 14 包
+		"postgresql":  "PostgreSQL",
+		"minio":       "MinIO",
+		"gitea":       "Gitea",
+		"mongodb":     "MongoDB",
+		"rabbitmq":    "RabbitMQ",
+		"open-webui":  "Open WebUI",
+		"n8n":         "n8n",
+		"code-server": "code-server",
+		"it-tools":    "IT Tools",
+		"jenkins":     "Jenkins",
+		"halo":        "Halo",
+		"memos":       "Memos",
+		"jellyfin":    "Jellyfin",
+		"qbittorrent": "qBittorrent",
 	}
 
 	metas, err := List()

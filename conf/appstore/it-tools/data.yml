@@ -1,0 +1,8 @@
+# IT Tools 应用包 —— 应用级元数据
+name: it-tools
+title: IT Tools
+category: devtools
+tags:
+  - devtools
+  - 开发者工具箱
+description: 面向开发者的在线工具箱（加密/转换/格式化/文本处理等 100+ 小工具），纯静态零配置，打开即用。

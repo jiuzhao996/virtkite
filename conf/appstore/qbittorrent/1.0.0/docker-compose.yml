@@ -1,0 +1,19 @@
+# qBittorrent —— WEBUI_PORT/TORRENTING_PORT 同时决定容器内监听端口与宿主机映射端口（两端一致，
+# LinuxServer 官方 compose 同款写法）；BT 传输端口需 TCP+UDP 双协议映射；首次登录临时密码见 docker logs
+services:
+  qbittorrent:
+    image: linuxserver/qbittorrent:latest
+    ports:
+      - "${PANEL_APP_PORT_WEBUI}:${PANEL_APP_PORT_WEBUI}"
+      - "${PANEL_APP_PORT_TORRENTING}:${PANEL_APP_PORT_TORRENTING}"
+      - "${PANEL_APP_PORT_TORRENTING}:${PANEL_APP_PORT_TORRENTING}/udp"
+    environment:
+      PUID: ${PANEL_PUID}
+      PGID: ${PANEL_PGID}
+      TZ: ${PANEL_TZ}
+      WEBUI_PORT: ${PANEL_APP_PORT_WEBUI}
+      TORRENTING_PORT: ${PANEL_APP_PORT_TORRENTING}
+    volumes:
+      - ./data:/config
+      - ./data/downloads:/downloads
+    restart: unless-stopped

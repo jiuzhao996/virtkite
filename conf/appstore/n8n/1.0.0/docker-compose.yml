@@ -1,0 +1,20 @@
+# n8n —— 工作流与凭据（含加密钥）落安装目录 data/；
+# SECURE_COOKIE 默认关闭支持 http 直连；健康检查探测内置 /healthz
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "${PANEL_APP_PORT}:5678"
+    environment:
+      N8N_SECURE_COOKIE: ${PANEL_N8N_SECURE_COOKIE}
+      TZ: ${PANEL_TIMEZONE}
+      GENERIC_TIMEZONE: ${PANEL_TIMEZONE}
+    volumes:
+      - ./data:/home/node/.n8n
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped

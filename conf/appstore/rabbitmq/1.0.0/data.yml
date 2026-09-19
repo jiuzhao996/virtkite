@@ -1,0 +1,25 @@
+# RabbitMQ 1.0.0 —— 版本级表单定义（密码项预置随机占位串，安装时可改）
+additionalProperties:
+  formFields:
+    - envKey: PANEL_APP_PORT_AMQP
+      label: AMQP 端口
+      type: number
+      default: 5672
+      required: true
+      rule: paramPort
+    - envKey: PANEL_APP_PORT_MGMT
+      label: 管理控制台端口
+      type: number
+      default: 15672
+      required: true
+      rule: paramPort
+    - envKey: PANEL_RABBITMQ_DEFAULT_USER
+      label: 默认用户名
+      type: text
+      default: admin
+      required: true
+    - envKey: PANEL_RABBITMQ_DEFAULT_PASS
+      label: 默认用户密码
+      type: password
+      default: Rb6qNu3Mp9Kd2XsG
+      required: true
