@@ -5,9 +5,10 @@
 // 复用 golang.org/x/crypto/ssh（与 terminal.go 同一依赖，不引入新库）。
 //
 // 安全约定：
-//   - HostKeyCallback 沿用 terminal.go 既有约定（InsecureIgnoreHostKey）：目标是平台
-//     自建、IP 由 DHCP 动态分配的短生命周期虚拟机，重建即换主机密钥，维护 known_hosts
-//     不可操作；目标范围由调用方（handler 层 validateSSHTarget 白名单）收敛到本机私有网段。
+//   - HostKeyCallback 走 TOFU 主机密钥校验（hostkey.go，等价 openssh 首连记录
+//     known_hosts、后续比对指纹）：目标是平台自建、IP 由 DHCP 动态分配的短生命周期
+//     虚拟机，重建即换主机密钥，人工核对 known_hosts 不可操作，故采用自动 TOFU；
+//     目标范围另由调用方（handler 层 validateSSHTarget 白名单）收敛到本机私有网段。
 //   - VM 内命令的路径参数必须经 ShellQuote 包裹后再拼接，禁止任何用户输入直接拼进命令串。
 package vmssh
 
@@ -63,9 +64,9 @@ func RunWithStdin(opts Options, cmd string, stdin io.Reader, timeout time.Durati
 	config := &ssh.ClientConfig{
 		User: opts.User,
 		Auth: []ssh.AuthMethod{ssh.Password(opts.Password)},
-		// 主机密钥校验策略与 handler/terminal.go 一致，论证见包注释（安全约定）；
-		// 中间人风险由调用方的 validateSSHTarget 私有网段白名单收敛。
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		// 主机密钥 TOFU 校验（与 handler/terminal.go 同一回调工厂），论证见包注释（安全约定）；
+		// 中间人风险由指纹比对 + 调用方的 validateSSHTarget 私有网段白名单双重收敛。
+		HostKeyCallback: TOFUHostKeyCallback(),
 		Timeout:         8 * time.Second, // TCP 拨号超时（ssh.Dial 内部用它做 net.DialTimeout）
 	}
 

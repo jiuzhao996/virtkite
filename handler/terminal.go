@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/console"
+	"github.com/jiuzhao/vmops/service/vmssh"
 	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
 )
@@ -107,17 +109,22 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 	sshConfig := &ssh.ClientConfig{
 		User: auth.User,
 		Auth: []ssh.AuthMethod{ssh.Password(auth.Password)},
-		// 目标是平台自己创建的短生命周期虚拟机，IP 由 DHCP 动态分配、重建即换主机密钥，
-		// 维护 known_hosts 不具可操作性，故显式跳过主机密钥校验。
-		// 中间人风险由上面的 validateSSHTarget 收敛：目标被限制在本机私有网段内。
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		// 主机密钥 TOFU 校验（与 service/vmssh 同一回调工厂）：首连记录指纹、再连比对，
+		// 不一致即拒绝。目标是平台自建的短生命周期虚拟机，重建即换密钥，人工核对
+		// known_hosts 不可操作，故采用自动 TOFU；范围另由上面的 validateSSHTarget 收敛。
+		HostKeyCallback: vmssh.TOFUHostKeyCallback(),
 		Timeout:         8 * time.Second,
 	}
 	client, err := ssh.Dial("tcp", net.JoinHostPort(auth.Host, itoa(port)), sshConfig)
 	if err != nil {
 		log.Printf("[terminal] SSH 拨号失败 host=%s:%d err=%v", auth.Host, port, err)
-		// 完整错误（可能含内网拓扑/banner）只进服务端日志，WS 帧给固定文案（全量审计 P1）
-		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "SSH 连接失败，请确认虚拟机已开机且 SSH 服务可用"})
+		// 完整错误（可能含内网拓扑/banner）只进服务端日志，WS 帧给固定文案（全量审计 P1）；
+		// 指纹不一致单独识别（errors.Is 穿透 %w 链），用户需要那句话才知道去删旧指纹
+		msg := "SSH 连接失败，请确认虚拟机已开机且 SSH 服务可用"
+		if errors.Is(err, vmssh.ErrHostKeyMismatch) {
+			msg = vmssh.ErrHostKeyMismatch.Error()
+		}
+		_ = conn.WriteJSON(gin.H{"type": "error", "msg": msg})
 		return
 	}
 	defer client.Close()
@@ -256,7 +263,8 @@ readLoop:
 //
 // 约束由强到弱：
 //  1. 平台已记录该 VM 的 IP（vm.IP 非空）→ 目标必须与之精确一致；
-//  2. 未记录 IP（无 guest agent 时的常态）→ 只接受 RFC1918 私有网段的 IP 字面量，
+//  2. 未记录 IP（无 guest agent 时的常态）→ 只接受私有网段的 IP 字面量
+//     （IPv4 为 RFC1918 三段，IPv6 为 ULA fd00::/8，net.IP.IsPrivate 同时覆盖两者），
 //     并排除环回（否则可 SSH 进宿主机自身）、链路本地、组播与未指定地址；
 //     不接受主机名，避免 DNS 解析到公网或 DNS rebinding 绕过；
 //  3. 端口必须落在 1-65535。
@@ -283,7 +291,9 @@ func validateSSHTarget(vm *model.VM, host string, port int) error {
 		return fmt.Errorf("该地址不允许作为终端目标（环回 / 链路本地 / 组播）")
 	}
 	if !ip.IsPrivate() {
-		return fmt.Errorf("只允许连接私有网段地址（10/8、172.16/12、192.168/16）")
+		// net.IP.IsPrivate 对 IPv4 判 RFC1918、对 IPv6 判 fc00::/7（含 fd00::/8 ULA），
+		// 文案与实现对齐（此前只写 IPv4 网段，曾误导排查）
+		return fmt.Errorf("仅允许 IPv4 私有网段或 IPv6 ULA（fd00::/8）地址")
 	}
 	return nil
 }

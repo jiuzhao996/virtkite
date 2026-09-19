@@ -20,7 +20,6 @@ type Host struct {
 	Status      string         `gorm:"size:20;default:unknown" json:"status"`
 	CPUCores    int            `json:"cpu_cores"`
 	MemoryGB    float64        `json:"memory_gb"`
-	DiskGB      float64        `json:"disk_gb"`
 	Description string         `gorm:"type:text" json:"description"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`

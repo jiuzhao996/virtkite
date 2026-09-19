@@ -111,8 +111,16 @@ func (h *VMHandler) GetVMXML(c *gin.Context) {
 	Success(c, gin.H{"name": vm.Name, "xml": xml})
 }
 
-// UpdateVMXML 更新虚拟机 XML 定义（高级功能）
+// UpdateVMXML 更新虚拟机 XML 定义（高级功能，仅 admin）。
+// XML 直定义可整域改写（磁盘/网卡/内存乃至添加任意设备），风险远高于结构化编辑：
+// vms 路由组挂 OperatorMiddleware，operator 的写放行前缀恰是 /api/vms，能直达本端点，
+// 故 handler 内二次收口仅 admin（与 vm_grant.go 的 requireAdminRole 同款角色闸；
+// 不直接复用它是因为其 403 文案是「授权管理」语境，此处单独给文案，同 image_market.go）。
 func (h *VMHandler) UpdateVMXML(c *gin.Context) {
+	if !roleIsAdmin(c) {
+		Fail(c, http.StatusForbidden, "虚拟机 XML 直定义仅管理员可用")
+		return
+	}
 	vm, ok := h.findVM(c)
 	if !ok {
 		return

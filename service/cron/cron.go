@@ -235,6 +235,28 @@ func Next(spec *Spec, from time.Time) time.Time {
 	return time.Time{}
 }
 
+// NextRuns 解析表达式并返回自 now 起接下来的 n 个执行时刻（升序，严格递增）。
+// 供 handler 的表达式预览端点（GET /api/crons/preview）复用 Next 的逐分钟探测。
+// 表达式非法返回 ParseCron 的中文错误；表达式合法但 366 天内无匹配时刻时返回
+// 已找到的前缀（可能为空切片），由调用方决定如何呈现。
+func NextRuns(expr string, n int) ([]time.Time, error) {
+	spec, err := ParseCron(expr)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]time.Time, 0, n)
+	cur := time.Now()
+	for i := 0; i < n; i++ {
+		next := Next(spec, cur)
+		if next.IsZero() {
+			break
+		}
+		out = append(out, next)
+		cur = next
+	}
+	return out, nil
+}
+
 // Scheduler 计划任务调度器：整点 tick → 查 enabled 任务 → 表达式匹配 → 执行。
 // 由 main 构造并调用 Start（内部自起 goroutine，进程生命周期即调度器生命周期）。
 type Scheduler struct {

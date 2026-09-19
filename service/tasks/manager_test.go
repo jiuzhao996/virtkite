@@ -220,6 +220,7 @@ func TestRunExecutorRecoversPanic(t *testing.T) {
 		{"显式 panic 字符串", func(*ExecContext) error { panic("boom") }},
 		{"nil map 写入", func(*ExecContext) error {
 			var m map[string]string
+			//nolint:staticcheck // SA5000：本用例刻意写 nil map 触发 panic，验证 recover 兜底
 			m["k"] = "v"
 			return nil
 		}},

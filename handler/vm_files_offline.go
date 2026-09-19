@@ -55,13 +55,6 @@ func sudoRun(timeout time.Duration, args ...string) (string, error) {
 	return string(out), nil
 }
 
-// offlineResolve 离线通道公共前置：解析 :id → 取 VM → 授权可见性。
-func offlineResolve(c *gin.Context, db interface {
-	First(dest interface{}, conds ...interface{}) (tx interface{ Error() error })
-}) {
-	_ = db // 占位（实际实现见 offlineVM）
-}
-
 // offlineVM 离线通道取 VM：paramID → DB → vmVisible。未授权与不存在同响应。
 func (h *VMFilesHandler) offlineVM(c *gin.Context) *model.VM {
 	id, ok := paramID(c, "id")

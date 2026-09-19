@@ -130,6 +130,16 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		users.DELETE("/:id", userHandler.DeleteUser)
 	}
 
+	// SSH 主机指纹管理（仅管理员）：TOFU 首连记录的 host_keys，VM 重建换密钥后
+	// 由管理员删旧指纹放行重录。暂无前端入口，curl/后续页面消费（记录在案）。
+	sshHostKeysHandler := NewSSHHostKeyHandler(deps.DB)
+	sshKeys := api.Group("/ssh-host-keys")
+	sshKeys.Use(middleware.AdminMiddleware())
+	{
+		sshKeys.GET("", sshHostKeysHandler.List)
+		sshKeys.DELETE("/:id", sshHostKeysHandler.Delete)
+	}
+
 	// 宿主机管理（仅管理员）
 	hosts := api.Group("/hosts")
 	hosts.Use(middleware.OperatorMiddleware())
@@ -349,6 +359,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	{
 		crons.GET("", cronsHandler.List)
 		crons.POST("", cronsHandler.Create)
+		// 表达式下次执行预览（静态路由与 /:id 同级，gin 静态优先，与 vms/options 同款）
+		crons.GET("/preview", cronsHandler.Preview)
 		crons.PUT("/:id", cronsHandler.Update)
 		crons.DELETE("/:id", cronsHandler.Delete)
 		crons.POST("/:id/toggle", cronsHandler.Toggle)

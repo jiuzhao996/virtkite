@@ -361,3 +361,65 @@ func TestNext(t *testing.T) {
 		}
 	})
 }
+
+// TestNextRuns 覆盖预览端点依赖的多次计算：合法表达式返回升序递增的时刻序列，
+// 非法表达式透传 ParseCron 的中文错误。n 覆盖请求 1 个与多个两种形态。
+func TestNextRuns(t *testing.T) {
+	t.Run("合法表达式返回 n 个严格递增时刻", func(t *testing.T) {
+		runs, err := NextRuns("*/5 * * * *", 5)
+		if err != nil {
+			t.Fatalf("NextRuns 意外报错: %v", err)
+		}
+		if len(runs) != 5 {
+			t.Fatalf("期望 5 个时刻，实际 %d 个", len(runs))
+		}
+		for i := 1; i < len(runs); i++ {
+			if !runs[i].After(runs[i-1]) {
+				t.Errorf("时刻序列必须严格递增：runs[%d]=%s 不晚于 runs[%d]=%s",
+					i, runs[i], i-1, runs[i-1])
+			}
+		}
+		// */5 表达式：相邻两次恰好间隔 5 分钟（顺带验证对齐到 5 的倍数分）
+		if diff := runs[1].Sub(runs[0]); diff != 5*time.Minute {
+			t.Errorf("*/5 相邻间隔期望 5 分钟，实际 %s", diff)
+		}
+		if runs[0].Minute()%5 != 0 || runs[0].Second() != 0 {
+			t.Errorf("首时刻应对齐到 5 的倍数分的整分：%s", runs[0])
+		}
+	})
+
+	t.Run("n=1 只返回一个时刻", func(t *testing.T) {
+		runs, err := NextRuns("0 2 * * *", 1)
+		if err != nil {
+			t.Fatalf("NextRuns 意外报错: %v", err)
+		}
+		if len(runs) != 1 {
+			t.Fatalf("期望 1 个时刻，实际 %d 个", len(runs))
+		}
+		if runs[0].Hour() != 2 || runs[0].Minute() != 0 {
+			t.Errorf("时刻应落在 02:00，实际 %s", runs[0])
+		}
+	})
+
+	t.Run("非法表达式返回中文错误", func(t *testing.T) {
+		for _, expr := range []string{"* * * *", "61 * * * *", "abc"} {
+			runs, err := NextRuns(expr, 5)
+			if err == nil {
+				t.Errorf("表达式 %q 应报错，实际返回 %v", expr, runs)
+			}
+			if runs != nil {
+				t.Errorf("报错时结果应为 nil，实际 %v", runs)
+			}
+		}
+	})
+
+	t.Run("366 天内无匹配时刻返回空切片", func(t *testing.T) {
+		runs, err := NextRuns("0 0 31 2 *", 5) // 2 月 31 日不存在
+		if err != nil {
+			t.Fatalf("表达式本身合法，不应报错: %v", err)
+		}
+		if len(runs) != 0 {
+			t.Errorf("期望空切片，实际 %v", runs)
+		}
+	})
+}

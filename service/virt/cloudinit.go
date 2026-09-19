@@ -67,7 +67,8 @@ func GenerateSeedISO(cfg *CloudInitSpec) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化 iso9660 写入器失败: %w", err)
 	}
-	defer w.Cleanup()
+	// Cleanup 释放写入器内部资源；源全是内存缓冲（无落盘句柄），失败无下游影响，显式忽略
+	defer func() { _ = w.Cleanup() }()
 
 	if err := w.AddFile(bytes.NewReader([]byte(metaData)), "meta-data"); err != nil {
 		return nil, fmt.Errorf("写入 meta-data 失败: %w", err)

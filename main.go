@@ -21,6 +21,7 @@ import (
 	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
+	"github.com/jiuzhao/vmops/service/vmssh"
 	"github.com/jiuzhao/vmops/service/vnc"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
@@ -68,6 +69,10 @@ func main() {
 	tasks.DefaultStoragePoolResolver = settingMgr.DefaultStoragePool
 	vnc.TTLResolver = settingMgr.VNCTokenTTL
 	console.StaleAfterResolver = settingMgr.VNCStale
+
+	// SSH 主机指纹存储（TOFU）：web 终端与 VM 文件管理两条 SSH 通道共用的主机密钥校验。
+	// 未注入时回调 fail-closed（一律拒绝拨号），故必须在建立任何 SSH 连接前完成接线。
+	vmssh.SetHostKeyStore(vmssh.GormHostKeyStore{DB: db})
 
 	// 启动收敛：内存队列/连接随进程消失，DB 里残留的 pending/running 任务与 ssh/serial 会话
 	// 置终态，避免重启后幽灵任务与幽灵会话（VNC 靠 last_seen 过期清扫收敛，无需处理）

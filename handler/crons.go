@@ -23,6 +23,8 @@ const (
 	listRecentRunLimit = 3
 	// runsPageSize 执行历史接口 page_size 默认值（同时是越界回退值），上限 100。
 	runsPageSize = 20
+	// cronPreviewCount 表达式预览端点返回的下次执行时刻个数。
+	cronPreviewCount = 5
 )
 
 // CronsHandler 计划任务处理器：CRUD + 启停 + 手动触发。
@@ -82,6 +84,32 @@ func (h *CronsHandler) List(c *gin.Context) {
 		items = append(items, item)
 	}
 	Success(c, gin.H{"total": len(items), "items": items})
+}
+
+// Preview GET /api/crons/preview?expr=：预览 cron 表达式接下来的 5 个执行时刻
+// （返回 {"next": ["2006-01-02 15:04:05", ...]}）。表达式非法 400 中文提示
+// （ParseCron 错误为固定文案可直接回显）；366 天内无可执行时刻同样 400
+// （与 validateCronTask 的创建校验同口径——建了也永远不跑的表达式没有预览价值）。
+func (h *CronsHandler) Preview(c *gin.Context) {
+	expr := strings.TrimSpace(c.Query("expr"))
+	if expr == "" {
+		Fail(c, http.StatusBadRequest, "缺少 expr 参数（5 字段 cron 表达式：分 时 日 月 周）")
+		return
+	}
+	runs, err := cron.NextRuns(expr, cronPreviewCount)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(runs) == 0 {
+		Fail(c, http.StatusBadRequest, "cron 表达式在未来 366 天内没有可执行时刻，请检查字段取值")
+		return
+	}
+	next := make([]string, 0, len(runs))
+	for _, t := range runs {
+		next = append(next, t.Format(time.DateTime))
+	}
+	Success(c, gin.H{"next": next})
 }
 
 // recentRuns 查询任务最近 limit 条执行记录（按开始时间倒序）。
