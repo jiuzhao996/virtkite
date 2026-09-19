@@ -107,7 +107,11 @@ func TestValidateTemplateSpecFields(t *testing.T) {
 		{"static 缺 ip", func(s *virt.CloudInitSpec) { s.NetMode = "static"; s.Gateway = "192.168.122.1" }},
 		{"static 缺 gateway", func(s *virt.CloudInitSpec) { s.NetMode = "static"; s.IP = "192.168.122.10" }},
 		{"ip 非法", func(s *virt.CloudInitSpec) { s.NetMode = "static"; s.IP = "999.1.1.1"; s.Gateway = "192.168.122.1" }},
-		{"ip 为 IPv6 映射写法", func(s *virt.CloudInitSpec) { s.NetMode = "static"; s.IP = "::ffff:192.168.122.10"; s.Gateway = "192.168.122.1" }},
+		{"ip 为 IPv6 映射写法", func(s *virt.CloudInitSpec) {
+			s.NetMode = "static"
+			s.IP = "::ffff:192.168.122.10"
+			s.Gateway = "192.168.122.1"
+		}},
 		{"gateway 非法", func(s *virt.CloudInitSpec) { s.NetMode = "static"; s.IP = "192.168.122.10"; s.Gateway = "not-an-ip" }},
 		{"dns 非法", func(s *virt.CloudInitSpec) { s.DNS = []string{"8.8.8.8", "dns.example.com"} }},
 		{"dns 超 8 个", func(s *virt.CloudInitSpec) {

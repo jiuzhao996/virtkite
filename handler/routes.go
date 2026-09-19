@@ -108,6 +108,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	vmHandler := NewVMHandler(deps.DB, deps.Tasks, deps.Sessions)
 	aiHandler := NewAIHandler(deps.DB, deps.SettingMgr)
 	vmCredHandler := NewVMCredentialHandler(deps.DB, config.GlobalConfig.JWTSecretKey)
+	vmFilesHandler.SetVMCredentialHandler(vmCredHandler)
 	lokiHandler := NewLokiHandler(deps.LokiURL)
 	appStoreV2 := NewAppStoreV2Handler()
 	cronScheduler := &cron.Scheduler{DB: deps.DB, Virt: deps.Virt, BackupDir: ""}

@@ -24,14 +24,18 @@ import (
 // 仅内存透传不落盘，目标必须先过 validateSSHTarget 白名单（防平台沦为跳板机）；
 // VM 内的一切路径参数必须经 vmssh.ShellQuote 包裹后才能拼进远程命令（防命令注入）。
 type VMFilesHandler struct {
-	DB   *gorm.DB
-	Virt *virt.Virt
+	DB     *gorm.DB
+	Virt   *virt.Virt
+	VMCred *VMCredentialHandler // v3.2 批次 I+：凭据托管（use_saved 时经 ResolveFor 取用）
 }
 
 // NewVMFilesHandler 创建虚拟机文件管理处理器（构造风格对齐 vnc.go：Virt 内部自建，惰性连接）。
 func NewVMFilesHandler(db *gorm.DB) *VMFilesHandler {
 	return &VMFilesHandler{DB: db, Virt: virt.New()}
 }
+
+// SetVMCredentialHandler 注入凭据托管（渐进式，构造器签名保持不变）。
+func (h *VMFilesHandler) SetVMCredentialHandler(ch *VMCredentialHandler) { h.VMCred = ch }
 
 // maxVMFileUpload 单文件上传的解码后大小上限。
 // SSH exec 通道会把内容整体载入内存，必须设上限防大文件 OOM；
@@ -40,13 +44,14 @@ const maxVMFileUpload = 16 << 20 // 16MB
 
 // vmFilesReq 文件操作统一请求体（各端点按需取用字段）。
 type vmFilesReq struct {
-	Host     string   `json:"host"`     // VM 的 IP
-	Port     int      `json:"port"`     // SSH 端口，省略 = 22
-	User     string   `json:"user"`     // SSH 用户名
-	Password string   `json:"password"` // SSH 密码（不落盘不进日志）
-	Path     string   `json:"path"`     // 远程路径（List/Download/Upload/Mkdir）
-	Paths    []string `json:"paths"`    // 批量路径（Delete）
-	Content  string   `json:"content"`  // 文件内容（Upload，base64 编码）
+	Host     string   `json:"host"`      // VM 的 IP
+	Port     int      `json:"port"`      // SSH 端口，省略 = 22
+	User     string   `json:"user"`      // SSH 用户名
+	Password string   `json:"password"`  // SSH 密码（不落盘不进日志）
+	Path     string   `json:"path"`      // 远程路径（List/Download/Upload/Mkdir）
+	Paths    []string `json:"paths"`     // 批量路径（Delete）
+	Content  string   `json:"content"`   // 文件内容（Upload，base64 编码）
+	UseSaved bool     `json:"use_saved"` // v3.2 批次 I+：true 时使用凭据托管（host/port 仍需提供，user/password 忽略）
 }
 
 // resolve 文件操作的公共前置：解析 :id → 取 VM → 授权可见性 → 绑定请求体 →
@@ -69,6 +74,18 @@ func (h *VMFilesHandler) resolve(c *gin.Context, req *vmFilesReq, op string) (vm
 	if err := c.ShouldBindJSON(req); err != nil {
 		ErrorWithMessage(c, http.StatusBadRequest, "参数错误（需提供主机、用户名和密码）", err)
 		return nil, vmssh.Options{}, false
+	}
+	// use_saved：从凭据托管取 SSH 凭据（v3.2 批次 I+），host/port 仍由请求提供
+	if req.UseSaved {
+		user, port, password, ok2 := h.VMCred.ResolveFor(c, vm.ID)
+		if !ok2 {
+			return
+		}
+		req.User = user
+		req.Password = password
+		if req.Port == 0 {
+			req.Port = port
+		}
 	}
 	if req.Host == "" || req.User == "" || req.Password == "" {
 		Fail(c, http.StatusBadRequest, "请填写主机、用户名和密码")

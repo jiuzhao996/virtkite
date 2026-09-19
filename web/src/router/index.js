@@ -23,7 +23,6 @@ const routes = [
       { path: 'apps', name: 'apps', component: () => import('../views/AppStore.vue'), meta: { requiresOperate: true } },
       { path: 'ai', name: 'ai', component: () => import('../views/AiChat.vue'), meta: { requiresOperate: true } },
       { path: 'cloud-init-templates', name: 'cloud-init-templates', component: () => import('../views/CloudInitTemplates.vue'), meta: { requiresOperate: true } },
-      { path: 'image-market', name: 'image-market', component: () => import('../views/ImageMarket.vue'), meta: { requiresOperate: true } },
       { path: 'topology', name: 'topology', component: () => import('../views/Topology.vue') },
       { path: 'recycle-bin', name: 'recycle-bin', component: () => import('../views/RecycleBin.vue'), meta: { requiresAdmin: true } },
       { path: 'toolbox', name: 'toolbox', component: () => import('../views/Toolbox.vue'), meta: { requiresAdmin: true } },

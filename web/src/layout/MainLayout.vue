@@ -179,7 +179,6 @@ const navItems = [
   { index: '/topology', label: '拓扑图', icon: Share, group: '总览' },
   { index: '/vms', label: '虚拟机', icon: Monitor, group: '资源' },
   { index: '/images', label: '镜像管理', icon: Picture, group: '资源' },
-  { index: '/image-market', label: '云镜像市场', icon: Goods, group: '资源' },
   { index: '/docker', label: 'Docker 管理', icon: Box, group: '资源' },
   { index: '/ai', label: 'AI 助手', icon: ChatDotRound, group: '应用' },
   { index: '/apps', label: '应用商店', icon: Goods, group: '应用' },

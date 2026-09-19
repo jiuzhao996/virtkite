@@ -112,6 +112,10 @@
           </el-table>
         </el-card>
       </el-tab-pane>
+      <!-- Tab 3 镜像市场：官方云镜像一键下载（下载完成自动登记进上方镜像库） -->
+      <el-tab-pane label="镜像市场" name="market" lazy>
+        <ImageMarket embedded />
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 上传镜像 -->
@@ -198,6 +202,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu } from '@element-plus/icons-vue'
+import ImageMarket from './ImageMarket.vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
@@ -206,6 +211,7 @@ import { fmtSizeGB, fmtSizeBytes, fmtDateTime, errMsg, isCancel } from '../utils
 const { isAdmin } = useAuth()
 
 const activeTab = ref('images')
+// 镜像市场 tab 懒加载：组件 onMounted 自拉数据，无需额外处理
 const items = ref([])
 const total = ref(0)
 const loading = ref(false)

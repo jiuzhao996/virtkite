@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-head">
+    <div v-if="!embedded" class="page-head">
       <div>
         <h2 class="page-title">云镜像市场</h2>
         <span class="page-desc">一键下载官方云镜像到存储池并自动登记进镜像库；下载为分钟级后台任务，可离开页面，进度可在任务中心继续跟踪</span>
@@ -86,6 +86,8 @@
 </template>
 
 <script setup>
+// embedded=true 时作为嵌入组件使用（镜像管理页「镜像市场」tab），隐藏独立页头
+const props = defineProps({ embedded: { type: Boolean, default: false } })
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download, CircleCheck } from '@element-plus/icons-vue'
