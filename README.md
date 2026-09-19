@@ -12,7 +12,7 @@
 
 Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**——纸鸢掠浪而行，正是「鸢航」；金色虚线自浪间牵向鸢身，"断而未断"，是平台与虚拟机之间的管理通道。品牌口号一句话：**把你的私有云放上天，线始终在手中。**
 
-对标 virt-manager 核心功能（创建向导/硬件管理/控制台/存储池/网络/快照），辅以 PVE 式增量克隆（qcow2 backing chain）与 cloud-init 快速初始化。
+对标 virt-manager 核心功能（创建向导/硬件管理/控制台/存储池/网络/快照），辅以 PVE 式增量克隆（qcow2 backing chain）与 cloud-init 快速初始化。v3 起参考 1Panel（GPLv3，借鉴设计模式而非引入代码）吸收运维面板能力（容器管理 / 应用商店 / 计划任务 / 工具箱 / AI 助手），但保持 KVM 私有云定位，不做建站赛道。
 
 ## 技术栈
 
@@ -21,8 +21,11 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 | 后端 | Go 1.25 + gin + GORM + golang-jwt + bcrypt |
 | 数据库 | MySQL 8（Docker 部署） |
 | 虚拟化 | libvirt / KVM（`digitalocean/go-libvirt` 纯 Go RPC 直连，无 CGO） |
+| 容器 | Docker CLI / Docker Engine API（`service/dockerx` 封装：结构化输出 + exec TTY 容器终端）+ docker compose |
 | 前端 | Vue 3 + Vite + Element Plus + vue-router + ECharts |
 | 监控 | 内建 Prometheus exporter + Prometheus + Grafana + Alertmanager |
+| 日志 | Loki + Promtail（以应用商店 compose 包一键交付，LogQL 经后端代理查询） |
+| AI | OpenAI 兼容 API 代理（SSE 流式 + 平台上下文注入，Key 只存服务端） |
 | 部署 | 二进制直跑 / Docker / docker-compose |
 
 ## 功能清单
@@ -53,9 +56,24 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **Prometheus 监控**（内建 `/metrics`：VM/宿主机/存储池/任务指标 + 9 告警规则 + Grafana 双看板（宿主机 5 面板 / 虚拟机 6 面板）；监控中心含实时告警、webhook 告警历史、file_sd 抓取目标预览、Grafana 探活兜底）
 - [x] 存量 VM 导入 / 纳管
 - [x] **监控闭环**（Prometheus file_sd 服务发现自动下发 running 且已知 IP 的 VM 目标；Alertmanager webhook 告警网关按 fingerprint 去重入库 + 分页历史；`vms.ip` DHCP 租约 + QGA 双通道回填）
+- [x] **容器管理（v3：KVM 域 + Docker 容器「双运行时」统一面板）**（容器 / 镜像 / 网络 / 卷 / 编排（compose 项目级启停）五 tab + 容器终端（WebSocket ↔ Docker Engine API exec TTY，支持运行中调窗）+ 日志查看（跟随/下载/tail 行数）+ 资源占用实时统计 + 批量启停删与悬空镜像/容器清理；viewer 403，容器终端与 SSH 终端共用 `console.Conn` 写锁 + recover 纪律与会话强断）
+- [x] **应用商店（v3）**（参考 1Panel（GPLv3）声明式 compose 应用包设计模式：应用级+版本级 `data.yml`（动态表单）+ `docker-compose.yml` `${VAR}` 占位 → 写 `.env` → `docker compose up -d`，变量替换交给 compose 原生插值；内置 20 个应用（nginx / mysql / redis / minio / gitea / jenkins / n8n 等），安装走异步任务、安装前端口占用预检、卸载保留数据目录；Docker 不可用时页面级禁用安装）
+- [x] **VM 应用（v3）**（不经容器往虚拟机里装软件：SSH 在客户机内幂等执行安装脚本，10 个内置应用（nginx/mysql/redis/php/nodejs/docker-engine 等），已装检测自动跳过）
+- [x] **AI 运维助手（v3）**（OpenAI 兼容 `/chat/completions` 代理：API Key 只存服务端永不下发前端；`with_context` 注入平台环境摘要（VM/容器/告警统计），能答「我平台几台虚拟机在跑」；SSE 流式逐段转发；助手只读问答、不具备任何写操作能力；viewer 403）
+- [x] **SSH 凭据托管（v3）**（AES-256-GCM 加密落库：主密钥运行时注入不落库 + 每条记录随机盐，数据库泄露后凭据不可直接可读；文件管理 / VM 应用安装「使用已保存凭据」后端自行解密消费，明文不出服务端）
+- [x] **VM 文件管理（v3：双通道）**（在线通道：SSH/SFTP 浏览/上传/下载/删除/建目录，管开机机；离线通道：guestmount 只读挂载关机机系统盘，不依赖 VM 内 SSH；运行中 VM 一律拒绝离线挂载防磁盘锁，挂载只读——宁可浏览受限不可损坏磁盘）
+- [x] **计划任务（v3）**（自研五字段 cron 解析（百行纯函数可单测，不引第三方）+ 整分 tick 调度器：定时快照 / mysqldump 数据库备份；启停 / 立即运行 / 执行记录（成功失败与耗时））
+- [x] **Loki 日志栈（v3）**（以应用商店 compose 包一键交付（loki + promtail），监控中心提供 LogQL 查询与标签接口——指标 + 日志 + 告警完整可观测性）
+- [x] **云镜像市场（v3）**（内置官方云镜像清单一键提交下载任务（异步、流式落盘、完成自动登记镜像库），镜像管理页第三 tab）
+- [x] **VM 导出/导入（v3）**（tar.gz 全量包 = 域 XML + 系统盘卷；导出 gzip/tar 两级 writer 管道直写响应体，不落临时盘不整载内存；导入失败按副作用逆序清理）
+- [x] **回收站（v3）**（删除是软删——回收站页可视化软删 VM：恢复 / 彻底清除（admin），删错机器的后悔药）
+- [x] **工具箱（v3）**（宿主机快捷运维：进程列表 / 磁盘用量 / Docker 清理 / 任务记录清理，admin 专属）
+- [x] **cloud-init 模板（v3）**（初始化配置存为可复用模板，创建向导一键套用 / 当前配置保存为模板）
+- [x] **拓扑图（v3）**（宿主机-存储池-虚拟机从属关系可视化：池节点按容量、VM 节点按状态着色，拖拽布局/滚轮缩放/图例过滤）
+- [x] **系统公告 + 安全入口（v3）**（公告板登录页与仪表盘公开展示（admin 经设置页编辑）；登录接口可设安全入口暗号，无暗号请求一律 404 伪装；建用户/改密密码复杂度校验）
 - [x] **安全加固**（路径参数主键统一解析防 SQL 注入 / libvirt XML 全部走 `encoding/xml` / JWT 锁定 HS256 / SSH 目标白名单 / release 密钥强校验）
 - [x] E2E 回归脚本（`scripts/smoke.sh`，23 项断言）
-- [x] 单元测试（142 个顶层测试函数 / 约 950 个子用例 / 7 个包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
+- [x] 单元测试（197 个顶层测试函数 / 1031 个子用例 / 13 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
 - [x] 前端工程化（路由懒加载 + manualChunks 分包：首屏下载量 −50%；`utils/format.js` 收敛 10 余处重复；图标全部换成 `@element-plus/icons-vue`）
 
 
@@ -65,7 +83,8 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - Node.js 18+（仅前端开发 / 构建需要）
 - MySQL 8.0+（或 Docker）
 - libvirt + KVM（运行虚拟机的宿主机）
-- Prometheus / Grafana（可选，二进制或 Docker，见监控章节）
+- Docker（可选：容器管理与容器形态的应用商店需要，未安装时相关页面显示不可用提示）
+- Prometheus / Grafana / Loki（可选，Docker compose 一键栈，见监控章节）
 
 ## 快速开始
 
@@ -165,12 +184,12 @@ docker compose up -d prometheus grafana alertmanager
 
 ```bash
 ./scripts/smoke.sh          # E2E 23 项：只读接口 + metrics + 创建/删除 task 全链路 + 硬件管理
-go test -race ./...         # 单元测试 142 个顶层函数 / 约 950 子用例 / 7 个包（必须带 -race）
+go test -race ./...         # 单元测试 197 个顶层函数 / 1031 个子用例 / 13 个测试包（必须带 -race）
 go build ./... && go vet ./... && gofmt -l .
 ```
 
-> `.golangci.yml` 已配置（govet/errcheck/staticcheck/unused/ineffassign/gofmt/revive，`go: "1.25"`），但本机**未安装** `golangci-lint`，
-> 该项静态检查尚未执行，列为待补项。另注意该配置为 v1 schema，装 v2.x 会因字段改名（`linters-settings` → `linters.settings` 等）报错。
+> 静态检查：`go build` / `go vet` / `gofmt` 三件套全过；`.golangci.yml` 配置就绪
+> （govet/errcheck/staticcheck/unused/ineffassign/gofmt/revive，v1 schema——装 v2.x 会因字段改名报错）。
 
 ### 7. 容器构建（可选）
 
@@ -292,34 +311,66 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 - `GET /metrics` — Prometheus exposition（env `METRICS_TOKEN` 非空时要求 Bearer/`?token=`，未设置保持公开）
 - `GET /api/health` — 健康检查
 
+### v3 扩展（容器 / 应用商店 / AI / 运维面板）
+
+- Docker（viewer 403）：`GET /api/docker/containers` `POST /api/docker/containers/:id/:action`（start/stop/restart/pause/unpause） `DELETE /api/docker/containers/:id` `GET .../logs`（`?follow/&tail/`） `GET .../inspect` `GET .../stats`、`GET /api/docker/stats`（全量统计）、`GET /api/docker/containers/:id/terminal`（容器终端 WS）
+- Docker 镜像/网络/卷/编排：`GET|POST /api/docker/images` `DELETE /api/docker/images/:id` `POST /api/docker/images/pull` `POST /api/docker/prune`、`GET|POST|DELETE /api/docker/networks*`、`GET|POST /api/docker/volumes*` `POST /api/docker/volumes/prune`、`GET /api/docker/compose` `POST /api/docker/compose/:name/:action`
+- 应用商店：`GET /api/appstore`（目录，登录可看） `GET /api/appstore/status` `POST /api/appstore/:key/install` `POST /api/appstore/:key/uninstall`（安装走异步任务）
+- VM 应用：`GET /api/apps`（SSH 脚本应用目录） `POST /api/vms/apps/install`（挂 `/vms` 前缀，operator 可用——往自己 VM 装软件属操作语义）
+- AI 助手（viewer 403）：`GET /api/ai/status` `POST /api/ai/chat`（SSE 流式；`with_context=true` 注入平台摘要）
+- SSH 凭据：`POST|GET|DELETE /api/vms/:id/credentials`（AES-256-GCM 密文落库，响应永不含明文）
+- VM 文件管理：`POST /api/vms/:id/files/{list,download,upload,delete,mkdir}`（SSH 在线通道）+ `POST /api/vms/:id/files/offline/{mount,list,unmount}` `GET .../offline/download` `GET .../offline-capability`（guestmount 离线只读通道）
+- 计划任务（admin）：`GET|POST /api/crons` `PUT|DELETE /api/crons/:id` `POST /api/crons/:id/{toggle,run}` `GET /api/crons/:id/runs`（执行记录） `GET /api/crons/preview?expr=`（下次执行预览）
+- SSH 主机指纹（TOFU，admin）：`GET /api/ssh-host-keys` `DELETE /api/ssh-host-keys/:id`
+- 回收站（admin）：`GET /api/vms-recycle` `POST /api/vms-recycle/:id/restore` `DELETE /api/vms-recycle/:id/purge`
+- 工具箱（admin）：`GET /api/toolbox/{processes,disk}` `POST /api/toolbox/{docker-prune,tasks-purge}`
+- 镜像市场：`GET /api/images/market`（清单） `POST /api/images/market/download`（admin，202 任务）
+- VM 导出/导入：`GET /api/vms/:id/export`（tar.gz 流式下载） `POST /api/vms/import-file`（admin）
+- cloud-init 模板：`GET|POST /api/cloud-init-templates` `GET|PUT|DELETE /api/cloud-init-templates/:id`
+- Loki 日志（viewer 403）：`GET /api/monitor/loki/query` `GET /api/monitor/loki/labels`
+- 公告：`GET /api/announcement`（公开读；写入口收敛在 `PUT /api/settings`）
+
 ## 项目结构
 
 ```
 vmops/
-├── main.go              # 入口：路由/静态托管（四候选探测）/任务管理器/会话注册表/种子数据/启动收敛
+├── main.go              # 入口：静态托管（四候选探测）/Deps 组装/任务管理器/会话注册表/种子数据/启动收敛
 ├── config/              # 环境变量配置（含 SEED_DIR）
-├── database/            # GORM 连接与自动迁移
-├── handler/             # HTTP 处理器（vm/spec/device/clone/stats/task/session/metrics/settings/…）
+├── database/            # GORM 连接与自动迁移（16 张表）
+├── handler/             # HTTP 处理器，routes.go 按域收口注册
+│                        #   vm/存储/网络/镜像/任务/会话/设置/监控/历史 + v3：docker*/appstore/apps/
+│                        #   ai/crons/vm_files*/vm_credentials/image_market/vm_export/vm_recycle/
+│                        #   toolbox/cloud_init_templates/announcement/container_terminal/loki
 │                        #   param.go：paramID/parseID，路径参数主键统一解析（禁止直传 GORM）
-├── middleware/          # JWT / OperatorMiddleware(RBAC) / CORS / 审计中间件
-├── model/               # GORM 模型（user/host/vm/image/audit/task/session）
+├── middleware/          # JWT / OperatorMiddleware(RBAC) / NonViewerMiddleware / CORS / 审计 / 安全入口
+├── model/               # GORM 模型（user/host/vm/image/audit/task/session + vm_grant/vm_credential/
+│                        #   scheduled_task/cron_run/setting/alert/pool_meta/cloud_init_template/host_key）
 ├── service/
 │   ├── virt/            # libvirt 封装（domain/spec/device/storage/network/snapshot/console/stats/clone/cloudinit）
 │   │                    #   clone.go：增量克隆（backingStore）+ buildCloneSpec 纯函数（UUID/MAC 重生成）
 │   │                    #   storage.go：ListBackingRefs（父卷→子卷依赖表，删卷守卫用）
-│   │                    #   *_test.go：spec(13)/clone(8)/cloudinit(6)/storage(7)/network(4)/state(4)/snapshot(4)
-│   ├── tasks/           # 异步任务队列（4 worker + 6 executors，有界入队 + 两层 recover）
-│   │                    #   manager_test.go(11)/vm_tasks_test.go(14)：panic 兜底/有界入队/payload 解析
+│   ├── tasks/           # 异步任务队列（4 worker，有界入队 + 两层 recover；VM 全生命周期 + 镜像下载 + 商店安装/卸载等 executor）
 │   ├── console/         # 会话注册表（WS 持有/强制断开/VNC 映射/过期清扫）
-│   │                    #   conn.go：写锁串行化的 WS 包装 + conn_test.go（5 个 -race 用例）
+│   │                    #   conn.go：写锁串行化的 WS 包装（VM 终端与容器终端共用）
+│   ├── dockerx/         # Docker CLI / Engine API 封装（容器/镜像/网络/卷/compose/统计，数组参数 + 统一超时）
+│   ├── appstore/        # 声明式 compose 应用包（conf/appstore 20 应用 → data/apps，参考 1Panel 设计模式）
+│   ├── apps/            # VM 内 SSH 脚本应用目录（10 个内置，幂等安装）
+│   ├── vmssh/           # SSH 短连接封装（文件管理/VM 应用安装，命令经 ShellQuote）
+│   ├── secretbox/       # AES-256-GCM 凭据加解密（标准库实现，主密钥运行时注入）
+│   ├── cron/            # 计划任务（五字段 cron 解析 + 整分 tick 调度器 + 执行记录）
+│   ├── monitor/         # Prometheus file_sd 服务发现（GenerateFileSD 纯函数 + 原子落盘）
 │   ├── metrics/         # Prometheus 内建采集
+│   ├── setting/         # 系统设置 KV（白名单校验 + 内存缓存）
 │   └── vnc/             # VNC token 存储
+├── conf/appstore/       # 应用商店内置应用包（data.yml 表单定义 + docker-compose.yml，磁盘可增改无需重编译）
 ├── scripts/             # init-db.sql / smoke.sh（E2E 回归）/ start-novnc.sh
-├── deploy/              # prometheus.yml / alerts.yml / grafana 看板与 provisioning
-├── web/                 # Vue3 + Vite 前端（17 个视图：Dashboard(概览/监控双 tab+容量超分卡)/Monitor/VmList/VmDetail/向导/Host/Image(双 tab)/Storage/Network/Task/Audit+SessionList(双 tab)/Settings/UserList/Profile/Console/Login）
+├── deploy/              # prometheus.yml / alerts.yml / alertmanager.yml / grafana 看板与 provisioning / docker-compose
+├── web/                 # Vue3 + Vite 前端（26 个视图：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
+│                        #   DockerList(容器五 tab+终端+日志)/AppStore/AiChat/CronList/RecycleBin/Toolbox/CloudInitTemplates/
+│                        #   Host/Image(三 tab 含镜像市场)/Storage/Network/Task/Audit+SessionList/Settings/UserList/Profile/Login）
 │   ├── src/utils/format.js  # 状态文案/时间/尺寸/错误提取统一实现（收敛 10 余处重复）
 │   └── dist/            # 构建产物，由后端托管（路由懒加载 + manualChunks：首屏 −50%）
-└── docs/                # 设计 / 开发文档（含 api-contract / task-contract）
+└── docs/                # 设计 / 开发文档（含 api-contract / task-contract / ROADMAP v2/v3）
 ```
 
 ## 文档
@@ -328,8 +379,8 @@ vmops/
 
 - [00-选题依据与开题.md](docs/00-选题依据与开题.md) — 选题背景、研究内容、技术路线、进度安排（开题）
 - [01-相关技术基础.md](docs/01-相关技术基础.md) — KVM/libvirt、Go/gin/GORM、Vue3、技术选型
-- [02-系统需求分析.md](docs/02-系统需求分析.md) — 角色权限、功能/非功能需求
-- [03-系统总体设计.md](docs/03-系统总体设计.md) — 架构、模块划分、请求流转（含任务/会话/RBAC）
+- [02-系统需求分析.md](docs/02-系统需求分析.md) — 角色权限、功能/非功能需求（含 v3 运维面板扩展需求）
+- [03-系统总体设计.md](docs/03-系统总体设计.md) — 架构、模块划分、请求流转（含任务/会话/RBAC 与 v3 双运行时扩展）
 - [04-数据库设计.md](docs/04-数据库设计.md) — 七张核心表结构、ER 图
 - [05-详细设计与实现.md](docs/05-详细设计与实现.md) — 逐模块实现 + 前端 + 监控
 - [06-系统测试与验证.md](docs/06-系统测试与验证.md) — 测试环境、功能测试、真实 KVM 演示
@@ -343,12 +394,12 @@ vmops/
 
 | 项 | 现状 | 影响面 |
 |---|---|---|
-| `POST /api/networks/xml`、`PUT /api/networks/:name`、`PUT /api/vms/:id/xml` | 接受调用方原始 XML 直接定义，无结构校验 | 仅 admin 可达 |
+| `POST /api/networks/xml`、`PUT /api/networks/:name` | 接受调用方原始 XML 直接定义，无结构校验（域的 `PUT /api/vms/:id/xml` 已收口仅 admin 可用） | 仅 admin 可达 |
 | `GET /metrics` | 未设置 `METRICS_TOKEN` 时公开（启动日志有提示）；设置后要求 Bearer/`?token=` 认证 | 生产建议开启令牌或以防火墙限制来源网段 |
-| `POST /api/auth/login` | ✅ 已限流（同 IP 1 分钟 5 次失败锁定）+ 无验证码 | 残余：无验证码，可换 IP 分布式爆破 |
+| `POST /api/auth/login` | ✅ 已限流（同 IP 1 分钟 5 次失败锁定）+ 可设安全入口暗号（无暗号一律 404 伪装） | 残余：无验证码，可换 IP 分布式爆破 |
 | CORS | `CORS_ORIGINS` 默认 `*`（release 模式下为 `*` 拒绝启动） | 生产需收敛为具体来源 |
-| Web 终端 SSH | `HostKeyCallback` 为 `InsecureIgnoreHostKey()` | 目标已限私有网段，残余中间人风险 |
-| `golangci-lint` | 本机未安装，深度 lint 未执行 | 静态检查覆盖不完整（`go build`/`go vet`/`gofmt` 已过） |
+| Web 终端 SSH | ✅ 主机密钥已按 TOFU 语义校验（首次连接记录指纹，指纹变化拒绝连接并提示风险，admin 可管理指纹清单） | 残余：TOFU 首连本身无法识别「首次即中间人」；目标已限私有网段 |
+| 静态检查 | `go build` / `go vet` / `gofmt` 全过，`.golangci.yml` 配置就绪 | 深度 lint 覆盖以 vet 为主 |
 | 状态字面量 | 全仓库仍有 7 处状态字面量未换成常量 | 一致性隐患，行为正确 |
 | deploy 明文密钥 | `deploy/prometheus.yml`（remote_write BasicAuth）与 `deploy/alertmanager.yml` 含明文凭据入库 | 仓库可见，需轮换并改环境变量注入 |
 | Grafana iframe | 匿名只读 + allow_embedding 下，viewer 在监控 tab 仍能看到看板画面（告警/file-sd 四端点已对 viewer 收权 403，看板画面属部署层收权） | viewer 可见监控看板 |
