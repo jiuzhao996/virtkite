@@ -131,7 +131,37 @@ O（VM 标签）─────────────→ K（拓扑图分组�
 | 计划任务+安全入口 | 运维与安全章节 | 1.5min |
 | 日志栈/可观测性四件套 | 监控中心章节收尾 | 1min |
 
-## 6. 技术风险与预案汇总
+## 6. v3.2 增补批次（第二轮：对标 1Panel 容器模块逐页拆解 + 应用商店 263 应用全量调研）
+
+用户结论：容器管理做浅了（1Panel 是 8 tab：容器/编排/镜像/网络/卷/仓库/模板/设置）、应用太少（1Panel 263 个 vs 我们 6 个）、镜像体系需理顺（市场=获取渠道，镜像库=资产仓库，并入镜像管理页做双 tab）。
+
+### 批次 R：容器管理强化（八 tab 化）
+后端 dockerx 扩展 + handler/docker.go 扩展 + 前端 DockerList 改 tab 页（容器/编排/镜像/网络/卷）：
+- R1 容器详情：docker inspect JSON 只读抽屉
+- R2 容器终端：WebSocket + PTY + docker exec -it（复用 console.Conn 写锁与 terminal 桥模式）
+- R3 日志增强：--since/--tail/-f follow 流式
+- R4 资源占用列：docker stats --no-stream 轮询（CPU%/内存% 实时列 + 悬浮详情）
+- R5 批量启停删 + 7 状态筛选 + 名称搜索
+- R6 镜像拉取：docker pull（异步任务，支持加速地址）
+- R7 清理：image/container prune（返回删除数与回收空间）
+- R8 创建容器表单：端口/挂载/环境变量/资源限制/重启策略 → docker run 参数映射
+- R9 网络管理：network ls/create/rm
+- R10 卷管理：volume ls/create/rm/prune
+- 编排列表：compose ls + 逐项目启停（与应用商店联动）
+- 不做：仓库凭据管理、镜像构建、daemon.json 配置页、IPv6 细项
+
+### 批次 S：应用扩充（6 → 20）
+调研筛选的 14 个新增 compose 包（已剔除 GitLab/HA 等资源怪兽，清单含真实镜像 tag/端口/env）：
+PostgreSQL、MinIO、Gitea（官方镜像）、MongoDB、RabbitMQ（management）、Open WebUI、n8n、code-server、it-tools、Jenkins（LTS）、Halo、Memos、Jellyfin、qBittorrent——参照 1Panel 真实 data.yml 风格（密码 random、端口 paramPort）
+
+### 批次 T：镜像体系理顺
+- 云镜像市场并入镜像管理页第二 tab（「我的镜像」/「镜像市场」），下载完成原地刷新
+- ImageMarket 独立页与路由撤除；两处引导文案（市场=获取渠道，镜像库=资产仓库）
+
+### 批次 I+：凭据打通消费端
+- 文件管理/应用商店 SSH 安装表单加「使用已保存凭据」开关（后端 ResolveFor 取用，明文不出服务端）
+
+## 7. 技术风险与预案汇总
 
 | 风险 | 预案 |
 |---|---|
