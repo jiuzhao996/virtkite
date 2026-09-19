@@ -26,6 +26,7 @@ const (
 	KeyAIModel            = "ai_model"             // 模型名（如 deepseek-chat / glm-4）
 	KeySecurityEntrance   = "security_entrance"    // 登录安全入口口令（空=关闭；设置后登录须携带 X-Entrance 头或 ?entrance= 参数）
 	KeyPasswordMinLength  = "password_min_length"  // 密码最小长度（0=关闭策略；默认 8）
+	KeyAnnouncement       = "announcement"         // 系统公告（登录页与仪表盘展示；空=无公告；写入口 PUT /api/settings，公开读 GET /api/announcement）
 )
 
 // 各键默认值（与配置化之前的硬编码行为一致）。
@@ -40,6 +41,10 @@ const (
 	// passwordStrongPolicyMin 密码策略混合字符要求的起算长度：
 	// 策略达到该值时除长度外还要求至少含字母与数字各一（等价常见 Web 平台的弱口令底线）。
 	passwordStrongPolicyMin = 8
+
+	// AnnouncementMaxLength 公告文本长度上界（按 Unicode 字符数计，中文按字不算字节）。
+	// model.Setting.Value 列宽（varchar(2000)）与之对齐，改一处必须同步另一处。
+	AnnouncementMaxLength = 2000
 )
 
 // poolNameRe 存储池名白名单：字母数字下划线点连字符（libvirt 池名约束的保守子集）。
@@ -121,6 +126,7 @@ func (m *Manager) All() map[string]string {
 		KeyVNCStaleMin:        strconv.Itoa(m.getInt(KeyVNCStaleMin, VNCStaleDefaultMin)),
 		KeySecurityEntrance:   m.SecurityEntrance(),
 		KeyPasswordMinLength:  strconv.Itoa(m.PasswordMinLength()),
+		KeyAnnouncement:       m.Announcement(),
 	}
 }
 
@@ -148,6 +154,12 @@ func (m *Manager) SecurityEntrance() string {
 // PasswordMinLength 密码最小长度策略（0=关闭策略）。
 func (m *Manager) PasswordMinLength() int {
 	return m.getInt(KeyPasswordMinLength, PasswordMinLengthDefault)
+}
+
+// Announcement 系统公告文本（空=当前无公告，前端不渲染公告条）。
+// 消费方是公开端点 GET /api/announcement（登录页匿名访问），走进程内缓存不打 DB。
+func (m *Manager) Announcement() string {
+	return m.GetStr(KeyAnnouncement, "")
 }
 
 // Validate 校验键与取值。键必须在白名单内，取值按键的类型与范围校验。
@@ -183,6 +195,12 @@ func Validate(key, value string) error {
 		return nil
 	case KeyPasswordMinLength:
 		return validateRange(value, 0, 64, "密码最小长度")
+	case KeyAnnouncement:
+		// 空值=撤下公告，允许；非空仅校验长度（按 Unicode 字符数），内容不做格式约束
+		if utf8.RuneCountInString(value) > AnnouncementMaxLength {
+			return fmt.Errorf("公告内容长度需不超过 %d 字", AnnouncementMaxLength)
+		}
+		return nil
 	default:
 		return fmt.Errorf("不支持的配置项: %s", key)
 	}

@@ -152,6 +152,14 @@ export const api = {
   updateUser: (id, payload) => unwrap(http.put('/users/' + id, payload)),
   deleteUser: (id) => unwrap(http.delete('/users/' + id)),
 
+  // cloud-init 配置模板（operator/admin：向导「套用模板 / 保存为模板」与管理页共用）
+  // spec 为对象（后端出库已反序列化），字段 hostname/user/password/ssh_key/net_mode/ip/gateway/dns
+  listCloudInitTemplates: () => unwrap(http.get('/cloud-init-templates')),
+  getCloudInitTemplate: (id) => unwrap(http.get('/cloud-init-templates/' + id)),
+  createCloudInitTemplate: (payload) => unwrap(http.post('/cloud-init-templates', payload)),
+  updateCloudInitTemplate: (id, payload) => unwrap(http.put('/cloud-init-templates/' + id, payload)),
+  deleteCloudInitTemplate: (id) => unwrap(http.delete('/cloud-init-templates/' + id)),
+
   // 监控中心（Alertmanager 告警代理，登录即可看）
   listAlerts: () => unwrap(http.get('/monitor/alerts')),
   // 告警历史（webhook 入库数据，params: { status, fingerprint, page, page_size }）
@@ -196,7 +204,10 @@ export const api = {
 
   // 系统设置（仅管理员）：GET 生效配置快照 + 可写项当前值；PUT 修改可写项（写入即生效）
   getSettings: () => unwrap(http.get('/settings')),
-  updateSettings: (payload) => unwrap(http.put('/settings', payload))
+  updateSettings: (payload) => unwrap(http.put('/settings', payload)),
+
+  // 系统公告（公开接口，无需认证——登录页也展示）；写入口走 updateSettings 的 announcement 键
+  getAnnouncement: () => unwrap(http.get('/announcement'))
 }
 
 // TOKEN_KEY 实际定义在 store/auth.js，这里原样 re-export，保持既有的「从 ../api 导入 TOKEN_KEY」写法可用

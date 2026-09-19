@@ -81,6 +81,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		AIModel            *string `json:"ai_model"`
 		SecurityEntrance   *string `json:"security_entrance"`   // 登录安全入口口令（空串=关闭）
 		PasswordMinLength  *int    `json:"password_min_length"` // 密码最小长度（0=关闭策略）
+		Announcement       *string `json:"announcement"`        // 系统公告（空串=撤下公告）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数错误")
@@ -186,6 +187,20 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		updated = append(updated, "密码最小长度")
+	}
+	// 系统公告（v3 批次 P）：公开读（GET /api/announcement，登录页匿名访问），写入仍仅管理员。
+	// 消费方走 Settings 进程内缓存，保存即生效；空串=撤下公告，Validate 放行空值。
+	if req.Announcement != nil {
+		if err := setting.Validate(setting.KeyAnnouncement, *req.Announcement); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.Settings.Set(setting.KeyAnnouncement, *req.Announcement); err != nil {
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存系统公告失败")
+			return
+		}
+		updated = append(updated, "系统公告")
 	}
 	if len(updated) == 0 {
 		Fail(c, http.StatusBadRequest, "没有需要更新的配置项")

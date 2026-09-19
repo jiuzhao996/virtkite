@@ -9,35 +9,46 @@
       @load="bgOk = true"
       @error="bgOk = false"
     />
-    <el-card class="login-card" shadow="always">
-      <div class="login-brand">
-        <img class="logo" src="/brand/logo-teal.svg" alt="鸢航 VirtKite" />
-        <h1>鸢航 <span class="en">VirtKite</span></h1>
-        <p>基于 KVM 的轻量级私有云管理平台</p>
-      </div>
+    <!-- 系统公告（公开接口，无需认证）：非空即展示，置于登录卡片上方同宽展示 -->
+    <div class="login-stack">
+      <el-alert
+        v-if="announcement"
+        class="login-announcement"
+        type="warning"
+        show-icon
+        :closable="false"
+        :title="announcement"
+      />
+      <el-card class="login-card" shadow="always">
+        <div class="login-brand">
+          <img class="logo" src="/brand/logo-teal.svg" alt="鸢航 VirtKite" />
+          <h1>鸢航 <span class="en">VirtKite</span></h1>
+          <p>基于 KVM 的轻量级私有云管理平台</p>
+        </div>
 
-      <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="mb" />
+        <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="mb" />
 
-      <el-form @submit.prevent="submit" label-position="top">
-        <el-form-item label="用户名">
-          <el-input v-model="form.username" placeholder="请输入用户名" size="large" @keyup.enter="submit" />
-        </el-form-item>
-        <el-form-item label="密码">
-          <el-input v-model="form.password" type="password" placeholder="请输入密码" size="large" show-password @keyup.enter="submit" />
-        </el-form-item>
-        <el-button type="primary" class="submit-btn" size="large" :loading="submitting" @click="submit">
-          登 录
-        </el-button>
-      </el-form>
+        <el-form @submit.prevent="submit" label-position="top">
+          <el-form-item label="用户名">
+            <el-input v-model="form.username" placeholder="请输入用户名" size="large" @keyup.enter="submit" />
+          </el-form-item>
+          <el-form-item label="密码">
+            <el-input v-model="form.password" type="password" placeholder="请输入密码" size="large" show-password @keyup.enter="submit" />
+          </el-form-item>
+          <el-button type="primary" class="submit-btn" size="large" :loading="submitting" @click="submit">
+            登 录
+          </el-button>
+        </el-form>
 
-      <!-- 演示账号提示：构建时 VITE_SHOW_DEMO_TIP=false 可隐藏（公开演示/截图归档时不应暴露口令） -->
-      <div v-if="showDemoTip" class="demo-tip">
-        <el-icon><InfoFilled /></el-icon>演示账号：<br />
-        管理员 <code>admin</code> / <code>Password1</code><br />
-        操作员 <code>stu</code> / <code>123456</code><br />
-        普通用户 <code>user</code> / <code>123456</code>
-      </div>
-    </el-card>
+        <!-- 演示账号提示：构建时 VITE_SHOW_DEMO_TIP=false 可隐藏（公开演示/截图归档时不应暴露口令） -->
+        <div v-if="showDemoTip" class="demo-tip">
+          <el-icon><InfoFilled /></el-icon>演示账号：<br />
+          管理员 <code>admin</code> / <code>Password1</code><br />
+          操作员 <code>stu</code> / <code>123456</code><br />
+          普通用户 <code>user</code> / <code>123456</code>
+        </div>
+      </el-card>
+    </div>
   </div>
 </template>
 
@@ -62,10 +73,23 @@ const bgImg = ref(null)
 // 演示账号提示开关：默认显示（开发/答辩演示用），构建时 VITE_SHOW_DEMO_TIP=false 隐藏
 const showDemoTip = import.meta.env.VITE_SHOW_DEMO_TIP !== 'false'
 
+// 系统公告（v3 批次 P）：公开接口拉取，非空展示于登录卡片上方；拉取失败静默（不挡登录主流程）
+const announcement = ref('')
+
+async function loadAnnouncement() {
+  try {
+    const res = await api.getAnnouncement()
+    announcement.value = (res.data && res.data.content) || ''
+  } catch (e) {
+    /* 公告不可达不影响登录 */
+  }
+}
+
 onMounted(() => {
   // 登录页禁止页面级滚动（内容居中，不应出现右侧滚动条）
   document.documentElement.style.overflow = 'hidden'
   if (bgImg.value && bgImg.value.complete && bgImg.value.naturalWidth > 0) bgOk.value = true
+  loadAnnouncement()
 })
 
 onUnmounted(() => {
@@ -119,6 +143,19 @@ async function submit() {
 }
 .login-bg.on {
   opacity: 1;
+}
+.login-stack {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* 公告条与登录卡同宽同圆角，多行内容自动撑高 */
+.login-announcement {
+  border-radius: var(--radius-lg);
 }
 .login-card {
   position: relative;

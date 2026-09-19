@@ -11,6 +11,17 @@
       </el-tooltip>
     </div>
 
+    <!-- 系统公告（v3 批次 P）：公开接口拉取。localStorage 记录已关闭公告的内容 hash——
+         同一内容点过关闭不再弹，公告内容变化（hash 不同）后重新提示 -->
+    <el-alert
+      v-if="announcementVisible"
+      class="dash-announcement"
+      type="info"
+      show-icon
+      :title="announcement"
+      @close="markAnnouncementRead"
+    />
+
     <!-- 概览 / 监控 两个 tab：概览是状态摘要（含即时时序快照），监控收敛全部深度分析
          （Grafana 双看板 + 实时告警 + 告警历史 + file_sd 服务发现）。监控 tab 用 lazy：
          首次激活才挂载（Grafana iframe 首载约 3MB），挂载后常驻不销毁。 -->
@@ -316,6 +327,40 @@ const firingAlerts = computed(
 // 系统信息（仅管理员拉取，补充平台信息卡；viewer 无 /settings 权限）
 const sysInfo = ref(null)
 
+// 系统公告（v3 批次 P）：登录即可见，公开接口。localStorage 记录已关闭公告的内容
+// hash（djb2，仅本地「内容变没变」比对用）——同一内容点过关闭不再弹，内容变化重新提示
+const ANN_READ_KEY = 'vmops_announcement_read'
+const announcement = ref('')
+const announcementRead = ref(true) // 初始视为已读，拉到未读内容再点亮
+
+function hashStr(s) {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
+  return String(h >>> 0)
+}
+
+const announcementVisible = computed(() => announcement.value !== '' && !announcementRead.value)
+
+async function loadAnnouncement() {
+  try {
+    const res = await api.getAnnouncement()
+    const content = (res.data && res.data.content) || ''
+    announcement.value = content
+    announcementRead.value = content === '' || localStorage.getItem(ANN_READ_KEY) === hashStr(content)
+  } catch (e) {
+    /* 公告拉取失败静默，不打扰仪表盘主流程 */
+  }
+}
+
+function markAnnouncementRead() {
+  announcementRead.value = true
+  try {
+    localStorage.setItem(ANN_READ_KEY, hashStr(announcement.value))
+  } catch (e) {
+    /* localStorage 不可用（隐私模式等）时仅本次会话生效 */
+  }
+}
+
 async function loadAlerts() {
   if (!canOperate.value) return // 监控数据仅操作员/管理员可见（viewer 不发请求）
   try {
@@ -604,6 +649,7 @@ onMounted(async () => {
   loadAlerts()
   loadSysInfo()
   loadCapacity()
+  loadAnnouncement()
   alertTimer = setInterval(loadAlerts, ms)
   // 历史曲线预填：先画满过去一小时，再由轮询无缝追加
   prefillHostHistory()
@@ -623,6 +669,10 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 系统公告条：页头与 tabs 之间留 8px 栅格间距 */
+.dash-announcement {
+  margin-bottom: 16px;
+}
 /* 资源容量卡（超分视角）：分配/物理 横条，ratio>1 超分变橙 */
 .cap-row {
   display: flex;

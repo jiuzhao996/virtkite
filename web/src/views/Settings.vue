@@ -84,6 +84,29 @@
       </el-form>
       <p class="tip">安全入口遗忘时的应急处理见 docs/07 部署文档。</p>
     </el-card>
+
+    <!-- 系统公告（v3 批次 P）：登录页与仪表盘公开展示，独立保存，只提交 announcement 键 -->
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">系统公告</span>
+          <el-button type="primary" :loading="savingAnn" @click="saveAnnouncement">保存</el-button>
+        </div>
+      </template>
+      <el-form label-width="170px">
+        <el-form-item label="公告内容">
+          <el-input
+            v-model="ann.content"
+            type="textarea"
+            :rows="5"
+            maxlength="2000"
+            show-word-limit
+            placeholder="留空 = 不展示公告。保存后立即在登录页与仪表盘顶部展示"
+          />
+        </el-form-item>
+      </el-form>
+      <p class="tip">公告对全部用户公开（含未登录的登录页），请勿填写敏感信息；清空内容并保存即撤下公告。仪表盘对同一内容仅提示一次，内容变更后重新提示。</p>
+    </el-card>
   </div>
 </template>
 
@@ -112,6 +135,10 @@ const sec = reactive({ entrance: '', pwdMin: 8 })
 const savingAI = ref(false)
 const ai = reactive({ base_url: '', api_key: '', model: '' })
 
+// 系统公告（v3 批次 P）：announcement 单键，独立保存；空串=撤下公告（后端放行空值）
+const savingAnn = ref(false)
+const ann = reactive({ content: '' })
+
 async function load() {
   loading.value = true
   try {
@@ -128,6 +155,7 @@ async function load() {
     ai.model = w.ai_model ?? snap.ai_model ?? ''
     if (w.security_entrance !== undefined) sec.entrance = w.security_entrance
     if (w.password_min_length !== undefined) sec.pwdMin = Number(w.password_min_length) || 0
+    if (w.announcement !== undefined) ann.content = w.announcement
   } catch (e) {
     ElMessage.error('获取系统设置失败')
   } finally {
@@ -196,6 +224,21 @@ async function saveSec() {
     ElMessage.error(errMsg(e, '保存安全设置失败'))
   } finally {
     savingSec.value = false
+  }
+}
+
+// 系统公告单独保存：只提交 announcement 键，与其它配置卡互不覆盖；
+// 允许保存空串（=撤下公告），后端 Validate 放行空值
+async function saveAnnouncement() {
+  savingAnn.value = true
+  try {
+    await api.updateSettings({ announcement: ann.content })
+    ElMessage.success(ann.content.trim() ? '公告已发布并生效' : '公告已撤下')
+    load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存系统公告失败'))
+  } finally {
+    savingAnn.value = false
   }
 }
 

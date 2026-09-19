@@ -121,6 +121,24 @@
           </el-form-item>
           <el-collapse v-if="cloudImage.imageId && cloudInitSupported && cloudInitEnabled" v-model="ciPanels" class="ci-collapse">
             <el-collapse-item name="ci" title="cloud-init 配置">
+              <!-- 模板工具行：套用（回填）/ 存为模板 / 管理模板（v3 批次 L） -->
+              <div class="ci-toolbar">
+                <el-select
+                  v-model="ciTemplateId"
+                  placeholder="套用模板：一键回填下方配置"
+                  clearable
+                  style="width: 300px"
+                  @change="applyCiTemplate"
+                >
+                  <el-option v-for="t in ciTemplates" :key="t.id" :label="t.name" :value="t.id">
+                    <span>{{ t.name }}</span>
+                    <span class="opt-hint" style="float: right">{{ t.spec && t.spec.net_mode === 'static' ? '静态 IP' : 'DHCP' }}</span>
+                  </el-option>
+                  <template #empty><span class="opt-hint">暂无模板，可点击右侧「存为模板」创建</span></template>
+                </el-select>
+                <el-button text type="primary" :icon="Plus" @click="saveAsTemplate">存为模板</el-button>
+                <el-button text type="primary" @click="router.push('/cloud-init-templates')">管理模板</el-button>
+              </div>
               <el-form label-width="110px" class="ci-form">
                 <el-form-item label="主机名">
                   <el-input v-model="cloudInit.hostname" :placeholder="'默认：' + (form.name || '虚拟机名')" style="width: 320px" />
@@ -384,10 +402,10 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, Check, CircleCheck, Plus, Delete, Monitor, Cloudy, CopyDocument, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { fmtSizeBytes } from '../utils/format.js'
+import { errMsg, fmtSizeBytes } from '../utils/format.js'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
@@ -426,6 +444,68 @@ const nics = reactive([{ id: 1, source: '' }])
 
 const cloudInitEnabled = ref(false)
 const cloudInit = reactive({ hostname: '', user: '', password: '', sshKey: '', netMode: 'dhcp', ip: '', gateway: '', dns: '' })
+
+// ── cloud-init 模板（v3 批次 L）：面板展开时懒加载，套用回填 / 存为模板 / 管理页跳转 ──
+const ciTemplates = ref([])
+const ciTemplateId = ref(null)
+const ciTemplatesLoaded = ref(false)
+async function ensureCiTemplates(force = false) {
+  if (ciTemplatesLoaded.value && !force) return
+  try {
+    const res = await api.listCloudInitTemplates()
+    ciTemplates.value = (res.data && res.data.items) || []
+    ciTemplatesLoaded.value = true
+  } catch {
+    /* 模板列表加载失败静默：不阻塞建机主流程；「存为模板」走 POST 自身会报错 */
+  }
+}
+watch(ciPanels, (v) => {
+  if (Array.isArray(v) && v.includes('ci')) ensureCiTemplates()
+})
+// 套用模板：模板 spec 回填进 cloudInit（清除选择 = 不动当前配置）
+function applyCiTemplate(tplId) {
+  if (!tplId) return
+  const t = ciTemplates.value.find((x) => x.id === tplId)
+  if (!t || !t.spec) return
+  const s = t.spec
+  Object.assign(cloudInit, {
+    hostname: s.hostname || '',
+    user: s.user || '',
+    password: s.password || '',
+    sshKey: s.ssh_key || '',
+    netMode: s.net_mode === 'static' ? 'static' : 'dhcp',
+    ip: s.ip || '',
+    gateway: s.gateway || '',
+    dns: Array.isArray(s.dns) ? s.dns.join(', ') : ''
+  })
+  ElMessage.success(`已套用模板「${t.name}」，可继续微调`)
+}
+// 存为模板：把当前 cloud-init 配置保存为可复用模板（hostname 为空不落「虚拟机名」默认值，
+// 模板应是通用配置，套用时空主机名自然回落为各台机器自己的名字）
+async function saveAsTemplate() {
+  let name = ''
+  try {
+    const r = await ElMessageBox.prompt('把当前 cloud-init 配置保存为模板，以后建机可一键套用', '保存为模板', {
+      inputPlaceholder: '模板名，如「教学实验机默认配置」',
+      inputPattern: /\S/,
+      inputErrorMessage: '模板名不能为空',
+      confirmButtonText: '保存',
+      cancelButtonText: '取消'
+    })
+    name = (r.value || '').trim()
+  } catch {
+    return // 用户取消
+  }
+  try {
+    const res = await api.createCloudInitTemplate({ name, description: '', spec: buildCiSpec() })
+    ElMessage.success('模板已保存，可在「管理模板」中维护')
+    await ensureCiTemplates(true)
+    const item = res && res.data
+    if (item && item.id) ciTemplateId.value = item.id
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存模板失败'))
+  }
+}
 
 const diskDialog = ref(false)
 const diskForm = reactive({ kind: 'create', createGb: 20, source: '', imageId: null, volName: '' })
@@ -841,20 +921,26 @@ function removeDisk(row) {
   if (idx > -1) extraDisks.splice(idx, 1)
 }
 
-function buildCloudInit() {
-  const cfg = {
-    hostname: cloudInit.hostname || form.name,
-    net_mode: cloudInit.netMode
-  }
-  if (cloudInit.user) cfg.user = cloudInit.user
+// 当前 cloud-init 表单 → spec 对象（只带非空字段；模板保存与建机 payload 共用的裁剪逻辑）
+function buildCiSpec() {
+  const cfg = { net_mode: cloudInit.netMode }
+  if (cloudInit.hostname.trim()) cfg.hostname = cloudInit.hostname.trim()
+  if (cloudInit.user.trim()) cfg.user = cloudInit.user.trim()
   if (cloudInit.password) cfg.password = cloudInit.password
-  if (cloudInit.sshKey) cfg.ssh_key = cloudInit.sshKey
+  if (cloudInit.sshKey.trim()) cfg.ssh_key = cloudInit.sshKey.trim()
   if (cloudInit.netMode === 'static') {
-    if (cloudInit.ip) cfg.ip = cloudInit.ip
-    if (cloudInit.gateway) cfg.gateway = cloudInit.gateway
+    if (cloudInit.ip.trim()) cfg.ip = cloudInit.ip.trim()
+    if (cloudInit.gateway.trim()) cfg.gateway = cloudInit.gateway.trim()
     const dnsList = cloudInit.dns.split(/[,，\s]+/).filter(Boolean)
     if (dnsList.length) cfg.dns = dnsList
   }
+  return cfg
+}
+
+function buildCloudInit() {
+  const cfg = buildCiSpec()
+  // 主机名缺省回落为虚拟机名（模板保存走 buildCiSpec，不带这一层 VM 专属默认值）
+  if (!cfg.hostname) cfg.hostname = form.name
   return cfg
 }
 
@@ -1120,6 +1206,14 @@ onMounted(async () => {
 
 .ci-form {
   max-width: 640px;
+}
+
+/* cloud-init 面板顶部的模板工具行：套用下拉 + 存为模板 + 管理模板 */
+.ci-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
 }
 
 .section-bar {

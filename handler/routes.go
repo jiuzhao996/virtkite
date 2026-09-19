@@ -50,6 +50,10 @@ func RegisterPublic(r *gin.Engine, deps Deps) {
 	login := r.Group("/api/auth", middleware.EntranceMiddleware(deps.SettingMgr.SecurityEntrance()))
 	login.POST("/login", authHandler.Login)
 
+	// 系统公告公开读取（v3 批次 P：登录页/仪表盘展示；写入走 PUT /api/settings admin）
+	announcementHandler := NewAnnouncementHandler(deps.DB, deps.SettingMgr)
+	r.GET("/api/announcement", announcementHandler.Get)
+
 	// VNC token 解析（供 websockify JSONTokenApi 内网调用）
 	r.GET("/api/vnc/token/:token", vncHandler.ResolveToken)
 
@@ -278,6 +282,17 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	}
 
 	// 应用商店 v2（声明式 compose 应用包，1Panel 对标）
+	citHandler := NewCloudInitTemplateHandler(deps.DB)
+	cit := api.Group("/cloud-init-templates")
+	cit.Use(middleware.OperatorMiddleware())
+	{
+		cit.GET("", citHandler.List)
+		cit.GET("/:id", citHandler.Get)
+		cit.POST("", citHandler.Create)
+		cit.PUT("/:id", citHandler.Update)
+		cit.DELETE("/:id", citHandler.Delete)
+	}
+
 	v2 := api.Group("/appstore")
 	v2.Use(middleware.NonViewerMiddleware())
 	{
