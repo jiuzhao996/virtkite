@@ -63,6 +63,27 @@
       </el-form>
       <p class="tip">配置后可在「AI 助手」页使用智能问答；Key 保存在服务端，不会下发到浏览器。</p>
     </el-card>
+
+    <!-- 安全设置（批次 D）：安全入口 + 密码策略，独立保存 -->
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">安全设置</span>
+          <el-button type="primary" :loading="savingSec" @click="saveSec">保存</el-button>
+        </div>
+      </template>
+      <el-form label-width="170px" style="max-width: 560px">
+        <el-form-item label="安全入口">
+          <el-input v-model="sec.entrance" placeholder="留空 = 关闭（默认登录地址）" clearable style="width: 320px" />
+          <div class="input-help">设置后登录 API 必须携带该入口参数（?entrance=值），否则一律 404——防扫描爆破。请妥善保存，遗忘可经 SSH 按文档重置。</div>
+        </el-form-item>
+        <el-form-item label="密码最小长度">
+          <el-input-number v-model="sec.pwdMin" :min="0" :max="64" controls-position="right" style="width: 160px" />
+          <div class="input-help">0 = 关闭策略；≥8 时密码需同时包含字母与数字</div>
+        </el-form-item>
+      </el-form>
+      <p class="tip">安全入口遗忘时的应急处理见 docs/07 部署文档。</p>
+    </el-card>
   </div>
 </template>
 
@@ -83,6 +104,10 @@ const writable = reactive({
   vnc_stale_min: 60
 })
 
+// 安全设置（批次 D）：security_entrance / password_min_length，独立保存
+const savingSec = ref(false)
+const sec = reactive({ entrance: '', pwdMin: 8 })
+
 // AI 设置（运维助手）：ai_base_url / ai_api_key / ai_model 三个键，独立保存
 const savingAI = ref(false)
 const ai = reactive({ base_url: '', api_key: '', model: '' })
@@ -101,6 +126,8 @@ async function load() {
     ai.base_url = w.ai_base_url ?? snap.ai_base_url ?? ''
     ai.api_key = w.ai_api_key ?? snap.ai_api_key ?? ''
     ai.model = w.ai_model ?? snap.ai_model ?? ''
+    if (w.security_entrance !== undefined) sec.entrance = w.security_entrance
+    if (w.password_min_length !== undefined) sec.pwdMin = Number(w.password_min_length) || 0
   } catch (e) {
     ElMessage.error('获取系统设置失败')
   } finally {
@@ -152,6 +179,23 @@ async function saveAI() {
     ElMessage.error(errMsg(e, '保存 AI 设置失败'))
   } finally {
     savingAI.value = false
+  }
+}
+
+// 安全设置单独保存：只提交两键，与运行参数/AI 互不覆盖
+async function saveSec() {
+  savingSec.value = true
+  try {
+    await api.updateSettings({
+      security_entrance: sec.entrance.trim(),
+      password_min_length: Number(sec.pwdMin) || 0
+    })
+    ElMessage.success('安全设置已保存并生效')
+    load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存安全设置失败'))
+  } finally {
+    savingSec.value = false
   }
 }
 

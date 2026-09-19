@@ -79,13 +79,15 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		AIBaseURL          *string `json:"ai_base_url"`
 		AIAPIKey           *string `json:"ai_api_key"`
 		AIModel            *string `json:"ai_model"`
+		SecurityEntrance   *string `json:"security_entrance"`   // 登录安全入口口令（空串=关闭）
+		PasswordMinLength  *int    `json:"password_min_length"` // 密码最小长度（0=关闭策略）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
 
-	updated := make([]string, 0, 6)
+	updated := make([]string, 0, 8)
 	// AI 三键（v3 批次 B）：同样的「Validate 400 固定文案 / Set DB 错误收口」分层
 	if req.AIBaseURL != nil {
 		if err := setting.Validate(setting.KeyAIBaseURL, *req.AIBaseURL); err != nil {
@@ -158,6 +160,32 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		updated = append(updated, "VNC 会话过期判定时长")
+	}
+	// 安全入口与密码策略（v3 批次 D）：同样的「Validate 400 固定文案 / Set DB 错误收口」分层。
+	// 消费方（AuthHandler.Login 入口校验、CreateUser/ChangeMyPassword 密码策略）每请求实时读取，写入即生效。
+	if req.SecurityEntrance != nil {
+		if err := setting.Validate(setting.KeySecurityEntrance, *req.SecurityEntrance); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.Settings.Set(setting.KeySecurityEntrance, *req.SecurityEntrance); err != nil {
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存安全入口失败")
+			return
+		}
+		updated = append(updated, "安全入口")
+	}
+	if req.PasswordMinLength != nil {
+		if err := setting.Validate(setting.KeyPasswordMinLength, strconv.Itoa(*req.PasswordMinLength)); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.Settings.Set(setting.KeyPasswordMinLength, strconv.Itoa(*req.PasswordMinLength)); err != nil {
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存密码最小长度失败")
+			return
+		}
+		updated = append(updated, "密码最小长度")
 	}
 	if len(updated) == 0 {
 		Fail(c, http.StatusBadRequest, "没有需要更新的配置项")

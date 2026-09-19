@@ -17,6 +17,7 @@ import (
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/service/console"
 	"github.com/jiuzhao/vmops/service/cron"
+	"github.com/jiuzhao/vmops/service/dockerx"
 	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
@@ -40,12 +41,14 @@ type Deps struct {
 // RegisterPublic 公开路由（无需认证，注册在引擎根上）。
 func RegisterPublic(r *gin.Engine, deps Deps) {
 	authHandler := NewAuthHandler(deps.DB)
+	authHandler.SetSettingMgr(deps.SettingMgr) // 安全入口动态校验 + 密码策略依赖
 	vncHandler := NewVNCHandler(deps.DB, deps.Sessions)
 	alertWebhookHandler := NewAlertWebhookHandler(deps.DB, deps.AlertWebhookToken)
 	metricsHandler := NewMetricsHandler(deps.DB)
 
-	// 公开接口（无需认证）
-	r.POST("/api/auth/login", authHandler.Login)
+	// 公开接口（无需认证）。安全入口（批次 D）：设置后 login 必须携带 X-Entrance 头/参数，否则 404 伪装
+	login := r.Group("/api/auth", middleware.EntranceMiddleware(deps.SettingMgr.SecurityEntrance()))
+	login.POST("/login", authHandler.Login)
 
 	// VNC token 解析（供 websockify JSONTokenApi 内网调用）
 	r.GET("/api/vnc/token/:token", vncHandler.ResolveToken)
@@ -74,7 +77,13 @@ func RegisterPublic(r *gin.Engine, deps Deps) {
 func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	// handler 构造（批次 0：统一从 Deps 取依赖；auth/metrics/webhook 等公开路由 handler 在 RegisterPublic 内构造）
 	authHandler := NewAuthHandler(deps.DB)
+	authHandler.SetSettingMgr(deps.SettingMgr)
 	userHandler := NewUserHandler(deps.DB)
+	userHandler.SetSettingMgr(deps.SettingMgr) // 改密/建用户密码策略
+	vmExportHandler := NewVMExportHandler(deps.DB, deps.Virt)
+	recycleHandler := NewVMRecycleHandler(deps.DB, deps.Virt)
+	toolboxHandler := NewToolboxHandler(deps.DB, dockerx.New(), "/home/jiuzhao/vmops/data")
+	imageMarketHandler := NewImageMarketHandler(deps.DB, deps.Tasks)
 	hostHandler := NewHostHandler(deps.DB)
 	imageHandler := NewImageHandler(deps.DB, deps.Tasks)
 	taskHandler := NewTaskHandler(deps.DB, deps.Tasks)
@@ -186,6 +195,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.GET("/:id/credentials", vmCredHandler.Get)
 		vms.DELETE("/:id/credentials", vmCredHandler.Delete)
 		vms.POST("/apps/install", appsHandler.Install)
+		// VM 导出/导入（v3 批次 J：导出 operator，导入 handler 内收口仅 admin）
+		vms.GET("/:id/export", vmExportHandler.Export)
+		vms.POST("/import-file", vmExportHandler.Import)
 		vms.POST("/:id/vnc-token", vncHandler.RequestToken)
 		vms.GET("/:id/terminal", terminalHandler.Connect)
 		vms.GET("/:id/serial", vmHandler.ConnectSerial)
@@ -228,6 +240,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		images.GET("", imageHandler.ListImages)
 		images.POST("/upload", imageHandler.UploadImage)
 		images.POST("/register", imageHandler.RegisterImage)
+		// 云镜像市场（v3 批次 H：下载仅管理员，handler 内 roleIsAdmin 收口）
+		images.GET("/market", imageMarketHandler.ListMarket)
+		images.POST("/market/download", imageMarketHandler.Download)
 		images.POST("/:id/clone", imageHandler.CloneVM)
 		images.PUT("/:id/template", imageHandler.SetImageTemplate)
 		images.DELETE("/:id", imageHandler.DeleteImage)
@@ -271,6 +286,25 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		v2.GET("/:key", appStoreV2.GetV2)
 		v2.POST("/:key/install", appStoreV2.InstallV2)
 		v2.POST("/:key/uninstall", appStoreV2.UninstallV2)
+	}
+
+	// 回收站（v3 批次 N：软删 VM 可视化恢复/彻底清除，仅管理员）
+	recycle := api.Group("/vms-recycle")
+	recycle.Use(middleware.AdminMiddleware())
+	{
+		recycle.GET("", recycleHandler.ListDeleted)
+		recycle.POST("/:id/restore", recycleHandler.Restore)
+		recycle.DELETE("/:id/purge", recycleHandler.Purge)
+	}
+
+	// 工具箱（v3 批次 E：进程/磁盘/清理，仅管理员）
+	toolbox := api.Group("/toolbox")
+	toolbox.Use(middleware.AdminMiddleware())
+	{
+		toolbox.GET("/processes", toolboxHandler.Processes)
+		toolbox.GET("/disk", toolboxHandler.DiskUsage)
+		toolbox.POST("/docker-prune", toolboxHandler.DockerPrune)
+		toolbox.POST("/tasks-purge", toolboxHandler.PurgeOldTasks)
 	}
 
 	// 计划任务（平台管理语义，仅管理员）

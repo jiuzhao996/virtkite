@@ -33,7 +33,7 @@
       <!-- 演示账号提示：构建时 VITE_SHOW_DEMO_TIP=false 可隐藏（公开演示/截图归档时不应暴露口令） -->
       <div v-if="showDemoTip" class="demo-tip">
         <el-icon><InfoFilled /></el-icon>演示账号：<br />
-        管理员 <code>admin</code> / <code>password</code><br />
+        管理员 <code>admin</code> / <code>Password1</code><br />
         操作员 <code>stu</code> / <code>123456</code><br />
         普通用户 <code>user</code> / <code>123456</code>
       </div>

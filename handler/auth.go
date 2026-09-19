@@ -9,17 +9,34 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/setting"
 	"gorm.io/gorm"
 )
 
 // AuthHandler 认证处理器
 type AuthHandler struct {
-	DB *gorm.DB
+	DB         *gorm.DB
+	settingMgr *setting.Manager // 系统可写配置（SetSettingMgr 注入，未注入时安全入口视为关闭）
 }
 
 // NewAuthHandler 创建认证处理器
 func NewAuthHandler(db *gorm.DB) *AuthHandler {
 	return &AuthHandler{DB: db}
+}
+
+// SetSettingMgr 注入系统设置管理器（向后兼容注入：构造器签名不变，routes.go 补一行接线）。
+// 未注入（旧构造路径/单测）时安全入口关闭，行为与改造前一致。
+func (h *AuthHandler) SetSettingMgr(m *setting.Manager) {
+	h.settingMgr = m
+}
+
+// securityEntrance 实时读取登录安全入口口令（空=关闭）。每次请求都读，
+// 设置页改完即时生效，无需重启。
+func (h *AuthHandler) securityEntrance() string {
+	if h.settingMgr == nil {
+		return ""
+	}
+	return h.settingMgr.SecurityEntrance()
 }
 
 // loginLimiter 登录失败限流器（内存实现，按来源 IP 计数）。
@@ -106,8 +123,22 @@ type LoginResponse struct {
 	User        *model.User `json:"user"`
 }
 
-// Login 用户登录（带失败限流：同 IP 1 分钟内失败 5 次锁定 1 分钟，成功清零）
+// Login 用户登录（带失败限流：同 IP 1 分钟内失败 5 次锁定 1 分钟，成功清零）。
+// 安全入口开启时（settings 的 security_entrance 非空），请求须携带匹配的
+// X-Entrance 头或 ?entrance= 查询参数，不匹配一律 404。
 func (h *AuthHandler) Login(c *gin.Context) {
+	// 安全入口校验（v3 批次 D）：置于限流之前——被拦请求按「路径不存在」处理，
+	// 不消耗限流计数、不返回限流提示，与访问了不存在路由在响应层面不可区分（不泄露端点存在性）。
+	if entrance := h.securityEntrance(); entrance != "" {
+		if !middleware.EntranceMatch(entrance, middleware.EntranceFromRequest(c)) {
+			// 响应体与 gin 默认 404 完全一致；此处刻意不走 Fail/ErrorResponse
+			//（错误响应格式反而会暴露「端点存在但被拦」）
+			c.String(http.StatusNotFound, "404 page not found")
+			c.Abort()
+			return
+		}
+	}
+
 	ip := c.ClientIP()
 	if blocked, wait := loginLimiterDefault.blocked(ip); blocked {
 		c.Header("Retry-After", strconv.Itoa(int(wait.Seconds())+1))

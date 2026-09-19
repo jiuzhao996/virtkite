@@ -154,7 +154,7 @@ docker compose up -d prometheus grafana alertmanager
 
 | 账号 | 密码 | 角色 | 权限 |
 |------|------|------|------|
-| `admin` | `password` | 管理员（admin） | 全部权限，含 SSH 终端与串口控制台、用户/设置/授权管理 |
+| `admin` | `Password1` | 管理员（admin） | 全部权限，含 SSH 终端与串口控制台、用户/设置/授权管理 |
 | `stu` | `123456` | 操作员（operator） | VM 全生命周期 + 三类控制台；`/api/vms` 之外写操作 403；**仅能看到被授权的 VM**（经「授权管理」面板分配） |
 | `user` | `123456` | 只读运维（viewer） | 只读接口 + 图形控制台**只读观看**；变更操作、SSH 终端、串口控制台、监控中心四端点一律 403 |
 

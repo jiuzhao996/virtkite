@@ -6,17 +6,37 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/setting"
 	"gorm.io/gorm"
 )
 
+// legacyPasswordMinLength 改造前 CreateUser/ChangeMyPassword 的硬编码密码下限。
+// 仅在 settingMgr 未接线时兜底使用，避免「忘记注入」静默放开已有的口令强度约束。
+const legacyPasswordMinLength = 6
+
 // UserHandler 用户处理器
 type UserHandler struct {
-	DB *gorm.DB
+	DB         *gorm.DB
+	settingMgr *setting.Manager // 系统可写配置（SetSettingMgr 注入，未注入时用改造前硬底线）
 }
 
 // NewUserHandler 创建用户处理器
 func NewUserHandler(db *gorm.DB) *UserHandler {
 	return &UserHandler{DB: db}
+}
+
+// SetSettingMgr 注入系统设置管理器（向后兼容注入：构造器签名不变，routes.go 补一行接线）。
+func (h *UserHandler) SetSettingMgr(m *setting.Manager) {
+	h.settingMgr = m
+}
+
+// passwordPolicy 读取密码最小长度策略（实时读，设置改完即时生效；0=关闭策略）。
+// 未注入管理器时退回改造前的 6 位硬底线。
+func (h *UserHandler) passwordPolicy() int {
+	if h.settingMgr == nil {
+		return legacyPasswordMinLength
+	}
+	return h.settingMgr.PasswordMinLength()
 }
 
 // ListUsers 获取用户列表
@@ -54,9 +74,10 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		return
 	}
 
-	// 密码强度与 ChangeMyPassword 对齐：至少 6 位
-	if len(req.Password) < 6 {
-		Fail(c, http.StatusBadRequest, "密码至少 6 位")
+	// 密码策略（v3 批次 D）：长度按系统设置 password_min_length 校验（策略 ≥8 时
+	// 额外要求字母+数字混合）。错误文案是固定中文，可直接回显给前端。
+	if err := setting.ValidatePassword(h.passwordPolicy(), req.Password); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -177,8 +198,10 @@ func (h *UserHandler) ChangeMyPassword(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "请填写旧密码和新密码")
 		return
 	}
-	if len(req.NewPassword) < 6 {
-		Fail(c, http.StatusBadRequest, "新密码至少 6 位")
+	// 密码策略（v3 批次 D）：新密码按系统设置 password_min_length 校验（含复杂度要求），
+	// 旧密码不参与策略（它只用于身份确认）。错误文案是固定中文，可直接回显。
+	if err := setting.ValidatePassword(h.passwordPolicy(), req.NewPassword); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.OldPassword == req.NewPassword {

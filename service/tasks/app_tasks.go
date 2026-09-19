@@ -39,13 +39,14 @@ func buildDetectCmd(detect string) string {
 	return "if " + detect + "; then echo " + appInstalledMark + "; else echo " + appNotInstalledMark + "; fi"
 }
 
-// RegisterAppTasks 注册应用商店任务 executor。检测走 handler 同步 SSH（快速、用户在线等待），
-// 这里只注册 app_install。
+// RegisterAppTasks 注册应用商店与云镜像市场任务 executor。检测走 handler 同步 SSH（快速、用户在线等待），
+// 这里注册 app_install；image_download（云镜像市场下载）一并挂入（v3 批次 H）。
 func RegisterAppTasks(m *Manager) {
 	if m == nil {
 		return
 	}
 	m.Register("app_install", execAppInstall)
+	RegisterImageDownload(m)
 }
 
 // execAppInstall 在虚拟机内经 SSH 执行应用安装脚本（executor 内禁引用 gin/handler）。
