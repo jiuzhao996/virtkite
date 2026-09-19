@@ -9,12 +9,24 @@
 
     <el-card shadow="never">
       <div class="toolbar">
-        <span class="count">共 {{ items.length }} 个任务</span>
-        <el-button type="primary" :icon="Plus" @click="openCreate">新建任务</el-button>
-        <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+        <div class="toolbar-left">
+          <span class="count">共 {{ filteredItems.length }} 个任务</span>
+          <!-- 前端过滤当前数据，不动服务端查询 -->
+          <el-select v-model="actionFilter" placeholder="动作类型" clearable style="width: 140px">
+            <el-option v-for="a in actionFilterOptions" :key="a.value" :label="a.label" :value="a.value" />
+          </el-select>
+          <el-select v-model="enabledFilter" placeholder="启用状态" clearable style="width: 120px">
+            <el-option label="已启用" value="enabled" />
+            <el-option label="已停用" value="disabled" />
+          </el-select>
+        </div>
+        <div class="toolbar-right">
+          <el-button type="primary" :icon="Plus" @click="openCreate">新建任务</el-button>
+          <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+        </div>
       </div>
 
-      <el-table v-loading="loading" :data="items" stripe size="small">
+      <el-table v-loading="loading" :data="filteredItems" stripe size="small">
         <template #empty>
           <el-empty description="暂无计划任务，点击新建创建第一个定时任务" :image-size="80" />
         </template>
@@ -68,7 +80,7 @@
           <template #default="{ row }">
             <el-button
               size="small"
-              type="success"
+              type="primary"
               plain
               :loading="runningId === row.id"
               :disabled="!!runningId && runningId !== row.id"
@@ -96,6 +108,11 @@
             </el-select>
           </div>
           <div class="field-tip">5 个字段：分 时 日 月 周；示例「0 2 * * *」= 每天 02:00</div>
+          <!-- 下次执行预览：输入停顿 500ms 后调后端解析，非法表达式给红色提示 -->
+          <div v-if="cronPreview.state === 'invalid'" class="cron-preview cron-preview-invalid">表达式无效</div>
+          <div v-else-if="cronPreview.state === 'ok' && cronPreview.times.length" class="cron-preview cron-preview-ok">
+            下次执行：{{ cronPreview.times.join('、') }}
+          </div>
         </el-form-item>
         <el-form-item label="动作" required>
           <el-radio-group v-model="form.action">
@@ -162,7 +179,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import http from '../api'
@@ -171,6 +188,27 @@ import { errMsg, isCancel, fmtDateTime, vmStatusText } from '../utils/format'
 // ===== 列表 =====
 const items = ref([])
 const loading = ref(false)
+
+// ===== 前端筛选：动作类型（按现有数据归纳选项） + 启用状态 =====
+const actionFilter = ref('')
+const enabledFilter = ref('')
+
+const actionFilterOptions = computed(() => {
+  const seen = new Map()
+  items.value.forEach((it) => {
+    if (it.action && !seen.has(it.action)) seen.set(it.action, actionText(it.action))
+  })
+  return Array.from(seen, ([value, label]) => ({ value, label }))
+})
+
+const filteredItems = computed(() =>
+  items.value.filter((it) => {
+    if (actionFilter.value && it.action !== actionFilter.value) return false
+    if (enabledFilter.value === 'enabled' && !it.enabled) return false
+    if (enabledFilter.value === 'disabled' && it.enabled) return false
+    return true
+  })
+)
 
 // 动作 → 中文 / tag 颜色
 function actionText(a) {
@@ -271,6 +309,46 @@ const PRESETS = [
 // keep：保留份数（快照/备份只留最近 N 份），后端校验 1-365，默认 7
 const DEFAULT_KEEP = 7
 const form = ref({ name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, keep: DEFAULT_KEEP, enabled: true })
+
+// ===== cron 表达式「下次执行」预览 =====
+// 契约：GET /crons/preview?expr=<表达式> → data.next = 最多 5 个「YYYY-MM-DD HH:mm:ss」字符串；
+// 表达式非法时后端 400。请求失败 / 400 统一展示红色「表达式无效」，不弹 toast 打断填表。
+const cronPreview = ref({ state: 'idle', times: [] }) // state: idle（无输入/输入中）| ok | invalid
+let previewSeq = 0 // 时间戳守卫：慢响应晚到时若已非最新请求则丢弃，防旧结果覆盖新输入
+let previewTimer = null
+
+watch(
+  () => form.value.cron_expr,
+  (expr) => {
+    clearTimeout(previewTimer)
+    cronPreview.value = { state: 'idle', times: [] }
+    const trimmed = (expr || '').trim()
+    if (!trimmed) return
+    // debounce 500ms：等用户停止输入再请求
+    previewTimer = setTimeout(() => fetchPreview(trimmed), 500)
+  }
+)
+
+// 弹窗关闭即取消挂起的预览请求并复位提示
+watch(dialog, (open) => {
+  if (!open) {
+    clearTimeout(previewTimer)
+    cronPreview.value = { state: 'idle', times: [] }
+  }
+})
+
+async function fetchPreview(expr) {
+  const seq = ++previewSeq
+  try {
+    const res = await http.get('/crons/preview', { params: { expr } })
+    if (seq !== previewSeq) return
+    const next = (res.data && res.data.data && res.data.data.next) || []
+    cronPreview.value = { state: 'ok', times: Array.isArray(next) ? next.slice(0, 3) : [] }
+  } catch (e) {
+    if (seq !== previewSeq) return
+    cronPreview.value = { state: 'invalid', times: [] }
+  }
+}
 
 // vm_snapshot 时参数预览：未选虚拟机用 ? 占位，选中后即最终提交的 JSON 字符串
 const snapshotParamsPreview = computed(() =>
@@ -455,13 +533,35 @@ onMounted(() => {
   // 参数列要把 vm_id 翻译成虚拟机名，列表数据里没有，进页面就拉一份
   loadVMs()
 })
+
+onUnmounted(() => {
+  clearTimeout(previewTimer)
+})
 </script>
 
 <style scoped>
+.toolbar-left,
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .expr-row {
   display: flex;
   gap: 8px;
   width: 100%;
+}
+.cron-preview {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+.cron-preview-ok {
+  color: var(--color-success, #16a34a);
+}
+.cron-preview-invalid {
+  color: var(--el-color-danger);
 }
 .field-tip {
   font-size: 0.78rem;

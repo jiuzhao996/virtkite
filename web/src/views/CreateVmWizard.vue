@@ -1,9 +1,9 @@
 <template>
   <div class="wizard" v-loading="loading">
     <div class="wizard-head">
-      <el-button round :icon="ArrowLeft" @click="router.push({ name: 'vms' })">返回</el-button>
+      <el-button text :icon="ArrowLeft" @click="router.push({ name: 'vms' })">返回</el-button>
       <h2 class="wizard-title">创建虚拟机</h2>
-      <span class="wizard-sub">对齐 virt-manager 创建向导 · 支持 ISO / 云镜像 cloud-init / 克隆</span>
+      <span class="wizard-sub">三种安装方式：ISO 安装、云镜像 + cloud-init、克隆现有虚拟机</span>
     </div>
 
     <!-- 前置条件检查：缺网络/安装源/存储池时给出引导链接，不让用户走到中途才发现卡住（基建先行） -->
@@ -21,10 +21,11 @@
         <el-button v-if="!usablePools.length" size="small" text type="primary" @click="$router.push('/storage')">去存储池查看 →</el-button>
       </div>
     </el-alert>
+    <!-- 已经过的步骤可点击回跳（后续步骤必须走「下一步」过校验，不能跳） -->
     <el-steps :active="step" finish-status="success" align-center class="wizard-steps">
-      <el-step title="安装方式" />
-      <el-step title="计算资源" />
-      <el-step title="磁盘与网络" />
+      <el-step title="安装方式" :class="{ 'step-clickable': step > 0 }" @click="goStep(0)" />
+      <el-step title="计算资源" :class="{ 'step-clickable': step > 1 }" @click="goStep(1)" />
+      <el-step title="磁盘与网络" :class="{ 'step-clickable': step > 2 }" @click="goStep(2)" />
       <el-step title="确认创建" />
     </el-steps>
 
@@ -87,7 +88,7 @@
 
         <el-form v-if="installMode === 'cloudimage'" label-width="110px" class="step-form">
           <el-form-item label="云镜像 / 模板" required>
-            <el-select v-model="cloudImage.imageId" filterable placeholder="选择云镜像或模板" style="width: 460px" @change="onCloudImageChange">
+            <el-select v-model="cloudImage.imageId" filterable placeholder="选择云镜像或模板" style="width: 380px" @change="onCloudImageChange">
               <el-option v-for="img in cloudImageList" :key="img.id" :label="img.name" :value="img.id">
                 <div class="opt-line">
                   <span>{{ img.name }}</span>
@@ -127,7 +128,7 @@
                   v-model="ciTemplateId"
                   placeholder="套用模板：一键回填下方配置"
                   clearable
-                  style="width: 300px"
+                  style="width: 380px"
                   @change="applyCiTemplate"
                 >
                   <el-option v-for="t in ciTemplates" :key="t.id" :label="t.name" :value="t.id">
@@ -141,13 +142,13 @@
               </div>
               <el-form label-width="110px" class="ci-form">
                 <el-form-item label="主机名">
-                  <el-input v-model="cloudInit.hostname" :placeholder="'默认：' + (form.name || '虚拟机名')" style="width: 320px" />
+                  <el-input v-model="cloudInit.hostname" :placeholder="'默认：' + (form.name || '虚拟机名')" style="width: 380px" />
                 </el-form-item>
                 <el-form-item label="用户名">
-                  <el-input v-model="cloudInit.user" placeholder="如 ubuntu / root，可选" style="width: 320px" />
+                  <el-input v-model="cloudInit.user" placeholder="如 ubuntu / root，可选" style="width: 380px" />
                 </el-form-item>
                 <el-form-item label="密码">
-                  <el-input v-model="cloudInit.password" type="password" show-password placeholder="可选" style="width: 320px" />
+                  <el-input v-model="cloudInit.password" type="password" show-password placeholder="可选" style="width: 380px" />
                 </el-form-item>
                 <el-form-item label="SSH 公钥">
                   <el-input v-model="cloudInit.sshKey" type="textarea" :rows="3" placeholder="粘贴 ssh-rsa / ssh-ed25519 公钥，可选" style="width: 480px" />
@@ -160,13 +161,13 @@
                 </el-form-item>
                 <template v-if="cloudInit.netMode === 'static'">
                   <el-form-item label="IP 地址">
-                    <el-input v-model="cloudInit.ip" placeholder="如 192.168.122.10" style="width: 320px" />
+                    <el-input v-model="cloudInit.ip" placeholder="如 192.168.122.10" style="width: 380px" />
                   </el-form-item>
                   <el-form-item label="网关">
-                    <el-input v-model="cloudInit.gateway" placeholder="如 192.168.122.1" style="width: 320px" />
+                    <el-input v-model="cloudInit.gateway" placeholder="如 192.168.122.1" style="width: 380px" />
                   </el-form-item>
                   <el-form-item label="DNS">
-                    <el-input v-model="cloudInit.dns" placeholder="逗号分隔，如 114.114.114.114" style="width: 320px" />
+                    <el-input v-model="cloudInit.dns" placeholder="逗号分隔，如 114.114.114.114" style="width: 380px" />
                   </el-form-item>
                 </template>
               </el-form>
@@ -199,10 +200,10 @@
         </div>
         <el-form label-width="140px" class="step-form">
           <el-form-item v-if="installMode !== 'clone'" label="虚拟机名称" required>
-            <el-input v-model="form.name" placeholder="仅字母、数字、_、-" style="width: 320px" />
+            <el-input v-model="form.name" placeholder="仅字母、数字、_、-" style="width: 380px" />
           </el-form-item>
           <el-form-item v-else label="虚拟机名称">
-            <el-input :model-value="form.name" disabled style="width: 320px" />
+            <el-input :model-value="form.name" disabled style="width: 380px" />
             <span class="os-hint">克隆名称已在安装方式中填写</span>
           </el-form-item>
           <el-form-item label="vCPU 核数" required>
@@ -218,11 +219,11 @@
             <span class="os-hint">新建空白系统盘容量，默认 20 GB</span>
           </el-form-item>
           <el-form-item v-if="installMode === 'iso'" label="系统盘卷名">
-            <el-input v-model="form.sysVolName" :placeholder="'默认 ' + (form.name || '虚拟机名') + '.qcow2，可自定义'" style="width: 320px" clearable />
+            <el-input v-model="form.sysVolName" :placeholder="'默认 ' + (form.name || '虚拟机名') + '.qcow2，可自定义'" style="width: 380px" clearable />
             <div class="os-hint">留空自动命名；仅允许字母、数字、下划线和连字符</div>
           </el-form-item>
           <el-form-item label="存储池">
-            <el-select v-model="form.storagePool" style="width: 320px" placeholder="选择存储池">
+            <el-select v-model="form.storagePool" style="width: 380px" placeholder="选择存储池">
               <el-option v-for="p in usablePools" :key="p.name" :label="poolLabel(p)" :value="p.name" />
             </el-select>
             <div v-if="diskOverPool" class="os-hint" style="color: var(--el-color-danger)">
@@ -231,7 +232,7 @@
             </div>
           </el-form-item>
           <el-form-item label="机器类型">
-            <el-select v-model="form.machine" style="width: 320px">
+            <el-select v-model="form.machine" style="width: 380px">
               <el-option label="自动（libvirt 默认）" value="" />
               <el-option label="q35（PCIe 拓扑，推荐）" value="q35" />
               <el-option label="pc（i440fx，兼容旧系统）" value="pc" />
@@ -316,9 +317,23 @@
           <p class="step-desc">核对配置后点击「创建虚拟机」，可随时返回上一步修改。</p>
         </div>
 
+        <!-- 创建失败常驻展示（可关闭）：toast 会消失，任务失败原因必须留在页面上看 -->
+        <el-alert
+          v-if="submitError && !submitting"
+          type="error"
+          show-icon
+          closable
+          class="creating-bar"
+          :title="submitError"
+          @close="submitError = ''"
+        />
+
         <el-card v-if="submitting" shadow="never" class="creating-bar">
           <div class="creating-text">{{ submitText }}，请稍候…</div>
           <el-progress :percentage="createProgress" :stroke-width="8" />
+          <div class="creating-actions">
+            创建任务已在后台执行，可<router-link :to="{ name: 'tasks' }">离开，去任务中心查看</router-link>
+          </div>
         </el-card>
 
         <div class="summary-grid">
@@ -359,7 +374,7 @@
     </el-card>
 
     <div class="wizard-footer">
-      <el-button v-if="step > 0" @click="step--">上一步</el-button>
+      <el-button v-if="step > 0" :disabled="submitting" @click="step--">上一步</el-button>
       <div class="footer-right">
         <el-button v-if="step < 3" type="primary" :icon="ArrowRight" @click="next">下一步</el-button>
         <el-button v-else type="primary" :icon="Check" :loading="submitting" :disabled="submitting" @click="submit">{{ submitText }}</el-button>
@@ -416,6 +431,8 @@ if (!canOperate.value) router.replace({ name: 'vms' })
 const step = ref(0)
 const loading = ref(false)
 const submitting = ref(false)
+// 创建失败的常驻错误（el-alert 展示，可关闭）：toast 会消失，长错误必须留在页面上可读可复制
+const submitError = ref('')
 // 后台创建任务进度（0-100），驱动按钮文字与汇总页进度条
 const createProgress = ref(0)
 const submitText = computed(() =>
@@ -980,6 +997,21 @@ function buildPayload() {
   return payload
 }
 
+// 已完成步骤点击回跳：只允许往回走，往前的步骤必须经「下一步」过校验
+function goStep(i) {
+  if (loading.value || submitting.value) return
+  if (i >= 0 && i < step.value) step.value = i
+}
+
+// 虚拟机名称校验（新建与克隆共用）：非空 / 字符白名单 / 与存量 VM 重名
+function validateVmName() {
+  if (!(form.name || '').trim()) return '请填写虚拟机名称'
+  if (!/^[\w-]+$/.test(form.name)) return '虚拟机名称仅允许字母、数字、_、-'
+  const dup = vms.value.find((v) => v.name === form.name.trim())
+  if (dup) return '已存在同名虚拟机「' + dup.name + '」，请更换名称'
+  return ''
+}
+
 function next() {
   if (step.value === 0) {
     if (installMode.value === 'iso') {
@@ -989,19 +1021,24 @@ function next() {
       if (!cloudImage.imageId) return ElMessage.warning('请选择云镜像')
     } else if (installMode.value === 'clone') {
       if (!cloneVm.sourceVmId) return ElMessage.warning('请选择源虚拟机')
-      if (!form.name) return ElMessage.warning('请填写新虚拟机名称')
+      const nameErr = validateVmName()
+      if (nameErr) return ElMessage.warning(nameErr)
+    }
+    // cloud-init 静态 IP：IP 与网关都必填（缺网关的静态网络是不完整配置）
+    if (installMode.value === 'cloudimage' && cloudInitEnabled.value && cloudInit.netMode === 'static') {
+      if (!cloudInit.ip) return ElMessage.warning('静态网络模式请填写 IP 地址')
+      if (!cloudInit.gateway) return ElMessage.warning('静态网络模式请填写网关')
     }
   }
-  if (step.value === 1 && installMode.value !== 'clone' && !form.name) {
-    return ElMessage.warning('请填写虚拟机名称')
-  }
-  if (step.value === 0 && installMode.value === 'cloudimage' && cloudInitEnabled.value && cloudInit.netMode === 'static' && !cloudInit.ip) {
-    return ElMessage.warning('静态网络模式请填写 IP 地址')
+  if (step.value === 1 && installMode.value !== 'clone') {
+    const nameErr = validateVmName()
+    if (nameErr) return ElMessage.warning(nameErr)
   }
   step.value++
 }
 
 async function submit() {
+  submitError.value = '' // 提交开始清空上一次的常驻错误
   submitting.value = true
   createProgress.value = 0
   try {
@@ -1025,7 +1062,9 @@ async function submit() {
     sessionStorage.removeItem(DRAFT_KEY) // 创建成功清草稿
     router.push({ name: 'vms' })
   } catch (e) {
-    ElMessage.error(taskErrorMessage(e, '创建失败'))
+    const msg = taskErrorMessage(e, '创建失败')
+    submitError.value = msg // 常驻 alert（长错误可读可复制）
+    ElMessage.error(msg)
   } finally {
     submitting.value = false
   }
@@ -1114,9 +1153,24 @@ onMounted(async () => {
 
 .mode-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr)); /* 三张方式卡一行排齐 */
   gap: var(--space-lg);
   width: 100%;
+}
+
+/* 窄屏方式卡回落单列，避免三列挤压 */
+@media (max-width: 992px) {
+  .mode-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 已完成步骤可点击回跳（类挂在 el-step 根元素上，el-steps 无原生点击） */
+.step-clickable {
+  cursor: pointer;
+}
+.step-clickable:hover :deep(.el-step__title) {
+  color: var(--el-color-primary);
 }
 
 .mode-card {
@@ -1246,6 +1300,13 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-xl);
+}
+
+/* 窄屏汇总双栏回落单列，XML 预览不再被挤压成窄条 */
+@media (max-width: 1100px) {
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .summary-col {

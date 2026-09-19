@@ -5,10 +5,7 @@
         <h2 class="page-title">系统设置</h2>
         <span class="page-desc">平台运行参数，保存进数据库、立即生效无需重启；生效配置的只读快照见仪表盘「平台信息」卡，界面轮询偏好已移至顶栏「个人中心」</span>
       </div>
-      <!-- icon-only 按钮必须带 tooltip（ui-ux-pro-max §1 aria-labels：icon-only 无文字必须有可访问名称） -->
-      <el-tooltip content="刷新" placement="top">
-        <el-button :icon="Refresh" :loading="loading" circle text aria-label="刷新" @click="load" />
-      </el-tooltip>
+      <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
     <!-- 可写配置：DB 持久化、写入即生效 -->
@@ -112,7 +109,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg } from '../utils/format'
@@ -127,9 +124,11 @@ const writable = reactive({
   vnc_stale_min: 60
 })
 
-// 安全设置（批次 D）：security_entrance / password_min_length，独立保存
+// 安全设置（批次 D）：security_entrance / password_min_length，独立保存；
+// savedEntrance 记录后端当前生效值，保存时检测 entrance 是否真的发生变更（变了才弹高危确认）
 const savingSec = ref(false)
 const sec = reactive({ entrance: '', pwdMin: 8 })
+let savedEntrance = ''
 
 // AI 设置（运维助手）：ai_base_url / ai_api_key / ai_model 三个键，独立保存
 const savingAI = ref(false)
@@ -154,6 +153,7 @@ async function load() {
     ai.api_key = w.ai_api_key ?? snap.ai_api_key ?? ''
     ai.model = w.ai_model ?? snap.ai_model ?? ''
     if (w.security_entrance !== undefined) sec.entrance = w.security_entrance
+    savedEntrance = String(w.security_entrance ?? '')
     if (w.password_min_length !== undefined) sec.pwdMin = Number(w.password_min_length) || 0
     if (w.announcement !== undefined) ann.content = w.announcement
   } catch (e) {
@@ -210,14 +210,32 @@ async function saveAI() {
   }
 }
 
-// 安全设置单独保存：只提交两键，与运行参数/AI 互不覆盖
+// 安全设置单独保存：只提交两键，与运行参数/AI 互不覆盖。
+// 安全入口属高危变更：值发生变更（含开启/关闭）时先弹确认说明后果，未变更直接提交
 async function saveSec() {
+  const next = sec.entrance.trim()
+  if (next !== savedEntrance.trim()) {
+    const tip = next
+      ? `将把安全入口设置为「${next}」：保存后所有非该入口的请求一律返回 404，遗忘需按文档经 SSH 重置。确认修改？`
+      : '将关闭安全入口：登录地址恢复为默认入口，任何人可直接访问登录页。确认修改？'
+    try {
+      await ElMessageBox.confirm(tip, '修改安全入口', {
+        type: 'warning',
+        confirmButtonText: '确认修改',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger'
+      })
+    } catch {
+      return // 用户取消
+    }
+  }
   savingSec.value = true
   try {
     await api.updateSettings({
-      security_entrance: sec.entrance.trim(),
+      security_entrance: next,
       password_min_length: Number(sec.pwdMin) || 0
     })
+    savedEntrance = next
     ElMessage.success('安全设置已保存并生效')
     load()
   } catch (e) {

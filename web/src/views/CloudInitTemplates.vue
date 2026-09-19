@@ -19,7 +19,10 @@
     <el-card shadow="never">
       <div class="toolbar">
         <span class="count">共 {{ items.length }} 个模板</span>
-        <el-button text type="primary" @click="$router.push('/vms/new')">去创建虚拟机 →</el-button>
+        <div class="toolbar-right">
+          <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+          <el-button text type="primary" @click="$router.push('/vms/new')">去创建虚拟机 →</el-button>
+        </div>
       </div>
 
       <el-table :data="items" v-loading="loading" stripe>
@@ -44,8 +47,9 @@
             <span class="mono">{{ fmtDateTime(row.updated_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
+            <el-button text type="primary" size="small" @click="copyTemplate(row)">复制</el-button>
             <el-button text type="primary" size="small" @click="openEdit(row)">编辑</el-button>
             <el-button text type="danger" size="small" @click="remove(row)">删除</el-button>
           </template>
@@ -109,9 +113,12 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, fmtDateTime } from '../utils/format'
+
+// 合法 IPv4（0-255 四段）；静态 IP / 网关保存前拦截，格式错误直接提示不提交
+const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
 
 const items = ref([])
 const loading = ref(false)
@@ -192,14 +199,31 @@ function openEdit(row) {
   dialog.value = true
 }
 
+// 复制模板：以该模板 spec 预填新建表单，名称建议加 -copy 后缀，可直接改名后保存
+function copyTemplate(row) {
+  editingId.value = null
+  form.value = { ...specToForm(row.spec), name: row.name + '-copy', description: row.description || '' }
+  dialog.value = true
+}
+
 async function save() {
   if (!form.value.name.trim()) {
     ElMessage.warning('请填写模板名')
     return
   }
-  if (form.value.netMode === 'static' && (!form.value.ip.trim() || !form.value.gateway.trim())) {
-    ElMessage.warning('静态网络模式请填写 IP 地址与网关')
-    return
+  if (form.value.netMode === 'static') {
+    if (!form.value.ip.trim() || !form.value.gateway.trim()) {
+      ElMessage.warning('静态网络模式请填写 IP 地址与网关')
+      return
+    }
+    if (!IPV4_RE.test(form.value.ip.trim())) {
+      ElMessage.warning('IP 地址格式不正确，请填写合法 IPv4 地址（如 192.168.122.10）')
+      return
+    }
+    if (!IPV4_RE.test(form.value.gateway.trim())) {
+      ElMessage.warning('网关格式不正确，请填写合法 IPv4 地址（如 192.168.122.1）')
+      return
+    }
   }
   saving.value = true
   const payload = { name: form.value.name.trim(), spec: formToSpec(), description: form.value.description.trim() }
@@ -237,3 +261,12 @@ async function remove(row) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+/* .toolbar / .count 已收进 global.css；右侧分组仅本地使用 */
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+}
+</style>

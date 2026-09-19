@@ -68,6 +68,16 @@
             <el-divider direction="vertical" />
             <span>卷数 <b class="mono">{{ pool.vol_count == null ? 0 : pool.vol_count }}</b></span>
           </div>
+          <!-- mini 用量条：capacity 缺省（后端未返回）时不显示；dir 池口径 caveat 同上行 title -->
+          <el-progress
+            v-if="pool.capacity"
+            class="pool-bar"
+            :percentage="poolPct(pool)"
+            :color="usageColor(poolPct(pool))"
+            :stroke-width="6"
+            :show-text="false"
+            title="dir 型池的容量统计是文件系统级的：同盘多个池显示同一口径，非池内卷独占占用"
+          />
           <div class="pool-actions" @click.stop>
             <el-button size="small" :icon="FolderOpened" @click="openVolumes(pool)">浏览卷</el-button>
             <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openMeta(pool)">编辑</el-button>
@@ -192,11 +202,11 @@
 
     <!-- 新建存储池 -->
     <el-dialog v-model="poolDialog" title="新建存储池" width="460px">
-      <el-form :model="poolForm" label-width="80px">
-        <el-form-item label="名称" required>
-          <el-input v-model="poolForm.name" placeholder="仅字母、数字、_、-" />
+      <el-form ref="poolFormRef" :model="poolForm" :rules="poolRules" label-width="80px">
+        <el-form-item label="名称" prop="name">
+          <el-input v-model="poolForm.name" placeholder="仅字母、数字、_、-、." />
         </el-form-item>
-        <el-form-item label="路径" required>
+        <el-form-item label="路径" prop="path">
           <el-input v-model="poolForm.path" placeholder="如 /var/lib/libvirt/xxx-images" />
         </el-form-item>
         <el-form-item label="描述">
@@ -241,7 +251,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, h, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, FolderOpened, Edit, Delete, Collection, Brush } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -269,6 +279,31 @@ const metaSaving = ref(false)
 const metaForm = ref({ name: '', role: '', description: '' })
 // 新建存储池弹窗（openCreatePool / createPool 控制）
 const poolDialog = ref(false)
+const poolFormRef = ref(null)
+// 行内校验规则对齐后端 handler/storage.go：名称 volNameRegex（字母数字_-.），
+// 路径 validPoolPath（绝对路径 + 字符白名单 + 非 .. / 结尾斜杠 / 根目录）——文案取后端同款
+const poolRules = {
+  name: [
+    { required: true, message: '请填写名称', trigger: 'blur' },
+    { pattern: /^[A-Za-z0-9_.-]+$/, message: '存储池名称只允许字母、数字、下划线、连字符和点', trigger: 'blur' }
+  ],
+  path: [
+    { required: true, message: '请填写路径', trigger: 'blur' },
+    {
+      validator: (rule, value, callback) => {
+        const v = (value || '').trim()
+        if (!/^\/[A-Za-z0-9_./-]+$/.test(v)) {
+          return callback(new Error('存储池路径必须是规范的绝对路径（仅允许字母、数字、下划线、点、连字符与斜杠）'))
+        }
+        if (v === '/' || v.includes('..') || v.endsWith('/')) {
+          return callback(new Error('路径不能是根目录，且不含 .. 与结尾斜杠'))
+        }
+        callback()
+      },
+      trigger: 'blur'
+    }
+  ]
+}
 
 const volDrawer = ref(false)
 const volCreateDialog = ref(false)
@@ -297,6 +332,12 @@ const physPct = computed(() => {
   if (!capacity) return 0
   return clampPct(((capacity - available) / capacity) * 100)
 })
+
+// 池卡片 mini 用量条：allocation/capacity，钳制 0~100（超分显示满格红），capacity 缺省返回 0
+function poolPct(pool) {
+  if (!pool.capacity) return 0
+  return clampPct((pool.allocation / pool.capacity) * 100)
+}
 
 // 池角色 → el-tag type（其余/空串走「未分类」灰 tag，不在本表）
 const ROLE_TAG_TYPES = {
@@ -388,8 +429,10 @@ function openCreatePool() {
 }
 
 async function createPool() {
-  if (!poolForm.value.name || !poolForm.value.path) {
-    ElMessage.warning('请填写名称和路径')
+  // 行内 rules 校验：出错字段红字提示（取代原先的 toast），通过才提交
+  try {
+    await poolFormRef.value.validate()
+  } catch {
     return
   }
   saving.value = true
@@ -418,7 +461,12 @@ async function createPool() {
 
 async function removePool(row) {
   try {
-    await ElMessageBox.confirm('确定删除存储池「' + row.name + '」？', '确认删除', { type: 'warning' })
+    await ElMessageBox.confirm('确定删除存储池「' + row.name + '」？', '确认删除', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
+    })
     await api.deleteStoragePool(row.name)
     ElMessage.success('存储池已删除')
     await load()
@@ -468,10 +516,23 @@ async function cleanupOrphans() {
       ElMessage.info('该存储池没有孤儿卷（所有卷都有引用）')
       return
     }
+    // 名单用 pre VNode 展示：ElMessageBox 纯文本里 \n 不换行，长名单挤成一团不可读（同 DockerList showPruneResult）
     await ElMessageBox.confirm(
-      `检测到 ${orphans.length} 个孤儿卷（无任何引用，删除不可恢复）：\n${orphans.join('、')}`,
+      h('div', null, [
+        h('p', { style: 'margin:0 0 8px;' }, `检测到 ${orphans.length} 个孤儿卷（无任何引用，删除不可恢复）：`),
+        h(
+          'pre',
+          { style: 'max-height:260px;overflow:auto;margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;' },
+          orphans.join('\n')
+        )
+      ]),
       '清理孤儿卷',
-      { type: 'warning' }
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger'
+      }
     )
     const res = await api.cleanupOrphans(curPool.value)
     const taskId = extractTaskId(res)
@@ -518,14 +579,24 @@ async function createVolume() {
 }
 
 async function removeVolume(row) {
-  // 删卷确认带上引用详情；后端守卫同样会拦截（双保险）
+  // 删卷确认带上引用详情；后端守卫同样会拦截（双保险）。
+  // 有引用时消息含换行，纯文本里 \n 不换行——改 VNode 分行展示
   const r = volRefs.value[row.name]
+  const inUse = refsInUse(r)
   let msg = '确定删除卷「' + row.name + '」？此操作不可恢复。'
-  if (r && refsInUse(r)) {
-    msg = '卷「' + row.name + '」正在被使用：' + refsTooltip(r) + '。\n强删可能导致虚拟机磁盘损坏，确定继续？'
+  if (inUse && r) {
+    msg = h('div', null, [
+      h('p', { style: 'margin:0 0 8px;' }, '卷「' + row.name + '」正在被使用：' + refsTooltip(r)),
+      h('p', { style: 'margin:0;color:var(--el-color-danger);' }, '强删可能导致虚拟机磁盘损坏，确定继续？')
+    ])
   }
   try {
-    await ElMessageBox.confirm(msg, '确认删除', { type: refsInUse(r) ? 'error' : 'warning' })
+    await ElMessageBox.confirm(msg, '确认删除', {
+      type: inUse ? 'error' : 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
+    })
     await api.deleteVolume(curPool.value, row.name)
     ElMessage.success('卷已删除')
     await refreshVolumes()
@@ -695,6 +766,10 @@ onMounted(load)
 .pool-stats b {
   color: var(--color-foreground);
   font-weight: 700;
+}
+/* 卡片 mini 用量条：贴在统计行与操作区之间，capacity 缺省时不渲染、间距回落原状 */
+.pool-bar {
+  margin-bottom: 12px;
 }
 .pool-actions {
   display: flex;

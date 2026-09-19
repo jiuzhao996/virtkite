@@ -7,7 +7,7 @@
         <h3 class="page-title">监控中心</h3>
         <p class="page-desc">Alertmanager 实时告警 + Grafana 可视化看板（Prometheus 指标 30s 刷新）</p>
       </div>
-      <el-button :icon="Refresh" @click="loadAlerts">刷新告警</el-button>
+      <el-button :icon="Refresh" :loading="alertsLoading" @click="loadAlerts">刷新告警</el-button>
     </div>
 
     <!-- Grafana 看板（kiosk 模式嵌入；地址跟随当前访问主机，兼容宿主机直跑与 docker compose 两种形态）。
@@ -68,7 +68,7 @@
             <el-tag v-if="!alertsError" :type="firingCount ? 'danger' : 'success'" effect="light" size="small">
               {{ firingCount ? `${firingCount} 条待处理` : '当前无告警' }}
             </el-tag>
-            <el-button :icon="Refresh" @click="loadAlerts">刷新</el-button>
+            <el-button :icon="Refresh" :loading="alertsLoading" @click="loadAlerts">刷新</el-button>
           </div>
         </div>
       </template>
@@ -85,7 +85,7 @@
       <el-table v-else-if="firingCount" :data="alerts" v-loading="alertsLoading" stripe>
         <el-table-column label="级别" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.labels && row.labels.severity === 'critical' ? 'danger' : 'warning'" effect="dark" size="small">
+            <el-tag :type="row.labels && row.labels.severity === 'critical' ? 'danger' : 'warning'" effect="light" size="small">
               {{ (row.labels && row.labels.severity) === 'critical' ? '严重' : '警告' }}
             </el-tag>
           </template>
@@ -132,6 +132,7 @@
       </template>
 
       <el-table :data="history" v-loading="historyLoading" stripe>
+        <template #empty><el-empty description="暂无告警历史记录" :image-size="80" /></template>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 'firing' ? 'danger' : 'success'" effect="light" size="small">
@@ -148,7 +149,7 @@
           <template #default="{ row }">
             <el-tag
               :type="(row.labels && row.labels.severity) === 'critical' ? 'danger' : (row.labels && row.labels.severity) === 'warning' ? 'warning' : 'info'"
-              effect="dark" size="small"
+              effect="light" size="small"
             >
               {{ (row.labels && row.labels.severity) === 'critical' ? '严重' : (row.labels && row.labels.severity) === 'warning' ? '警告' : (row.labels && row.labels.severity) || '—' }}
             </el-tag>
@@ -182,8 +183,6 @@
           :page-size="historyPageSize"
           :total="historyTotal"
           layout="total, prev, pager, next"
-          size="small"
-          background
           @current-change="loadHistory"
         />
       </div>
@@ -499,7 +498,7 @@ onUnmounted(() => {
   width: 100%;
   border: none;
   border-radius: var(--radius-md);
-  background: #fff;
+  background: var(--color-card, #fff);
 }
 .grafana-loading {
   position: absolute;

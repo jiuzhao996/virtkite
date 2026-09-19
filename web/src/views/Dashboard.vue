@@ -53,7 +53,8 @@
     <!-- Row 2: 主机资源大盘 + 虚拟机状态 -->
     <el-row :gutter="16" class="mt">
       <el-col :md="14">
-        <el-card shadow="hover" class="host-card">
+        <!-- host-card 类名无对应样式（死类名），已删除 -->
+        <el-card shadow="hover">
           <template #header>
             <span class="card-title">主机资源实时大盘</span>
             <span v-if="lastUpdate" class="update-time">更新于 {{ lastUpdate }}</span>
@@ -168,10 +169,13 @@
           <el-table :data="vmPerf" size="small" class="perf-table" empty-text="暂无运行中虚拟机">
             <el-table-column label="名称" min-width="220" show-overflow-tooltip>
               <template #default="{ row }">
-                <span class="vm-name">
-                  <el-icon class="vm-icon"><Monitor /></el-icon>
-                  {{ row.name }}
-                </span>
+                <!-- 名称可点直达 VM 详情（列表页卡片「详情」同目标） -->
+                <el-link type="primary" :underline="false" @click="$router.push({ name: 'vm-detail', params: { id: row.id } })">
+                  <span class="vm-name">
+                    <el-icon class="vm-icon"><Monitor /></el-icon>
+                    {{ row.name }}
+                  </span>
+                </el-link>
               </template>
             </el-table-column>
             <el-table-column label="状态" width="120">
@@ -179,7 +183,7 @@
                 <el-tag :type="vmStatusTag(row.status)" effect="light" size="small" round>{{ vmStatusText(row.status) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="CPU" min-width="220">
+            <el-table-column label="CPU" min-width="220" prop="cpu_percent" sortable>
               <template #default="{ row }">
                 <div v-if="row.status === 'running'" class="perf-cell">
                   <el-progress
@@ -192,7 +196,7 @@
                 <span v-else class="perf-na">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="内存" min-width="220">
+            <el-table-column label="内存" min-width="220" prop="mem_pct" sortable>
               <template #default="{ row }">
                 <div v-if="row.status === 'running'" class="perf-cell">
                   <el-progress
@@ -300,6 +304,7 @@ import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 import {
   FALLBACK_ACTION_LABELS,
+  roleText,
   vmStatusText,
   vmStatusTag,
   vmStatusColor,
@@ -390,6 +395,10 @@ const HOST_POINTS = 60
 // echarts 不解析 var()，主机曲线需要真实色值：cssVar 由 utils/format.js 提供
 const primaryColor = cssVar('--el-color-primary', '#2a9da5')
 const memChartColor = cssVar('--color-success', '#16a34a')
+// 图例 / 轴标签等文字与线条颜色同样必须取真实值（原处传 var() 会静默失效回退黑色）
+const chartMutedColor = cssVar('--color-muted-foreground', '#64748b')
+const chartAxisColor = cssVar('--color-border', '#e2e8f0')
+const chartSplitColor = cssVar('--color-muted', '#eef2f6')
 
 const host = ref({ cpu: 0, memPct: 0, memUsed: '0', memTotal: '0' })
 const cpuSeries = ref([])
@@ -429,22 +438,24 @@ function capGB(mb) {
 
 const stats = computed(() => {
   const o = overview.value || {}
-  return [
+  // 图标色一律 CSS 变量（硬编码 hex 是审计反模式）；「用户」卡仅管理员可见（/users 为 admin 专属页）
+  const all = [
     { label: '宿主机', icon: Cpu, color: 'var(--color-primary)', value: o.host_count || 0, to: '/hosts' },
     { label: '虚拟机', icon: Monitor, color: 'var(--color-primary)', value: o.vm_count || 0, to: '/vms' },
     { label: '运行中', icon: VideoPlay, color: 'var(--color-accent)', value: o.running_vm_count || 0, to: '/vms' },
     { label: '存储池', icon: FolderOpened, color: 'var(--color-warning)', value: o.pool_count || 0, to: '/storage' },
-    { label: '网络', icon: Connection, color: '#2563eb', value: o.network_count || 0, to: '/networks' },
+    { label: '网络', icon: Connection, color: 'var(--color-secondary)', value: o.network_count || 0, to: '/networks' },
     { label: '镜像', icon: Picture, color: '#7c3aed', value: o.image_count || 0, to: '/images' },
-    { label: '用户', icon: User, color: '#0891b2', value: o.user_count || 0, to: '/users' },
+    { label: '用户', icon: User, color: 'var(--color-info)', value: o.user_count || 0, to: '/users', adminOnly: true },
     { label: '审计', icon: Document, color: 'var(--color-info)', value: o.audit_count || 0, to: '/audit' }
   ]
+  return all.filter((s) => !s.adminOnly || isAdmin.value)
 })
 
 const userText = computed(() => {
   const u = state.user
   if (!u) return '—'
-  return u.username + '（' + (u.role === 'admin' ? '管理员' : '用户') + '）'
+  return u.username + '（' + roleText(u.role) + '）'
 })
 
 const totalVM = computed(() => vmStatus.value.reduce((a, b) => a + b.count, 0))
@@ -454,7 +465,7 @@ function pct(count) {
   return Math.round((count / totalVM.value) * 100)
 }
 const donutStyle = computed(() => {
-  if (!totalVM.value) return '#eef2f6'
+  if (!totalVM.value) return 'var(--color-muted)' // 空态底色走 token（style 绑定支持 var()）
   let acc = 0
   const segs = vmStatus.value.map((it) => {
     const from = Math.round((acc / totalVM.value) * 360)
@@ -591,20 +602,20 @@ function initChart() {
       right: 8,
       itemWidth: 14,
       itemHeight: 8,
-      textStyle: { color: 'var(--color-muted-foreground)', fontSize: 12 }
+      textStyle: { color: chartMutedColor, fontSize: 12 }
     },
     xAxis: {
       type: 'category',
       boundaryGap: false,
       data: timeLabels.value,
-      axisLine: { lineStyle: { color: '#e2e8f0' } },
-      axisLabel: { color: '#94a3b8', fontSize: 11, interval: 14 }
+      axisLine: { lineStyle: { color: chartAxisColor } },
+      axisLabel: { color: chartMutedColor, fontSize: 12, interval: 14 }
     },
     yAxis: {
       type: 'value',
       max: 100,
-      axisLabel: { formatter: '{value}%', color: '#94a3b8' },
-      splitLine: { lineStyle: { color: '#eef2f6' } }
+      axisLabel: { formatter: '{value}%', color: chartMutedColor },
+      splitLine: { lineStyle: { color: chartSplitColor } }
     },
     series: [
       {
@@ -810,7 +821,7 @@ onBeforeUnmount(() => {
 }
 .stat-card {
   text-align: center;
-  margin-bottom: 4px;
+  margin-bottom: 16px; /* 窄屏两列/一列堆叠时保持行距（原 4px 挤在一起） */
 }
 .stat-icon {
   font-size: 1.5rem;
@@ -900,7 +911,7 @@ onBeforeUnmount(() => {
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--color-card); /* 环心挖空色随卡片底色（原硬编码 #fff） */
 }
 .donut-center {
   position: relative;
@@ -1040,7 +1051,7 @@ onBeforeUnmount(() => {
   flex: 1;
   height: 10px;
   border-radius: var(--radius-sm);
-  background: #eef2f6;
+  background: var(--el-fill-color); /* 与资源容量 .cap-track 同 token（原硬编码 #eef2f6） */
   overflow: hidden;
 }
 .action-fill {

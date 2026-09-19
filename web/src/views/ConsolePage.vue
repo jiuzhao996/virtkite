@@ -7,8 +7,8 @@
       </el-button>
       <div class="vm-info">
         <span class="vm-name">{{ vm ? vm.name : '...' }}</span>
-        <el-tag v-if="vm" :type="vm.status === 'running' ? 'success' : 'info'" effect="dark" size="small">
-          {{ vm.status === 'running' ? '运行中' : '已关机' }}
+        <el-tag v-if="vm" :type="vmStatusTag(vm.status)" effect="dark" size="small">
+          {{ vmStatusText(vm.status) }}
         </el-tag>
       </div>
       <div class="topbar-tip">
@@ -89,12 +89,16 @@
         </div>
 
         <!-- VNC 图形控制台：浅色干净背景，无背景图 -->
-        <div v-else-if="view === 'vnc'" class="vnc-view">
+        <div v-else-if="view === 'vnc'" ref="vncViewEl" class="vnc-view">
           <div v-if="!vm || vm.status !== 'running'" class="vnc-placeholder">
             <el-alert type="warning" :closable="false" show-icon
-              title="VM 未运行，无法连接图形控制台（VNC 需运行中）。可在此直接开机，开机后自动连接。" />
+              :title="vm && vm.status === 'paused'
+                ? 'VM 已暂停，无法连接图形控制台（VNC 需运行中）。可在此直接恢复，恢复后自动连接。'
+                : 'VM 未运行，无法连接图形控制台（VNC 需运行中）。可在此直接开机，开机后自动连接。'" />
             <div class="vnc-placeholder-btns">
-              <el-button type="primary" size="large" :loading="powerLoading" @click="powerOnAndConnect">一键开机并连接</el-button>
+              <el-button type="primary" size="large" :loading="powerLoading" @click="powerOnAndConnect">
+                {{ vm && vm.status === 'paused' ? '恢复并连接' : '一键开机并连接' }}
+              </el-button>
               <el-button @click="$router.push('/vms')">去虚拟机列表</el-button>
             </div>
           </div>
@@ -104,27 +108,30 @@
           </div>
           <div v-else class="vnc-frame">
             <div v-if="vncFrameLoading" class="vnc-loading" v-loading="true" element-loading-text="图形桌面加载中…" />
-            <iframe :src="vncUrl" class="vnc" allow="fullscreen" @load="onVncLoad" />
+            <iframe :src="vncUrl" class="vnc" allow="fullscreen" title="noVNC 图形控制台" @load="onVncLoad" />
             <div class="vnc-bar">
               <span><el-icon><Monitor /></el-icon>图形控制台已连接</span>
               <el-tag v-if="vncViewOnly" type="warning" size="small" effect="dark">只读观看（键鼠已禁用）</el-tag>
               <div class="vnc-bar-btns">
                 <el-button size="small" text @click="openVncNewWindow">新窗口打开</el-button>
-                <el-button size="small" text @click="vncUrl = ''">重新连接</el-button>
+                <el-button size="small" text @click="reconnectVNC">重新连接</el-button>
+                <el-button size="small" text :title="isVncFull ? '退出全屏' : '图形控制台全屏'" @click="toggleVncFullscreen">
+                  <el-icon><FullScreen /></el-icon><span>{{ isVncFull ? '退出全屏' : '全屏' }}</span>
+                </el-button>
               </div>
             </div>
           </div>
         </div>
 
         <!-- SSH / 串口 共用终端视图：深色 + console-bg.jpg 背景 -->
-        <div v-else class="term-view" :style="{ backgroundImage: 'url(' + consoleBg + ')' }">
-          <!-- 星星划过背景 -->
+        <div v-else ref="termViewEl" class="term-view" :style="{ backgroundImage: 'url(' + consoleBg + ')' }">
+          <!-- 星星划过背景：坐标来自一次性生成的 STARS 常量（内联 Math.random 会随每秒时钟重渲染而瞬移） -->
           <div class="stars-bg">
-            <div v-for="n in 40" :key="n" class="star" :style="{
-              left: Math.random() * 100 + '%',
-              top: Math.random() * 100 + '%',
-              animationDelay: Math.random() * 6 + 's',
-              animationDuration: (2 + Math.random() * 4) + 's',
+            <div v-for="(s, i) in STARS" :key="i" class="star" :style="{
+              left: s.left + '%',
+              top: s.top + '%',
+              animationDelay: s.delay + 's',
+              animationDuration: s.duration + 's',
             }" />
           </div>
 
@@ -173,7 +180,7 @@
             <div class="serial-big-icon"><el-icon><Connection /></el-icon></div>
             <div class="serial-title">串口 Console · 免 IP 直连</div>
             <div class="serial-desc">等价 virsh console，直接读写 guest 串口 ttyS0。无需 IP / 账号，无网卡也能进系统，建议优先尝试。</div>
-            <el-button type="warning" size="large" class="serial-btn" :loading="connecting" @click="connectSerial">
+            <el-button type="primary" size="large" class="serial-btn" :loading="connecting" @click="connectSerial">
               <el-icon v-if="!connecting"><CaretRight /></el-icon>
               <span>{{ connecting ? '连接中…' : '连接串口 Console' }}</span>
             </el-button>
@@ -204,7 +211,16 @@
               </template>
             </div>
             <div class="term-footer-right">
-
+              <template v-if="connected">
+                <el-button size="small" class="ft-btn" title="粘贴剪贴板内容到终端（需浏览器授权剪贴板）" @click="pasteFromClipboard">
+                  <el-icon><CopyDocument /></el-icon><span>粘贴</span>
+                </el-button>
+                <el-button size="small" class="ft-btn" title="缩小字号（11 ~ 24）" @click="changeTermFont(-1)">A-</el-button>
+                <el-button size="small" class="ft-btn" title="放大字号（11 ~ 24）" @click="changeTermFont(1)">A+</el-button>
+                <el-button size="small" class="ft-btn" :title="isTermFull ? '退出全屏' : '终端全屏'" @click="toggleTermFullscreen">
+                  <el-icon><FullScreen /></el-icon><span>{{ isTermFull ? '退出全屏' : '全屏' }}</span>
+                </el-button>
+              </template>
             </div>
           </div>
         </div>
@@ -214,7 +230,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 // 图标一律用组件（禁止 emoji 当图标）。main.js 已全量全局注册，这里仍显式 import：
@@ -225,6 +241,8 @@ import {
   CaretRight,
   Clock,
   Connection,
+  CopyDocument,
+  FullScreen,
   InfoFilled,
   Monitor,
   Platform,
@@ -237,7 +255,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { api, TOKEN_KEY } from '../api'
-import { errMsg } from '../utils/format'
+import { errMsg, vmStatusTag, vmStatusText } from '../utils/format'
 import { useAuth } from '../store/auth'
 import consoleBg from '../assets/console-bg.jpg'
 
@@ -245,6 +263,26 @@ const route = useRoute()
 const id = route.params.id
 const auth = useAuth()
 const { canOperate } = auth
+
+// 星星背景坐标：一次性生成的模块级常量。此前在模板里内联 Math.random()，
+// 时钟 ref 每秒更新触发重渲染 → 40 颗星每秒重新随机、肉眼可见地“瞬移”；
+// 改为常量数组后 v-for 只读渲染，位置/节奏在页面生命周期内恒定。
+const STARS = Array.from({ length: 40 }, () => ({
+  left: +(Math.random() * 100).toFixed(2),
+  top: +(Math.random() * 100).toFixed(2),
+  delay: +(Math.random() * 6).toFixed(2),
+  duration: +(2 + Math.random() * 4).toFixed(2),
+}))
+
+// 终端字号偏好：A-/A+ 调节，localStorage 持久化（11~24，越界截断）
+const TERM_FONT_KEY = 'vmops-term-font'
+const TERM_FONT_MIN = 11
+const TERM_FONT_MAX = 24
+function loadTermFontSize() {
+  const saved = parseInt(localStorage.getItem(TERM_FONT_KEY) || '', 10)
+  if (!Number.isFinite(saved)) return 15
+  return Math.min(TERM_FONT_MAX, Math.max(TERM_FONT_MIN, saved))
+}
 
 const vm = ref(null)
 const loading = ref(true)
@@ -271,6 +309,11 @@ const termEl = ref(null)
 const clock = ref('')
 const serialUnavailable = ref(false)
 const serialReason = ref('')
+// 全屏（Fullscreen API）：终端区与 VNC 区各自挂 ref，fullscreenchange 同步图标文案
+const termViewEl = ref(null)
+const vncViewEl = ref(null)
+const isTermFull = ref(false)
+const isVncFull = ref(false)
 
 let term = null
 let fitAddon = null
@@ -465,13 +508,91 @@ function openVncNewWindow() {
   if (vncUrl.value) window.open(vncUrl.value, '_blank')
 }
 
-// 页内一键开机并自动连接 VNC：开机指令 → 轮询状态至 running（最长 ~60s）→ 自动 connectVNC
+// 重新连接 VNC：不再只是清空 URL 停在占位页，直接重取 token 重建连接
+async function reconnectVNC() {
+  vncUrl.value = ''
+  vncFrameLoading.value = false
+  if (vncTimer) { clearTimeout(vncTimer); vncTimer = null }
+  await connectVNC()
+}
+
+// ---------- 全屏（Fullscreen API） ----------
+function exitFullscreenIfAny() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => { /* 用户已退出等场景忽略 */ })
+    return true
+  }
+  return false
+}
+function requestFullscreen(el) {
+  if (!el || !el.requestFullscreen) {
+    ElMessage.warning('当前浏览器不支持全屏')
+    return
+  }
+  el.requestFullscreen().catch(() => ElMessage.warning('进入全屏失败'))
+}
+function toggleTermFullscreen() {
+  if (!exitFullscreenIfAny()) requestFullscreen(termViewEl.value)
+}
+function toggleVncFullscreen() {
+  if (!exitFullscreenIfAny()) requestFullscreen(vncViewEl.value)
+}
+// 进入/退出全屏后容器尺寸突变：终端重新 fit（SSH 同时同步 PTY 尺寸）
+function onFullscreenChange() {
+  const fs = document.fullscreenElement
+  isTermFull.value = !!fs && fs === termViewEl.value
+  isVncFull.value = !!fs && fs === vncViewEl.value
+  nextTick(() => onResize())
+}
+
+// ---------- 剪贴板 ----------
+async function pasteFromClipboard() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return
+  try {
+    const text = await navigator.clipboard.readText()
+    if (!text) return
+    if (view.value === 'ssh') ws.send(JSON.stringify({ type: 'input', data: text }))
+    else ws.send(text) // 串口：直接发原始字节
+  } catch (e) {
+    ElMessage.warning('浏览器未授权剪贴板')
+  }
+}
+// xterm 自定义按键：Ctrl+Shift+C 复制选区 / Ctrl+V、Ctrl+Shift+V 粘贴，其余按键原样放行
+function termClipboardKeyHandler(ev) {
+  if (ev.type !== 'keydown') return true
+  if (ev.ctrlKey && ev.shiftKey && (ev.key === 'C' || ev.key === 'c')) {
+    if (term && term.hasSelection()) {
+      navigator.clipboard.writeText(term.getSelection()).catch(() => { /* 剪贴板不可用静默 */ })
+      return false
+    }
+    return true // 无选区不拦截
+  }
+  if (ev.ctrlKey && (ev.key === 'v' || ev.key === 'V')) {
+    pasteFromClipboard()
+    return false
+  }
+  return true
+}
+
+// ---------- 终端字号 ----------
+function changeTermFont(delta) {
+  if (!term) return
+  const cur = term.options.fontSize || 15
+  const next = Math.min(TERM_FONT_MAX, Math.max(TERM_FONT_MIN, cur + delta))
+  if (next === cur) return
+  term.options.fontSize = next
+  try { localStorage.setItem(TERM_FONT_KEY, String(next)) } catch (e) { /* 配额不足忽略 */ }
+  onResize() // 字号变化行列数随之变化：fit + 同步 SSH PTY 尺寸
+}
+
+// 页内一键开机/恢复并自动连接 VNC：指令 → 轮询状态至 running（最长 ~60s）→ 自动 connectVNC
 async function powerOnAndConnect() {
+  const paused = !!(vm.value && vm.value.status === 'paused')
   powerLoading.value = true
   powerCancelled = false
   try {
-    await api.startVM(id)
-    ElMessage.success('开机指令已发送，等待虚拟机启动…')
+    await (paused ? api.resumeVM(id) : api.startVM(id))
+    ElMessage.success(paused ? '恢复指令已发送，等待虚拟机启动…' : '开机指令已发送，等待虚拟机启动…')
     const deadline = Date.now() + 60000
     while (Date.now() < deadline) {
       if (powerCancelled) return // 中途切走/卸载：停止轮询
@@ -597,7 +718,7 @@ async function initTerminal() {
   term = new Terminal({
     cursorBlink: true,
     cursorStyle: 'bar',
-    fontSize: 15,
+    fontSize: loadTermFontSize(), // A-/A+ 可调（11~24），localStorage 持久化
     fontFamily: "'Cascadia Code', 'Fira Code', Consolas, monospace",
     theme: {
       background: 'rgba(10, 22, 40, 0.18)',
@@ -613,6 +734,7 @@ async function initTerminal() {
   })
   fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
+  term.attachCustomKeyEventHandler(termClipboardKeyHandler) // Ctrl+Shift+C 复制 / Ctrl+V 粘贴
   term.open(termEl.value)
   fitAddon.fit()
 
@@ -671,12 +793,23 @@ function handleMsg(ev) {
   }
 }
 
+// 折叠/展开侧栏后终端容器宽度变化：nextTick 先补一刀，宽度 transition（0.2s）结束后再校准一次，
+// 两处都走 onResize（fit + SSH 同步 PTY 尺寸），避免折叠后终端留白或横向滚动
+watch(collapsed, () => {
+  nextTick(() => onResize())
+  setTimeout(() => onResize(), 260)
+})
+
 onMounted(() => {
   // 窄屏默认收起侧边栏，给终端/表单让出宽度
   if (window.innerWidth < 720) collapsed.value = true
+  document.addEventListener('fullscreenchange', onFullscreenChange)
   load()
 })
-onUnmounted(() => cleanupConnection())
+onUnmounted(() => {
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  cleanupConnection()
+})
 </script>
 
 <style scoped>
@@ -693,16 +826,20 @@ onUnmounted(() => cleanupConnection())
    图标一律用 @element-plus/icons-vue 组件（禁止 emoji）。el-icon 是 inline-flex，
    默认按基线对齐 → 1em 的图标盒整体压在基线上，与中文混排时目测偏高；
    统一下压 0.15em 并补 4px 右间距（原来 emoji 后面跟的那个空格已删）。
-   注意：不覆盖 el-button 内的图标，按钮的图标/文字间距由 Element Plus 自己管。 */
+   注意：不覆盖 el-button 内的图标，按钮的图标/文字间距由 Element Plus 自己管。
+   （修复记录：此组选择器原先以尾逗号悬空结束、直接焊上了后面的 .topbar 规则——CSS 注释
+   不打断选择器组，导致 .topbar 的深色背景/padding 作用到白底页面的行内图标上。） */
 .topbar-tip .el-icon,
 .vnc-bar > span .el-icon,
-.term-logo .el-icon,
 .term-user .el-icon,
 .term-host .el-icon,
 .term-clock .el-icon,
 .term-error .el-icon,
 .form-title .el-icon,
-.card-badge .el-icon,
+.card-badge .el-icon {
+  vertical-align: -0.15em;
+  margin-right: 4px;
+}
 
 /* ========== 顶部条 ========== */
 .topbar {
@@ -806,8 +943,8 @@ onUnmounted(() => cleanupConnection())
   padding: 24px;
   background: #ffffff;
 }
-.pick-title { margin: 0; color: #1f2937; font-size: 1.5rem; }
-.pick-sub { margin: 8px 0 28px; color: #6b7280; font-size: 0.92rem; }
+.pick-title { margin: 0; color: var(--color-foreground); font-size: 1.5rem; }
+.pick-sub { margin: 8px 0 28px; color: var(--color-muted-foreground); font-size: 0.92rem; }
 .pick-note {
   max-width: 720px;
   margin: 24px auto 0;
@@ -829,7 +966,7 @@ onUnmounted(() => cleanupConnection())
 }
 .card {
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 26px 22px;
   text-align: center;
@@ -853,8 +990,8 @@ onUnmounted(() => cleanupConnection())
   line-height: 1;
   color: #58a6ff;
 }
-.card .card-title { margin: 10px 0 6px; color: #111827; font-size: 1.02rem; font-weight: 600; }
-.card .card-desc { min-height: 46px; color: #6b7280; font-size: 0.82rem; line-height: 1.55; }
+.card .card-title { margin: 10px 0 6px; color: var(--color-foreground); font-size: 1.02rem; font-weight: 600; }
+.card .card-desc { min-height: 46px; color: var(--color-muted-foreground); font-size: 0.82rem; line-height: 1.55; }
 .card-badge {
   display: inline-block;
   margin-top: 12px;
@@ -885,10 +1022,10 @@ onUnmounted(() => cleanupConnection())
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: #f5f7fa;
+  background: var(--color-background);
   min-height: 0;
 }
-.vnc-placeholder { text-align: center; color: #374151; }
+.vnc-placeholder { text-align: center; color: var(--color-foreground); }
 .vnc-placeholder-btns {
   display: flex;
   align-items: center;
@@ -903,12 +1040,12 @@ onUnmounted(() => cleanupConnection())
   inset: 0;
   z-index: 2;
   border-radius: var(--radius-md);
-  background: #f5f7fa;
+  background: var(--color-background);
 }
 .vnc {
   flex: 1;
   width: 100%;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: #000;
 }
@@ -917,7 +1054,7 @@ onUnmounted(() => cleanupConnection())
   align-items: center;
   justify-content: space-between;
   padding: 8px 4px 0;
-  color: #374151;
+  color: var(--color-foreground);
   font-size: 0.85rem;
 }
 .vnc-bar-btns {
@@ -1170,7 +1307,7 @@ onUnmounted(() => cleanupConnection())
     padding: 8px 12px;
   }
   .term-footer-right { flex-wrap: wrap; row-gap: 4px; }
-  .term-footer   .pick-panel { padding: 16px; }
+  .pick-panel { padding: 16px; }
   /* 窄屏卡片单列：minmax(230px,290px) 在 390px 下会横向溢出 */
   .cards { grid-template-columns: 1fr; max-width: 340px; width: 100%; }
   .card .card-desc { min-height: 0; }

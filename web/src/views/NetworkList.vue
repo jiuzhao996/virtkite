@@ -8,7 +8,7 @@
     <el-card shadow="never">
       <div class="toolbar">
         <div class="toolbar-left">
-          <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+          <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">新建 NAT 网络</el-button>
           <el-button v-if="isAdmin" :icon="Document" @click="openXML">从 XML 定义</el-button>
         </div>
@@ -82,6 +82,9 @@
 
     <!-- 从 XML 定义 -->
     <el-dialog v-model="xmlDialog" title="从 XML 定义网络" width="640px">
+      <div class="xml-toolbar">
+        <el-button size="small" :icon="MagicStick" @click="formatXmlText(xmlForm)">格式化</el-button>
+      </div>
       <el-input v-model="xmlForm.xml" type="textarea" :rows="14" class="edit-input" placeholder="<network>...</network>" />
       <template #footer>
         <el-button @click="xmlDialog = false">取消</el-button>
@@ -92,6 +95,9 @@
     <!-- 编辑网络 XML -->
     <el-dialog v-model="editDialog" :title="'编辑网络 XML - ' + (editRow.name || '')" width="680px">
       <el-alert type="info" :closable="false" show-icon class="edit-tip" title="保存后网络将按新 XML 重建，XML 中的网络名称需保持不变" />
+      <div class="xml-toolbar">
+        <el-button size="small" :icon="MagicStick" @click="formatXmlText(editForm)">格式化</el-button>
+      </div>
       <el-input v-model="editForm.xml" type="textarea" :rows="16" class="edit-input" />
       <template #footer>
         <el-button @click="editDialog = false">取消</el-button>
@@ -104,7 +110,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, Document, VideoPlay, VideoPause, Delete, Edit } from '@element-plus/icons-vue'
+import { Refresh, Plus, Document, VideoPlay, VideoPause, Delete, Edit, MagicStick } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { errMsg, isCancel } from '../utils/format'
@@ -168,6 +174,43 @@ function openXML() {
   xmlDialog.value = true
 }
 
+// ===== XML 格式化（纯浏览器端，无外部依赖） =====
+// 递归序列化带两空格缩进：只保留元素子节点（元素间的空白文本节点正是要清掉的旧排版），
+// libvirt 网络 XML 无混合内容，文本叶子节点去首尾空白后原样内联
+function prettyXml(node, indent) {
+  const pad = indent == null ? '' : indent
+  const childPad = indent == null ? '  ' : indent + '  '
+  const attrs = Array.from(node.attributes || [])
+    .map((a) => ` ${a.name}="${a.value.replace(/"/g, '&quot;')}"`)
+    .join('')
+  const children = Array.from(node.children || [])
+  if (!children.length) {
+    const text = (node.textContent || '').trim()
+    return text ? `<${node.nodeName}${attrs}>${text}</${node.nodeName}>` : `<${node.nodeName}${attrs}/>`
+  }
+  const inner = children.map((c) => prettyXml(c, childPad)).join('\n')
+  return `<${node.nodeName}${attrs}>\n${inner}\n${pad}</${node.nodeName}>`
+}
+
+// 格式化 XML 编辑框内容：parseFromString 检查 parsererror，失败给中文提示不改动原文
+function formatXmlText(target) {
+  const src = (target.value.xml || '').trim()
+  if (!src) {
+    ElMessage.warning('请先填写 XML')
+    return
+  }
+  let doc
+  try {
+    doc = new DOMParser().parseFromString(src, 'application/xml')
+    if (doc.getElementsByTagName('parsererror').length) throw new Error('parsererror')
+  } catch (e) {
+    ElMessage.error('XML 解析失败，请检查标签是否闭合、属性引号是否完整')
+    return
+  }
+  target.value.xml = prettyXml(doc.documentElement) + '\n'
+  ElMessage.success('已格式化')
+}
+
 async function defineXML() {
   if (!xmlForm.value.xml.trim()) {
     ElMessage.warning('请填写 XML')
@@ -219,20 +262,20 @@ async function saveEdit() {
 }
 
 async function act(row, type) {
-  // 启动/停止影响连通性：停止会瞬断该网络上所有虚拟机的流量，二次确认防误触
+  // 仅停止弹确认（瞬断该网络上所有虚拟机的流量，属破坏性操作）；
+  // 启动是无损操作，不再过度确认
   if (type === 'stop') {
     try {
       await ElMessageBox.confirm(
         `确定停止网络「${row.name}」？该网络上运行中的虚拟机将立即失去网络连接。`,
         '确认停止',
-        { type: 'warning' }
+        {
+          type: 'warning',
+          confirmButtonText: '停止',
+          cancelButtonText: '取消',
+          confirmButtonClass: 'el-button--danger'
+        }
       )
-    } catch {
-      return
-    }
-  } else {
-    try {
-      await ElMessageBox.confirm(`确定启动网络「${row.name}」？`, '确认启动', { type: 'info' })
     } catch {
       return
     }
@@ -272,7 +315,12 @@ async function toggleAutostart(row, value) {
 
 async function remove(row) {
   try {
-    await ElMessageBox.confirm('确定删除网络「' + row.name + '」？运行中的网络将一并停止。', '确认删除', { type: 'warning' })
+    await ElMessageBox.confirm('确定删除网络「' + row.name + '」？运行中的网络将一并停止。', '确认删除', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
+    })
     await api.deleteNetwork(row.name)
     ElMessage.success('网络已删除')
     await load()
@@ -297,6 +345,12 @@ onMounted(load)
 }
 .edit-tip {
   margin-bottom: var(--space-lg);
+}
+/* 格式化按钮工具行：右对齐贴在 textarea 上方 */
+.xml-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
 }
 .edit-input :deep(.el-textarea__inner) {
   font-family: var(--font-mono);

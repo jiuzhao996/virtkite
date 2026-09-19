@@ -10,10 +10,14 @@
     <el-card shadow="never">
       <div class="toolbar">
         <div class="toolbar-left">
-          <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+          <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <span class="tp-hint">虚拟机 → 所属存储池 → 宿主机</span>
         </div>
-        <span class="count">虚拟机 {{ vms.length }} 台 · 存储池 {{ pools.length }} 个 · 网络 {{ networks.length }} 个</span>
+        <span class="count">
+          虚拟机 {{ vms.length }} 台 · 存储池 {{ pools.length }} 个 · 网络 {{ networks.length }} 个<span
+            v-if="updatedAt"
+          > · 更新于 {{ updatedAt }}</span>
+        </span>
       </div>
 
       <div v-show="hasData" ref="chartRef" class="topo-chart" />
@@ -38,13 +42,15 @@ import { GraphChart } from 'echarts/charts'
 echarts.use([GraphChart])
 
 import http from '../api'
-import { errMsg, cssVar, vmStatusText, vmStatusHex, fmtSizeBytes } from '../utils/format'
+import { errMsg, cssVar, vmStatusText, vmStatusHex, fmtSizeBytes, nowClock } from '../utils/format'
 
 const vms = ref([])
 const pools = ref([])
 const networks = ref([])
 const loading = ref(false)
 const loadFailed = ref(false)
+// 最近一次成功拉取的时刻（HH:MM:SS），主数据（VM/池）任一路失败则不更新
+const updatedAt = ref('')
 const chartRef = ref(null)
 let chart = null
 
@@ -290,6 +296,8 @@ async function load() {
     if (loadFailed.value) {
       const reason = vmsRes.status === 'rejected' ? vmsRes.reason : poolsRes.reason
       ElMessage.error(errMsg(reason, '拓扑数据加载失败'))
+    } else {
+      updatedAt.value = nowClock()
     }
     await nextTick()
     renderChart()
@@ -313,6 +321,11 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .topo-chart {
   width: 100%;
   height: 560px;

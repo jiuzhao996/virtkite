@@ -15,18 +15,26 @@
             <el-option label="成功" value="success" />
             <el-option label="失败" value="failed" />
           </el-select>
+          <!-- 前端过滤当前页：任务名 / 虚拟机名模糊匹配，不动服务端查询 -->
+          <el-input
+            v-model="keyword"
+            placeholder="搜索任务名 / 虚拟机名"
+            clearable
+            :prefix-icon="Search"
+            style="width: 220px"
+          />
           <el-button
             v-if="isAdmin"
             type="danger"
             :icon="Delete"
             :disabled="!finishedCount"
             @click="clearFinished"
-          >清理已完成 ({{ finishedCount }})</el-button>
+          >清理本页已完成 ({{ finishedCount }})</el-button>
         </div>
         <span class="count">共 {{ serverTotal }} 个任务<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span></span>
       </div>
 
-      <el-table :data="items" stripe border style="width: 100%">
+      <el-table :data="filteredItems" stripe border style="width: 100%">
         <template #empty><el-empty description="暂无任务" :image-size="80" /></template>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="title" label="任务" min-width="200" show-overflow-tooltip />
@@ -50,7 +58,13 @@
             />
           </template>
         </el-table-column>
-        <el-table-column prop="vm_name" label="虚拟机" width="140" show-overflow-tooltip />
+        <el-table-column label="虚拟机" width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            <!-- vm_id 在任务数据里：有则点击跳虚拟机详情，无（如数据库备份）显示占位 -->
+            <el-link v-if="row.vm_id" type="primary" @click="goVM(row.vm_id)">{{ row.vm_name }}</el-link>
+            <span v-else>{{ row.vm_name || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="username" label="执行人" width="110" />
         <el-table-column label="结果/错误" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">
@@ -135,7 +149,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Delete } from '@element-plus/icons-vue'
+import { Refresh, Delete, Search } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
@@ -174,28 +188,43 @@ function goVM(id) {
 const activeCount = computed(() => items.value.filter((t) => t.status === 'pending' || t.status === 'running').length)
 const finishedCount = computed(() => items.value.filter((t) => t.status === 'success' || t.status === 'failed').length)
 
+// 前端过滤当前页：任务名 / 虚拟机名模糊匹配（大小写不敏感），只影响表格展示不动计数
+const keyword = ref('')
+const filteredItems = computed(() => {
+  const k = keyword.value.trim().toLowerCase()
+  if (!k) return items.value
+  return items.value.filter(
+    (t) => (t.title || '').toLowerCase().includes(k) || (t.vm_name || '').toLowerCase().includes(k)
+  )
+})
+
+// 拉取列表（手动刷新与静默轮询共用，只负责取数与赋值，不动 loading）
+async function fetchTasks() {
+  // "进行中"= pending+running 两请求并发合并（原"整页拉取再前端过滤"分页数与可见条数漂移）
+  if (q.value.status === 'active') {
+    const [run, pend] = await Promise.all([
+      api.listTasks({ page: q.value.page, page_size: q.value.page_size, status: 'running' }),
+      api.listTasks({ page: q.value.page, page_size: q.value.page_size, status: 'pending' })
+    ])
+    const rl = (run.data && run.data.items) || []
+    const pl = (pend.data && pend.data.items) || []
+    items.value = [...rl, ...pl]
+    serverTotal.value = ((run.data && run.data.total) || 0) + ((pend.data && pend.data.total) || 0)
+  } else {
+    const params = { page: q.value.page, page_size: q.value.page_size }
+    if (q.value.status) params.status = q.value.status
+    const res = await api.listTasks(params)
+    items.value = (res.data && res.data.items) || []
+    serverTotal.value = (res.data && res.data.total) || items.value.length
+  }
+}
+
 async function load() {
   loading.value = true
   try {
-    // "进行中"= pending+running 两请求并发合并（原"整页拉取再前端过滤"分页数与可见条数漂移）
-    if (q.value.status === 'active') {
-      const [run, pend] = await Promise.all([
-        api.listTasks({ page: q.value.page, page_size: q.value.page_size, status: 'running' }),
-        api.listTasks({ page: q.value.page, page_size: q.value.page_size, status: 'pending' })
-      ])
-      const rl = (run.data && run.data.items) || []
-      const pl = (pend.data && pend.data.items) || []
-      items.value = [...rl, ...pl]
-      serverTotal.value = ((run.data && run.data.total) || 0) + ((pend.data && pend.data.total) || 0)
-    } else {
-      const params = { page: q.value.page, page_size: q.value.page_size }
-      if (q.value.status) params.status = q.value.status
-      const res = await api.listTasks(params)
-      items.value = (res.data && res.data.items) || []
-      serverTotal.value = (res.data && res.data.total) || items.value.length
-    }
+    await fetchTasks()
   } catch (e) {
-    ElMessage.error('获取任务列表失败')
+    ElMessage.error(errMsg(e, '获取任务列表失败'))
   } finally {
     loading.value = false
   }
@@ -208,15 +237,33 @@ function onPageSizeChange() {
 
 // 智能轮询：有进行中任务才刷（3s），无则停
 let pollTimer = null
+// 轮询静默刷新：不动 loading（否则整页 v-loading 每 3s 闪一次），范式与 SessionList 一致；
+// 保留「上一轮未回 / 首屏加载中就跳过」守卫，避免请求堆叠
+let refreshing = false
+async function silentRefresh() {
+  if (refreshing || loading.value) return
+  refreshing = true
+  try {
+    await fetchTasks()
+  } catch (e) {
+    // 轮询失败静默，不打扰用户，下一轮自动重试
+  } finally {
+    refreshing = false
+  }
+}
+
 function tick() {
   if (activeCount.value > 0) {
-    load()
+    silentRefresh()
   }
 }
 
 async function remove(row) {
   try {
-    await ElMessageBox.confirm(`确定删除任务「${row.title}」的记录？`, '确认删除', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除任务「${row.title}」的记录？`, '确认删除', {
+      type: 'warning',
+      confirmButtonClass: 'el-button--danger'
+    })
     await api.deleteTask(row.id)
     ElMessage.success('已删除')
     await load()
@@ -229,7 +276,10 @@ async function clearFinished() {
   const done = items.value.filter((t) => t.status === 'success' || t.status === 'failed')
   if (!done.length) return
   try {
-    await ElMessageBox.confirm(`确定清理 ${done.length} 条已完成任务记录？`, '确认清理', { type: 'warning' })
+    await ElMessageBox.confirm(`确定清理本页 ${done.length} 条已完成任务记录？`, '确认清理', {
+      type: 'warning',
+      confirmButtonClass: 'el-button--danger'
+    })
     let failed = 0
     for (const t of done) {
       try {

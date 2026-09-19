@@ -18,7 +18,9 @@
       </div>
       <span class="count">共 {{ total }} 个会话<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span></span>
     </div>
+      <!-- 仅当本页存在 VNC 会话时才说明「为什么断不开 VNC」，纯 SSH/串口列表不占版面 -->
       <el-alert
+        v-if="hasVncSession"
         type="info"
         :closable="false"
         show-icon
@@ -66,7 +68,7 @@
             <el-button
               v-if="isAdmin"
               size="small"
-              type="warning"
+              type="danger"
               :disabled="row.status !== 'active' || row.type === 'vnc'"
               :title="row.type === 'vnc' ? 'VNC 中转连接无法强制断开' : '强制断开'"
               @click="disconnect(row)"
@@ -114,6 +116,8 @@ function duration(row) {
 }
 
 const activeCount = computed(() => items.value.filter((s) => s.status === 'active').length)
+// 本页是否存在 VNC 会话：决定「VNC 无法强断」说明条是否显示
+const hasVncSession = computed(() => items.value.some((s) => s.type === 'vnc'))
 
 // 拉取列表（首屏/手动刷新与静默轮询共用，只负责取数与赋值）
 async function fetchSessions() {
@@ -144,7 +148,7 @@ async function load() {
   try {
     await fetchSessions()
   } catch (e) {
-    ElMessage.error('获取会话列表失败')
+    ElMessage.error(errMsg(e, '获取会话列表失败'))
   } finally {
     loading.value = false
   }

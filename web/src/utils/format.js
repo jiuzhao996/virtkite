@@ -73,6 +73,18 @@ export function vmStatusHex(status) {
   return cssVar('--color-primary', '#2a9da5')
 }
 
+/* ==================== 用户角色 ==================== */
+
+/**
+ * 角色 → 中文（users.role：admin / operator / viewer，未知角色一并落到只读）。
+ * 仪表盘「当前用户」、顶栏角色徽标共用此唯一实现，禁止页面内再散落三元表达式。
+ */
+export function roleText(role) {
+  if (role === 'admin') return '管理员'
+  if (role === 'operator') return '操作员'
+  return '只读用户'
+}
+
 /* ==================== 任务状态 / 类型 ==================== */
 
 /** 任务状态 → 中文。后端 tasks.status 只有 pending / running / success / failed。 */

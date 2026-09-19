@@ -23,7 +23,16 @@
           <!-- 组内 >1 项才渲染分组标题与折叠；单项目组（如只剩仪表盘的总览组）直接平铺菜单项 -->
           <el-menu-item-group v-if="group.items.length > 1">
             <template #title>
-              <span class="nav-group-title" @click="toggleGroup(group.name)">
+              <!-- 分组标题可折叠：role/tabindex/键盘 Enter 触发（ui-ux-pro-max 可访问性基线） -->
+              <span
+                class="nav-group-title"
+                role="button"
+                tabindex="0"
+                :aria-expanded="!closedGroups.has(group.name)"
+                @click="toggleGroup(group.name)"
+                @keydown.enter.prevent="toggleGroup(group.name)"
+                @keydown.space.prevent="toggleGroup(group.name)"
+              >
                 <span class="group-title">{{ group.name }}</span>
                 <el-icon class="group-caret" :class="{ closed: closedGroups.has(group.name) }"><ArrowDown /></el-icon>
               </span>
@@ -82,7 +91,7 @@
             clearable
             placeholder="搜索虚拟机名称，回车直达详情"
             :loading="searchLoading"
-            @focus="loadSearchVMs"
+            @visible-change="onSearchVisible"
             @change="goSearchVM"
           >
             <el-option v-for="vm in searchVMs" :key="vm.id" :label="vm.name" :value="vm.id">
@@ -116,7 +125,8 @@
             <div class="task-pop-head">进行中任务（{{ activeTasks.length }}）</div>
             <div v-if="!activeTasks.length" class="task-pop-empty">当前没有进行中的任务</div>
             <div v-else class="task-pop-list">
-              <div v-for="t in activeTasks" :key="t.id" class="task-pop-item">
+              <!-- 条目可点直达任务中心（与底部「前往任务中心」同目标） -->
+              <div v-for="t in activeTasks" :key="t.id" class="task-pop-item" @click="router.push('/tasks')">
                 <span class="task-pop-title">{{ t.title }}</span>
                 <el-tag :type="t.status === 'running' ? 'primary' : 'info'" size="small">
                   {{ t.status === 'running' ? '执行中' : '等待中' }}
@@ -125,9 +135,12 @@
             </div>
             <el-button text type="primary" class="task-pop-more" @click="router.push('/tasks')">前往任务中心</el-button>
           </el-popover>
-          <el-tag v-if="isAdmin" type="warning" effect="dark" size="small">管理员</el-tag>
-          <el-tag v-else-if="state.user && state.user.role === 'operator'" type="primary" effect="plain" size="small">操作员</el-tag>
-          <el-tag v-else type="info" effect="plain" size="small">只读用户</el-tag>
+          <!-- 角色徽标：文案统一走 utils/format 的 roleText（与仪表盘平台信息同源，operator 正确显示「操作员」） -->
+          <el-tag
+            :type="isAdmin ? 'warning' : role === 'operator' ? 'primary' : 'info'"
+            :effect="isAdmin ? 'dark' : 'plain'"
+            size="small"
+          >{{ roleText(role) }}</el-tag>
           <!-- 用户中心：资料/改密码/轮询偏好集中在个人中心页（对标云控制台顶栏分工） -->
           <el-dropdown trigger="click" @command="onUserCommand">
             <span class="user-entry">
@@ -157,18 +170,30 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Monitor, Picture, Odometer, Setting, Share, SwitchButton, Timer, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Monitor, Odometer, Picture, Setting, Share, SwitchButton, Tickets, Timer, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
-import { vmStatusText, vmStatusTag } from '../utils/format'
+import { roleText, vmStatusText, vmStatusTag } from '../utils/format'
 import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
 
 const route = useRoute()
 const router = useRouter()
 const { state, isAdmin, logout } = useAuth()
-const collapsed = ref(false)
+
+// 侧栏折叠状态持久化：ref 工厂读初始值，watch 写回（刷新后保持上次的折叠选择）
+const COLLAPSED_KEY = 'vmops-sidebar-collapsed'
+const collapsed = ref(localStorage.getItem(COLLAPSED_KEY) === '1')
+watch(collapsed, (v) => {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0')
+  } catch (e) {
+    /* localStorage 不可用（隐私模式等）时仅本次会话生效 */
+  }
+})
+
+const role = computed(() => (state.user && state.user.role) || '')
 
 // 分组导航：group 字段同时驱动展开态（el-menu-item-group）与折叠态 v-for，
 // adminOnly 过滤在 menuGroups 里统一做。层级思路：资源组 = 用户生产消费的对象（虚拟机/镜像），
@@ -187,6 +212,8 @@ const navItems = [
   { index: '/networks', label: '网络', icon: Connection, group: '基础设施' },
   { index: '/tasks', label: '任务中心', icon: List, group: '运维' },
   { index: '/audit', label: '审计中心', icon: Document, group: '运维' },
+  // cloud-init 模板：操作员即可用（路由 requiresOperate，非 adminOnly），故不开 adminOnly
+  { index: '/cloud-init-templates', label: 'cloud-init 模板', icon: Tickets, group: '运维' },
   { index: '/crons', label: '计划任务', icon: Timer, group: '运维', adminOnly: true },
   { index: '/recycle-bin', label: '回收站', icon: Delete, group: '运维', adminOnly: true },
   { index: '/toolbox', label: '工具箱', icon: Odometer, group: '运维', adminOnly: true },
@@ -213,24 +240,24 @@ function toggleGroup(name) {
 
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard'))
 
-// 全局搜索：进布局拉一次 VM 清单（15 台规模客户端过滤足够），选中直达详情。
-// viewer 也可用（GET /vms 对 viewer 放行）。拉取失败静默（搜索是辅助入口）。
+// 全局搜索：每次下拉展开都重新拉 VM 清单（不做常驻缓存，新建/删除的机器下次展开即生效）。
+// viewer 也可用（GET /vms 对 viewer 放行）。拉取失败静默保留旧清单（搜索是辅助入口）。
 const searchVMs = ref([])
 const searchSel = ref('')
 const searchLoading = ref(false)
-let searchLoaded = false
 async function loadSearchVMs() {
-  if (searchLoaded) return
   searchLoading.value = true
   try {
     const res = await api.listVMs()
     searchVMs.value = (res.data && res.data.items) || []
-    searchLoaded = true
   } catch (e) {
-    /* 静默 */
+    /* 静默：保留上次清单 */
   } finally {
     searchLoading.value = false
   }
+}
+function onSearchVisible(visible) {
+  if (visible) loadSearchVMs()
 }
 function goSearchVM(id) {
   if (!id) return
@@ -264,7 +291,6 @@ async function loadActiveTasks() {
 }
 onMounted(() => {
   loadActiveTasks()
-  loadSearchVMs() // 全局搜索数据：布局挂载即加载（el-select 的 @focus 在部分触发方式下不可靠）
   taskTimer = setInterval(loadActiveTasks, getPollInterval('tasks', POLL_DEFAULTS.tasks))
 })
 onUnmounted(() => {
@@ -296,7 +322,7 @@ function onUserCommand(cmd) {
   overflow: hidden;
 }
 .brand {
-  height: 56px;
+  height: 60px; /* 与顶栏 el-header 默认高度 60px 对齐，侧栏/顶栏分界线齐平 */
   display: flex;
   align-items: center;
   gap: 10px;
@@ -490,6 +516,7 @@ function onUserCommand(cmd) {
   gap: 8px;
   padding: 6px 0;
   border-bottom: 1px solid var(--color-border);
+  cursor: pointer; /* 条目可点直达任务中心 */
 }
 .task-pop-title {
   font-size: 13px;
@@ -534,7 +561,7 @@ function onUserCommand(cmd) {
 }
 .main {
   background: var(--color-background);
-  padding: 20px;
+  padding: var(--space-2xl); /* 24px，8px 栅格（原 20px 不在栅格上） */
 }
 .aside-collapse-bar {
   margin: auto 12px 12px;

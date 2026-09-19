@@ -91,7 +91,7 @@ const props = defineProps({ embedded: { type: Boolean, default: false } })
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download, CircleCheck } from '@element-plus/icons-vue'
-import http from '../api'
+import http, { api } from '../api'
 import { errMsg, clampPct } from '../utils/format'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
@@ -146,7 +146,61 @@ onUnmounted(() => {
   disposed = true
 })
 
-onMounted(load)
+// 刷新后恢复下载态：dlStates 仅存内存，页面刷新后进行中的下载任务会被误标「可下载」从而重复发起。
+// 拉一次进行中（pending+running）任务列表，按 任务类型 + 标题匹配 清单项恢复 downloading 态
+// （后端 Submit 的标题固定为「下载云镜像 <镜像名>」、类型固定 image_download）。
+// 匹配刻意保守：类型或标题对不上宁可不恢复，绝不误标。
+async function restoreDownloading() {
+  let tasks = []
+  try {
+    const [run, pend] = await Promise.all([
+      api.listTasks({ page: 1, page_size: 200, status: 'running' }),
+      api.listTasks({ page: 1, page_size: 200, status: 'pending' })
+    ])
+    tasks = [...((run.data && run.data.items) || []), ...((pend.data && pend.data.items) || [])]
+  } catch (e) {
+    return // 任务列表拉不到就放弃恢复，维持「可下载」展示（再次点击下载对已存在文件是幂等登记）
+  }
+  for (const it of items.value) {
+    const t = tasks.find((x) => x.type === 'image_download' && String(x.title || '').indexOf(it.name) !== -1)
+    if (!t) continue
+    const st = stateOf(it.key)
+    st.phase = 'downloading'
+    st.submitting = false
+    st.percent = clampPct(t.progress)
+    st.phaseText = t.status === 'running' ? '正在下载' : '等待任务调度'
+    resumePolling(t.id, it.key, it.name)
+  }
+}
+
+// 恢复态后接续轮询：进度继续推进，终态处理与首次发起下载一致（成功置 done，失败回可重试态）
+async function resumePolling(taskId, key, name) {
+  const st = stateOf(key)
+  try {
+    await pollTask(taskId, {
+      interval: 2000,
+      timeout: 30 * 60 * 1000,
+      onProgress: (task) => {
+        if (disposed || st.phase !== 'downloading') return
+        st.percent = clampPct(task.progress)
+        st.phaseText = task.status === 'running' ? '正在下载' : '等待任务调度'
+      }
+    })
+    if (disposed) return
+    st.phase = 'done'
+    st.percent = 100
+    ElMessage.success(`「${name}」下载完成，已登记进镜像库`)
+  } catch (e) {
+    if (disposed) return
+    if (st.phase === 'downloading') st.phase = 'idle'
+    ElMessage.error(taskErrorMessage(e, '下载任务失败'))
+  }
+}
+
+onMounted(async () => {
+  await load()
+  restoreDownloading()
+})
 
 /**
  * 下载一个云镜像：提交 202 任务 → pollTask 轮询到终态。

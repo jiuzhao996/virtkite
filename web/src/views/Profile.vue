@@ -49,8 +49,8 @@
         </el-card>
       </el-col>
 
-      <!-- 前端轮询偏好（本机浏览器生效，属个人个性化设置，从系统设置页迁来） -->
-      <el-col :xs="24" :md="12" class="mb">
+      <!-- 前端轮询偏好（本机浏览器生效，属个人个性化设置，从系统设置页迁来）；md=24 通栏，避免两列布局右下留洞 -->
+      <el-col :xs="24" :md="24" class="mb">
         <el-card shadow="never">
           <template #header>
             <div class="card-head">
@@ -91,8 +91,17 @@ const roleTag = computed(() => ({ admin: 'warning', operator: 'primary', viewer:
 const pwdSaving = ref(false)
 const pwdForm = reactive({ old_password: '', new_password: '', confirm: '' })
 async function doChangePwd() {
-  if (!pwdForm.old_password || !pwdForm.new_password) {
-    ElMessage.warning('请填写旧密码和新密码')
+  if (!pwdForm.old_password) {
+    ElMessage.warning('请填写旧密码')
+    return
+  }
+  if (!pwdForm.new_password) {
+    ElMessage.warning('请填写新密码')
+    return
+  }
+  // 与后端密码策略一致：最短 6 位
+  if (pwdForm.new_password.length < 6) {
+    ElMessage.warning('新密码至少 6 位')
     return
   }
   if (pwdForm.new_password !== pwdForm.confirm) {

@@ -6,7 +6,8 @@
       <el-card shadow="never">
         <div class="toolbar">
           <div class="toolbar-left">
-            <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+            <!-- 刷新是次操作：default 描边（主操作「新建虚拟机」才用实底 primary） -->
+            <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
             <el-button v-if="canOperate" type="primary" :icon="Plus" @click="router.push({ name: 'vm-create' })">新建虚拟机</el-button>
             <el-button v-if="canOperate" type="warning" plain :icon="Upload" @click="openImport">导入存量 VM</el-button>
             <!-- 批量操作条：勾选后出现；按选中状态智能禁用（全在运行时开机禁用、全已关机时关机禁用），
@@ -51,18 +52,23 @@
           <span v-if="isFiltered" class="filter-count">筛选出 {{ filteredItems.length }} 台</span>
         </div>
 
-        <!-- 卡片网格（替代 el-table，对齐 KvmDash 卡片 + virt-manager 实时条） -->
-        <el-empty v-if="!filteredItems.length && !loading" description="暂无虚拟机" :image-size="80" />
+        <!-- 卡片网格（替代 el-table，对齐 KvmDash 卡片 + virt-manager 实时条）；
+             筛选无结果与列表真空是两种空态，文案区分并提供「清除筛选」出口 -->
+        <el-empty v-if="!filteredItems.length && !loading" :description="isFiltered ? '无匹配虚拟机' : '暂无虚拟机'" :image-size="80">
+          <el-button v-if="isFiltered" :icon="Refresh" @click="clearFilters">清除筛选</el-button>
+        </el-empty>
         <div v-else class="vm-grid">
           <el-card
             v-for="vm in filteredItems"
             :key="vm.id"
             shadow="hover"
             class="vm-card"
-            :class="{ selected: isChecked(vm), running: vm.status === 'running' }"
+            :class="{ selected: canOperate && isChecked(vm), running: vm.status === 'running' }"
           >
             <div class="vm-head">
+              <!-- viewer 只读：不给勾选框也不给选中高亮（批量操作属操作员/管理员） -->
               <el-checkbox
+                v-if="canOperate"
                 :model-value="isChecked(vm)"
                 :disabled="busy.has(vm.id)"
                 @change="toggleCheck(vm, $event)"
@@ -77,7 +83,11 @@
             <div class="vm-meta">
               <span class="meta-item"><el-icon><Cpu /></el-icon>{{ vm.host ? vm.host.name : ('ID ' + vm.host_id) }}</span>
               <span class="meta-item"><el-icon><FolderOpened /></el-icon>{{ vm.storage_pool || '—' }}</span>
-              <span class="meta-item mono" v-if="vm.ip"><el-icon><Connection /></el-icon>{{ vm.ip }}</span>
+              <!-- IP 可点复制（CopyDocument 小图标示意可点；剪贴板 API 失败降级报错提示） -->
+              <span v-if="vm.ip" class="meta-item mono ip-copy" title="点击复制 IP" @click="copyIP(vm.ip)">
+                <el-icon><Connection /></el-icon>{{ vm.ip }}
+                <el-icon class="ip-copy-icon"><CopyDocument /></el-icon>
+              </span>
             </div>
             <div class="vm-spec">
               <span>{{ vm.vcpu }} 核</span>
@@ -99,7 +109,7 @@
               <span class="idle-text">未运行，无实时指标</span>
             </div>
             <div class="vm-actions">
-              <el-button size="small" :icon="Search" @click="router.push({ name: 'vm-detail', params: { id: vm.id } })">详情</el-button>
+              <el-button size="small" :icon="View" @click="router.push({ name: 'vm-detail', params: { id: vm.id } })">详情</el-button>
               <el-button
                 v-if="canOperate && vm.status !== 'running'"
                 size="small"
@@ -115,18 +125,21 @@
                 @click="action(vm, 'stop')"
               >关机</el-button>
               <el-button size="small" :icon="Monitor" :disabled="vm.status !== 'running'" @click="openConsole(vm)">控制台</el-button>
-              <!-- 删除常驻（原「更多」下拉悬浮突兀，重启去详情页操作）：删除有输入名称确认弹窗兜底 -->
-              <el-button
-                v-if="canOperate"
-                class="vm-delete"
-                size="small"
-                type="danger"
-                plain
-                :icon="Delete"
-                :disabled="busy.has(vm.id)"
-                :title="'删除 ' + vm.name"
-                @click="action(vm, 'delete')"
-              />
+              <!-- 删除常驻（原「更多」下拉悬浮突兀，重启去详情页操作）：删除有输入名称确认弹窗兜底；
+                   icon-only 必须带 tooltip + aria-label（ui-ux-pro-max §1） -->
+              <el-tooltip :content="'删除 ' + vm.name" placement="top">
+                <el-button
+                  v-if="canOperate"
+                  class="vm-delete"
+                  size="small"
+                  type="danger"
+                  plain
+                  :icon="Delete"
+                  :disabled="busy.has(vm.id)"
+                  :aria-label="'删除 ' + vm.name"
+                  @click="action(vm, 'delete')"
+                />
+              </el-tooltip>
             </div>
           </el-card>
         </div>
@@ -143,7 +156,19 @@
           :title="`宿主机「${importHostName}」共检测到 ${importTotal} 台域：已纳管 ${importManaged} 台，未纳管 ${importUnmanaged} 台`"
           style="margin-bottom: 12px"
         />
-        <el-empty v-if="!importScanning && !unmanaged.length" description="暂无未纳管的存量 VM" />
+        <!-- 扫描失败：弹窗内给出错误与重试入口（不落「暂无未纳管」空态误导用户） -->
+        <el-result
+          v-if="!importScanning && importError"
+          icon="warning"
+          title="扫描失败"
+          :sub-title="importError"
+          style="padding: 24px 0"
+        >
+          <template #extra>
+            <el-button type="primary" :icon="Refresh" @click="openImport">重试扫描</el-button>
+          </template>
+        </el-result>
+        <el-empty v-else-if="!importScanning && !unmanaged.length" description="暂无未纳管的存量 VM" />
         <el-table
           v-else
           :data="unmanaged"
@@ -183,7 +208,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import echarts from '../utils/echarts'
-import { Refresh, Plus, Upload, VideoPlay, SwitchButton, Monitor, Delete, Search, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
+import { Refresh, Plus, Upload, VideoPlay, SwitchButton, Monitor, Delete, Search, View, CopyDocument, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
@@ -195,7 +220,8 @@ const { canOperate } = useAuth()
 
 // echarts 不解析 var()，需要真实色值：挂载时读一次 CSS 变量（避免散落 hex）
 const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2a9da5')
-const CHART_MEM_COLOR = cssVar('--color-warning', '#d97706')
+// 内存曲线与仪表盘同色（--color-success 绿）；原 --color-warning 橙与 CPU 阈值色混淆
+const CHART_MEM_COLOR = cssVar('--color-success', '#16a34a')
 const CHART_BASELINE_COLOR = cssVar('--color-border-strong', '#cbd5e1')
 
 const items = ref([])
@@ -222,6 +248,8 @@ const sparkEls = {}
 const importDialog = ref(false)
 const importScanning = ref(false)
 const importing = ref(false)
+// 扫描失败信息：非空时弹窗内展示错误 + 重试按钮（不误显「暂无未纳管」空态）
+const importError = ref('')
 const importHostId = ref(null)
 const importHostName = ref('')
 const importTotal = ref(0)
@@ -235,6 +263,11 @@ const runningCount = computed(() => items.value.filter((i) => i.status === 'runn
 // 筛选：关键词（名称）+ 状态（客户端即时过滤）
 const q = reactive({ keyword: '', status: '' })
 const isFiltered = computed(() => !!(q.keyword.trim() || q.status))
+// 清除筛选：重置关键词与状态，回到全量列表（筛选空态的「清除筛选」按钮入口）
+function clearFilters() {
+  q.keyword = ''
+  q.status = ''
+}
 const filteredItems = computed(() => {
   const kw = q.keyword.trim().toLowerCase()
   return items.value.filter((vm) => {
@@ -424,6 +457,7 @@ let pollTimer = null
 async function openImport() {
   importDialog.value = true
   importScanning.value = true
+  importError.value = ''
   importHostName.value = ''
   importUnmanaged.value = 0
   unmanaged.value = []
@@ -438,8 +472,9 @@ async function openImport() {
     importUnmanaged.value = data.unmanaged || 0
     unmanaged.value = ((data.items || []).filter((i) => !i.managed))
   } catch (e) {
-    // 后端已统一为 {code, message, data}（handler 层禁止再泄漏 detail），走统一提取
-    ElMessage.error(errMsg(e, '扫描失败，无法连接 libvirt'))
+    // 后端已统一为 {code, message, data}（handler 层禁止再泄漏 detail），走统一提取；
+    // 错误落弹窗内 importError 态（含重试按钮），不再弹 toast 也不误显空态
+    importError.value = errMsg(e, '扫描失败，无法连接 libvirt')
   } finally {
     importScanning.value = false
   }
@@ -466,8 +501,15 @@ async function doImport() {
 
 // 批量操作：start 同步直调（快接口）；stop/delete 逐台走后台任务（提交→poll→汇总）
 async function bulkAction(type) {
+  // 目标收敛：只作用于「勾选 ∩ 当前筛选结果」——被筛掉的机器对用户不可见，不应被批量波及
+  const inFilter = new Set(filteredItems.value.map((r) => r.id))
+  const scoped = checked.value.filter((r) => inFilter.has(r.id))
+  if (!scoped.length) {
+    ElMessage.warning('勾选的虚拟机不在当前筛选结果中，请调整或清除筛选')
+    return
+  }
   // 目标过滤：开机只对非 running 生效、关机只对 running 生效，避免对不适用机器白跑接口
-  const rows = checked.value.filter((r) => !busy.value.has(r.id))
+  const rows = scoped.filter((r) => !busy.value.has(r.id))
     .filter((r) => (type === 'start' ? r.status !== 'running' : type === 'stop' ? r.status === 'running' : true))
   if (!rows.length) {
     ElMessage.warning(type === 'start' ? '选中的虚拟机均在运行中' : type === 'stop' ? '选中的虚拟机均已关机' : '请选择虚拟机')
@@ -510,6 +552,17 @@ async function bulkAction(type) {
 
 function statusClass(status) {
   return 'st-' + (status || 'unknown').replace(' ', '-')
+}
+
+// 卡片 IP 一键复制：navigator.clipboard 仅在安全上下文可用（localhost / HTTPS），
+// 失败（http 部署 / 权限拒绝）降级为错误提示，不让点击无响应
+async function copyIP(ip) {
+  try {
+    await navigator.clipboard.writeText(ip)
+    ElMessage.success('已复制')
+  } catch (e) {
+    ElMessage.error('复制失败，请手动复制')
+  }
 }
 
 async function action(vm, type) {
@@ -663,7 +716,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 腾讯云式状态徽标：圆点 + 文字 */
+/* 腾讯云式状态徽标：圆点 + 文字（前景色走 token 等值替换；浅底色无对应 token 保留原值） */
 .vm-status {
   display: inline-flex;
   align-items: center;
@@ -674,7 +727,7 @@ onUnmounted(() => {
   border-radius: 999px;
   white-space: nowrap;
   background: #f1f5f9;
-  color: #64748b;
+  color: var(--color-info);
 }
 .vm-status .status-dot {
   width: 7px;
@@ -685,23 +738,23 @@ onUnmounted(() => {
 }
 .vm-status.st-running {
   background: #ecfdf5;
-  color: #16a34a;
+  color: var(--color-success);
 }
 .vm-status.st-running .status-dot {
   animation: breathe-ring 1.6s ease-in-out infinite;
 }
 .vm-status.st-paused {
   background: #fffbeb;
-  color: #d97706;
+  color: var(--color-warning);
 }
 .vm-status.st-error {
   background: #fef2f2;
-  color: #dc2626;
+  color: var(--color-danger);
 }
 .vm-status.st-shut-off,
 .vm-status.st-stopped {
   background: #f1f5f9;
-  color: #64748b;
+  color: var(--color-info);
 }
 @keyframes breathe-ring {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); }
@@ -719,6 +772,17 @@ onUnmounted(() => {
   gap: 4px;
   font-size: 0.82rem;
   color: var(--color-muted-foreground);
+}
+/* IP 行可点复制：小图标示意可点性，hover 提示主色 */
+.ip-copy {
+  cursor: pointer;
+}
+.ip-copy:hover {
+  color: var(--el-color-primary);
+}
+.ip-copy-icon {
+  font-size: 0.9em;
+  opacity: 0.6;
 }
 .vm-spec {
   display: flex;
@@ -758,14 +822,14 @@ onUnmounted(() => {
   gap: 4px;
   font-size: 0.75rem;
   font-weight: 700;
-  color: #16a34a;
+  color: var(--color-success);
   letter-spacing: 0.5px;
 }
 .live-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #16a34a;
+  background: var(--color-success);
   animation: breathe 1.6s ease-in-out infinite; /* 全局纯透明度版（global.css） */
 }
 .perf-time {

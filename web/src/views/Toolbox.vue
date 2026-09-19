@@ -16,49 +16,45 @@
       @close="loadError = ''"
     />
 
-    <el-row :gutter="16">
-      <!-- 卡一：进程 Top（ps 排序由后端完成，前端只切 sort 参数） -->
-      <el-col :span="24">
-        <el-card shadow="never">
-          <template #header>
-            <div class="card-head">
-              <span class="card-title">进程 Top（占用前 20）</span>
-              <div class="card-head-right">
-                <el-radio-group v-model="procSort" @change="loadProcesses">
-                  <el-radio-button value="cpu">CPU 占用</el-radio-button>
-                  <el-radio-button value="mem">内存占用</el-radio-button>
-                </el-radio-group>
-                <el-button :icon="Refresh" :loading="procLoading" @click="loadProcesses">刷新</el-button>
-              </div>
-            </div>
-          </template>
+    <!-- 卡一：进程 Top（ps 排序由后端完成，前端只切 sort 参数）；全宽单卡无需 row/col 包裹 -->
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">进程 Top（占用前 20）</span>
+          <div class="card-head-right">
+            <el-radio-group v-model="procSort" @change="loadProcesses">
+              <el-radio-button value="cpu">CPU 占用</el-radio-button>
+              <el-radio-button value="mem">内存占用</el-radio-button>
+            </el-radio-group>
+            <el-button :icon="Refresh" :loading="procLoading" @click="loadProcesses">刷新</el-button>
+          </div>
+        </div>
+      </template>
 
-          <el-table v-loading="procLoading" :data="procs" stripe size="small" style="width: 100%">
-            <template #empty>
-              <el-empty description="暂无进程数据" :image-size="80" />
-            </template>
-            <el-table-column prop="pid" label="PID" width="100" />
-            <el-table-column prop="user" label="用户" width="130" show-overflow-tooltip />
-            <el-table-column label="CPU %" width="110" align="right">
-              <template #default="{ row }">
-                <span :class="{ 'hot-num': row.cpu >= 50 }">{{ pctText(row.cpu) }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="内存 %" width="110" align="right">
-              <template #default="{ row }">{{ pctText(row.mem) }}</template>
-            </el-table-column>
-            <el-table-column prop="comm" label="命令" min-width="240" show-overflow-tooltip>
-              <template #default="{ row }"><span class="mono">{{ row.comm }}</span></template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-      </el-col>
-    </el-row>
+      <el-table v-loading="procLoading" :data="procs" stripe size="small" style="width: 100%">
+        <template #empty>
+          <el-empty description="暂无进程数据" :image-size="80" />
+        </template>
+        <el-table-column prop="pid" label="PID" width="100" />
+        <el-table-column prop="user" label="用户" width="130" show-overflow-tooltip />
+        <el-table-column label="CPU %" width="110" align="right">
+          <template #default="{ row }">
+            <span :class="{ 'hot-num': row.cpu >= 50 }">{{ pctText(row.cpu) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="内存 %" width="110" align="right">
+          <template #default="{ row }">{{ pctText(row.mem) }}</template>
+        </el-table-column>
+        <el-table-column prop="comm" label="命令" min-width="240" show-overflow-tooltip>
+          <template #default="{ row }"><span class="mono">{{ row.comm }}</span></template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
     <el-row :gutter="16" class="tb-row">
-      <!-- 卡二：磁盘水位 + 清理动作 -->
+      <!-- 卡二：磁盘水位 + 清理动作（独立加载态，不随进程卡联动） -->
       <el-col :xs="24" :md="15">
-        <el-card shadow="never" class="tb-card">
+        <el-card v-loading="diskLoading" shadow="never" class="tb-card">
           <template #header>
             <span class="card-title">磁盘</span>
           </template>
@@ -150,9 +146,11 @@ async function loadProcesses() {
   try {
     const res = await http.get('/toolbox/processes', { params: { sort: procSort.value } })
     procs.value = (res.data.data && res.data.data.items) || []
+    loadError.value = ''
   } catch (e) {
     procs.value = []
-    ElMessage.error(errMsg(e, '读取进程列表失败'))
+    // 失败统一置页顶 alert（errMsg 取后端中文 message），不再逐卡弹 toast
+    loadError.value = errMsg(e, '读取进程列表失败')
   } finally {
     procLoading.value = false
   }
@@ -171,9 +169,10 @@ async function loadDisk() {
   try {
     const res = await http.get('/toolbox/disk')
     disk.value = res.data.data || { root: null, data_dir: '', data_dir_size: '' }
+    loadError.value = ''
   } catch (e) {
     disk.value = { root: null, data_dir: '', data_dir_size: '' }
-    ElMessage.error(errMsg(e, '读取磁盘占用失败'))
+    loadError.value = errMsg(e, '读取磁盘占用失败')
   } finally {
     diskLoading.value = false
   }
@@ -189,7 +188,12 @@ async function pruneDocker() {
     await ElMessageBox.confirm(
       '将执行 docker image prune，仅删除未被任何镜像引用的悬空镜像层，不影响在用镜像与容器。是否继续？',
       '清理悬空镜像',
-      { confirmButtonText: '开始清理', cancelButtonText: '取消', type: 'warning' }
+      {
+        confirmButtonText: '开始清理',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger'
+      }
     )
   } catch (e) {
     if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))
@@ -213,7 +217,12 @@ async function purgeTasks() {
     await ElMessageBox.confirm(
       '将物理删除创建于 30 天前的历史任务记录（含成功与失败记录），此操作不可恢复。是否继续？',
       '清理历史任务记录',
-      { confirmButtonText: '开始清理', cancelButtonText: '取消', type: 'warning' }
+      {
+        confirmButtonText: '开始清理',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger'
+      }
     )
   } catch (e) {
     if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))

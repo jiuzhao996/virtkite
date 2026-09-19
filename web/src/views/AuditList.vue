@@ -11,91 +11,96 @@
       <!-- 操作日志仅管理员可见（后端 /api/audit admin-only）；viewer 只能看会话流水 -->
       <el-tab-pane v-if="isAdmin" label="操作日志" name="ops">
         <el-card shadow="never">
-      <div class="filters">
-        <el-select v-model="q.action" placeholder="操作类型" clearable filterable style="width: 180px" @change="search">
-          <el-option v-for="a in actionOptions" :key="a.value" :label="a.label" :value="a.value" />
-        </el-select>
-        <el-select v-model="q.object_type" placeholder="对象类型" clearable style="width: 130px" @change="search">
-          <el-option v-for="o in objectOptions" :key="o" :label="o" :value="o" />
-        </el-select>
-        <el-input v-model="q.username" placeholder="操作人" clearable style="width: 140px" @keyup.enter="search" @clear="search" />
-        <el-select v-model="q.status" placeholder="状态" clearable style="width: 110px" @change="search">
-          <el-option label="成功" value="success" />
-          <el-option label="失败" value="failed" />
-        </el-select>
-        <el-date-picker
-          v-model="range"
-          type="daterange"
-          range-separator="至"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          value-format="YYYY-MM-DD"
-          @change="onRange"
-        />
-        <el-button type="primary" :icon="Search" :loading="loading" @click="search">查询</el-button>
-        <el-button :icon="RefreshLeft" @click="reset">重置</el-button>
-      </div>
+          <div class="filters">
+            <el-select v-model="q.action" placeholder="操作类型" clearable filterable style="width: 180px" @change="search">
+              <el-option v-for="a in actionOptions" :key="a.value" :label="a.label" :value="a.value" />
+            </el-select>
+            <el-select v-model="q.object_type" placeholder="对象类型" clearable style="width: 130px" @change="search">
+              <el-option v-for="o in objectOptions" :key="o" :label="o" :value="o" />
+            </el-select>
+            <el-input v-model="q.username" placeholder="操作人" clearable style="width: 140px" @keyup.enter="search" @clear="search" />
+            <el-select v-model="q.status" placeholder="状态" clearable style="width: 110px" @change="search">
+              <el-option label="成功" value="success" />
+              <el-option label="失败" value="failed" />
+            </el-select>
+            <el-date-picker
+              v-model="range"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              value-format="YYYY-MM-DD"
+              :shortcuts="dateShortcuts"
+              @change="onRange"
+            />
+            <el-button type="primary" :icon="Search" :loading="loading" @click="search">查询</el-button>
+            <el-button :icon="RefreshLeft" @click="reset">重置</el-button>
+            <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+            <el-button :icon="Download" :loading="exporting" @click="exportCsv">导出</el-button>
+          </div>
 
-      <el-table :data="items" stripe border style="width: 100%">
+          <el-table :data="items" stripe border style="width: 100%">
             <template #empty><el-empty description="暂无审计记录" :image-size="72" /></template>
-        <el-table-column label="时间" min-width="172">
-          <template #default="{ row }">
-            <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作人" width="120">
-          <template #default="{ row }">
-            <span>{{ row.username || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="160">
-          <template #default="{ row }">
-            <el-tag effect="plain">{{ actionLabel(row.action) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="object_type" label="对象" width="100" />
-        <el-table-column label="来源 IP" width="150">
-          <template #default="{ row }">
-            <span class="mono">{{ row.source_ip || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'success' ? 'success' : 'danger'" effect="light">
-              {{ row.status === 'success' ? '成功' : '失败' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="详情" min-width="220">
-          <template #default="{ row }">
-            <el-tooltip
-              v-if="row.detail"
-              :content="row.detail"
-              placement="top"
-              :show-after="300"
-              :enterable="false"
-              popper-class="audit-detail-popper"
-            >
-              <span class="detail-cell mono" @click="openDetail(row)">{{ row.detail }}</span>
-            </el-tooltip>
-            <span v-else class="muted">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" :icon="View" @click="openDetail(row)">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+            <el-table-column label="时间" min-width="172">
+              <template #default="{ row }">
+                <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作人" width="120">
+              <template #default="{ row }">
+                <span>{{ row.username || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="160">
+              <template #default="{ row }">
+                <el-tag effect="plain">{{ actionLabel(row.action) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="object_type" label="对象" width="100" />
+            <el-table-column label="来源 IP" width="150">
+              <template #default="{ row }">
+                <span class="mono">{{ row.source_ip || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'success' ? 'success' : 'danger'" effect="light">
+                  {{ row.status === 'success' ? '成功' : '失败' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="详情" min-width="220">
+              <template #default="{ row }">
+                <el-tooltip
+                  v-if="row.detail"
+                  :content="row.detail"
+                  placement="top"
+                  :show-after="300"
+                  :enterable="false"
+                  popper-class="audit-detail-popper"
+                >
+                  <span class="detail-cell mono" @click="openDetail(row)">{{ row.detail }}</span>
+                </el-tooltip>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="90" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" :icon="View" @click="openDetail(row)">详情</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
 
-      <el-pagination
-        class="pager"
-        layout="total, prev, pager, next"
-        :total="total"
-        :current-page="q.page"
-        :page-size="q.page_size"
-        @current-change="onPage"
-      />
+          <el-pagination
+            class="pager"
+            layout="total, sizes, prev, pager, next"
+            :total="total"
+            :current-page="q.page"
+            v-model:page-size="q.page_size"
+            :page-sizes="[20, 50, 100]"
+            @current-change="onPage"
+            @size-change="onPageSizeChange"
+          />
         </el-card>
       </el-tab-pane>
       <el-tab-pane label="控制台会话" name="sessions">
@@ -147,7 +152,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, RefreshLeft, View } from '@element-plus/icons-vue'
+import { Search, RefreshLeft, Refresh, Download, View } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { FALLBACK_ACTION_LABELS, fmtDateTime, errMsg } from '../utils/format'
@@ -182,6 +187,35 @@ function actionLabel(action) {
 
 const q = reactive({ action: '', object_type: '', username: '', status: '', start: '', end: '', page: 1, page_size: 20 })
 
+// 日期范围快捷项（今天 / 近 7 天 / 近 30 天），返回 Date 由 value-format 统一转 YYYY-MM-DD
+const dateShortcuts = [
+  {
+    text: '今天',
+    value: () => {
+      const d = new Date()
+      return [d, d]
+    }
+  },
+  {
+    text: '近 7 天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 6)
+      return [start, end]
+    }
+  },
+  {
+    text: '近 30 天',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 29)
+      return [start, end]
+    }
+  }
+]
+
 function onRange(val) {
   if (val && val.length === 2) {
     q.start = val[0]
@@ -204,26 +238,104 @@ function onPage(p) {
   load()
 }
 
+function onPageSizeChange() {
+  q.page = 1
+  load()
+}
+
 function reset() {
   Object.assign(q, { action: '', object_type: '', username: '', status: '', start: '', end: '', page: 1 })
   range.value = null
   load()
 }
 
+// 组装查询参数（不含分页，导出时也复用：按当前筛选条件拉全量）
+function filterParams() {
+  const params = {}
+  for (const k of ['action', 'object_type', 'username', 'status', 'start', 'end']) {
+    if (q[k]) params[k] = q[k]
+  }
+  return params
+}
+
 async function load() {
   loading.value = true
   try {
-    const params = {}
-    for (const k of ['action', 'object_type', 'username', 'status', 'start', 'end', 'page', 'page_size']) {
-      if (q[k]) params[k] = q[k]
-    }
-    const res = await api.listAudit(params)
+    const res = await api.listAudit({ ...filterParams(), page: q.page, page_size: q.page_size })
     items.value = (res.data && res.data.items) || []
     total.value = (res.data && res.data.total) || 0
   } catch (e) {
     ElMessage.error(errMsg(e, '获取审计日志失败'))
   } finally {
     loading.value = false
+  }
+}
+
+// ===== 导出 CSV（按当前筛选条件分页拉全量，上限 5000 条） =====
+const EXPORT_LIMIT = 5000
+const EXPORT_PAGE_SIZE = 500
+const exporting = ref(false)
+
+// CSV 字段转义：整体加引号，内部引号翻倍，防逗号/换行/引号破坏列结构
+function csvCell(v) {
+  return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'
+}
+
+async function exportCsv() {
+  exporting.value = true
+  try {
+    const filters = filterParams()
+    const rows = []
+    let page = 1
+    let totalCount = 0
+    do {
+      const res = await api.listAudit({ ...filters, page, page_size: EXPORT_PAGE_SIZE })
+      const data = (res && res.data) || {}
+      const batch = Array.isArray(data.items) ? data.items : []
+      totalCount = Number(data.total) || 0
+      rows.push(...batch)
+      page++
+    } while (rows.length < totalCount && rows.length < EXPORT_LIMIT)
+
+    if (!rows.length) {
+      ElMessage.info('当前筛选条件下没有可导出的审计记录')
+      return
+    }
+
+    // 列以页面现有列为准（时间/操作人/操作/对象/来源 IP/状态/详情）
+    const header = ['时间', '操作人', '操作', '对象', '来源 IP', '状态', '详情']
+    const lines = [header.map(csvCell).join(',')]
+    for (const r of rows) {
+      lines.push(
+        [
+          fmtDateTime(r.created_at),
+          r.username || '',
+          actionLabel(r.action),
+          r.object_type || '',
+          r.source_ip || '',
+          r.status === 'success' ? '成功' : '失败',
+          r.detail || ''
+        ]
+          .map(csvCell)
+          .join(',')
+      )
+    }
+    // \uFEFF BOM：Excel 打开才不会把 UTF-8 中文识别成乱码
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const d = new Date()
+    const p = (n) => String(n).padStart(2, '0')
+    a.href = url
+    a.download = `audit-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    const truncated = rows.length >= EXPORT_LIMIT ? '（已达导出上限 5000 条）' : ''
+    ElMessage.success(`已导出 ${rows.length} 条记录${truncated}`)
+  } catch (e) {
+    ElMessage.error(errMsg(e, '导出失败'))
+  } finally {
+    exporting.value = false
   }
 }
 

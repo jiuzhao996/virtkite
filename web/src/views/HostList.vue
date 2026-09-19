@@ -2,6 +2,7 @@
   <div v-loading="loading">
     <div class="page-head">
       <h2 class="page-title">宿主机管理</h2>
+      <span class="page-desc">登记宿主机连接信息，采集连通性与实时状态</span>
     </div>
     <el-card shadow="never">
       <div class="toolbar">
@@ -24,20 +25,20 @@
           <div class="hc-rows">
             <div class="hc-row"><span class="hc-label">SSH 连接</span><span class="mono">{{ row.ssh_user }}@{{ row.ssh_ip }}:{{ row.ssh_port || 22 }}</span></div>
             <div class="hc-row"><span class="hc-label">描述</span><span>{{ row.description || '—' }}</span></div>
-            <div class="hc-row"><span class="hc-label">登记时间</span><span>{{ row.created_at ? new Date(row.created_at).toLocaleString() : '—' }}</span></div>
+            <div class="hc-row"><span class="hc-label">登记时间</span><span>{{ fmtDateTimeLocale(row.created_at) }}</span></div>
           </div>
           <div class="hc-actions">
-            <el-button :icon="Connection" :loading="testBusy.has(row.id)" @click="test(row)">测试连通</el-button>
-            <el-button :icon="DataLine" @click="showStats(row)">查看状态</el-button>
-            <el-button v-if="isAdmin" :icon="Edit" @click="openEdit(row)">编辑</el-button>
-            <el-button v-if="isAdmin" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+            <el-button size="small" :icon="Connection" :loading="testBusy.has(row.id)" @click="test(row)">测试连通</el-button>
+            <el-button size="small" :icon="DataLine" @click="showStats(row)">查看状态</el-button>
+            <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="isAdmin" size="small" type="danger" plain :icon="Delete" @click="remove(row)">删除</el-button>
           </div>
         </el-card>
       </div>
     </el-card>
 
     <el-dialog v-model="statsDialog" :title="(statsTarget ? statsTarget.name : '') + ' · 资源状态'" width="460px">
-      <div v-if="!statsData" class="loading">加载中...</div>
+      <div v-if="!statsData" v-loading="true" class="stats-loading"></div>
       <el-alert v-else-if="statsData.error" :title="statsData.error" type="error" :closable="false" />
       <el-descriptions v-else :column="1" border>
         <el-descriptions-item label="主机名">{{ statsData.hostname || '—' }}</el-descriptions-item>
@@ -50,21 +51,21 @@
 
     <!-- 添加 / 编辑 复用一个弹窗：editingId 区分模式 -->
     <el-dialog v-model="dialog" :title="editingId ? '编辑宿主机' : '添加宿主机'" width="480px">
-      <el-form :model="form" label-width="90px">
-        <el-form-item label="名称" required>
-          <el-input v-model="form.name" />
+      <el-form ref="formRef" :model="form" :rules="formRules" label-width="90px">
+        <el-form-item label="名称" prop="name">
+          <el-input v-model="form.name" placeholder="如 kvm-node1" />
         </el-form-item>
-        <el-form-item label="SSH IP" required>
-          <el-input v-model="form.ssh_ip" />
+        <el-form-item label="SSH IP" prop="ssh_ip">
+          <el-input v-model="form.ssh_ip" placeholder="IP 或主机名，如 192.168.1.10" />
         </el-form-item>
         <el-form-item label="SSH 端口">
-          <el-input-number v-model="form.ssh_port" :min="1" :max="65535" />
+          <el-input-number v-model="form.ssh_port" :min="1" :max="65535" placeholder="默认 22" />
         </el-form-item>
         <el-form-item label="SSH 用户">
-          <el-input v-model="form.ssh_user" />
+          <el-input v-model="form.ssh_user" placeholder="如 root" />
         </el-form-item>
         <el-form-item label="描述">
-          <el-input v-model="form.description" type="textarea" :rows="2" />
+          <el-input v-model="form.description" type="textarea" :rows="2" placeholder="可选，备注该宿主机用途" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -81,7 +82,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Connection, DataLine, Edit, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
-import { hostStatusText, hostStatusTag, errMsg, isCancel } from '../utils/format'
+import { hostStatusText, hostStatusTag, errMsg, isCancel, fmtDateTimeLocale } from '../utils/format'
 
 const { isAdmin } = useAuth()
 
@@ -105,6 +106,21 @@ const form = reactive({
   description: ''
 })
 
+const formRef = ref(null)
+// SSH IP 前端 pattern：IPv4 或字母/数字/连字符/点组成的主机名（对齐后端 ssh_ip 校验口径，
+// 完整白名单仍由后端把关，这里只挡手滑）；错误走行内红字而非 toast
+const formRules = {
+  name: [{ required: true, message: '请填写名称', trigger: 'blur' }],
+  ssh_ip: [
+    { required: true, message: '请填写 SSH IP', trigger: 'blur' },
+    {
+      pattern: /^(\d{1,3}(\.\d{1,3}){3}|[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*)$/,
+      message: '仅支持 IPv4 地址或主机名（字母、数字、连字符、点）',
+      trigger: 'blur'
+    }
+  ]
+}
+
 async function load() {
   loading.value = true
   try {
@@ -112,7 +128,7 @@ async function load() {
     items.value = (res.data && res.data.items) || []
     total.value = (res.data && res.data.total) || 0
   } catch (e) {
-    ElMessage.error('获取宿主机列表失败')
+    ElMessage.error(errMsg(e, '获取宿主机列表失败'))
   } finally {
     loading.value = false
   }
@@ -184,8 +200,10 @@ function openEdit(row) {
 }
 
 async function submit() {
-  if (!form.name || !form.ssh_ip) {
-    ElMessage.warning('请填写名称和 SSH IP')
+  // 行内 rules 校验：出错字段红字提示（取代原先的 toast），通过才提交
+  try {
+    await formRef.value.validate()
+  } catch {
     return
   }
   creating.value = true
@@ -211,10 +229,9 @@ onMounted(load)
 
 <style scoped>
 /* .page-head / .page-title / .toolbar / .count 已收进 global.css */
-.loading {
-  color: var(--color-muted-foreground);
-  text-align: center;
-  padding: 30px 0;
+/* 状态弹窗内容区加载占位：v-loading 遮罩需要非零高度才可见 */
+.stats-loading {
+  min-height: 180px;
 }
 .hc-head {
   display: flex;

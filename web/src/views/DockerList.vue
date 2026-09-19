@@ -2,7 +2,7 @@
   <div>
     <div class="page-head">
       <div>
-        <h3 class="page-title">Docker 管理</h3>
+        <h2 class="page-title">Docker 管理</h2>
         <p class="page-desc">容器 / 镜像 / 网络 / 卷 / 编排一体化管理（对标 1Panel 容器页）</p>
       </div>
     </div>
@@ -27,7 +27,7 @@
             <div class="pane-toolbar">
               <el-select v-model="stateFilter" class="ct-state" placeholder="全部状态">
                 <el-option label="全部状态" value="" />
-                <el-option v-for="s in stateOptions" :key="s" :label="s" :value="s" />
+                <el-option v-for="s in stateOptions" :key="s.value" :label="`${s.value}（${s.count}）`" :value="s.value" />
               </el-select>
               <el-input
                 v-model="keyword"
@@ -36,6 +36,11 @@
                 clearable
                 :prefix-icon="Search"
               />
+              <!-- 自动刷新：10s 静默轮询的总开关（记忆到 localStorage），关闭后定时器回调直接跳过 -->
+              <div class="ct-auto" title="每 10 秒自动刷新容器列表与资源占用">
+                <el-switch v-model="autoRefresh" @change="onAutoRefreshChange" />
+                <span class="ct-auto-label">自动刷新</span>
+              </div>
               <template v-if="selection.length">
                 <span class="ct-sel">已选 {{ selection.length }} 项</span>
                 <el-button type="primary" plain :disabled="!bulkStartable" :loading="bulkLoading" @click="bulkAction('start')">批量启动</el-button>
@@ -45,16 +50,18 @@
               <span class="count ct-count">共 {{ filteredContainers.length }} 个容器</span>
             </div>
 
+            <!-- row-key + reserve-selection：10s 轮询整体替换数据后保留勾选（P0） -->
             <el-table
               ref="containerTableRef"
               :data="filteredContainers"
+              row-key="ID"
               v-loading="loading"
               stripe
               size="small"
               @selection-change="onSelectionChange"
             >
               <template #empty><el-empty description="暂无容器" :image-size="80" /></template>
-              <el-table-column type="selection" width="36" />
+              <el-table-column type="selection" width="36" reserve-selection />
               <el-table-column label="名称" min-width="96" show-overflow-tooltip>
                 <template #default="{ row }">
                   <span class="mono">{{ containerName(row.Names) }}</span>
@@ -67,7 +74,7 @@
               </el-table-column>
               <el-table-column label="状态" width="72">
                 <template #default="{ row }">
-                  <el-tag :type="stateTag(row.State)" effect="light" size="small">{{ row.State || '未知' }}</el-tag>
+                  <el-tag :type="stateTag(row.State)" effect="light" size="small">{{ stateText(row.State) }}</el-tag>
                 </template>
               </el-table-column>
               <el-table-column label="CPU%" width="62">
@@ -126,10 +133,17 @@
           <el-tab-pane label="镜像" name="images">
             <div class="pane-toolbar">
               <el-button type="primary" @click="openPull">拉取镜像</el-button>
-              <el-button type="warning" plain :loading="pruneLoading" @click="pruneImages">清理未使用</el-button>
-              <span class="count ct-count">共 {{ images.length }} 个镜像</span>
+              <el-button type="warning" plain :loading="pruneLoading" @click="pruneImages">清理悬空镜像</el-button>
+              <el-input
+                v-model="imageKeyword"
+                class="ct-search"
+                placeholder="按仓库名 / Tag 搜索"
+                clearable
+                :prefix-icon="Search"
+              />
+              <span class="count ct-count">共 {{ filteredImages.length }} 个镜像</span>
             </div>
-            <el-table :data="images" v-loading="loading" stripe size="small">
+            <el-table :data="filteredImages" v-loading="loading" stripe size="small">
               <template #empty><el-empty description="暂无镜像" :image-size="80" /></template>
               <el-table-column label="仓库" min-width="220" show-overflow-tooltip>
                 <template #default="{ row }">
@@ -151,7 +165,7 @@
               </el-table-column>
               <el-table-column label="创建时间" width="160">
                 <template #default="{ row }">
-                  <span class="mono">{{ dockerTime(row.CreatedSince || row.Created) }}</span>
+                  <span class="mono">{{ imageTime(row.CreatedSince || row.Created) }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="操作" width="90" fixed="right">
@@ -298,15 +312,27 @@
       </div>
     </el-drawer>
 
-    <!-- 容器日志抽屉：深色背景等宽展示，支持复制 -->
+    <!-- 容器日志抽屉：深色背景等宽展示，支持 tail 行数切换 / 跟随滚动 / 复制 / 下载 -->
     <el-drawer v-model="logsDrawer" :title="'容器日志 — ' + logsName" size="55%">
       <div v-loading="logsLoading">
         <div class="logs-toolbar">
           <el-button size="small" :icon="Refresh" :loading="logsLoading" @click="fetchLogs">刷新</el-button>
+          <el-select v-model="logsTail" class="logs-tail" @change="onTailChange">
+            <!-- 后端将 tail 钳制到 [200, 2000]，无法真正「不限行数」，「全部」即后端支持的 2000 行上限 -->
+            <el-option label="全部（2000 行）" :value="2000" />
+            <el-option label="100 行" :value="100" />
+            <el-option label="200 行" :value="200" />
+            <el-option label="500 行" :value="500" />
+            <el-option label="1000 行" :value="1000" />
+          </el-select>
+          <div class="ct-auto" title="开启后每 2 秒自动拉取新日志，滚动贴底时自动滚到最新">
+            <el-switch v-model="logsFollow" size="small" />
+            <span class="ct-auto-label">跟随</span>
+          </div>
+          <el-button size="small" :icon="Download" @click="downloadLogs">下载</el-button>
           <el-button size="small" :icon="CopyDocument" @click="copyLogs">复制</el-button>
-          <span class="logs-hint">最近 200 行</span>
         </div>
-        <pre class="logs-pre">{{ logsText || '（暂无日志输出）' }}</pre>
+        <pre ref="logsPreRef" class="logs-pre">{{ logsText || '（暂无日志输出）' }}</pre>
       </div>
     </el-drawer>
 
@@ -376,12 +402,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, h, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, h, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, CopyDocument, Search } from '@element-plus/icons-vue'
+import { Refresh, CopyDocument, Search, Download } from '@element-plus/icons-vue'
 import http from '../api'
 import ContainerTerminal from '../components/ContainerTerminal.vue'
-import { errMsg, isCancel, fmtDateTime, fmtSizeBytes } from '../utils/format'
+import { errMsg, isCancel, fmtDateTime, fmtDateTimeLocale, fmtSizeBytes } from '../utils/format'
 
 // ═══════════════ Tab 骨架与按需加载 ═══════════════
 // 首次进入某 tab 才拉取对应数据；右上刷新按钮强制重拉当前 tab。
@@ -390,6 +416,14 @@ const loading = ref(false)
 const loadedTabs = ref(['containers'])
 // HTTP 503（Docker 守护进程不可用）时置为后端 message，页面顶部 alert 展示；成功加载后清空
 const backendError = ref('')
+
+// 「自动刷新」开关：容器视图 10s 轮询的总开关，记忆到 localStorage（默认开）
+const AUTO_REFRESH_KEY = 'vmops-docker-autorefresh'
+const autoRefresh = ref(localStorage.getItem(AUTO_REFRESH_KEY) !== '0')
+
+function onAutoRefreshChange(v) {
+  localStorage.setItem(AUTO_REFRESH_KEY, v ? '1' : '0')
+}
 
 const containers = ref([])
 const images = ref([])
@@ -447,6 +481,21 @@ function stateTag(state) {
   return 'warning'
 }
 
+// Docker 容器状态 → 中文（docker ps 的 State 全取值集）；未知状态原样返回便于暴露新取值
+const DOCKER_STATE_TEXT = {
+  running: '运行中',
+  exited: '已退出',
+  paused: '已暂停',
+  created: '已创建',
+  restarting: '重启中',
+  removing: '删除中',
+  dead: '死亡'
+}
+
+function stateText(state) {
+  return DOCKER_STATE_TEXT[state] || state || '未知'
+}
+
 // compose 项目状态 → tag 颜色
 function composeTag(status) {
   const s = String(status || '')
@@ -480,6 +529,30 @@ function dockerTime(v) {
   if (typeof v === 'number') return fmtDateTime(v * (v > 1e12 ? 1 : 1000))
   const d = new Date(v)
   if (!isNaN(d.getTime()) && /\d{4}/.test(String(v))) return fmtDateTime(d)
+  return String(v)
+}
+
+// docker 相对时间串（「3 days ago」「About an hour ago」）→ 中文；不匹配返回空串
+const REL_TIME_ZH_UNITS = { second: '秒', minute: '分钟', hour: '小时', day: '天', week: '周', month: '个月', year: '年' }
+
+function relativeTimeZh(v) {
+  const s = String(v).trim()
+  let m = s.match(/^(\d+)\s*(second|minute|hour|day|week|month|year)s?\s+ago$/i)
+  if (m) return `${m[1]} ${REL_TIME_ZH_UNITS[m[2].toLowerCase()]}前`
+  m = s.match(/^about an? (second|minute|hour|day)\s+ago$/i)
+  if (m) return `约 1 ${REL_TIME_ZH_UNITS[m[1].toLowerCase()]}前`
+  return ''
+}
+
+// 镜像创建时间：Created 为 unix 秒时间戳时换算本地化时间；
+// 「3 days ago」相对时间串映射中文（docker images 的 CreatedSince 形态）
+function imageTime(v) {
+  if (v === null || v === undefined || v === '') return '—'
+  if (typeof v === 'number') return fmtDateTimeLocale(new Date(v > 1e12 ? v : v * 1000))
+  const rel = relativeTimeZh(v)
+  if (rel) return rel
+  const d = new Date(v)
+  if (!isNaN(d.getTime()) && /\d{4}/.test(String(v))) return fmtDateTimeLocale(d)
   return String(v)
 }
 
@@ -531,10 +604,11 @@ async function fetchCompose() {
 }
 
 // 容器视图 10s 静默轮询：列表 + stats 一起刷；不动 loading，失败不打扰用户（503 时同步顶部 alert）
+// 「自动刷新」开关关闭时回调直接 return（定时器保留，见 onMounted）
 let pollTimer = null
 let refreshing = false
 async function silentRefresh() {
-  if (tab.value !== 'containers' || refreshing || loading.value) return
+  if (!autoRefresh.value || tab.value !== 'containers' || refreshing || loading.value) return
   refreshing = true
   try {
     await Promise.all([fetchContainers(), fetchStats()])
@@ -553,9 +627,17 @@ async function silentRefresh() {
 const stateFilter = ref('')
 const keyword = ref('')
 
-const stateOptions = computed(() =>
-  Array.from(new Set(containers.value.map((r) => r.State).filter(Boolean))).sort()
-)
+// 状态筛选选项带计数（label 渲染为「running（3）」），按状态名排序
+const stateOptions = computed(() => {
+  const counts = {}
+  for (const r of containers.value) {
+    if (!r.State) continue
+    counts[r.State] = (counts[r.State] || 0) + 1
+  }
+  return Object.keys(counts)
+    .sort()
+    .map((s) => ({ value: s, count: counts[s] }))
+})
 
 const filteredContainers = computed(() =>
   containers.value.filter((r) => {
@@ -568,6 +650,16 @@ const filteredContainers = computed(() =>
     return true
   })
 )
+
+// ── 镜像 tab：关键字搜索（仓库名 / Tag 前端过滤，与容器 tab 同款交互）──
+
+const imageKeyword = ref('')
+
+const filteredImages = computed(() => {
+  const kw = imageKeyword.value.trim().toLowerCase()
+  if (!kw) return images.value
+  return images.value.filter((r) => `${r.Repository || ''} ${r.Tag || ''}`.toLowerCase().includes(kw))
+})
 
 // ── stats 列（CPU% / 内存%）──
 
@@ -772,6 +864,11 @@ const logsLoading = ref(false)
 const logsText = ref('')
 const logsName = ref('')
 const logsId = ref('')
+// tail 行数（后端钳制到 [200, 2000]）；「跟随」开关：每 2s 静默重拉新日志
+const logsTail = ref(200)
+const logsFollow = ref(false)
+const logsPreRef = ref(null)
+let logsTimer = null
 
 function openLogs(row) {
   logsId.value = row.ID
@@ -785,13 +882,84 @@ async function fetchLogs() {
   if (!logsId.value) return
   logsLoading.value = true
   try {
-    const res = await http.get('/docker/containers/' + logsId.value + '/logs', { params: { tail: 200 } })
+    const res = await http.get('/docker/containers/' + logsId.value + '/logs', { params: { tail: logsTail.value } })
     const data = res.data.data || {}
     logsText.value = data.logs || ''
   } catch (e) {
     ElMessage.error(errMsg(e, '获取日志失败'))
   } finally {
     logsLoading.value = false
+  }
+}
+
+function onTailChange() {
+  fetchLogs()
+}
+
+// ── 跟随：定时静默重拉（不动 loading），贴底（距底 <40px）才自动滚到底 ──
+
+function logsNearBottom() {
+  const el = logsPreRef.value
+  if (!el) return false
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 40
+}
+
+function scrollLogsBottom() {
+  const el = logsPreRef.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+function startLogsTimer() {
+  stopLogsTimer()
+  logsTimer = setInterval(async () => {
+    if (!logsDrawer.value || !logsId.value) return
+    try {
+      const near = logsNearBottom() // 更新内容前先记贴底状态，新日志到达后据此决定是否滚动
+      const res = await http.get('/docker/containers/' + logsId.value + '/logs', { params: { tail: logsTail.value } })
+      logsText.value = (res.data.data || {}).logs || ''
+      if (near) nextTick(scrollLogsBottom)
+    } catch (e) {
+      // 跟随轮询失败静默（下拉手动刷新会给错误提示），不打扰阅读
+    }
+  }, 2000)
+}
+
+function stopLogsTimer() {
+  if (logsTimer) {
+    clearInterval(logsTimer)
+    logsTimer = null
+  }
+}
+
+watch(logsFollow, (on) => {
+  if (on && logsDrawer.value) startLogsTimer()
+  else stopLogsTimer()
+})
+
+// 抽屉关闭即停跟随轮询（下次打开时按开关状态重启）
+watch(logsDrawer, (open) => {
+  if (!open) stopLogsTimer()
+  else if (logsFollow.value) startLogsTimer()
+})
+
+// 按当前 tail 拉取日志内容，Blob 下载为 <容器名>.log
+async function downloadLogs() {
+  if (!logsId.value) return
+  try {
+    const res = await http.get('/docker/containers/' + logsId.value + '/logs', { params: { tail: logsTail.value } })
+    const text = (res.data.data || {}).logs || ''
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    // 容器名形如 "/web"，下载文件名清理掉路径非法字符
+    a.download = (logsName.value || 'container').replace(/[\\/:*?"<>|]/g, '_').replace(/^_+/, '') + '.log'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error(errMsg(e, '下载日志失败'))
   }
 }
 
@@ -845,7 +1013,7 @@ async function pruneImages() {
   try {
     await ElMessageBox.confirm(
       '将删除所有悬空镜像（未被任何容器引用的未标记镜像层），此操作不可恢复。确定清理？',
-      '清理未使用镜像',
+      '清理悬空镜像',
       { type: 'warning', confirmButtonText: '清理', confirmButtonClass: 'el-button--danger' }
     )
   } catch (e) {
@@ -941,7 +1109,7 @@ const networkRules = {
     { pattern: /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, message: '仅允许字母数字与 -_. 且不以符号开头', trigger: 'blur' }
   ],
   subnet: [
-    { pattern: /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/, message: '应为 CIDR 格式，如 172.30.0.0/16', trigger: 'blur' }
+    { pattern: /^(\d{1,3}\.){3}\d{1,3}\/(3[0-2]|[12]?\d)$/, message: '应为 CIDR 格式（掩码 0-32），如 172.30.0.0/16', trigger: 'blur' }
   ],
   gateway: [
     { pattern: /^(\d{1,3}\.){3}\d{1,3}$/, message: '应为合法 IPv4 地址', trigger: 'blur' }
@@ -1096,6 +1264,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
+  stopLogsTimer()
 })
 </script>
 
@@ -1143,6 +1312,19 @@ onUnmounted(() => {
 }
 .ct-count-inline {
   margin-left: 0;
+}
+/* 开关 + 文字标签（容器工具栏「自动刷新」/ 日志抽屉「跟随」共用） */
+.ct-auto {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ct-auto-label {
+  font-size: 0.85rem;
+  color: var(--el-text-color-regular, #606266);
+}
+.logs-tail {
+  width: 150px;
 }
 .logs-toolbar {
   display: flex;

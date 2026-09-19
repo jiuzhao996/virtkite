@@ -3,12 +3,15 @@
     <div class="page-head">
       <div>
         <h3 class="page-title">回收站</h3>
-        <p class="page-desc">删除的虚拟机在此保留，可一键恢复；彻底清除将物理删除记录与无主卷</p>
+        <p class="page-desc">删除的虚拟机在此保留，可一键恢复；记录永久保留，直至手动彻底清除；彻底清除将物理删除记录与无主卷</p>
       </div>
-      <el-button text type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
     <el-card shadow="never" v-loading="loading">
+      <div class="toolbar">
+        <span class="count">共 {{ items.length }} 条记录</span>
+        <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+      </div>
       <!-- 空态：回收站没有软删记录 -->
       <el-empty v-if="!loading && items.length === 0" description="回收站是空的" :image-size="80" />
       <el-table v-else :data="items" size="small">
@@ -33,7 +36,18 @@
         <el-table-column label="删除时间" width="170">
           <template #default="{ row }">{{ fmtDateTime(row.deleted_at) }}</template>
         </el-table-column>
-        <el-table-column label="域状态" width="90">
+        <el-table-column label="域状态" width="100">
+          <template #header>
+            <el-tooltip
+              content="存在 = libvirt 中仍有同名域定义（删除中途失败的残留），恢复后可直接开机；不存在 = 域定义已彻底删除，恢复后需重新定义"
+              placement="top"
+            >
+              <span class="col-help">
+                域状态
+                <el-icon><QuestionFilled /></el-icon>
+              </span>
+            </el-tooltip>
+          </template>
           <template #default="{ row }">
             <!-- 域仍存在多为删除中途失败的残留，恢复后可直接开机；不存在则需重新定义 -->
             <el-tag :type="row.domain_exists ? 'success' : 'info'" effect="light" size="small">
@@ -69,7 +83,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, RefreshLeft, Delete } from '@element-plus/icons-vue'
+import { Refresh, RefreshLeft, Delete, QuestionFilled } from '@element-plus/icons-vue'
 import http from '../api'
 import { errMsg, isCancel, vmStatusText, vmStatusTag, fmtDateTime } from '../utils/format'
 
@@ -147,10 +161,22 @@ onMounted(load)
 </script>
 
 <style scoped>
+/* .toolbar / .count 已收进 global.css */
 .vm-name {
   font-weight: 600;
 }
 .uuid {
   font-size: 0.85rem;
+}
+/* 列头帮助图标（域状态 tooltip 触发区） */
+.col-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  cursor: help;
+}
+.col-help .el-icon {
+  font-size: 13px;
+  color: var(--color-muted-foreground);
 }
 </style>

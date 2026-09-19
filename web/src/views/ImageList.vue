@@ -11,16 +11,23 @@
         <el-card shadow="never">
           <div class="toolbar">
             <div class="toolbar-left">
-              <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+              <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
               <el-button v-if="isAdmin" type="primary" :icon="Upload" @click="openUpload">上传镜像</el-button>
+              <el-input
+                v-model="search"
+                placeholder="按名称搜索"
+                clearable
+                :prefix-icon="Search"
+                style="width: 180px"
+              />
               <el-select v-model="filter" placeholder="筛选" clearable style="width: 150px" @change="load">
                 <el-option label="全部镜像" value="" />
                 <el-option label="仅模板" value="true" />
               </el-select>
             </div>
             <div class="toolbar-right">
-              <el-tag v-if="templateCount" type="success" effect="plain" size="small">模板 {{ templateCount }}</el-tag>
-              <span class="count">共 {{ total }} 个</span>
+              <el-tag v-if="templateCount" type="primary" effect="plain" size="small">模板 {{ templateCount }}</el-tag>
+              <span class="count">共 {{ filteredItems.length }} 个</span>
             </div>
           </div>
 
@@ -31,7 +38,7 @@
             style="margin-bottom: 12px"
             title="登记的是 qcow2 磁盘模板（增量克隆父盘）——创建 VM 选「云镜像 + cloud-init」时从这里选。"
           />
-          <el-table :data="items" stripe border style="width: 100%">
+          <el-table :data="filteredItems" stripe border style="width: 100%">
             <template #empty><el-empty description="暂无镜像，点击上方「上传镜像」或到存储池登记既有卷" :image-size="72" /></template>
             <el-table-column prop="name" label="名称" min-width="150" />
             <el-table-column prop="os_version" label="OS 版本" min-width="130" />
@@ -151,7 +158,7 @@
             :limit="1"
             :on-change="onFileChange"
             :on-remove="onFileRemove"
-            accept=".qcow2,.raw,.vmdk,.iso"
+            accept=".qcow2,.raw,.vmdk"
           >
             <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
             <div class="el-upload__text">拖入文件或 <em>点击选择</em></div>
@@ -187,7 +194,14 @@
           <el-input-number v-model="cloneForm.memory_mb" :min="256" :max="131072" :step="256" />
         </el-form-item>
         <el-form-item label="网络">
-          <el-input v-model="cloneForm.network" placeholder="默认 default" />
+          <el-select v-model="cloneForm.network" clearable placeholder="留空使用 default" style="width: 100%">
+            <el-option
+              v-for="n in netOptions"
+              :key="n.name"
+              :label="n.gateway ? n.name + '（' + n.gateway + '）' : n.name"
+              :value="n.name"
+            />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -201,7 +215,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu } from '@element-plus/icons-vue'
+import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu, Search } from '@element-plus/icons-vue'
 import ImageMarket from './ImageMarket.vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
@@ -216,6 +230,9 @@ const items = ref([])
 const total = ref(0)
 const loading = ref(false)
 const filter = ref('')
+// 云镜像 tab 名称关键字搜索：纯前端过滤（后端列表无该参数），不区分大小写
+const search = ref('')
+const netOptions = ref([])
 const dialog = ref(false)
 const uploading = ref(false)
 const uploadPct = ref(0)
@@ -233,6 +250,13 @@ const form = reactive({ name: '', os_version: '', is_template: false, pool: 'img
 const cloneForm = reactive({ name: '', vcpu: 1, memory_mb: 1024, network: 'default' })
 
 const templateCount = computed(() => items.value.filter((i) => i.is_template).length)
+
+// 表格展示 = 关键字过滤后的列表；计数 tag「模板 N」仍按全量统计（库内模板总数，不随搜索变）
+const filteredItems = computed(() => {
+  const kw = search.value.trim().toLowerCase()
+  if (!kw) return items.value
+  return items.value.filter((i) => (i.name || '').toLowerCase().includes(kw))
+})
 
 function onFileChange(uploadFile) {
   file.value = uploadFile.raw
@@ -355,7 +379,11 @@ async function toggleTemplate(img) {
     await ElMessageBox.confirm(
       `确定将镜像「${img.name}」${label}？${next ? '模板镜像可直接用于创建虚拟机。' : '取消后仍作为普通镜像保留。'}`,
       '确认操作',
-      { type: next ? 'warning' : 'info' }
+      {
+        type: next ? 'warning' : 'info',
+        confirmButtonText: '确定',
+        cancelButtonText: '取消'
+      }
     )
     await api.setImageTemplate(img.id, next)
     ElMessage.success(`${label}成功`)
@@ -364,6 +392,16 @@ async function toggleTemplate(img) {
     if (!isCancel(e)) {
       ElMessage.error(errMsg(e, '操作失败'))
     }
+  }
+}
+
+// 网络下拉（基于模板创建 VM）：listNetworks 拉取，选项显示名称+网关；拉取失败静默走空列表（可手清空回退 default）
+async function loadNetworks() {
+  try {
+    const res = await api.listNetworks()
+    netOptions.value = ((res.data && res.data.items) || []).map((n) => ({ name: n.name, gateway: n.gateway || '' }))
+  } catch (e) {
+    netOptions.value = []
   }
 }
 
@@ -377,6 +415,7 @@ function openClone(img) {
     network: 'default'
   })
   cloneDialog.value = true
+  loadNetworks()
 }
 
 async function cloneVm() {
@@ -390,7 +429,7 @@ async function cloneVm() {
       name: cloneForm.name,
       vcpu: cloneForm.vcpu,
       memory_mb: cloneForm.memory_mb,
-      network: cloneForm.network
+      network: cloneForm.network || 'default' // clearable 清空后为空串，回退默认网络
     })
     ElMessage.info('克隆任务已提交，正在后台执行…')
     await pollTask(extractTaskId(res))
@@ -405,7 +444,12 @@ async function cloneVm() {
 
 async function remove(img) {
   try {
-    await ElMessageBox.confirm('确定删除镜像「' + img.name + '」？磁盘文件将一并清理。', '确认删除', { type: 'warning' })
+    await ElMessageBox.confirm('确定删除镜像「' + img.name + '」？磁盘文件将一并清理。', '确认删除', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
+    })
     await api.deleteImage(img.id)
     ElMessage.success('已删除')
     await load()

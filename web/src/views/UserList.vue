@@ -9,11 +9,21 @@
 
     <el-card shadow="never">
       <div class="toolbar">
-        <span class="count">共 {{ users.length }} 个账号</span>
-        <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
+        <div class="toolbar-left">
+          <el-select v-model="roleFilter" clearable placeholder="全部角色" style="width: 140px">
+            <el-option label="管理员" value="admin" />
+            <el-option label="操作员" value="operator" />
+            <el-option label="普通用户" value="viewer" />
+          </el-select>
+        </div>
+        <div class="toolbar-right">
+          <span class="count">共 {{ filteredUsers.length }} 个账号</span>
+          <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+          <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
+        </div>
       </div>
 
-      <el-table :data="users" v-loading="loading" stripe>
+      <el-table :data="filteredUsers" v-loading="loading" stripe>
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column label="角色" width="110">
           <template #default="{ row }">
@@ -58,6 +68,11 @@
             >删除</el-button>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty description="暂无账号，点击「新建用户」创建第一个平台账号" :image-size="80">
+            <el-button v-if="isAdmin" type="primary" plain @click="openCreate">新建用户</el-button>
+          </el-empty>
+        </template>
       </el-table>
     </el-card>
 
@@ -71,14 +86,16 @@
           <el-input v-model="form.password" type="password" show-password placeholder="至少 6 位" />
         </el-form-item>
         <el-form-item label="角色" required>
-          <el-select v-model="form.role" style="width: 100%">
+          <el-select v-model="form.role" :disabled="editingSelf" style="width: 100%">
             <el-option label="管理员（全部权限）" value="admin" />
             <el-option label="操作员（可操作虚拟机）" value="operator" />
             <el-option label="普通用户（只读 + 图形控制台）" value="viewer" />
           </el-select>
+          <div v-if="editingSelf" class="input-help">不能修改自己当前账号的角色（防止自锁失去管理权限）</div>
         </el-form-item>
         <el-form-item v-if="editingId" label="账号状态">
-          <el-switch v-model="form.is_active" active-text="启用" inactive-text="停用" />
+          <el-switch v-model="form.is_active" :disabled="editingSelf" active-text="启用" inactive-text="停用" />
+          <div v-if="editingSelf" class="input-help">不能停用自己当前登录的账号</div>
         </el-form-item>
         <el-form-item label="姓名">
           <el-input v-model="form.real_name" />
@@ -99,9 +116,9 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { errMsg, fmtDateTime } from '../utils/format'
@@ -113,6 +130,20 @@ const dialog = ref(false)
 const saving = ref(false)
 const editingId = ref(null)
 const form = ref({ username: '', password: '', role: 'viewer', is_active: true, real_name: '', phone: '', email: '' })
+
+// 角色筛选（前端过滤，不重复请求后端）
+const roleFilter = ref('')
+const filteredUsers = computed(() =>
+  roleFilter.value ? users.value.filter((u) => u.role === roleFilter.value) : users.value
+)
+
+// 编辑自己守卫：角色与账号状态禁改（自己给自己降级/停用会导致无法再管理平台）
+const editingSelf = ref(false)
+function isSelf(row) {
+  const me = state.user || {}
+  if (me.id != null && row.id === me.id) return true
+  return !!me.username && row.username === me.username
+}
 
 function roleText(role) {
   return { admin: '管理员', operator: '操作员', viewer: '普通用户' }[role] || role
@@ -135,12 +166,14 @@ async function load() {
 
 function openCreate() {
   editingId.value = null
+  editingSelf.value = false
   form.value = { username: '', password: '', role: 'viewer', is_active: true, real_name: '', phone: '', email: '' }
   dialog.value = true
 }
 
 function openEdit(row) {
   editingId.value = row.id
+  editingSelf.value = isSelf(row)
   form.value = {
     username: row.username,
     password: '',
@@ -198,3 +231,13 @@ async function remove(row) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+/* .toolbar / .count 已收进 global.css；左右分组仅本地使用 */
+.toolbar-left,
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+}
+</style>

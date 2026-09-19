@@ -25,11 +25,17 @@
     />
 
     <el-card shadow="never" v-loading="loading">
-      <el-tabs v-model="activeCategory">
-        <el-tab-pane v-for="cat in categoryTabs" :key="cat.value" :label="cat.label" :name="cat.value" />
-      </el-tabs>
+      <!-- 分类筛选与搜索：与容器应用视图同款 radio-button 形态，关键词两视图共用 -->
+      <div class="cat-filter">
+        <div class="cat-filter-left">
+          <el-radio-group v-model="activeCategory">
+            <el-radio-button v-for="cat in categoryTabs" :key="cat.value" :value="cat.value">{{ cat.label }}</el-radio-button>
+          </el-radio-group>
+          <el-input v-model="appKeyword" class="app-search" placeholder="按应用名搜索" clearable :prefix-icon="Search" />
+        </div>
+      </div>
 
-      <el-empty v-if="filteredApps.length === 0" description="该分类下暂无应用" :image-size="80" />
+      <el-empty v-if="filteredApps.length === 0" description="该分类下没有匹配的应用" :image-size="80" />
       <el-row v-else :gutter="12">
         <el-col v-for="app in filteredApps" :key="app.id" :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
           <el-card shadow="hover" class="app-card">
@@ -52,11 +58,11 @@
       </el-row>
     </el-card>
 
-    <!-- 安装对话框：目标 VM + SSH 凭据；提交后转任务轮询，进度条展示 -->
-    <el-dialog
+    <!-- 安装抽屉：目标 VM + SSH 凭据；提交后转任务轮询，进度条展示（形态对齐容器应用安装抽屉） -->
+    <el-drawer
       v-model="installDialog"
       :title="'安装 ' + (currentApp ? currentApp.name : '')"
-      width="460px"
+      size="40%"
       :close-on-click-modal="false"
       :close-on-press-escape="!installing"
       :show-close="!installing"
@@ -64,7 +70,7 @@
     >
       <el-form label-width="90px">
         <el-form-item label="目标虚拟机" required>
-          <el-select v-model="form.vm_id" placeholder="选择运行中的虚拟机" style="width: 100%" :disabled="installing">
+          <el-select v-model="form.vm_id" placeholder="选择运行中的虚拟机" style="width: 100%" :disabled="installing" @change="onInstallVMChange">
             <el-option v-for="vm in runningVMs" :key="vm.id" :label="vm.name" :value="vm.id" />
           </el-select>
         </el-form-item>
@@ -94,7 +100,7 @@
         <el-button :disabled="installing" @click="installDialog = false">取消</el-button>
         <el-button type="primary" :loading="installing" @click="submitInstall">{{ installing ? '安装中…' : '开始安装' }}</el-button>
       </template>
-    </el-dialog>
+    </el-drawer>
 
     <!-- 脚本预览抽屉：Detect / Install 两段 -->
     <el-drawer v-model="scriptDrawer" :title="'安装脚本 — ' + (scriptApp ? scriptApp.name : '')" size="50%">
@@ -109,15 +115,27 @@
 
     <!-- ===== 容器应用（Docker Compose）视图 ===== -->
     <template v-else>
+      <!-- Docker 不可用兜底：状态接口失败（含 503）时给出与 DockerList 同款引导 + 重试，安装钮一并禁用 -->
+      <el-alert v-if="dockerError" type="error" show-icon :closable="false" style="margin-bottom: 12px">
+        <template #title>{{ dockerError }}</template>
+        <div class="docker-retry-row">
+          <span>容器应用依赖宿主机 Docker 服务，请安装并启动 Docker（systemctl enable --now docker）后重试。</span>
+          <el-button size="small" type="primary" :loading="cLoading" @click="retryContainer">重试</el-button>
+        </div>
+      </el-alert>
+
       <el-card shadow="never" v-loading="cLoading">
         <div class="cat-filter">
-          <el-radio-group v-model="activeCCategory">
-            <el-radio-button v-for="c in cCategoryTabs" :key="c.value" :value="c.value">{{ c.label }}</el-radio-button>
-          </el-radio-group>
+          <div class="cat-filter-left">
+            <el-radio-group v-model="activeCCategory">
+              <el-radio-button v-for="c in cCategoryTabs" :key="c.value" :value="c.value">{{ c.label }}</el-radio-button>
+            </el-radio-group>
+            <el-input v-model="appKeyword" class="app-search" placeholder="按应用名搜索" clearable :prefix-icon="Search" />
+          </div>
           <el-button text type="primary" :icon="Refresh" @click="loadContainer">刷新</el-button>
         </div>
 
-        <el-empty v-if="filteredCApps.length === 0" description="该分类下暂无容器应用" :image-size="80" />
+        <el-empty v-if="filteredCApps.length === 0" description="该分类下没有匹配的容器应用" :image-size="80" />
         <el-row v-else :gutter="12">
           <el-col v-for="app in filteredCApps" :key="app.key" :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
             <el-card shadow="hover" class="app-card">
@@ -133,10 +151,16 @@
               <p class="app-desc">{{ app.description || '暂无介绍' }}</p>
               <div class="app-meta">
                 <el-tag v-for="t in app.tags" :key="t" size="small" effect="plain" type="info">{{ t }}</el-tag>
-                <span class="app-ver">v{{ app.version }}</span>
+                <span v-if="app.version" class="app-ver">v{{ app.version }}</span>
               </div>
               <div class="app-actions">
-                <el-button v-if="!cInstalled(app)" type="primary" :disabled="cInstalling" @click="openCInstall(app)">安装</el-button>
+                <el-button
+                  v-if="!cInstalled(app)"
+                  type="primary"
+                  :disabled="cInstalling || !!dockerError"
+                  :title="dockerError ? 'Docker 服务不可用' : ''"
+                  @click="openCInstall(app)"
+                >安装</el-button>
                 <el-button v-else type="danger" plain :loading="uninstallingKey === app.key" @click="uninstallCApp(app)">卸载</el-button>
                 <el-button text type="primary" @click="openCompose(app)">查看 compose</el-button>
               </div>
@@ -217,7 +241,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Search } from '@element-plus/icons-vue'
 import http from '../api'
 import { errMsg, clampPct } from '../utils/format'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
@@ -251,12 +275,20 @@ function categoryText(c) {
 }
 
 function categoryTag(c) {
-  const map = { web: 'primary', database: 'success', cache: 'warning', runtime: 'info', cms: 'danger', ops: 'info' }
+  const map = { web: 'primary', database: 'success', cache: 'warning', runtime: 'info', cms: 'info', ops: 'info' }
   return map[c] || 'info'
 }
 
+// 应用名搜索关键词（两视图共用一个输入，前端过滤）
+const appKeyword = ref('')
+
 const filteredApps = computed(() =>
-  activeCategory.value === 'all' ? apps.value : apps.value.filter((a) => a.category === activeCategory.value)
+  apps.value.filter((a) => {
+    if (activeCategory.value !== 'all' && a.category !== activeCategory.value) return false
+    const kw = appKeyword.value.trim().toLowerCase()
+    if (kw && String(a.name || '').toLowerCase().indexOf(kw) === -1) return false
+    return true
+  })
 )
 
 async function loadApps() {
@@ -306,6 +338,12 @@ function openInstall(app) {
   installDone.value = false
   installOutput.value = ''
   installDialog.value = true
+}
+
+// 选定虚拟机即用其已登记 IP（DHCP 租约 / qemu-guest-agent 回填）预填 SSH 地址，可手改
+function onInstallVMChange(id) {
+  const vm = runningVMs.value.find((v) => v.id === id)
+  if (vm && vm.ip) form.value.host = vm.ip
 }
 
 async function submitInstall() {
@@ -426,15 +464,25 @@ async function loadCApps() {
   capps.value = list.map(normalizeCApp)
 }
 
+// Docker 不可用（/appstore/status 失败，含 503）时的引导态：页顶 alert + 重试，安装钮禁用
+const dockerError = ref('')
+
 async function loadCStatus() {
   try {
     const res = await http.get('/appstore/status')
     const d = res.data.data
     cStatusList.value = Array.isArray(d) ? d : (d && d.items) || []
+    dockerError.value = ''
   } catch (e) {
-    // 状态拿不到不阻断应用列表（docker 未就绪等场景），卡片一律按「未安装」呈现
+    // 状态拿不到则按 Docker 不可用处理：不再「一律未安装」静默展示（会诱导重复安装）
     cStatusList.value = []
+    dockerError.value = errMsg(e, 'Docker 服务不可用')
   }
+}
+
+function retryContainer() {
+  dockerError.value = ''
+  loadContainer()
 }
 
 async function loadContainer() {
@@ -464,7 +512,12 @@ const cCategoryTabs = computed(() => {
 })
 
 const filteredCApps = computed(() =>
-  activeCCategory.value === 'all' ? capps.value : capps.value.filter((a) => a.category === activeCCategory.value)
+  capps.value.filter((a) => {
+    if (activeCCategory.value !== 'all' && a.category !== activeCCategory.value) return false
+    const kw = appKeyword.value.trim().toLowerCase()
+    if (kw && String(a.name || '').toLowerCase().indexOf(kw) === -1) return false
+    return true
+  })
 )
 
 // 已装状态匹配（尽力）：status 条目的 name 字段即 compose 项目名 = 应用 key，
@@ -483,7 +536,8 @@ function cInstalled(app) {
 
 function cStatusText(app) {
   const s = cStatusOf(app)
-  if (!s) return '已安装'
+  // 调用方以 cStatusOf(app) 作 v-if，空状态实际不可达；返回空串而非「已安装」这类说谎文案
+  if (!s) return ''
   if (Number(s.services) > 0) return `${s.running}/${s.services} 运行中`
   return Number(s.running) > 0 ? '运行中' : '已停止'
 }
@@ -560,7 +614,7 @@ async function uninstallCApp(app) {
     await ElMessageBox.confirm(
       `确定卸载 ${app.name}？容器将停止并移除，数据目录将保留，重新安装后数据仍在。`,
       '卸载确认',
-      { type: 'warning', confirmButtonText: '卸载', cancelButtonText: '取消' }
+      { type: 'warning', confirmButtonText: '卸载', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
     )
   } catch (e) {
     return // 用户取消
@@ -608,6 +662,21 @@ onMounted(load)
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 12px;
+}
+.cat-filter-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.app-search {
+  width: 200px;
+}
+.docker-retry-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .app-card :deep(.el-card__body) {
   display: flex;

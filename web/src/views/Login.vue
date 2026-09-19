@@ -14,7 +14,7 @@
       <el-alert
         v-if="announcement"
         class="login-announcement"
-        type="warning"
+        type="info"
         show-icon
         :closable="false"
         :title="announcement"
@@ -30,10 +30,10 @@
 
         <el-form @submit.prevent="submit" label-position="top">
           <el-form-item label="用户名">
-            <el-input v-model="form.username" placeholder="请输入用户名" size="large" @keyup.enter="submit" />
+            <el-input v-model="form.username" placeholder="请输入用户名" size="large" autocomplete="username" @keyup.enter="submit" />
           </el-form-item>
           <el-form-item label="密码">
-            <el-input v-model="form.password" type="password" placeholder="请输入密码" size="large" show-password @keyup.enter="submit" />
+            <el-input v-model="form.password" type="password" placeholder="请输入密码" size="large" show-password autocomplete="current-password" @keyup.enter="submit" />
           </el-form-item>
           <el-button type="primary" class="submit-btn" size="large" :loading="submitting" @click="submit">
             登 录
@@ -49,6 +49,8 @@
         </div>
       </el-card>
     </div>
+    <!-- 品牌收尾：弱化小字，不写版本号 -->
+    <footer class="login-footer">鸢航 VirtKite · 基于 KVM 的轻量级私有云管理平台</footer>
   </div>
 </template>
 
@@ -128,7 +130,8 @@ async function submit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(160deg, #0f1b2d 0%, #16283f 45%, #1d3a52 100%);
+  /* 深空蓝对齐品牌色板（AGENTS 品牌规范：#0d2444 → #1b3a62） */
+  background: linear-gradient(160deg, #0d2444 0%, #14304f 45%, #1b3a62 100%);
   padding: 24px;
   overflow: hidden;
 }
@@ -213,5 +216,17 @@ async function submit() {
 .demo-tip .el-icon {
   margin-right: 4px;
   vertical-align: -0.15em;
+}
+.login-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  z-index: 2;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 0.78rem;
+  letter-spacing: 1px;
+  pointer-events: none;
 }
 </style>
