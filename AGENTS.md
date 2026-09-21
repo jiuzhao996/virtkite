@@ -278,4 +278,18 @@
 - **ImportVMs errors 前端消费**：导入弹窗失败列表逐行展示，部分失败保持弹窗+自动重扫——挂了三个批次的遗留清零。
 - **⚠️ O 批（VM 标签/分组）已从 ROADMAP-v3.1 完成清单除名（勿再加回完成态）**：`model/vm.go` 无 tags/group 字段、全仓库无落地，此前状态行误标完成；拓扑图按状态着色不依赖分组。其他文档排查无虚假声称。VM 分组/标签列论文「展望」。
 - 测试实数口径更新：**209 顶层函数/约 1100 子用例/14 个测试包**（v3.4 后 `go test -v` 实跑 RUN 计数；README 与 docs/06 已统一——此前两文档 197/1031 与 199/1048 不一致，勿回退旧数）。
+
+### v3.5 动态 E2E 审计修复批次（2026-09-21 晚，静态审计找不到的功能 bug）
+
+- **⚠️ 云镜像建机已是真增量盘（2026-09-21 修复，重大，勿回退）**：`vm_create.go` 原 `source = img.Path` **直接引用共享镜像文件**（注释自称「VM 与镜像共用文件」）——实害（全部实测命中）：同基镜像的 VM 运行时新机开机 500（qemu 写锁冲突）；快照会对共享基镜像本体 `qemu-img snapshot -c`（污染所有兄弟机）；与向导「增量盘」承诺相悖、云镜像方式无容量输入（确认页显示镜像文件大小）。**动态 E2E（真浏览器+真 API 过链路）挖出——静态审计两轮都没发现，注释还把它当设计记录**。现走 `CloneVolumeFromVolSized`（backing 链）建 `<vm名>[-dN]` 增量卷；容量 create_gb>0 用之 / 为 0 取源卷虚拟容量（`VolumeCapacityGB`）/ 回退 20；指定容量小于源卷按源卷钳制；增量卷实际落**镜像所在池**，DB StoragePool 记真实池。向导云镜像方式补「系统盘容量 (GB)」输入（5-500，payload `disks[].create_gb`）。**分支优先级坑：source_image_id 优先于 create_gb**——同给两参曾退化成建空盘（E2E 首跑踩中，已修并写进 createDiskReq 注释）。E2E 证据：197KB 增量卷 + backing file + 双机共存开机 + 快照不再碰基镜像。
+- 删除任务对「域不存在」容错：新增 `virt.IsDomainNotFound`，undefine 报 NO_DOMAIN 放行（回收站恢复后的二次删除不再产出僵尸记录，实测验证）；删除兜底卷名扩 `-diska`/`-sys` 三候选。
+- 回收站「恢复」现在**重定义域**：按建卷命名约定探测系统盘卷在位 → DB 行重建精简 spec（单系统盘+默认 NAT 网卡，多盘恢复后可手动挂回）→ DefineDomain；失败降级 domain_defined:false。
+- 克隆机 DB `storage_pool` 改记源盘真实池（`LookupVolByPath` 反查）——原记请求池导致删除守卫误保留孤儿卷。
+- **notify 真支持钉钉**（此前「兼容钉钉」不实：钉钉要 `msgtype/text` 结构，配置即静默丢失）：按 URL Host 分派 `oapi.dingtalk.com` → 钉钉报文 + errcode 校验；飞书路径不变。**网络错误脱敏**：`errors.As(*url.Error)` 只留 scheme://host，webhook token 不落日志（有回归断言）。
+- **`POST /api/docker/containers` 收口 admin**：operator 可传 `-v /:/host` 挂宿主机根（docker 组只挡 viewer），事实提权——vm_xml 同款 roleIsAdmin 闸 + 三用例。
+- P2 收口：ssh-host-keys 空列表 `[]` 非 null；alert webhook token 常量时间比较；crons preview 50 字上限；volume 映射 TrimSpace；notifyFailure 移出 execMu 锁改异步+recover；handler/settings.go 两处与实现相反的注释改正。
+- Monitor.vue 补「日志查询（Loki）」卡（LogQL + 条数 + 结果列表，`data.result[].values` 纳秒解析）——Loki 后端/promtail 早已就绪但前端零消费，又一个「功能白做」接线。向导「登记索引」文案同步（「建机不复制文件」→「创建增量盘，不复制镜像数据」）。
+- 测试实数：**216 顶层函数 / 约 1114 子用例 / 14 个测试包**（README 与 docs/06 已同步）。
+- **方法论沉淀**：静态审计找规范问题、动态 E2E 找功能问题，两者互补——本项目两轮静态审计（130 条 UI + 新代码审查）都没发现云镜像直引这类「注释把它当设计记录」的功能 bug，真机过链路一跑就现形。下轮找问题优先动态路径。
+- ⚠️ 环境坑：`go build ... && kill ... ; nohup ./vmops ... & echo $! > vmops.pid` 同行书写时 `$!` 可能记下后台子 shell 的 PID，重启静默失败旧进程继续服务（B3a 实测踩中）——重启后务必 `ps -p $(cat vmops.pid)` 核对。
 - **⚠️ DockerList 懒加载标记预置 bug（v3.2 引入，2026-09-21 修复，勿回退）**：`loadedTabs` 曾预置 `['containers']`，onMounted 的 `loadTab('containers')` 被「已加载」守卫直接 return——容器列表**从不自动加载**，全靠 10s 轮询静默补数据掩盖（演示时头 10 秒必是空表）。现初始为 `[]`。排查特征备查：「curl API 正常但 UI 显示 0」+「网络面板零 /api/docker 请求」= 加载被前端守卫吞掉，不是后端问题。同批：docs/09 演示脚本纳入容器创建/告警推送两个 v3.4 演示位。

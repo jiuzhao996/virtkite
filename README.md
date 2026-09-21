@@ -73,7 +73,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **系统公告 + 安全入口（v3）**（公告板登录页与仪表盘公开展示（admin 经设置页编辑）；登录接口可设安全入口暗号，无暗号请求一律 404 伪装；建用户/改密密码复杂度校验）
 - [x] **安全加固**（路径参数主键统一解析防 SQL 注入 / libvirt XML 全部走 `encoding/xml` / JWT 锁定 HS256 / SSH 目标白名单 / release 密钥强校验）
 - [x] E2E 回归脚本（`scripts/smoke.sh`，23 项断言）
-- [x] 单元测试（209 个顶层测试函数 / 约 1100 个子用例 / 14 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
+- [x] 单元测试（216 个顶层测试函数 / 约 1114 个子用例 / 14 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
 - [x] 前端工程化（路由懒加载 + manualChunks 分包：首屏下载量 −50%；`utils/format.js` 收敛 10 余处重复；图标全部换成 `@element-plus/icons-vue`）
 
 
@@ -184,7 +184,7 @@ docker compose up -d prometheus grafana alertmanager
 
 ```bash
 ./scripts/smoke.sh          # E2E 23 项：只读接口 + metrics + 创建/删除 task 全链路 + 硬件管理
-go test -race ./...         # 单元测试 209 个顶层函数 / 约 1100 个子用例 / 14 个测试包（必须带 -race）
+go test -race ./...         # 单元测试 216 个顶层函数 / 约 1114 个子用例 / 14 个测试包（必须带 -race）
 go build ./... && go vet ./... && gofmt -l .
 ```
 
