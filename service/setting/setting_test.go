@@ -33,6 +33,13 @@ func TestValidate(t *testing.T) {
 		{"公告正常文本", KeyAnnouncement, "维护窗口：周六 22:00-24:00，请提前保存工作。", false},
 		{"公告恰好在 2000 字上界", KeyAnnouncement, strings.Repeat("维", AnnouncementMaxLength), false},
 		{"公告超 2000 字拒绝", KeyAnnouncement, strings.Repeat("维", AnnouncementMaxLength+1), true},
+		{"告警通知地址为空=关闭", KeyAlertNotifyURL, "", false},
+		{"告警通知地址https合法", KeyAlertNotifyURL, "https://open.feishu.cn/open-apis/bot/v2/hook/abc123", false},
+		{"告警通知地址http带端口合法", KeyAlertNotifyURL, "http://127.0.0.1:8081/hook", false},
+		{"告警通知地址缺协议拒绝", KeyAlertNotifyURL, "open.feishu.cn/hook/abc", true},
+		{"告警通知地址非http协议拒绝", KeyAlertNotifyURL, "ftp://example.com/hook", true},
+		{"告警通知地址无主机拒绝", KeyAlertNotifyURL, "http://", true},
+		{"告警通知地址超长拒绝", KeyAlertNotifyURL, "https://x/" + strings.Repeat("a", 500), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -270,6 +270,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	docker.Use(middleware.NonViewerMiddleware())
 	{
 		docker.GET("/containers", dockerHandler.ListContainers)
+		// 一键创建容器（v3.2 R8 收尾：docker run -d 封装，契约见 dockerx.ContainerOpts）
+		docker.POST("/containers", dockerHandler.CreateContainer)
 		docker.POST("/containers/:id/:action", dockerHandler.ContainerAction)
 		docker.DELETE("/containers/:id", dockerHandler.RemoveContainer)
 		docker.GET("/containers/:id/logs", dockerHandler.ContainerLogs)

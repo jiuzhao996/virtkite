@@ -82,6 +82,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		SecurityEntrance   *string `json:"security_entrance"`   // 登录安全入口口令（空串=关闭）
 		PasswordMinLength  *int    `json:"password_min_length"` // 密码最小长度（0=关闭策略）
 		Announcement       *string `json:"announcement"`        // 系统公告（空串=撤下公告）
+		AlertNotifyURL     *string `json:"alert_notify_url"`    // 告警触发通知 webhook（空串=关闭；值内嵌机器人 token，All() 快照不含此键不下发）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数错误")
@@ -201,6 +202,21 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			return
 		}
 		updated = append(updated, "系统公告")
+	}
+	// 告警出站通知（v3 规划 Q 批收尾）：消费方是 handler.AlertNotifyURLResolver（webhook
+	// 入库后 best-effort 推送飞书/钉钉）。空串=关闭；写入即生效。值不进 All() 快照
+	// （内嵌机器人 token），前端保存后不回显属预期。
+	if req.AlertNotifyURL != nil {
+		if err := setting.Validate(setting.KeyAlertNotifyURL, *req.AlertNotifyURL); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.Settings.Set(setting.KeyAlertNotifyURL, *req.AlertNotifyURL); err != nil {
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存告警通知地址失败")
+			return
+		}
+		updated = append(updated, "告警通知")
 	}
 	if len(updated) == 0 {
 		Fail(c, http.StatusBadRequest, "没有需要更新的配置项")

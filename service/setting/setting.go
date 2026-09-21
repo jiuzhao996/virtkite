@@ -5,6 +5,7 @@ package setting
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ const (
 	KeySecurityEntrance   = "security_entrance"    // 登录安全入口口令（空=关闭；设置后登录须携带 X-Entrance 头或 ?entrance= 参数）
 	KeyPasswordMinLength  = "password_min_length"  // 密码最小长度（0=关闭策略；默认 8）
 	KeyAnnouncement       = "announcement"         // 系统公告（登录页与仪表盘展示；空=无公告；写入口 PUT /api/settings，公开读 GET /api/announcement）
+	KeyAlertNotifyURL     = "alert_notify_url"     // 告警触发通知 webhook（飞书/钉钉机器人 incoming 地址；空=关闭；经 handler.AlertNotifyURLResolver 消费，进 All() 快照供设置页回显——GET /api/settings 为 admin-only）
 )
 
 // 各键默认值（与配置化之前的硬编码行为一致）。
@@ -118,7 +120,9 @@ func (m *Manager) Set(key, value string) error {
 }
 
 // All 返回全部可写项当前值（未设置的键填充默认值），供设置页快照展示。
-// 注意：ai_* 三键刻意不进快照（ai_api_key 永不下发前端，见键注释）。
+// 注意：ai_* 三键刻意不进快照（ai_api_key 永不下发前端，见键注释）；
+// alert_notify_url 进快照——它是管理员自配的本平台通知地址（GET /api/settings 本就
+// admin-only），不回显会导致设置页刷新后永远显示为空、无法核对是否已配置。
 func (m *Manager) All() map[string]string {
 	return map[string]string{
 		KeyDefaultStoragePool: m.DefaultStoragePool(),
@@ -127,6 +131,7 @@ func (m *Manager) All() map[string]string {
 		KeySecurityEntrance:   m.SecurityEntrance(),
 		KeyPasswordMinLength:  strconv.Itoa(m.PasswordMinLength()),
 		KeyAnnouncement:       m.Announcement(),
+		KeyAlertNotifyURL:     m.AlertNotifyURL(),
 	}
 }
 
@@ -160,6 +165,13 @@ func (m *Manager) PasswordMinLength() int {
 // 消费方是公开端点 GET /api/announcement（登录页匿名访问），走进程内缓存不打 DB。
 func (m *Manager) Announcement() string {
 	return m.GetStr(KeyAnnouncement, "")
+}
+
+// AlertNotifyURL 告警触发通知的 webhook 地址（空=关闭出站通知）。
+// 消费方是 handler.AlertNotifyURLResolver（告警 webhook 入库后 best-effort 推送）。
+// 进 All() 快照（见 All 注释）：管理员自配地址，设置页需回显核对是否已启用。
+func (m *Manager) AlertNotifyURL() string {
+	return m.GetStr(KeyAlertNotifyURL, "")
 }
 
 // Validate 校验键与取值。键必须在白名单内，取值按键的类型与范围校验。
@@ -199,6 +211,21 @@ func Validate(key, value string) error {
 		// 空值=撤下公告，允许；非空仅校验长度（按 Unicode 字符数），内容不做格式约束
 		if utf8.RuneCountInString(value) > AnnouncementMaxLength {
 			return fmt.Errorf("公告内容长度需不超过 %d 字", AnnouncementMaxLength)
+		}
+		return nil
+	case KeyAlertNotifyURL:
+		// 空值=关闭告警出站通知，允许；非空必须是 http/https 的完整 URL
+		// （机器人 incoming 地址，内嵌 token 由通知方平台校验）
+		if value == "" {
+			return nil
+		}
+		if len(value) > 500 {
+			return fmt.Errorf("告警通知地址长度需不超过 500")
+		}
+		u, err := url.Parse(value)
+		schemeOK := err == nil && (u.Scheme == "http" || u.Scheme == "https")
+		if !schemeOK || u.Host == "" {
+			return fmt.Errorf("告警通知地址必须是 http(s):// 开头的合法 URL（留空表示关闭）")
 		}
 		return nil
 	default:

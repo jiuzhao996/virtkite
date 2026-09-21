@@ -33,7 +33,7 @@
     </el-card>
 
     <!-- AI 设置（运维助手）：与「运行参数」独立保存，只提交 ai_* 三个键 -->
-    <el-card shadow="never">
+    <el-card shadow="never" class="mb">
       <template #header>
         <div class="card-head">
           <span class="card-title">AI 设置（运维助手）</span>
@@ -62,7 +62,7 @@
     </el-card>
 
     <!-- 安全设置（批次 D）：安全入口 + 密码策略，独立保存 -->
-    <el-card shadow="never">
+    <el-card shadow="never" class="mb">
       <template #header>
         <div class="card-head">
           <span class="card-title">安全设置</span>
@@ -80,6 +80,59 @@
         </el-form-item>
       </el-form>
       <p class="tip">安全入口遗忘时的应急处理见 docs/07 部署文档。</p>
+    </el-card>
+
+    <!-- SSH 主机密钥（TOFU）：首次 SSH 连接记录指纹，指纹变化拒绝连接（防中间人）；虚拟机重建后删旧记录重连 -->
+    <el-card shadow="never" class="mb">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">
+            SSH 主机密钥（TOFU）
+            <el-tooltip
+              content="首次 SSH 连接时记录主机指纹；指纹变化会拒绝连接（防中间人）。虚拟机重建后如遇连接被拒，可删除旧记录后重连"
+              placement="top"
+            >
+              <el-icon class="title-help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </span>
+          <el-button :icon="Refresh" :loading="keysLoading" @click="loadKeys">刷新</el-button>
+        </div>
+      </template>
+      <el-table :data="hostKeys" v-loading="keysLoading" size="small">
+        <template #empty><el-empty description="暂无已记录的主机指纹" :image-size="80" /></template>
+        <el-table-column prop="host" label="主机" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="port" label="端口" width="76" />
+        <el-table-column prop="key_type" label="算法" width="110" />
+        <el-table-column label="指纹" min-width="300">
+          <template #default="{ row }">
+            <span class="mono">{{ row.fingerprint }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="记录时间" width="180">
+          <template #default="{ row }">{{ fmtDateTimeLocale(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="76" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="danger" plain @click="removeKey(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 告警通知：alert_notify_url 单键，留空 = 关闭推送；独立保存 -->
+    <el-card shadow="never" class="mb">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">告警通知</span>
+          <el-button type="primary" :loading="savingNotify" @click="saveNotify">保存</el-button>
+        </div>
+      </template>
+      <el-form label-width="170px" style="max-width: 560px">
+        <el-form-item label="通知地址">
+          <el-input v-model="notify.url" placeholder="飞书/钉钉自定义机器人 incoming 地址，留空关闭" clearable />
+          <div class="input-help">告警触发时向该地址推送文本消息（飞书/钉钉自定义机器人格式）；仅在告警新增或恢复后再触发时通知，不重复轰炸。</div>
+        </el-form-item>
+      </el-form>
     </el-card>
 
     <!-- 系统公告（v3 批次 P）：登录页与仪表盘公开展示，独立保存，只提交 announcement 键 -->
@@ -110,9 +163,9 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, QuestionFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { errMsg } from '../utils/format'
+import { errMsg, fmtDateTimeLocale } from '../utils/format'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -138,6 +191,60 @@ const ai = reactive({ base_url: '', api_key: '', model: '' })
 const savingAnn = ref(false)
 const ann = reactive({ content: '' })
 
+// SSH 主机密钥（TOFU）：GET /api/ssh-host-keys 的记录表；指纹变化拒绝连接属预期防护，
+// 虚拟机重建后指纹必然变化，删除旧记录即可重新信任（本页是唯一的管理入口）
+const keysLoading = ref(false)
+const hostKeys = ref([])
+
+// 告警通知（alert_notify_url 单键）：留空 = 关闭推送；独立保存，回填自 writable 节
+const savingNotify = ref(false)
+const notify = reactive({ url: '' })
+
+async function loadKeys() {
+  keysLoading.value = true
+  try {
+    const res = await api.listSSHHostKeys()
+    hostKeys.value = (res.data && res.data.items) || []
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取 SSH 主机密钥失败'))
+  } finally {
+    keysLoading.value = false
+  }
+}
+
+async function removeKey(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除 ${row.host}:${row.port} 的主机指纹记录？删除后下次 SSH 连接将重新记录指纹。`,
+      '删除主机密钥',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await api.deleteSSHHostKey(row.id)
+    ElMessage.success('已删除')
+    loadKeys()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '删除主机密钥失败'))
+  }
+}
+
+// 告警通知单独保存：只提交 alert_notify_url 键，与其它配置卡互不覆盖
+async function saveNotify() {
+  savingNotify.value = true
+  try {
+    await api.updateSettings({ alert_notify_url: notify.url.trim() })
+    ElMessage.success(notify.url.trim() ? '告警通知已保存并生效' : '告警通知已关闭')
+    load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存告警通知失败'))
+  } finally {
+    savingNotify.value = false
+  }
+}
+
 async function load() {
   loading.value = true
   try {
@@ -156,6 +263,8 @@ async function load() {
     savedEntrance = String(w.security_entrance ?? '')
     if (w.password_min_length !== undefined) sec.pwdMin = Number(w.password_min_length) || 0
     if (w.announcement !== undefined) ann.content = w.announcement
+    // 告警通知地址：键未上线（后端未加白名单）时保持空串，不误清用户输入
+    if (w.alert_notify_url !== undefined) notify.url = w.alert_notify_url || ''
   } catch (e) {
     ElMessage.error('获取系统设置失败')
   } finally {
@@ -260,7 +369,10 @@ async function saveAnnouncement() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadKeys()
+})
 </script>
 
 <style scoped>
@@ -284,5 +396,13 @@ onMounted(load)
   color: var(--color-muted-foreground);
   font-size: 0.82rem;
   margin: 4px 0 0;
+}
+/* 卡头问号图标：白话说明入口（hover 展开 tooltip），弱化不抢标题 */
+.title-help {
+  margin-left: 6px;
+  font-size: 0.9rem;
+  color: var(--color-muted-foreground);
+  cursor: help;
+  vertical-align: -1px;
 }
 </style>

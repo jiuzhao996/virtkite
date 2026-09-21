@@ -11,9 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/notify"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
 )
@@ -50,8 +49,6 @@ const (
 	maxRunOutput = 2000
 	// notifyErrLimit 失败通知消息里错误摘要的最大字符数。
 	notifyErrLimit = 200
-	// notifyTimeout 失败通知 webhook 的 HTTP 超时，防通知端挂死拖住调度协程。
-	notifyTimeout = 10 * time.Second
 )
 
 // DefaultKeep 保留份数默认值：任务未配置 Keep（<=0，含历史行零值）时的兜底，
@@ -545,33 +542,19 @@ func truncateRunes(s string, limit int) string {
 	return string(rs[:limit-1]) + "…"
 }
 
-// notifyFailure 任务失败时向 NotifyURL 推送文本消息（{msg_type:"text", content:{text:...}}，
-// 飞书自定义机器人的 text 格式，钉钉机器人加签名参数后兼容同一结构的最小子集）。
-// best-effort：任何失败只记日志，绝不影响任务执行结果与返回值；10 秒超时防通知端
-// 挂死拖住调度协程；日志不打印 URL（可能内嵌机器人 token 等凭据）。
+// notifyFailure 任务失败时向 NotifyURL 推送文本消息（经 service/notify.SendText 发送
+// {msg_type:"text", content:{text:...}}，飞书自定义机器人的 text 格式，钉钉机器人加
+// 签名参数后兼容同一结构的最小子集）。best-effort：任何失败只记日志，绝不影响任务
+// 执行结果与返回值；日志不打印 URL（可能内嵌机器人 token 等凭据）。
 func notifyFailure(taskName, errMsg string) {
 	if NotifyURL == "" {
 		return
 	}
-	payload, err := json.Marshal(map[string]interface{}{
-		"msg_type": "text",
-		"content": map[string]string{
-			"text": fmt.Sprintf("[鸢航VirtKite] 计划任务失败: %s %s",
-				taskName, truncateRunes(errMsg, notifyErrLimit)),
-		},
-	})
-	if err != nil {
-		log.Printf("[cron] 失败通知报文序列化失败: %v", err)
-		return
-	}
-	client := &http.Client{Timeout: notifyTimeout}
-	resp, err := client.Post(NotifyURL, "application/json", bytes.NewReader(payload))
-	if err != nil {
+	text := fmt.Sprintf("[鸢航VirtKite] 计划任务失败: %s %s",
+		taskName, truncateRunes(errMsg, notifyErrLimit))
+	if err := notify.SendText(NotifyURL, text); err != nil {
 		log.Printf("[cron] 失败通知推送失败 task=%s: %v", taskName, err)
 		return
 	}
-	defer func() { _ = resp.Body.Close() }()
-	// 读掉响应体归还连接（内容不关心，只记状态码供排障）
-	_, _ = io.Copy(io.Discard, resp.Body)
-	log.Printf("[cron] 失败通知已推送 task=%s status=%d", taskName, resp.StatusCode)
+	log.Printf("[cron] 失败通知已推送 task=%s", taskName)
 }

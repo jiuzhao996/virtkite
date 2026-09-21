@@ -69,6 +69,7 @@ func main() {
 	tasks.DefaultStoragePoolResolver = settingMgr.DefaultStoragePool
 	vnc.TTLResolver = settingMgr.VNCTokenTTL
 	console.StaleAfterResolver = settingMgr.VNCStale
+	handler.AlertNotifyURLResolver = settingMgr.AlertNotifyURL
 
 	// SSH 主机指纹存储（TOFU）：web 终端与 VM 文件管理两条 SSH 通道共用的主机密钥校验。
 	// 未注入时回调 fail-closed（一律拒绝拨号），故必须在建立任何 SSH 连接前完成接线。

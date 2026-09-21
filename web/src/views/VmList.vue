@@ -145,8 +145,8 @@
         </div>
       </el-card>
 
-    <!-- 导入存量 VM（纳管 virsh 已有域） -->
-    <el-dialog v-model="importDialog" title="导入存量 VM" width="780px">
+    <!-- 导入存量 VM（纳管 virsh 已有域）；部分失败时弹窗保持打开并展示失败明细，关闭即清空结果 -->
+    <el-dialog v-model="importDialog" title="导入存量 VM" width="780px" @close="importResult = null">
       <div v-loading="importScanning" class="import-body">
         <el-alert
           v-if="importHostName"
@@ -156,6 +156,20 @@
           :title="`宿主机「${importHostName}」共检测到 ${importTotal} 台域：已纳管 ${importManaged} 台，未纳管 ${importUnmanaged} 台`"
           style="margin-bottom: 12px"
         />
+        <!-- 导入结果（仅 failed > 0 时出现）：成功/跳过计数一行 + 失败明细逐行（后端 errors 为「域名: 原因」字符串数组） -->
+        <el-alert
+          v-if="importResult"
+          type="error"
+          show-icon
+          :closable="false"
+          :title="`本次导入：成功 ${importResult.imported} 台，跳过（已纳管） ${importResult.skipped} 台，失败 ${importResult.failed} 台`"
+          style="margin-bottom: 12px"
+        >
+          <div v-if="importResult.errors.length" class="import-error-list">
+            <div v-for="(err, i) in importResult.errors" :key="i" class="import-error-item mono">{{ err }}</div>
+          </div>
+          <div v-else class="import-error-item">后端未返回失败原因明细，可到「任务中心」或后端日志排查</div>
+        </el-alert>
         <!-- 扫描失败：弹窗内给出错误与重试入口（不落「暂无未纳管」空态误导用户） -->
         <el-result
           v-if="!importScanning && importError"
@@ -257,6 +271,8 @@ const importManaged = ref(0)
 const importUnmanaged = ref(0)
 const unmanaged = ref([])
 const selected = ref([])
+// 导入结果（仅 failed > 0 时填充展示；弹窗关闭/重新打开即清空）
+const importResult = ref(null)
 
 const runningCount = computed(() => items.value.filter((i) => i.status === 'running').length)
 
@@ -456,12 +472,19 @@ let pollTimer = null
 
 async function openImport() {
   importDialog.value = true
-  importScanning.value = true
-  importError.value = ''
+  importResult.value = null
   importHostName.value = ''
   importUnmanaged.value = 0
   unmanaged.value = []
   selected.value = []
+  await scanImport()
+}
+
+// 扫描宿主机存量域（打开弹窗与导入后刷新共用）；
+// 错误落弹窗内 importError 态（含重试按钮），不弹 toast 也不误显空态
+async function scanImport() {
+  importScanning.value = true
+  importError.value = ''
   try {
     const res = await api.scanImportVMs()
     const data = (res && res.data) || {}
@@ -472,8 +495,7 @@ async function openImport() {
     importUnmanaged.value = data.unmanaged || 0
     unmanaged.value = ((data.items || []).filter((i) => !i.managed))
   } catch (e) {
-    // 后端已统一为 {code, message, data}（handler 层禁止再泄漏 detail），走统一提取；
-    // 错误落弹窗内 importError 态（含重试按钮），不再弹 toast 也不误显空态
+    // 后端已统一为 {code, message, data}（handler 层禁止再泄漏 detail），走统一提取
     importError.value = errMsg(e, '扫描失败，无法连接 libvirt')
   } finally {
     importScanning.value = false
@@ -489,8 +511,23 @@ async function doImport() {
   try {
     const res = await api.importVMs(importHostId.value, selected.value.map((i) => i.name))
     const d = (res && res.data) || {}
-    ElMessage.success(`导入完成：成功 ${d.imported} 台${d.skipped ? '，跳过(已纳管) ' + d.skipped + ' 台' : ''}${d.failed ? '，失败 ' + d.failed + ' 台' : ''}`)
-    importDialog.value = false
+    const imported = d.imported || 0
+    const skipped = d.skipped || 0
+    const failed = d.failed || 0
+    ElMessage.success(`导入完成：成功 ${imported} 台${skipped ? '，跳过(已纳管) ' + skipped + ' 台' : ''}${failed ? '，失败 ' + failed + ' 台' : ''}`)
+    if (failed > 0) {
+      // 部分失败：弹窗保持打开，渲染计数 + 失败明细（errors 为「域名: 原因」中文字符串数组）；
+      // 同时静默重扫未纳管列表（导入成功的域从表中消失），不 await 以免拖住按钮 loading
+      importResult.value = {
+        imported,
+        skipped,
+        failed,
+        errors: Array.isArray(d.errors) ? d.errors : []
+      }
+      scanImport()
+    } else {
+      importDialog.value = false
+    }
     await load()
   } catch (e) {
     ElMessage.error(errMsg(e, '导入失败'))
@@ -869,5 +906,17 @@ onUnmounted(() => {
   font-size: 0.88rem;
   color: var(--el-color-primary);
   font-weight: 600;
+}
+/* 导入失败明细（el-alert 内容区）：逐行「域名: 原因」 */
+.import-error-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.import-error-item {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  word-break: break-all;
 }
 </style>

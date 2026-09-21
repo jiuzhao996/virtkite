@@ -202,6 +202,13 @@ export const api = {
   listSessions: (params) => unwrap(http.get('/sessions', { params })),
   disconnectSession: (id) => unwrap(http.post('/sessions/' + id + '/disconnect')),
 
+  // SSH 主机密钥（TOFU：首次连接记录指纹，指纹变化拒绝连接防中间人；管理端点，admin）
+  listSSHHostKeys: () => unwrap(http.get('/ssh-host-keys')),
+  deleteSSHHostKey: (id) => unwrap(http.delete('/ssh-host-keys/' + id)),
+
+  // Docker：创建并启动容器（name/image 必填；ports/volumes/envs 为字符串数组；restart ∈ no/always/unless-stopped/on-failure；command 可空）
+  createContainer: (payload) => unwrap(http.post('/docker/containers', payload)),
+
   // 系统设置（仅管理员）：GET 生效配置快照 + 可写项当前值；PUT 修改可写项（写入即生效）
   getSettings: () => unwrap(http.get('/settings')),
   updateSettings: (payload) => unwrap(http.put('/settings', payload)),

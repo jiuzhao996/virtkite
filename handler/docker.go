@@ -43,6 +43,33 @@ func (h *DockerHandler) ListContainers(c *gin.Context) {
 	Success(c, gin.H{"total": len(list), "items": list})
 }
 
+// CreateContainer POST /api/docker/containers（v3.2 规划 R8 收尾：一键创建并启动容器）。
+// 请求体为 dockerx.ContainerOpts（name/image 必填，其余可空）；校验失败 400 固定中文文案，
+// docker run 失败 500（完整错误进日志）。成功返回 {"id": "<容器短ID>"}。
+func (h *DockerHandler) CreateContainer(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	var body dockerx.ContainerOpts
+	if err := c.ShouldBindJSON(&body); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	body.Image = strings.TrimSpace(body.Image)
+	// 校验错误是固定中文文案（无内部细节），可直接回显——与 UpdateSettings 的 setting.Validate 同口径
+	if err := dockerx.ValidateContainerOpts(body); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, err := h.Docker.CreateContainer(body)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"id": id})
+}
+
 // ContainerAction POST /api/docker/containers/:id/:action（start/stop/restart）
 func (h *DockerHandler) ContainerAction(c *gin.Context) {
 	if !h.dockerAvailable(c) {

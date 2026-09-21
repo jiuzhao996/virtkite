@@ -6,10 +6,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/notify"
 	"gorm.io/gorm"
 )
 
@@ -28,6 +31,11 @@ type AlertWebhookHandler struct {
 func NewAlertWebhookHandler(db *gorm.DB, token string) *AlertWebhookHandler {
 	return &AlertWebhookHandler{DB: db, Token: token}
 }
+
+// AlertNotifyURLResolver 告警出站通知 webhook 地址的解析钩子，main 启动时接线到
+// setting 服务（alert_notify_url 键，空=关闭）。参照 tasks.DefaultStoragePoolResolver
+// 模式：本包不直接依赖 setting.Manager 实例，未接线（nil）或返回空串一律不通知。
+var AlertNotifyURLResolver func() string
 
 // amWebhookPayload Alertmanager webhook v4 payload（https://prometheus.io/docs/alerting/latest/configuration/#webhook_config）。
 // version/groupKey/truncatedAlerts 等字段当前用不到，仅保留 status 便于日志排查。
@@ -131,6 +139,8 @@ func mustJSON(m map[string]string) string {
 
 // upsert 按 fingerprint 去重入库：存在则更新 status/annotations/endsAt（firing → resolved
 // 的终态流转全靠这里），不存在则新建。任何失败只记日志——调用方保证整体仍返回 200。
+// 入库成功且构成「告警触发」（新建即 firing，或从非 firing 转回 firing）时，异步推送
+// 出站通知（best-effort，见 pushAlertNotify）。
 func (h *AlertWebhookHandler) upsert(a *model.Alert) {
 	var existing model.Alert
 	err := h.DB.Where("fingerprint = ?", a.Fingerprint).First(&existing).Error
@@ -138,6 +148,10 @@ func (h *AlertWebhookHandler) upsert(a *model.Alert) {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			if err := h.DB.Create(a).Error; err != nil {
 				log.Printf("[alert-webhook] 写入告警失败 fingerprint=%s: %v", a.Fingerprint, err)
+				return
+			}
+			if alertTransitionedToFiring(nil, a) {
+				h.pushAlertNotify(a)
 			}
 			return
 		}
@@ -153,5 +167,80 @@ func (h *AlertWebhookHandler) upsert(a *model.Alert) {
 	}
 	if err := h.DB.Model(&existing).Updates(updates).Error; err != nil {
 		log.Printf("[alert-webhook] 更新告警失败 fingerprint=%s: %v", a.Fingerprint, err)
+		return
 	}
+	// existing 是更新前读出的行：其 status 与本次 a.status 的对比即「是否转 firing」
+	if alertTransitionedToFiring(&existing, a) {
+		h.pushAlertNotify(a)
+	}
+}
+
+// alertTransitionedToFiring 判断本次 upsert 后是否构成「告警触发」通知时机（纯函数）：
+// 仅新建且 firing（existing == nil），或既有行从非 firing 状态转为 firing 时为 true。
+// 去重考量：Alertmanager 按 group_interval/repeat_interval 会对同一 fingerprint 的
+// firing 告警反复推送，此时库中已是 firing，不重复通知；resolved 一律不通知
+// （恢复无需即时人工介入，且 resolved 推送量与告警抖动成正比，容易刷屏）。
+func alertTransitionedToFiring(existing, incoming *model.Alert) bool {
+	if incoming.Status != model.AlertStatusFiring {
+		return false
+	}
+	if existing == nil {
+		return true // 新建即 firing = 首次触发
+	}
+	return existing.Status != model.AlertStatusFiring
+}
+
+// notifySummaryLimit 通知文本中摘要部分的最大字符数（annotations 由告警规则作者
+// 自由填写，防超长文本撑爆机器人消息）。
+const notifySummaryLimit = 200
+
+// alertNotifyText 组装告警触发通知文本（纯函数）：告警名取 labels.alertname，
+// 摘要优先 annotations.summary、退化 annotations.description，均无则留空。
+// labels/annotations 是入库前的 JSON 文本，解析失败按空处理（best-effort）。
+func alertNotifyText(labelsJSON, annotationsJSON string) string {
+	labels := map[string]string{}
+	annotations := map[string]string{}
+	_ = json.Unmarshal([]byte(labelsJSON), &labels)
+	_ = json.Unmarshal([]byte(annotationsJSON), &annotations)
+	summary := annotations["summary"]
+	if summary == "" {
+		summary = annotations["description"]
+	}
+	if utf8.RuneCountInString(summary) > notifySummaryLimit {
+		rs := []rune(summary)
+		summary = string(rs[:notifySummaryLimit-1]) + "…"
+	}
+	name := labels["alertname"]
+	if name == "" {
+		name = "未知告警"
+	}
+	return "[鸢航 VirtKite] 告警触发: " + name + " " + summary
+}
+
+// pushAlertNotify 异步推送告警触发通知（goroutine + defer recover——gin Recovery
+// 不覆盖自起 goroutine，AGENTS 后端铁律第 10 条）。best-effort：失败只记日志，
+// 绝不影响 webhook 的 200 响应（AM 对非 2xx 会按重试策略轰炸）。
+// 日志不打印通知 URL（可能内嵌机器人 token 等凭据）。
+func (h *AlertWebhookHandler) pushAlertNotify(a *model.Alert) {
+	if AlertNotifyURLResolver == nil {
+		return
+	}
+	url := AlertNotifyURLResolver()
+	if url == "" {
+		return // 未配置=通知关闭
+	}
+	text := alertNotifyText(a.Labels, a.Annotations)
+	fingerprint := a.Fingerprint
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[alert-webhook] 告警通知协程 panic fingerprint=%s: %v\n%s", fingerprint, r, debug.Stack())
+			}
+		}()
+		if err := notify.SendText(url, text); err != nil {
+			log.Printf("[alert-webhook] 告警通知推送失败 fingerprint=%s: %v", fingerprint, err)
+			return
+		}
+		log.Printf("[alert-webhook] 告警通知已推送 fingerprint=%s", fingerprint)
+	}()
 }

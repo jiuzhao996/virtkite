@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,4 +175,68 @@ func TestAlertWebhookBadBody(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("非法 JSON 应 400，实际 %d", rec.Code)
 	}
+}
+
+// TestAlertTransitionedToFiring 通知时机判定（纯函数）：只有「新建即 firing」与
+// 「非 firing → firing」才通知；AM 重复推送的 firing 与 resolved 一律不通知。
+func TestAlertTransitionedToFiring(t *testing.T) {
+	firing := &model.Alert{Status: model.AlertStatusFiring}
+	resolved := &model.Alert{Status: model.AlertStatusResolved}
+
+	cases := []struct {
+		name     string
+		existing *model.Alert
+		incoming *model.Alert
+		want     bool
+	}{
+		{"新建即firing=通知", nil, firing, true},
+		{"新建即resolved=不通知", nil, resolved, false},
+		{"resolved转firing=通知", resolved, firing, true},
+		{"firing重复推送=不通知", firing, firing, false},
+		{"firing转resolved=不通知", firing, resolved, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := alertTransitionedToFiring(tc.existing, tc.incoming); got != tc.want {
+				t.Errorf("alertTransitionedToFiring = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAlertNotifyText 通知文本组装（纯函数）：alertname 取 labels、摘要优先
+// summary 退化 description、超长截断。
+func TestAlertNotifyText(t *testing.T) {
+	t.Run("标准summary", func(t *testing.T) {
+		got := alertNotifyText(`{"alertname":"VMRunningDrop","severity":"warning"}`, `{"summary":"虚拟机异常关机","description":"desc"}`)
+		want := "[鸢航 VirtKite] 告警触发: VMRunningDrop 虚拟机异常关机"
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("无summary退化description", func(t *testing.T) {
+		got := alertNotifyText(`{"alertname":"HostCpuHigh"}`, `{"description":"宿主机 CPU 过高"}`)
+		if got != "[鸢航 VirtKite] 告警触发: HostCpuHigh 宿主机 CPU 过高" {
+			t.Errorf("退化 description 不符: %q", got)
+		}
+	})
+	t.Run("无标注留空与未知告警名兜底", func(t *testing.T) {
+		if got := alertNotifyText(`{}`, `{"summary":"x"}`); got != "[鸢航 VirtKite] 告警触发: 未知告警 x" {
+			t.Errorf("alertname 缺失应兜底: %q", got)
+		}
+	})
+	t.Run("超长摘要截断", func(t *testing.T) {
+		long := strings.Repeat("长", notifySummaryLimit+50)
+		got := alertNotifyText(`{"alertname":"A"}`, `{"summary":"`+long+`"}`)
+		want := "[鸢航 VirtKite] 告警触发: A " + strings.Repeat("长", notifySummaryLimit-1) + "…"
+		if got != want {
+			t.Errorf("超长摘要应截断到 %d 字（含省略号）", notifySummaryLimit)
+		}
+	})
+	t.Run("非法JSON按空处理不报错", func(t *testing.T) {
+		got := alertNotifyText("not-json", "not-json")
+		if got != "[鸢航 VirtKite] 告警触发: 未知告警 " {
+			t.Errorf("非法 JSON 应按空 map 处理: %q", got)
+		}
+	})
 }
