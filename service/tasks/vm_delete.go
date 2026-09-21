@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/virt"
 )
 
 // execCleanupVolumes 清理存储池孤儿卷（cleanup_volumes 任务）。
@@ -134,8 +135,15 @@ func execDeleteVM(ctx *ExecContext) error {
 	}
 
 	// 2. 删除域定义（对应 virsh undefine）。
+	// 域在 libvirt 已不存在时容错继续：回收站「恢复」只清 deleted_at（域删除时已 undefine），
+	// 恢复过的 VM 再次删除时 undefine 必报「不存在」——若因此中止，该记录删除失败、
+	// purge 又报「不在回收站中」，成为用户无解的僵尸行。仅对 VIR_ERR_NO_DOMAIN 放行，
+	// 其余错误（连接失败、权限等）仍中止删除。
 	if err := ctx.Virt.UndefineDomain(vm.Name); err != nil {
-		return fmt.Errorf("删除虚拟机定义失败: %w", err)
+		if !virt.IsDomainNotFound(err) {
+			return fmt.Errorf("删除虚拟机定义失败: %w", err)
+		}
+		log.Printf("[tasks] 域定义已不存在，按已 undefine 处理（回收站恢复后的二次删除场景） vm=%s", vm.Name)
 	}
 	reportProgress(ctx, 30, "虚拟机定义已删除（对应 virsh undefine），开始清理磁盘")
 
@@ -216,7 +224,17 @@ func execDeleteVM(ctx *ExecContext) error {
 		tryDeleteVol(src)
 	}
 	if poolPath != "" {
-		tryDeleteVol(filepath.Join(poolPath, vm.Name+".qcow2"))
+		// 域配置拿不到（已 undefine 的二次删除）或解析失败时，按建卷命名约定兜底找系统盘：
+		// 新建机 <vm名>.qcow2 / 克隆机 <vm名>-diska.qcow2（CloneVMFromSpec）/ 镜像建机 <vm名>-sys.qcow2
+		// （execCloneImageVM）。文件不存在时 DeleteVolume 与 os.Remove 均静默无副作用；
+		// 盘有归属时 seen 去重 + shouldKeepVol 守卫照常生效。
+		for _, cand := range []string{
+			vm.Name + ".qcow2",
+			vm.Name + "-diska.qcow2",
+			vm.Name + "-sys.qcow2",
+		} {
+			tryDeleteVol(filepath.Join(poolPath, cand))
+		}
 	}
 	if len(keptVols) > 0 {
 		reportProgress(ctx, 70, "磁盘清理完成（保留 "+strconv.Itoa(len(keptVols))+" 个共享卷）")

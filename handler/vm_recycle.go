@@ -8,10 +8,13 @@ package handler
 //     路由建议挂 admin 组，本闸作为纵深防御，路由误挂 operator 组时仍拦得住）。
 //   - Unscoped() 绕过 GORM 软删过滤：软删行带 deleted_at 非空，不加 Unscoped 的查询/更新
 //     会被自动追加的 `deleted_at IS NULL` 条件过滤掉，永远查不到也改不动。
-//   - 恢复只还原数据库记录，不重建 libvirt 域——删除时已 undefine，域若还在则顺带同步状态，
-//     不在则诚实告知「定义已不存在」，前端引导走创建向导用同名卷重新定义。
+//   - 恢复清空 deleted_at；域仍在则同步实时状态，域已 undefine 且系统盘卷还在时
+//     按 DB 记录重建精简定义并 define（B3a 批次，见 redefineRestoredVM），
+//     重建失败降级为仅恢复记录，如实告知「定义已不存在」。
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -96,7 +99,8 @@ func (h *VMRecycleHandler) findDeletedVM(c *gin.Context) (model.VM, bool) {
 }
 
 // Restore 恢复回收站虚拟机（admin）。POST /api/vms-recycle/:id/restore
-// 清空 deleted_at 使记录回到正常列表；域仍在则同步实时状态，域已 undefine 则如实告知。
+// 清空 deleted_at 使记录回到正常列表；域仍在则同步实时状态；域已 undefine 且系统盘卷还在
+// 则按 DB 记录重建精简定义（恢复过的 VM 可直接开机），重建失败降级为仅恢复记录。
 func (h *VMRecycleHandler) Restore(c *gin.Context) {
 	if !requireAdminRole(c) {
 		return
@@ -125,24 +129,121 @@ func (h *VMRecycleHandler) Restore(c *gin.Context) {
 	// 域仍在：同步一次实时状态（删除流程 undefine 成功才会软删，域存在多为异常残留，
 	// 比如任务中途失败；如实呈现比假装「干净恢复」更有用）。
 	state, err := h.Virt.GetDomainState(vm.Name)
-	if err != nil {
+	if err == nil {
+		if err := h.DB.Model(&vm).Update("status", state).Error; err != nil {
+			// 状态同步失败不回滚恢复本身，完整错误进日志即可
+			LogError(c, err)
+		}
 		Success(c, gin.H{
 			"restored":       true,
-			"domain_defined": false,
-			"message":        "记录已恢复，但虚拟机定义已不存在，可在创建向导用同名卷重新定义",
+			"domain_defined": true,
+			"status":         state,
+			"message":        "已恢复（libvirt 中仍存在同名域，状态已同步）",
 		})
 		return
 	}
-	if err := h.DB.Model(&vm).Update("status", state).Error; err != nil {
-		// 状态同步失败不回滚恢复本身，完整错误进日志即可
+
+	// 域已不存在（删除时已 undefine）：系统盘卷还在则按 DB 记录重建精简定义并 define，
+	// 让「恢复」对得起语义；任何失败降级为仅恢复记录，不阻断恢复本身。
+	if err := h.redefineRestoredVM(vm); err != nil {
+		LogError(c, err)
+		Success(c, gin.H{
+			"restored":       true,
+			"domain_defined": false,
+			"message":        "记录已恢复，但虚拟机定义无法重建（系统盘卷可能已删除），可在创建向导用同名卷重新定义",
+		})
+		return
+	}
+	if err := h.DB.Model(&vm).Update("status", model.VMStatusShutOff).Error; err != nil {
 		LogError(c, err)
 	}
 	Success(c, gin.H{
 		"restored":       true,
 		"domain_defined": true,
-		"status":         state,
-		"message":        "已恢复（libvirt 中仍存在同名域，状态已同步）",
+		"status":         model.VMStatusShutOff,
+		"message":        "已恢复并重新定义虚拟机（原域已删除，按数据库记录重建精简定义，可直接开机）",
 	})
+}
+
+// redefineRestoredVM 恢复场景下按 DB 行重建精简域定义并 define（对应 virsh define）。
+// 仅在系统盘卷仍存在时才有意义——删除时卷可能被 shouldKeepVol 守卫保留，或 VM 走的
+// 「恢复过的域已不存在」路径本就没删卷。
+// DB 未存磁盘清单/机器类型/网卡列表等配置，重建为精简定义：单系统盘（按建卷命名约定探测，
+// 与 execDeleteVM 的兜底同一套）+ 默认 NAT 网络单网卡（MAC 用登记值）；多盘 VM 恢复后
+// 其余盘仍留在池中，可在磁盘管理手动挂回。
+func (h *VMRecycleHandler) redefineRestoredVM(vm model.VM) error {
+	pool := vm.StoragePool
+	if pool == "" {
+		pool = tasks.DefaultStoragePoolResolver()
+	}
+	poolPath, err := h.Virt.GetPoolPath(pool)
+	if err != nil {
+		return fmt.Errorf("获取存储池 %s 路径失败: %w", pool, err)
+	}
+	// 系统盘探测：新建机 <vm名>.qcow2 / 克隆机 <vm名>-diska.qcow2 / 镜像建机 <vm名>-sys.qcow2
+	var diskPath string
+	for _, cand := range []string{
+		vm.Name + ".qcow2",
+		vm.Name + "-diska.qcow2",
+		vm.Name + "-sys.qcow2",
+	} {
+		p := filepath.Join(poolPath, cand)
+		if _, err := os.Stat(p); err == nil {
+			diskPath = p
+			break
+		}
+	}
+	if diskPath == "" {
+		return fmt.Errorf("存储池 %s 中未找到 %s 的系统盘卷，无法重建定义", pool, vm.Name)
+	}
+
+	vcpu := vm.VCPU
+	if vcpu <= 0 {
+		vcpu = 1
+	}
+	memMB := vm.MemoryMB
+	if memMB <= 0 {
+		memMB = 1024
+	}
+	spec := &virt.DomainSpec{
+		Name:     vm.Name,
+		UUID:     vm.UUID,
+		VCPU:     vcpu,
+		MemoryMB: memMB,
+		OSType:   "hvm",
+		Arch:     "x86_64",
+		Boot:     virt.BootSpec{Devices: []string{"hd"}},
+		Graphics: virt.GraphicsSpec{Type: "vnc", Port: -1},
+	}
+	spec.Disks = append(spec.Disks, virt.DiskSpec{
+		Type: "file", Device: "disk", Driver: "qcow2", Bus: "virtio",
+		Source: diskPath, Target: "vda",
+	})
+	mac := vm.MACAddress
+	if mac == "" {
+		// DB 未登记 MAC 时重新生成，避免 DB 记录与 libvirt 实际不一致
+		m, merr := virt.RandomMAC()
+		if merr != nil {
+			return fmt.Errorf("生成网卡 MAC 失败: %w", merr)
+		}
+		mac = m
+		if err := h.DB.Model(&vm).Update("mac_address", mac).Error; err != nil {
+			// define 还没发生，这里失败仅留痕（MAC 兜底不一致不影响定义）
+			log.Printf("[recycle] 重建定义前回写 MAC 失败 vm=%s err=%v", vm.Name, err)
+		}
+	}
+	spec.Interfaces = append(spec.Interfaces, virt.InterfaceSpec{
+		Type: "network", Source: "default", MAC: mac, Model: "virtio",
+	})
+
+	xmlstr, err := virt.BuildDomainXML(spec)
+	if err != nil {
+		return fmt.Errorf("重建虚拟机 %s 配置失败: %w", vm.Name, err)
+	}
+	if err := h.Virt.DefineDomain(xmlstr); err != nil {
+		return fmt.Errorf("重新定义虚拟机 %s 失败: %w", vm.Name, err)
+	}
+	return nil
 }
 
 // Purge 彻底清除回收站虚拟机（admin）。DELETE /api/vms-recycle/:id/purge?purge_volumes=true

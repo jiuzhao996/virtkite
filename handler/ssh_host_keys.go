@@ -25,7 +25,8 @@ func NewSSHHostKeyHandler(db *gorm.DB) *SSHHostKeyHandler {
 
 // List 查看全部已记录的主机指纹（admin）。GET /api/ssh-host-keys
 func (h *SSHHostKeyHandler) List(c *gin.Context) {
-	var keys []model.HostKey
+	// 预分配非 nil 空切片：查无记录时序列化为 [] 而非 null（批 B② 既定约定）
+	keys := make([]model.HostKey, 0)
 	if err := h.DB.Order("host, port").Find(&keys).Error; err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return

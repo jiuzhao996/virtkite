@@ -46,7 +46,15 @@ func (h *DockerHandler) ListContainers(c *gin.Context) {
 // CreateContainer POST /api/docker/containers（v3.2 规划 R8 收尾：一键创建并启动容器）。
 // 请求体为 dockerx.ContainerOpts（name/image 必填，其余可空）；校验失败 400 固定中文文案，
 // docker run 失败 500（完整错误进日志）。成功返回 {"id": "<容器短ID>"}。
+// 仅 admin（二次收口）：容器创建可挂载宿主机任意路径（-v /:/host 即整机文件系统可读改），
+// 等于把宿主机 shell 交给请求方。docker 路由组挂 NonViewerMiddleware 只挡 viewer，
+// operator 的写请求能直达本端点，故 handler 内收口仅 admin
+// （与 UpdateVMXML 的内联 roleIsAdmin 闸同款角色闸，单独给文案）。
 func (h *DockerHandler) CreateContainer(c *gin.Context) {
+	if !roleIsAdmin(c) {
+		Fail(c, http.StatusForbidden, "容器创建仅管理员可用")
+		return
+	}
 	if !h.dockerAvailable(c) {
 		return
 	}

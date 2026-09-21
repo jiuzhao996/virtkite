@@ -79,6 +79,16 @@ func TestBuildRunArgs(t *testing.T) {
 			t.Errorf("空白项应全部跳过: got %v want %v", got, want)
 		}
 	})
+
+	t.Run("卷各段空白归一化", func(t *testing.T) {
+		// 校验与透传同一归一化：带空白的卷映射不再原样进 docker argv
+		//（否则 docker 报参数错误、handler 变 500）
+		opts := ContainerOpts{Name: "b", Image: "busybox", Volumes: []string{" /data:/x"}}
+		want := []string{"run", "-d", "--name", "b", "-v", "/data:/x", "busybox"}
+		if got := BuildRunArgs(opts); !reflect.DeepEqual(got, want) {
+			t.Errorf("卷参数应归一化: got %v want %v", got, want)
+		}
+	})
 }
 
 // TestValidateContainerOpts 校验规则表驱动：合法形态 + 各类非法输入。
@@ -120,6 +130,8 @@ func TestValidateContainerOpts(t *testing.T) {
 		{"卷缺容器路径", func(o *ContainerOpts) { o.Volumes = []string{"/data"} }, true},
 		{"卷容器路径非绝对", func(o *ContainerOpts) { o.Volumes = []string{"/data:rel/path"} }, true},
 		{"卷读写模式非法", func(o *ContainerOpts) { o.Volumes = []string{"/data:/data:rx"} }, true},
+		{"卷各段带空白（归一化后合法）", func(o *ContainerOpts) { o.Volumes = []string{" /data:/x"} }, false},
+		{"卷模式带空白（归一化后合法）", func(o *ContainerOpts) { o.Volumes = []string{"/data:/x: ro"} }, false},
 		{"env无等号", func(o *ContainerOpts) { o.Envs = []string{"NOEQ"} }, true},
 		{"env键为空", func(o *ContainerOpts) { o.Envs = []string{"=VALUE"} }, true},
 		{"env键含空白", func(o *ContainerOpts) { o.Envs = []string{"BAD KEY=1"} }, true},

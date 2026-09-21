@@ -13,7 +13,9 @@ import (
 
 // execCloneVM 克隆虚拟机（对应 virsh vol-clone + virsh define）。
 // payload：{source_id*, name*, storage_pool, vcpu, memory_mb, network}。
-// 注意：克隆卷落在源系统盘所在存储池，storage_pool 仅写入 DB 记录（virt 层按源池克隆）。
+// 克隆卷实际落在源系统盘所在存储池（CloneVMFromSpec 内部按源盘路径反查池建卷），
+// DB storage_pool 同步记真实池：删除守卫按 vm.StoragePool 的池路径判定卷归属，
+// 记成别的池会让子卷被判「池外」而保留成孤儿文件（实测踩中）。
 func execCloneVM(ctx *ExecContext) error {
 	if err := checkExecContext(ctx); err != nil {
 		return err
@@ -85,15 +87,30 @@ func execCloneVM(ctx *ExecContext) error {
 		}
 	}
 
-	pool := storagePool
-	if pool == "" {
-		pool = src.StoragePool
+	// 克隆卷落在源系统盘所在池（CloneVMFromSpec 内部按源盘路径反查），
+	// 这里用同一口径反查真实池写进 DB（与 virt 层各自反查一次，避免改 CloneVMFromSpec 签名）。
+	// 多盘 VM 各盘可能分属不同池：按系统盘（首块 device=disk）所在池登记，注释即口径声明。
+	clonePool := ""
+	for _, d := range source.Disks {
+		if d.Device == "disk" && d.Source != "" {
+			if pn, _, lerr := ctx.Virt.LookupVolByPath(d.Source); lerr == nil {
+				clonePool = pn
+			}
+			break
+		}
+	}
+	if clonePool == "" {
+		// 源盘反查不到所属池（池外盘等异常形态）时退回旧口径：请求池 → 源机记录池。
+		clonePool = storagePool
+		if clonePool == "" {
+			clonePool = src.StoragePool
+		}
 	}
 	clone := model.VM{
 		UUID:        uuid,
 		Name:        name,
 		HostID:      src.HostID,
-		StoragePool: pool,
+		StoragePool: clonePool,
 		VCPU:        source.VCPU,
 		MemoryMB:    source.MemoryMB,
 		DiskGB:      src.DiskGB,

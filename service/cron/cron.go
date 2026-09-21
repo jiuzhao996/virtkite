@@ -57,7 +57,7 @@ const (
 const DefaultKeep = 7
 
 // NotifyURL 计划任务失败通知的 webhook 地址（飞书/钉钉等自定义机器人的 incoming 地址，
-// 收 {msg_type:"text", content:{text:...}} 结构）。由 main 启动时注入（如环境变量
+// 报文格式由 service/notify 按 URL 域名自动分派）。由 main 启动时注入（如环境变量
 // CRON_NOTIFY_URL），为空表示不通知。用包级变量而非 Scheduler 字段：注入点与
 // routes.go 内部的调度器构造解耦，main 一行即可接线。
 var NotifyURL string
@@ -542,19 +542,30 @@ func truncateRunes(s string, limit int) string {
 	return string(rs[:limit-1]) + "…"
 }
 
-// notifyFailure 任务失败时向 NotifyURL 推送文本消息（经 service/notify.SendText 发送
-// {msg_type:"text", content:{text:...}}，飞书自定义机器人的 text 格式，钉钉机器人加
-// 签名参数后兼容同一结构的最小子集）。best-effort：任何失败只记日志，绝不影响任务
-// 执行结果与返回值；日志不打印 URL（可能内嵌机器人 token 等凭据）。
+// notifyFailure 任务失败时向 NotifyURL 推送文本通知（经 service/notify.SendText 发送，
+// 按 URL 域名自动分派飞书/钉钉报文格式）。异步 best-effort：NotifyURL 读取与组文在
+// 调用方协程完成，网络推送放 goroutine + defer recover（对齐 handler/alert_webhook.go
+// 的 pushAlertNotify 风格；gin Recovery 不覆盖自起 goroutine，AGENTS 后端铁律第 10 条）。
+// 原先在 execute 的 execMu 持锁内同步发送、最长拖 5s，现调度锁内只做取值，网络 IO 全在锁外。
+// 任何失败只记日志，绝不影响任务执行结果与返回值；日志不打印 URL（可能内嵌机器人 token 等凭据）。
 func notifyFailure(taskName, errMsg string) {
-	if NotifyURL == "" {
+	// 启协程前取值：NotifyURL 是包级变量，协程内再读会与注入方存在并发读窗口
+	url := NotifyURL
+	if url == "" {
 		return
 	}
 	text := fmt.Sprintf("[鸢航VirtKite] 计划任务失败: %s %s",
 		taskName, truncateRunes(errMsg, notifyErrLimit))
-	if err := notify.SendText(NotifyURL, text); err != nil {
-		log.Printf("[cron] 失败通知推送失败 task=%s: %v", taskName, err)
-		return
-	}
-	log.Printf("[cron] 失败通知已推送 task=%s", taskName)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[cron] 失败通知协程 panic task=%s: %v\n%s", taskName, r, debug.Stack())
+			}
+		}()
+		if err := notify.SendText(url, text); err != nil {
+			log.Printf("[cron] 失败通知推送失败 task=%s: %v", taskName, err)
+			return
+		}
+		log.Printf("[cron] 失败通知已推送 task=%s", taskName)
+	}()
 }

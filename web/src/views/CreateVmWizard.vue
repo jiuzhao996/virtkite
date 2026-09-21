@@ -100,7 +100,7 @@
                 </div>
               </el-option>
             </el-select>
-            <div class="os-hint">镜像库是池内共享盘的「登记索引」：这里列出已登记的云镜像/模板（可跨池引用，建机不复制文件）。想上架新的？到「存储池 → 卷抽屉」把任意卷登记进库。</div>
+            <div class="os-hint">镜像库是池内共享盘的「登记索引」：这里列出已登记的云镜像/模板（可跨池引用，建机基于它创建增量盘，不复制镜像数据）。想上架新的？到「存储池 → 卷抽屉」把任意卷登记进库。</div>
           </el-form-item>
           <el-form-item v-if="cloudImage.imageId" label="识别系统">
             <template v-if="cloudImage.osName">
@@ -112,7 +112,7 @@
           <el-form-item v-if="cloudImage.imageId" label="系统盘">
             <span class="os-hint">
               将创建基于「{{ cloudImageName }}」的<b>增量盘</b>（qcow2 backing，不复制镜像文件，初始仅占用元数据级别空间；
-              第 2 步填写的容量是该盘的读写上限）
+              第 2 步的「系统盘容量」即该盘读写上限，实际占用随写入增长）
             </span>
           </el-form-item>
           <!-- cloud-init 只属于云镜像方式：镜像选中后就地展开配置（用户拍板：第 4 步对 ISO/导入方式显示 cloud-init 很乱） -->
@@ -217,6 +217,11 @@
           <el-form-item v-if="installMode === 'iso'" label="系统盘容量 (GB)" required>
             <el-input-number v-model="form.diskGb" :min="1" :max="500" controls-position="right" />
             <span class="os-hint">新建空白系统盘容量，默认 20 GB</span>
+          </el-form-item>
+          <!-- 云镜像方式同样是增量盘：容量是 qcow2 虚拟容量（读写上限），实际占用从元数据级起步 -->
+          <el-form-item v-if="installMode === 'cloudimage'" label="系统盘容量 (GB)" required>
+            <el-input-number v-model="form.diskGb" :min="5" :max="500" :step="5" controls-position="right" />
+            <span class="os-hint">增量盘的读写上限（qcow2 虚拟容量），实际占用从几 MB 起步</span>
           </el-form-item>
           <el-form-item v-if="installMode === 'iso'" label="系统盘卷名">
             <el-input v-model="form.sysVolName" :placeholder="'默认 ' + (form.name || '虚拟机名') + '.qcow2，可自定义'" style="width: 380px" clearable />
@@ -715,7 +720,8 @@ const systemDisk = computed(() => {
   if (installMode.value === 'iso') return [{ id: 'sys', kind: 'create', createGb: form.diskGb, volName: form.sysVolName.trim(), isSystem: true }]
   if (installMode.value === 'cloudimage') {
     const img = options.cloudImages.find((i) => i.id === cloudImage.imageId)
-    return [{ id: 'sys', kind: 'image', imageId: cloudImage.imageId, imageName: img ? img.name : '', sizeGb: img ? img.size_gb : 0, isSystem: true }]
+    // createGb：用户声明的增量盘读写上限（第 2 步输入），与镜像文件大小 sizeGb 分开携带
+    return [{ id: 'sys', kind: 'image', imageId: cloudImage.imageId, imageName: img ? img.name : '', sizeGb: img ? img.size_gb : 0, createGb: form.diskGb, isSystem: true }]
   }
   return []
 })
@@ -771,7 +777,8 @@ const totalCapacity = computed(() => {
   let gb = 0
   for (const d of diskRows.value) {
     if (d.kind === 'create') gb += d.createGb
-    else if (d.kind === 'image') gb += d.sizeGb || 0
+    // 云镜像增量盘用输入的容量（读写上限），不用基镜像文件大小；弹窗加的 image 盘无输入，回退文件大小
+    else if (d.kind === 'image') gb += d.createGb || d.sizeGb || 0
   }
   return gb
 })
@@ -841,7 +848,8 @@ function diskSourceLabel(d) {
 
 function diskCapacityLabel(d) {
   if (d.kind === 'create') return d.createGb + ' GB'
-  if (d.kind === 'image') return (d.sizeGb ? d.sizeGb.toFixed(2) : '—') + ' GB'
+  // 云镜像增量盘：显示声明的读写上限，不是基镜像文件大小（sizeGb 仅在未声明容量时兜底）
+  if (d.kind === 'image') return d.createGb ? d.createGb + ' GB' : (d.sizeGb ? d.sizeGb.toFixed(2) : '—') + ' GB'
   return '—'
 }
 
@@ -966,12 +974,12 @@ function buildDisks() {
   for (const d of systemDisk.value) {
     if (d.kind === 'create') arr.push({ create_gb: d.createGb, ...(d.volName ? { vol_name: d.volName } : {}) })
     else if (d.kind === 'source') arr.push({ source: d.source })
-    else if (d.kind === 'image') arr.push({ source_image_id: d.imageId })
+    else if (d.kind === 'image') arr.push({ source_image_id: d.imageId, ...(d.createGb ? { create_gb: d.createGb } : {}) })
   }
   for (const d of extraDisks) {
     if (d.kind === 'create') arr.push({ create_gb: d.createGb, ...(d.volName ? { vol_name: d.volName } : {}) })
     else if (d.kind === 'source') arr.push({ source: d.source })
-    else if (d.kind === 'image') arr.push({ source_image_id: d.imageId })
+    else if (d.kind === 'image') arr.push({ source_image_id: d.imageId, ...(d.createGb ? { create_gb: d.createGb } : {}) })
   }
   return arr
 }
@@ -1033,6 +1041,11 @@ function next() {
   if (step.value === 1 && installMode.value !== 'clone') {
     const nameErr = validateVmName()
     if (nameErr) return ElMessage.warning(nameErr)
+    // 云镜像系统盘容量：非空且 5-500（与输入框 min/max 一致；清空后的 null 也拦在这）
+    if (installMode.value === 'cloudimage') {
+      const gb = Number(form.diskGb)
+      if (!gb || gb < 5 || gb > 500) return ElMessage.warning('请填写系统盘容量（5 ~ 500 GB）')
+    }
   }
   step.value++
 }

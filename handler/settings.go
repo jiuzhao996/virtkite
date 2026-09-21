@@ -82,7 +82,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		SecurityEntrance   *string `json:"security_entrance"`   // 登录安全入口口令（空串=关闭）
 		PasswordMinLength  *int    `json:"password_min_length"` // 密码最小长度（0=关闭策略）
 		Announcement       *string `json:"announcement"`        // 系统公告（空串=撤下公告）
-		AlertNotifyURL     *string `json:"alert_notify_url"`    // 告警触发通知 webhook（空串=关闭；值内嵌机器人 token，All() 快照不含此键不下发）
+		AlertNotifyURL     *string `json:"alert_notify_url"`    // 告警触发通知 webhook（空串=关闭；进 All() 快照回显——GET /api/settings 本就 admin-only，见 setting.All 注释）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数错误")
@@ -204,8 +204,9 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		updated = append(updated, "系统公告")
 	}
 	// 告警出站通知（v3 规划 Q 批收尾）：消费方是 handler.AlertNotifyURLResolver（webhook
-	// 入库后 best-effort 推送飞书/钉钉）。空串=关闭；写入即生效。值不进 All() 快照
-	// （内嵌机器人 token），前端保存后不回显属预期。
+	// 入库后 best-effort 推送飞书/钉钉）。空串=关闭；写入即生效。值进 All() 快照回显
+	// （GET /api/settings 本就 admin-only，不回显会导致设置页刷新后永远显示为空、
+	// 无法核对是否已配置——与 service/setting 的 All 注释同口径）。
 	if req.AlertNotifyURL != nil {
 		if err := setting.Validate(setting.KeyAlertNotifyURL, *req.AlertNotifyURL); err != nil {
 			Fail(c, http.StatusBadRequest, err.Error())

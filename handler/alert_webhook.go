@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -90,14 +92,21 @@ func (h *AlertWebhookHandler) Handle(c *gin.Context) {
 }
 
 // checkToken 令牌校验：Token 为空=公开；非空时要求 ?token= 或 Authorization: Bearer 匹配。
+// 比较走 crypto/subtle 恒定时间（本端点在公网入口暴露，防时序侧信道逐字节猜 token）；
+// 长度不等时 ConstantTimeCompare 直接返回 0（视为不等），无须额外分支。
 func (h *AlertWebhookHandler) checkToken(c *gin.Context) bool {
 	if h.Token == "" {
 		return true
 	}
-	if c.Query("token") == h.Token {
+	if subtle.ConstantTimeCompare([]byte(c.Query("token")), []byte(h.Token)) == 1 {
 		return true
 	}
-	return c.GetHeader("Authorization") == "Bearer "+h.Token
+	auth := c.GetHeader("Authorization")
+	const prefix = "Bearer "
+	if !strings.HasPrefix(auth, prefix) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, prefix)), []byte(h.Token)) == 1
 }
 
 // convertAlerts payload → 入库模型（纯函数，可单测）。fingerprint 为空的告警跳过：

@@ -18,6 +18,7 @@ import (
 //
 //	disks[{create_gb,source,source_image_id,cloud_init}], interfaces[{type,source,mac,model}],
 //	network, iso_path, cloud_init{hostname,user,password,ssh_key,net_mode,ip,gateway,dns}}。
+//	source_image_id 云镜像走真增量盘（linked clone）：子卷 backing 指向镜像文件，VM 不直引共享镜像。
 func execCreateVM(ctx *ExecContext) error {
 	if err := checkExecContext(ctx); err != nil {
 		return err
@@ -132,6 +133,10 @@ func execCreateVM(ctx *ExecContext) error {
 	var createdVols []string
 	totalDiskGB := 0
 	seedPath := ""
+	// 首块盘实际落地池：云镜像增量盘落在镜像所在池（CloneVolumeFromVolSized 按源卷池建卷），
+	// 可能与请求的 storage_pool 不同。VM.StoragePool 必须记真实池（首盘口径，与 execCloneVM 一致），
+	// 否则删除守卫按请求池前缀判「池外」，增量卷会残留成孤儿（实测踩中过同型问题）。
+	firstDiskPool := ""
 	cleanup := func() {
 		for _, cv := range createdVols {
 			parts := strings.SplitN(cv, ":", 2)
@@ -144,27 +149,67 @@ func execCreateVM(ctx *ExecContext) error {
 		}
 	}
 
-	// 逐磁盘落地：create_gb → 建卷；source → 直接引用；source_image_id → 引用云镜像文件。
+	// 逐磁盘落地：create_gb → 建卷；source → 直接引用；source_image_id → 云镜像增量盘（linked clone）。
 	reportProgress(ctx, 10, "开始创建虚拟机磁盘")
 	poolPath := ""
 	for i, d := range disks {
+		// 自定义卷名：合法性校验（与 VM 名同规则，新建卷与云镜像增量盘共用），冲突靠 libvirt 建卷报错兜底
+		if d.VolName != "" && !validateVMName(d.VolName) {
+			cleanup()
+			return fmt.Errorf("磁盘卷名 %s 不合法（只允许字母、数字、下划线和连字符）", d.VolName)
+		}
 		var source string
+		// 分支优先级：source_image_id（云镜像增量盘）> create_gb（新建空卷）> source（直引）。
+		// 云镜像在前：磁盘项同时给 source_image_id 与 create_gb 时，create_gb 只作为子卷容量，
+		// 决不能退化成新建空盘——云镜像方式的核心语义是「以镜像为模板的增量盘」。
 		switch {
-		case d.CreateGB > 0:
-			volName := ""
-			if d.VolName != "" {
-				// 自定义卷名：合法性校验（与 VM 名同规则），冲突靠 libvirt 建卷报错兜底
-				if !validateVMName(d.VolName) {
-					cleanup()
-					return fmt.Errorf("磁盘卷名 %s 不合法（只允许字母、数字、下划线和连字符）", d.VolName)
-				}
-				volName = d.VolName
+		case d.SourceImageID > 0:
+			var img model.Image
+			if err := ctx.DB.First(&img, d.SourceImageID).Error; err != nil {
+				cleanup()
+				return fmt.Errorf("云镜像不存在: %w", err)
+			}
+			// 云镜像走真增量盘（linked clone，对应 qemu-img create -f qcow2 -b <镜像>）：建
+			// <vm名>[-dN] 子卷、backing file 指向镜像文件，本机只写差异。
+			// 原先直接引用共享镜像文件，实害（实测）：同基镜像的其他 VM 运行时本机开机
+			// 报 qemu 写锁冲突 500；快照会对基镜像本体 qemu-img snapshot 污染所有兄弟机。
+			srcPool, srcVol, lerr := ctx.Virt.LookupVolByPath(img.Path)
+			if lerr != nil {
+				// 镜像不在任何 libvirt 池内（历史登记的池外文件）无法做增量克隆，
+				// 回退旧行为：直接引用镜像文件（与镜像共用，镜像删除前须先删本机）。
+				log.Printf("[tasks] 云镜像不在任何存储池内，回退为直接引用（不可增量） vm=%s image=%s err=%v", name, img.Path, lerr)
+				source = img.Path
 			} else {
-				volName = name
-				if i > 0 {
-					volName = fmt.Sprintf("%s-d%d", name, i+1)
+				// 实际容量：create_gb 指定则用之；未指定沿用源卷虚拟容量；都取不到回退 20（与默认盘一致）。
+				// 指定容量小于源卷时按源卷钳制——qcow2 虚拟容量小于 backing 会截断镜像已装内容。
+				srcGB, gerr := ctx.Virt.VolumeCapacityGB(srcPool, srcVol)
+				if gerr != nil {
+					// 取不到只影响容量登记与展示，不阻断建机
+					log.Printf("[tasks] 获取云镜像卷容量失败 vm=%s pool=%s vol=%s err=%v", name, srcPool, srcVol, gerr)
+				}
+				capGB := d.CreateGB
+				if capGB <= 0 || (srcGB > 0 && capGB < srcGB) {
+					capGB = srcGB
+				}
+				if capGB <= 0 {
+					capGB = 20
+				}
+				volName := diskVolumeName(name, i, d.VolName)
+				newPath, cerr := ctx.Virt.CloneVolumeFromVolSized(srcPool, srcVol, volName, capGB)
+				if cerr != nil {
+					cleanup()
+					return fmt.Errorf("创建增量系统盘失败: %w", cerr)
+				}
+				// 失败清理同建卷口径：cleanup 按「池:卷名.qcow2」回滚，define 失败时增量卷可回收
+				createdVols = append(createdVols, srcPool+":"+volName+".qcow2")
+				source = newPath
+				totalDiskGB += capGB
+				if firstDiskPool == "" {
+					firstDiskPool = srcPool
 				}
 			}
+		case d.CreateGB > 0:
+			volName := diskVolumeName(name, i, d.VolName)
 			if _, err := ctx.Virt.CreateVolume(storagePool, volName, d.CreateGB); err != nil {
 				cleanup()
 				return fmt.Errorf("创建磁盘卷失败: %w", err)
@@ -178,16 +223,11 @@ func execCreateVM(ctx *ExecContext) error {
 			}
 			source = filepath.Join(poolPath, volName+".qcow2")
 			totalDiskGB += d.CreateGB
+			if firstDiskPool == "" {
+				firstDiskPool = storagePool
+			}
 		case d.Source != "":
 			source = d.Source
-		case d.SourceImageID > 0:
-			var img model.Image
-			if err := ctx.DB.First(&img, d.SourceImageID).Error; err != nil {
-				cleanup()
-				return fmt.Errorf("云镜像不存在: %w", err)
-			}
-			// 云镜像直接引用，不拷贝：VM 与镜像共用文件，镜像删除前需先删引用 VM。
-			source = img.Path
 		default:
 			cleanup()
 			return errors.New("磁盘参数不完整（create_gb / source / source_image_id 三选一）")
@@ -297,11 +337,16 @@ func execCreateVM(ctx *ExecContext) error {
 		return fmt.Errorf("虚拟机配置不合法: %w", err)
 	}
 
+	// DB 记首块盘的实际落地池（无盘落池时回退请求池）
+	dbPool := storagePool
+	if firstDiskPool != "" {
+		dbPool = firstDiskPool
+	}
 	vm := model.VM{
 		UUID:        uuid,
 		Name:        name,
 		HostID:      host.ID,
-		StoragePool: storagePool,
+		StoragePool: dbPool,
 		VCPU:        vcpu,
 		MemoryMB:    memoryMB,
 		DiskGB:      totalDiskGB,
@@ -330,12 +375,25 @@ func execCreateVM(ctx *ExecContext) error {
 		}
 	}
 
-	setTaskResultVM(ctx, map[string]interface{}{"vm_id": vm.ID}, vm.ID, vm.Name)
+	setTaskResultVM(ctx, map[string]interface{}{"vm_id": vm.ID, "disk_gb": totalDiskGB}, vm.ID, vm.Name)
 	return nil
 }
 
-// createDiskReq 创建 VM 时的磁盘描述：三选一
-// (1) create_gb 新建卷；(2) source 直接引用现有卷/镜像路径；(3) source_image_id 引用云镜像（DB images.id）。
+// diskVolumeName 第 i 块磁盘的卷名（不含扩展名）：自定义名优先；否则首盘 <vm名>、后续 <vm名>-dN（N 从 2 起）。
+// 新建卷与云镜像增量盘共用同一命名，删除兜底（execDeleteVM）与回收站恢复重建均按该约定找卷。
+func diskVolumeName(name string, i int, custom string) string {
+	if custom != "" {
+		return custom
+	}
+	if i > 0 {
+		return fmt.Sprintf("%s-d%d", name, i+1)
+	}
+	return name
+}
+
+// createDiskReq 创建 VM 时的磁盘描述。
+// 分支优先级：source_image_id（云镜像增量盘，create_gb 可选作子卷容量）> create_gb（新建卷）
+// > source（直接引用现有卷/镜像路径）。
 type createDiskReq struct {
 	CreateGB      int
 	Source        string

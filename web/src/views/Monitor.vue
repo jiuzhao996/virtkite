@@ -257,6 +257,55 @@
         目标由监控服务发现自动生成（同 IP 去重）；虚拟机内需安装并运行 node_exporter（端口 9100）才会产生监控数据。
       </p>
     </el-card>
+
+    <!-- 日志查询（Loki）：后端 /api/monitor/loki/query 代理 Loki query_range 并原样透传响应
+         （信封 data = { status, data: { resultType, result: [{ stream, values: [[纳秒时间戳, 行]] }] } }）。
+         日志栈是可选增量：失败置卡内错误态（alert + 重试），不弹全局 toast，也不影响页面其它区块。 -->
+    <el-card shadow="never" class="alert-card">
+      <template #header>
+        <div class="alert-head">
+          <div class="loki-head">
+            <span><el-icon class="head-icon"><Memo /></el-icon>日志查询（Loki）</span>
+            <span class="loki-head-note">宿主机日志经 Promtail 采集（job=varlogs）；容器日志接入列后续</span>
+          </div>
+          <div class="alert-head-actions">
+            <el-input
+              v-model="lokiQuery"
+              placeholder='LogQL，如 {job="varlogs"}'
+              style="width: 260px"
+              clearable
+              @keyup.enter="queryLoki"
+            />
+            <el-select v-model="lokiLimit" style="width: 96px">
+              <el-option v-for="n in [50, 100, 200]" :key="n" :label="n + ' 条'" :value="n" />
+            </el-select>
+            <el-button type="primary" :icon="Search" :loading="lokiLoading" @click="queryLoki">查询</el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-alert v-if="lokiError" type="warning" :closable="false" show-icon title="Loki 未连接或查询失败">
+        <template #default>
+          <div class="loki-retry">
+            <span>典型原因：日志栈（Loki / Promtail）未启动，或 LogQL 语法有误。</span>
+            <el-button size="small" type="primary" plain :icon="Refresh" :loading="lokiLoading" @click="queryLoki">重试</el-button>
+          </div>
+        </template>
+      </el-alert>
+
+      <el-empty v-else-if="!lokiQueried" description="输入 LogQL 后点击「查询」拉取日志" :image-size="60" />
+      <el-empty v-else-if="!lokiRows.length" description="无匹配日志" :image-size="60" />
+
+      <template v-else>
+        <p class="sd-note loki-meta">共 {{ lokiRows.length }} 条 · 最近 1 小时 · 新日志在前</p>
+        <div class="loki-logs">
+          <div v-for="(r, i) in lokiRows" :key="i" class="loki-line">
+            <span class="mono loki-ts">{{ r.ts }}</span>
+            <span class="loki-text mono">{{ r.line }}</span>
+          </div>
+        </div>
+      </template>
+    </el-card>
   </div>
 </template>
 
@@ -264,9 +313,9 @@
 // embedded：被仪表盘 tab 嵌入时隐藏独立页头
 defineProps({ embedded: { type: Boolean, default: false } })
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { Aim, AlarmClock, InfoFilled, Refresh, Loading, WarningFilled } from '@element-plus/icons-vue'
-import { api } from '../api'
-import { fmtDateTime } from '../utils/format'
+import { Aim, AlarmClock, InfoFilled, Memo, Refresh, Search, Loading, WarningFilled } from '@element-plus/icons-vue'
+import http, { api } from '../api'
+import { fmtDateTime, fmtDateTimeLocale } from '../utils/format'
 import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
 
 const alerts = ref([])
@@ -433,6 +482,44 @@ async function loadFileSD() {
   }
 }
 
+// ── 日志查询（Loki）：走 raw http（后端原样透传 Loki query_range 响应），不在 api/index.js 加封装
+// —— Loki 侧字段演进零维护，前端只认 resultType=streams 一种形态。日志栈未部署属常态（502），
+// 失败置卡内错误态，不弹全局 toast（axios 拦截器只处理 401，无全局报错）。
+const lokiQuery = ref('{job="varlogs"}')
+const lokiLimit = ref(100)
+const lokiLoading = ref(false)
+const lokiError = ref(false)
+const lokiQueried = ref(false)
+const lokiRows = ref([])
+
+async function queryLoki() {
+  if (lokiLoading.value) return
+  const q = (lokiQuery.value || '').trim()
+  if (!q) return // 清空后点查询：静默返回，不打扰
+  lokiLoading.value = true
+  try {
+    const res = await http.get('/monitor/loki/query', { params: { query: q, limit: lokiLimit.value } })
+    // 信封 {code,message,data} 的 data 即 Loki 原始 JSON；日志流在 data.result[].values（[纳秒时间戳串, 行]）
+    const streams = (res.data && res.data.data && Array.isArray(res.data.data.result)) ? res.data.data.result : []
+    const rows = []
+    for (const s of streams) {
+      for (const v of s.values || []) {
+        const ms = Number(v[0]) / 1e6 // 纳秒 → 毫秒
+        rows.push({ tsMs: ms, ts: fmtDateTimeLocale(ms), line: String(v[1] || '') })
+      }
+    }
+    rows.sort((a, b) => b.tsMs - a.tsMs) // 新日志在前，便于看最新动态
+    lokiRows.value = rows
+    lokiError.value = false
+    lokiQueried.value = true
+  } catch (e) {
+    lokiError.value = true
+    lokiRows.value = []
+  } finally {
+    lokiLoading.value = false
+  }
+}
+
 let timer = null
 onMounted(() => {
   loadAlerts()
@@ -474,6 +561,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   font-weight: normal;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .history-pager {
   display: flex;
@@ -489,6 +578,45 @@ onUnmounted(() => {
   font-size: 0.82rem;
   color: var(--el-text-color-secondary);
   line-height: 1.6;
+}
+/* 日志查询卡：头部双行（标题 + 采集说明小字）；日志行 mono 等宽、不换行，
+   超宽靠容器横向滚动，max-height 限高防长结果撑爆页面 */
+.loki-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.loki-head-note {
+  font-weight: normal;
+  font-size: 0.8rem;
+  color: var(--el-text-color-secondary);
+}
+.loki-retry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.loki-meta {
+  margin: 0 0 8px;
+}
+.loki-logs {
+  max-height: 360px;
+  overflow: auto;
+}
+.loki-line {
+  display: flex;
+  gap: 12px;
+  padding: 2px 0;
+  font-size: 0.78rem;
+}
+.loki-ts {
+  flex-shrink: 0;
+  color: var(--el-text-color-secondary);
+}
+.loki-text {
+  white-space: pre;
 }
 .grafana-wrap {
   position: relative;

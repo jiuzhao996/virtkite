@@ -60,7 +60,7 @@ func ValidateContainerOpts(opts ContainerOpts) error {
 		if strings.TrimSpace(v) == "" {
 			continue
 		}
-		if err := validateVolumeMapping(v); err != nil {
+		if err := validateVolumeMapping(normalizeVolumeMapping(v)); err != nil {
 			return err
 		}
 	}
@@ -104,8 +104,20 @@ func validatePortMapping(p string) error {
 	return nil
 }
 
+// normalizeVolumeMapping 卷挂载各段去首尾空白（如 " /data:/x" → "/data:/x"）。
+// 校验与 BuildRunArgs 共用同一归一化：只在校验侧 trim 的话，校验能过而 docker 收到
+// 带空白参数仍失败、handler 变 500。纯函数，可单测。
+func normalizeVolumeMapping(v string) string {
+	parts := strings.Split(v, ":")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	return strings.Join(parts, ":")
+}
+
 // validateVolumeMapping 单条卷挂载校验：src:dst[:ro|rw]。dst 必须是容器内绝对路径；
 // src 为宿主机绝对路径或命名卷名，此处只做非空约束（bind 与命名卷无法静态区分）。
+// 入参应先经 normalizeVolumeMapping 归一化（调用方 ValidateContainerOpts 已做）。
 func validateVolumeMapping(v string) error {
 	parts := strings.Split(v, ":")
 	if len(parts) != 2 && len(parts) != 3 {
@@ -152,7 +164,9 @@ func BuildRunArgs(opts ContainerOpts) []string {
 	}
 	for _, v := range opts.Volumes {
 		if strings.TrimSpace(v) != "" {
-			args = append(args, "-v", v)
+			// 与校验同一归一化：各段去首尾空白后再透传给 docker，
+			// 防 " /data:/x" 这类输入校验能过、docker 却因参数带空白报错
+			args = append(args, "-v", normalizeVolumeMapping(v))
 		}
 	}
 	for _, e := range opts.Envs {

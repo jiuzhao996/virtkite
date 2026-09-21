@@ -83,6 +83,13 @@ func (v *Virt) DestroyDomain(name string) error {
 	return nil
 }
 
+// IsDomainNotFound 判断错误链中是否为 libvirt 的 VIR_ERR_NO_DOMAIN（对应 virsh 报 "domain not found"）。
+// virt 层错误按规范用 %w 包装，IsNotFound 会沿错误链向下解包找到 libvirt.Error 原始码。
+// 供任务层做「域已不存在」容错（如回收站恢复过的 VM 二次删除时 undefine 必报不存在）。
+func IsDomainNotFound(err error) bool {
+	return libvirt.IsNotFound(err)
+}
+
 // UndefineDomain 删除虚拟机定义（对应 virsh undefine，不删除存储卷）。
 // 若域正在运行，先强制销毁（virsh destroy）再删除定义（virsh undefine）。
 // 使用 DomainUndefineFlags 携带 SNAPSHOTS_METADATA + MANAGED_SAVE，兼容有快照/托管保存的域。

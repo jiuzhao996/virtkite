@@ -90,10 +90,16 @@ func (h *CronsHandler) List(c *gin.Context) {
 // （返回 {"next": ["2006-01-02 15:04:05", ...]}）。表达式非法 400 中文提示
 // （ParseCron 错误为固定文案可直接回显）；366 天内无可执行时刻同样 400
 // （与 validateCronTask 的创建校验同口径——建了也永远不跑的表达式没有预览价值）。
+// 长度上限与 validateCronTask 的 50 字符对齐，超长在解析前拒绝（防把无意义长串
+// 灌进解析器）。
 func (h *CronsHandler) Preview(c *gin.Context) {
 	expr := strings.TrimSpace(c.Query("expr"))
 	if expr == "" {
 		Fail(c, http.StatusBadRequest, "缺少 expr 参数（5 字段 cron 表达式：分 时 日 月 周）")
+		return
+	}
+	if utf8.RuneCountInString(expr) > 50 {
+		Fail(c, http.StatusBadRequest, "cron 表达式不能超过 50 个字符")
 		return
 	}
 	runs, err := cron.NextRuns(expr, cronPreviewCount)

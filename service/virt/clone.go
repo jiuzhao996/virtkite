@@ -25,6 +25,15 @@ import (
 // 代价：子卷存续期间父卷不可删除/移动/改写。删除虚拟机时由
 // ListBackingRefs 守卫拦住父盘（见 service/tasks 的 execDeleteVM）。
 func (v *Virt) CloneVolumeFromVol(poolName, srcVolName, newVolName string) (string, error) {
+	return v.CloneVolumeFromVolSized(poolName, srcVolName, newVolName, 0)
+}
+
+// CloneVolumeFromVolSized 同 CloneVolumeFromVol，但可指定子卷虚拟容量（GB）。
+// capacityGB <= 0 时沿用父卷容量（与 CloneVolumeFromVol 一致）。
+// qcow2 子卷虚拟容量可以大于父盘——backing 只提供基础数据，超出父盘的部分写入子卷即分配；
+// 指定容量小于父盘则由调用方自行钳制（容量小于镜像已装内容会截断 guest 视图），
+// 见 service/tasks/vm_create.go 云镜像建机分支。
+func (v *Virt) CloneVolumeFromVolSized(poolName, srcVolName, newVolName string, capacityGB int) (string, error) {
 	l, err := v.getConn()
 	if err != nil {
 		return "", err
@@ -38,10 +47,13 @@ func (v *Virt) CloneVolumeFromVol(poolName, srcVolName, newVolName string) (stri
 	if err != nil {
 		return "", fmt.Errorf("父卷 %s 不存在: %w", srcVolName, err)
 	}
-	// 取父卷虚拟容量（字节），子卷保持同容量
+	// 取父卷虚拟容量（字节）：未显式指定容量时子卷保持同容量
 	_, capacity, _, err := l.StorageVolGetInfo(srcVol)
 	if err != nil {
 		return "", fmt.Errorf("获取父卷 %s 容量失败: %w", srcVolName, err)
+	}
+	if capacityGB > 0 {
+		capacity = uint64(capacityGB) * 1024 * 1024 * 1024
 	}
 	// backingStore 需要父盘绝对路径
 	srcPath, err := l.StorageVolGetPath(srcVol)
@@ -129,6 +141,33 @@ func (v *Virt) lookupVolPool(volPath string) (poolName, volName string, err erro
 		return "", "", fmt.Errorf("池 %s 中未找到卷 %s（需先在存储管理中刷新）", p.Name, base)
 	}
 	return "", "", fmt.Errorf("未找到卷 %s 所属存储池", volPath)
+}
+
+// VolumeCapacityGB 返回存储卷的虚拟容量（GB，向上取整，对应 virsh vol-info 的 Capacity）。
+// 供建机在「云镜像未指定容量」时把源卷实际容量写进 DB（原先记固定默认值与实际不符）。
+func (v *Virt) VolumeCapacityGB(poolName, volName string) (int, error) {
+	l, err := v.getConn()
+	if err != nil {
+		return 0, err
+	}
+	pool, err := l.StoragePoolLookupByName(poolName)
+	if err != nil {
+		return 0, fmt.Errorf("存储池 %s 不存在: %w", poolName, err)
+	}
+	vol, err := l.StorageVolLookupByName(pool, volName)
+	if err != nil {
+		return 0, fmt.Errorf("卷 %s 不存在: %w", volName, err)
+	}
+	_, capacity, _, err := l.StorageVolGetInfo(vol)
+	if err != nil || capacity == 0 {
+		return 0, fmt.Errorf("获取卷 %s 容量失败: %w", volName, err)
+	}
+	const giB = 1024 * 1024 * 1024
+	gb := capacity / giB
+	if capacity%giB != 0 {
+		gb++
+	}
+	return int(gb), nil
 }
 
 // RandomUUID 生成一个符合 RFC 4122 的 v4 UUID 字符串。
