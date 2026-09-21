@@ -501,7 +501,9 @@ import { errMsg, isCancel, fmtDateTime, fmtDateTimeLocale, fmtSizeBytes } from '
 // 首次进入某 tab 才拉取对应数据；右上刷新按钮强制重拉当前 tab。
 const tab = ref('containers')
 const loading = ref(false)
-const loadedTabs = ref(['containers'])
+// 懒加载标记必须从空数组起步：预置 'containers' 会让 onMounted 的 loadTab('containers')
+// 被下方守卫直接 return，容器列表永远不自动加载（v3.2 引入，10s 轮询掩盖至今）。
+const loadedTabs = ref([])
 // HTTP 503（Docker 守护进程不可用）时置为后端 message，页面顶部 alert 展示；成功加载后清空
 const backendError = ref('')
 
