@@ -55,8 +55,8 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] 任务中心（任务详情抽屉解析 `kept_volumes`）/ 审计中心（操作日志 + 会话双 tab）/ 系统设置（可写运行参数，保存即生效；只读快照移至仪表盘「平台信息」卡）/ 个人中心 / 用户管理
 - [x] **Prometheus 监控**（内建 `/metrics`：VM/宿主机/存储池/任务指标 + 9 告警规则 + Grafana 双看板（宿主机 5 面板 / 虚拟机 6 面板）；监控中心含实时告警、webhook 告警历史、file_sd 抓取目标预览、Grafana 探活兜底）
 - [x] 存量 VM 导入 / 纳管
-- [x] **监控闭环**（Prometheus file_sd 服务发现自动下发 running 且已知 IP 的 VM 目标；Alertmanager webhook 告警网关按 fingerprint 去重入库 + 分页历史；`vms.ip` DHCP 租约 + QGA 双通道回填）
-- [x] **容器管理（v3：KVM 域 + Docker 容器「双运行时」统一面板）**（容器 / 镜像 / 网络 / 卷 / 编排（compose 项目级启停）五 tab + 容器终端（WebSocket ↔ Docker Engine API exec TTY，支持运行中调窗）+ 日志查看（跟随/下载/tail 行数）+ 资源占用实时统计 + 批量启停删与悬空镜像/容器清理；viewer 403，容器终端与 SSH 终端共用 `console.Conn` 写锁 + recover 纪律与会话强断）
+- [x] **监控闭环**（Prometheus file_sd 服务发现自动下发 running 且已知 IP 的 VM 目标；Alertmanager webhook 告警网关按 fingerprint 去重入库 + 分页历史；**告警出站通知**（v3.4：设置页配置飞书/钉钉机器人地址，仅新增 firing 或 resolved→firing 推送、同 fingerprint 重复去重，best-effort 不影响 webhook 响应）；`vms.ip` DHCP 租约 + QGA 双通道回填）
+- [x] **容器管理（v3：KVM 域 + Docker 容器「双运行时」统一面板）**（容器 / 镜像 / 网络 / 卷 / 编排（compose 项目级启停）五 tab + **容器创建**（v3.4：名称/镜像/端口映射/挂载卷/环境变量/重启策略/启动命令 → `docker run` 参数映射，纯函数校验，本地缺镜像自动拉取）+ 容器终端（WebSocket ↔ Docker Engine API exec TTY，支持运行中调窗）+ 日志查看（跟随/下载/tail 行数）+ 资源占用实时统计 + 批量启停删与悬空镜像/容器清理；viewer 403，容器终端与 SSH 终端共用 `console.Conn` 写锁 + recover 纪律与会话强断）
 - [x] **应用商店（v3）**（参考 1Panel（GPLv3）声明式 compose 应用包设计模式：应用级+版本级 `data.yml`（动态表单）+ `docker-compose.yml` `${VAR}` 占位 → 写 `.env` → `docker compose up -d`，变量替换交给 compose 原生插值；内置 20 个应用（nginx / mysql / redis / minio / gitea / jenkins / n8n 等），安装走异步任务、安装前端口占用预检、卸载保留数据目录；Docker 不可用时页面级禁用安装）
 - [x] **VM 应用（v3）**（不经容器往虚拟机里装软件：SSH 在客户机内幂等执行安装脚本，10 个内置应用（nginx/mysql/redis/php/nodejs/docker-engine 等），已装检测自动跳过）
 - [x] **AI 运维助手（v3）**（OpenAI 兼容 `/chat/completions` 代理：API Key 只存服务端永不下发前端；`with_context` 注入平台环境摘要（VM/容器/告警统计），能答「我平台几台虚拟机在跑」；SSE 流式逐段转发；助手只读问答、不具备任何写操作能力；viewer 403）
@@ -73,7 +73,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **系统公告 + 安全入口（v3）**（公告板登录页与仪表盘公开展示（admin 经设置页编辑）；登录接口可设安全入口暗号，无暗号请求一律 404 伪装；建用户/改密密码复杂度校验）
 - [x] **安全加固**（路径参数主键统一解析防 SQL 注入 / libvirt XML 全部走 `encoding/xml` / JWT 锁定 HS256 / SSH 目标白名单 / release 密钥强校验）
 - [x] E2E 回归脚本（`scripts/smoke.sh`，23 项断言）
-- [x] 单元测试（197 个顶层测试函数 / 1031 个子用例 / 13 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
+- [x] 单元测试（209 个顶层测试函数 / 约 1100 个子用例 / 14 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
 - [x] 前端工程化（路由懒加载 + manualChunks 分包：首屏下载量 −50%；`utils/format.js` 收敛 10 余处重复；图标全部换成 `@element-plus/icons-vue`）
 
 
@@ -184,7 +184,7 @@ docker compose up -d prometheus grafana alertmanager
 
 ```bash
 ./scripts/smoke.sh          # E2E 23 项：只读接口 + metrics + 创建/删除 task 全链路 + 硬件管理
-go test -race ./...         # 单元测试 197 个顶层函数 / 1031 个子用例 / 13 个测试包（必须带 -race）
+go test -race ./...         # 单元测试 209 个顶层函数 / 约 1100 个子用例 / 14 个测试包（必须带 -race）
 go build ./... && go vet ./... && gofmt -l .
 ```
 

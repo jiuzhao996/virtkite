@@ -269,3 +269,12 @@
 - **⚠️ 浏览器冒烟必须用 hash 路由**（createWebHashHistory）：playwright 脚本 URL 写 `/#/vms` 而非 `/vms`，否则全部重定向渲染成仪表盘且「白屏检测」全数失效——本轮真实踩过（第一轮冒烟 22 路由全 OK 是假阳性）。
 - 演示环境：监控栈容器（mysql/prometheus/grafana/alertmanager/loki/promtail）曾整体 Exited（宿主机疑似重启过），已 docker start 恢复；接手环境先 `docker ps` 检查再排查「后端挂了」。
 - **P0 论文对齐**：README 功能清单/技术栈/测试数与 docs 02/03/04/05/06/09 全部覆盖 v3 现实；测试数口径 **199 顶层函数/约 1048 子用例/13 个测试包**（TestMain 3 个不计）；两处以实现为准的口径：dockerx 封装的是 docker CLI（走 Engine API 的只有容器终端）、appstore 刻意不用 go:embed（磁盘目录可直接增改应用包）；演示脚本 docs/09 重排为 13 步动线 + 7 场景故障预案。
+
+### v3.4 增补批次（2026-09-21，答辩前收尾四件套 + O 批除名）
+
+- **容器创建（R8 收尾，勿回退）**：`POST /api/docker/containers`，`service/dockerx/container_create.go` 的 `BuildRunArgs`/`ValidateContainerOpts`/`extractContainerID` 纯函数。**⚠️坑：docker run -d 本地缺镜像会先自动拉取，`runTimeout` 的 CombinedOutput 会把 stderr 拉取噪音混在 64 位容器 ID 前——ID 提取必须从最后一行向前找 hex 形态行**（`extractContainerID`，E2E 实测踩中）。前端 DockerList 创建抽屉（动态行端口/挂载/env，镜像下拉复用镜像 tab 数据）。
+- **告警出站通知（Q 批收尾）**：`service/notify.SendText`（飞书/钉钉 text 格式）叶子包，`service/cron` notifyFailure 重构复用；settings 键 `alert_notify_url` **进 `All()` 快照**（曾按 ai_api_key 口径「不下发」——错：GET settings 本就 admin-only，不回显=设置页刷新后永远空，已修正并写注释）；`alertTransitionedToFiring` 判定推送时机（新建 firing / resolved→firing 才推，同 fingerprint 重复去重，resolved 不推）；goroutine+recover best-effort 绝不影响 webhook 200。
+- **ssh-host-keys 管理 UI**：Settings 页「SSH 主机密钥（TOFU）」卡（消费既有 GET|DELETE /api/ssh-host-keys，无新后端）。
+- **ImportVMs errors 前端消费**：导入弹窗失败列表逐行展示，部分失败保持弹窗+自动重扫——挂了三个批次的遗留清零。
+- **⚠️ O 批（VM 标签/分组）已从 ROADMAP-v3.1 完成清单除名（勿再加回完成态）**：`model/vm.go` 无 tags/group 字段、全仓库无落地，此前状态行误标完成；拓扑图按状态着色不依赖分组。其他文档排查无虚假声称。VM 分组/标签列论文「展望」。
+- 测试实数口径更新：**209 顶层函数/约 1100 子用例/14 个测试包**（v3.4 后 `go test -v` 实跑 RUN 计数；README 与 docs/06 已统一——此前两文档 197/1031 与 199/1048 不一致，勿回退旧数）。

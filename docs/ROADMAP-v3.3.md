@@ -121,3 +121,17 @@
 2. `go vet ./...` + `go test -race ./...` 全绿；后端 `go build -o vmops .` 重启（SERVER_MODE=debug，source .env）
 3. 浏览器冒烟：登录→仪表盘→建机向导→控制台（CSS/星星/剪贴板）→容器八 tab（勾选保留/日志跟随）→AI（markdown/停止）→审计导出
 4. 三笔本地提交：`feat(v3.3): P1 演示防翻车——全站 UI 审计修复（U1-U3+1Panel 对标增补）`、`feat(v3.3): P2 安全收口 + P3 工程质量`、`docs(v3.3): P0 论文对齐 + v3.3 规划文档`；AGENTS.md 补批次记录
+
+## §11 v3.4 增补批次（2026-09-21，答辩前收尾四件套，全部已实测）
+
+> 动机：v3.3 后复盘「还能加什么」得出的四个高性价比缺口——两个是自家规划的收尾（R8/Q 批），两个是小闭环补全。半天落地。
+
+| # | 功能 | 实现 | 实测结论 |
+|---|---|---|---|
+| 1 | **容器创建（v3.2 R8 收尾）** | `POST /api/docker/containers`：`BuildRunArgs`/`ValidateContainerOpts` 纯函数（端口/卷/env/重启策略/镜像白名单校验）→ `docker run -d`；前端创建抽屉（动态行：端口/挂载/env，镜像下拉带本地镜像列表） | busybox/alpine 创建成功且运行；坏名字 400 中文；自动拉取场景 `extractContainerID` 正确取短 ID（修复了 CombinedOutput 噪音混入 bug） |
+| 2 | **告警出站通知（v3 Q 批收尾）** | `service/notify.SendText`（飞书/钉钉 text 格式）+ settings 键 `alert_notify_url` + `alertTransitionedToFiring` 判定（仅新建 firing/resolved→firing 推送，同 fingerprint 去重）+ goroutine recover best-effort；cron 的 notifyFailure 重构复用 | 本地 mock 接收器收到正确 payload；重复推送正确去重（1 次）；设置页回显正常（`All()` 快照含该键——修正了最初「不下发」导致的回显缺口） |
+| 3 | **SSH 主机密钥管理 UI** | Settings 页「SSH 主机密钥（TOFU）」卡（列表/删除，消费既有 GET\|DELETE /api/ssh-host-keys） | 浏览器实测卡片渲染、空态正常 |
+| 4 | **导入存量 VM 失败原因展示** | VmList 导入弹窗消费后端 `errors` 数组（失败域名+原因逐行），部分失败保持弹窗打开+自动重扫 | 挂了三个批次的遗留清零 |
+
+- **同批修正：O 批（VM 标签/分组）从 ROADMAP-v3.1 完成清单除名**——`model/vm.go` 无 tags/group 字段、全仓库无落地，此前状态行误将 O 列入完成清单（答辩被抓的「文档说有、演示没有」重灾区）；拓扑图实际按状态着色，不依赖分组字段。其他文档经排查无虚假声称。
+- 测试实数更新：**209 顶层函数 / 约 1100 子用例 / 14 个测试包**（`go test -race` 全绿）。
