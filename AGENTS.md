@@ -51,7 +51,22 @@
     - 守卫一：池外文件（不在该池路径下）；守卫二：`images` 表登记的共享基镜像（「基于云镜像创建」走 `source_image_id` 是**直接引用不拷贝**）；守卫三：仍被子卷当 backing file 的增量克隆父盘（数据来自 `virt.ListBackingRefs(pool)`）。
     - 命中任一守卫即跳过并把中文原因写进日志 `[tasks] 保留卷（未删）` 与任务结果的 `kept_volumes` 数组。
     - 已知取舍：「先删父机、再删子机」顺序下父盘会残留为孤儿文件。**这是刻意选择**——宁可留一个垃圾文件，也不能损坏正在用的虚拟机磁盘。清理孤儿卷属后续工作，不要为了「删干净」把守卫拆掉。
-
+13. **DB 写失败禁止静默吞掉**：凡是把状态/配置落库的地方，错误必须留痕，**禁止 `_ = db.Update(...)`、禁止连返回值都不接**（后者比 `_ =` 更隐蔽）。统一走 `service/dbx`：
+    - `dbx.Persist(db, scene, fn)`：失败重试 3 次（退避 100/200ms）+ 每次留痕，三次全败打 `[persist] !!! 写入最终失败` 并返回 `%w` 错误，由调用方决定如何响应。
+    - `dbx.PersistBestEffort(db, scene, fn)`：无返回值版，给「写失败无处可补」的点位（读接口的状态同步、审计时间等），**从 API 上杜绝 `_ =` 这种写法**。
+    - 只接受**幂等等值写入**（`Update`/`Updates` 设固定值）。INSERT、累加、CAS、改外部系统不要传进去，helper 不保证幂等。
+    - 语义上必须落库才成立的写入（如任务终态、控制台会话关闭）**不要**用 BestEffort，要显式暴露失败。
+14. **手写进 `Update`/`Updates`/`Pluck` 的列名必须真实存在**：GORM 字段名与列名不总是一致——`VCPU` 字段的列名是 `v_cpu`。写错会报 1054，而调用处若只 `LogError` 就变成「libvirt 改了、DB 没改」的持久漂移，没人看得见（已在 `SetVcpu`/`vm_xml.go` 各发作过一次）。护栏测试 `model/columns_guard_test.go` 会扫全仓库并在写错时报错（已实证零误报），新增模型请同步该文件里的 `guardModels`。
+15. **SSH 拨号必须经 `vmssh.NewOptions` + `vmssh.Dial`**，禁止自行组装 `ssh.ClientConfig` 或 `ssh.Dial`。
+    - `vmssh.Options` 字段全部不可导出，**包外无法写 `vmssh.Options{Host: ...}` 字面量**；唯一构造入口 `NewOptions(recordedIP, host, port, user, password)` 内部强制过 `ValidateTarget` 白名单。
+    - 这不是啰嗦：白名单校验原先分散在各个 handler「记得就调一次」，新增应用安装模块时漏了一行，平台直接变成免费跳板机（内网横扫/爆破/投递脚本，源 IP 全算在服务器上），而代码读起来完全正常、测试全绿。下沉进构造函数后，「绕过白名单外连任意地址」从「靠人记得」变成「编译期做不到」。
+    - `NewOptions` 里**先补默认端口 22 再校验**，否则 `port=0` 会被 `ValidateTarget` 以「端口不合法」拒掉。
+    - 明文口令不得落库：任务 payload 只存 `credential_id` 或边界加密后的密文；历史明文用 `scripts/purge-task-secrets`（默认 dry-run）清洗。
+16. **虚拟机生命周期写操作必须先 `guardVMIdle` 再 `lockVM`**（启停/重启/暂停/恢复/删除/克隆/改规格/重 define）。
+    - `h.guardVMIdle(c, vm.ID)`：查库确认该 VM 无 pending/running 任务，覆盖「HTTP 已返回但后台任务仍在跑」的时间窗；查询失败一律 fail-closed。
+    - `h.lockVM(c, vm.ID)`：`service/vmlock` 的进程内非阻塞互斥，覆盖「同一瞬间并发进来的两个请求」（双开、误触、脚本重放）；冲突返回 409。必须 `defer release()`。
+    - 两者**互补、不互相替代**：锁只在请求处理期间持有，后台任务窗口由 guardVMIdle 兜。
+17. **禁止硬编码口令/密钥**：代码里不得出现真实口令字面量（含默认值）。配置一律从环境变量读，缺失即 fail-closed（如 compose 的 `${VAR:?}` 必填占位）。凭据加密主密钥用独立的 `CREDENTIAL_MASTER_KEY`，**不要复用 `JWT_SECRET_KEY`**——否则轮换 JWT 会让历史 VM 凭据集体解密失败，且报错伪装成「数据损坏」。种子管理员口令随机生成并一次性打印，不再硬编码。
 ## 品牌规范（鸢航 VirtKite，勿当装饰图误删）
 
 - **正式名称**：鸢航 VirtKite（项目代号 vmops 仅存在于代码/目录/包名，UI 与文档一律用品牌名）。
@@ -293,3 +308,20 @@
 - **方法论沉淀**：静态审计找规范问题、动态 E2E 找功能问题，两者互补——本项目两轮静态审计（130 条 UI + 新代码审查）都没发现云镜像直引这类「注释把它当设计记录」的功能 bug，真机过链路一跑就现形。下轮找问题优先动态路径。
 - ⚠️ 环境坑：`go build ... && kill ... ; nohup ./vmops ... & echo $! > vmops.pid` 同行书写时 `$!` 可能记下后台子 shell 的 PID，重启静默失败旧进程继续服务（B3a 实测踩中）——重启后务必 `ps -p $(cat vmops.pid)` 核对。
 - **⚠️ DockerList 懒加载标记预置 bug（v3.2 引入，2026-09-21 修复，勿回退）**：`loadedTabs` 曾预置 `['containers']`，onMounted 的 `loadTab('containers')` 被「已加载」守卫直接 return——容器列表**从不自动加载**，全靠 10s 轮询静默补数据掩盖（演示时头 10 秒必是空表）。现初始为 `[]`。排查特征备查：「curl API 正常但 UI 显示 0」+「网络面板零 /api/docker 请求」= 加载被前端守卫吞掉，不是后端问题。同批：docs/09 演示脚本纳入容器创建/告警推送两个 v3.4 演示位。
+
+### 胰腺癌级深度审计批次（2026-09-23，全量收口：28 文件 +1064/-212）
+
+起因：对成型代码做一次「胰腺癌级」只读审计——专门找**表面能跑、深藏架构里、早期无症状、发作即致命**的缺陷，不报风格噪声。共 P0 三项 / P1 七项 / P2 五项，全部修复并补上防回归护栏。
+
+- **① 应用安装接口漏调 SSH 白名单 → 平台变跳板机（P0，最典型的「接线遗漏」）**：项目已建成一条完整的防跳板防御链（`ShellQuote` + `TOFUHostKeyCallback` + `validateSSHTarget` + 私有网段白名单），但**安全性完全依赖每个调用点自觉调用**。新增 apps 模块时漏了一行，任何 operator 即可驱动服务器向任意内网主机 SSH（横扫/爆破/投递脚本，源 IP 全归服务器），且明文口令随 `tasks.payload` 落库。**治本做法**：`vmssh.Options` 字段全部改不可导出，唯一出口 `NewOptions` 内部强制 `ValidateTarget`，包外无法再写 `Options{Host:...}` 字面量；`vmssh.Dial` 成为全仓库唯一 `ssh.Dial`（终端桥原先自己组装 ClientConfig 直连，已并入）。「绕过白名单外连」从「靠人记得」变成「编译期做不到」。见后端标准第 15 条。
+- **② 任务终态写库错误被 `_ =` 吞掉 → 永久僵尸任务（P0）**：`manager.go` 成功/失败两处终态写入都是 `_ = m.DB...Updates(...)`。DB 抖动一次，任务永远停在 `running`，后续所有依赖「该 VM 无运行中任务」的操作被永久阻塞，且**零告警**。已收口为 `updateTaskFields`（3 次重试 + 醒目日志）。讽刺的是 `markFailed` 自带 `recover()`，唯独漏了最容易出错的 DB 写入。
+- **③ VNC TokenStore 被 new 了两份（P1，「装配期注入分裂」）**：`routes.go` 两条 VNC 路由各调一次 `NewVNCHandler`，签发与解析用两个互不相通的内存 store——签发 200 返回 token、解析必然失败，系统表面完全健康但整条业务链已死。改 `Deps.VNCTokens` 单例注入，未注入即 panic 防回退；新增 `handler/vnc_test.go` 锁死不回归。顺带修 `rand.Read` 错误被 `_, _` 忽略（熵源故障会产出可预测 token）。
+- **④ `v_cpu` 列名坑（发作过两次）**：GORM 字段名与列名不一致——`VCPU` 字段的列是 `v_cpu`。`Update("vcpu")` 每次报 1054 且被 `LogError` 吞掉，表现为「libvirt 改了、DB 没改」的持久漂移（`SetVcpu`/`SetMemory`、`vm_xml.go` 各一处；`Updates(map)` 整条失败还会连累 `memory_mb`/`disk_gb`/`mac_address`）。新增护栏测试 `model/columns_guard_test.go`：解析 16 个模型的 schema 取合法列名，AST 扫全仓库手写列名，写错即报错（故意改坏实测精确命中、零误报）。见后端标准第 14 条。
+- **⑤ 部署面密钥失控（P0）**：种子 admin 口令硬编码 `password` 且无强制改密 → 改为 `ADMIN_INITIAL_PASSWORD` 或随机 20 位一次性打印；cron 备份写死 `-pvmops123`（运维改了库口令后备份静默失败，真要恢复才发现没备份）→ 改从 config 读并经 `MYSQL_PWD` env 传递（不进命令行）；compose 弱口令改 `${VAR:?}` 必填；新增 `.env.example`；`config.go` 的 `DB_PASSWORD` 默认值去掉；`apps.go` WordPress 安装脚本的 `root123456`/`wordpress123` → VM 内运行时随机生成。另：凭据加密主密钥不再复用 JWT 密钥（新增 `CREDENTIAL_MASTER_KEY`，附 `scripts/credential-rekey` 迁移工具）——否则轮换 JWT 会让历史凭据集体解密失败，且报错伪装成「数据损坏」。
+- **⑥ 静默吞错全类收口**：新增 `service/dbx`（`Persist` 重试 3 次留痕 / `PersistBestEffort` 无返回值版，从 API 上杜绝 `_ =`）。接入 `auth.go` last_login、`console/registry.go` 会话关闭（此前失败会留永远"活跃"的僵尸会话）、`vm_recycle.go` 状态回写、`manager.go` 进度（高频不重试但首次失败留痕+降频）。**顺手挖出更隐蔽的**：`handler/host.go` `TestHost` 两处**连返回值都没接**的裸写。
+- **⑦ per-VM 操作互斥**：新增 `service/vmlock`（非阻塞 `Try` + 幂等 release），`handler` 加 `lockVM`（409）。生命周期写操作统一先 `guardVMIdle`（覆盖后台任务窗口）再 `lockVM`（覆盖同瞬间并发请求），两者互补。见后端标准第 16 条。
+- **⑧ 历史明文口令清洗脚本**：`scripts/purge-task-secrets`（默认 dry-run，`--apply` 才移除明文键，`--limit`/`--after` 续跑，单条乐观锁）。**未执行**——涉及生产数据，必须先 `mysqldump` 单表备份，顺序见 `scripts/README.md`。
+- **其它**：`storage.go` DeleteVolume 补 `validVolName` 且引用查询失败**拒绝删除**（原来失败即放行）、`vm_snapshot.go` 快照名白名单、`dashboard.go` `f.Close()` 改 defer、`vm_files_offline.go` 离线挂载加启动对账 + SIGTERM 退出钩子（进程崩溃不再残留 guestmount 挂载点）。
+- **验证**：`gofmt`/`go build ./...`/`go vet ./...` 零输出，`go test ./...` 17 个包全绿，`golangci-lint run ./...` 零告警。
+- **协作教训**：并行子 agent 改同一文件会**静默吃掉**对方改动（本次 `registry.go`、`host.go` 各发生一次，靠 `git diff` 复核才发现）。派发并行子 agent 时文件域必须严格不重叠。
+- **仍未处理（勿宣称已解决）**：P1 遗留五项（原始 XML 直定义 / `/metrics` 公开 / 登录无限流 / CORS `*`）继续有效；JWT 仍支持 `?token=` 查询参数传递（会进代理日志/Referer/审计）；VNC 解析路由按设计无鉴权（凭一次性 token）；历史 `tasks.payload` 明文待人工清洗；`vm_tasks.go` 5 处状态字面量未换常量；多宿主机是空壳。
