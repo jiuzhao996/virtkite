@@ -383,10 +383,22 @@ func (h *StorageHandler) GetVolumeRefs(c *gin.Context) {
 func (h *StorageHandler) DeleteVolume(c *gin.Context) {
 	poolName := c.Param("name")
 	volName := c.Param("vol")
+	// 与 CleanupOrphans/CreateVolume 一致走白名单：两个名字都会进 libvirt 的 XML，
+	// 缺校验时 <?>、引号等元字符可被用来构造非法的池/卷名查询。
+	if !validVolName(poolName) {
+		Fail(c, http.StatusBadRequest, "存储池名称只允许字母、数字、下划线、连字符和点")
+		return
+	}
+	if !validVolName(volName) {
+		Fail(c, http.StatusBadRequest, "卷名称只允许字母、数字、下划线、连字符和点")
+		return
+	}
 
 	refs, err := h.poolVolumeRefs(poolName)
 	if err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
+		// 引用查询失败必须拒绝删除：查不到引用≠没有引用（libvirt 或镜像库查询超时/中断时
+		// 会漏判在用卷），带着这个不确定性删除等于放行误删，比删不掉的风险大得多。
+		ErrorWithMessage(c, http.StatusInternalServerError, "无法确认卷的引用情况，为避免误删已拒绝本次删除，请稍后重试", err)
 		return
 	}
 	if r, ok := refs[volName]; ok && r.inUse() {

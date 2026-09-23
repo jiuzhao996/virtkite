@@ -9,8 +9,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/console"
+	"github.com/jiuzhao/vmops/service/dbx"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
+	"github.com/jiuzhao/vmops/service/vmlock"
 	"gorm.io/gorm"
 )
 
@@ -174,10 +176,12 @@ func (h *VMHandler) GetVM(c *gin.Context) {
 		return
 	}
 
-	// 同步 libvirt 状态
+	// 同步 libvirt 状态（读接口的尽力而为回写，失败重试并留痕，不阻断查询）
 	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != "" {
 		vm.Status = state
-		h.DB.Model(&vm).Update("status", state)
+		dbx.PersistBestEffort(h.DB, "GetVM 同步状态", func() error {
+			return h.DB.Model(&vm).Update("status", state).Error
+		})
 	}
 
 	Success(c, vm)
@@ -257,11 +261,21 @@ func (h *VMHandler) PauseVM(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	if err := h.Virt.PauseDomain(vm.Name); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
-	h.DB.Model(&vm).Update("status", model.VMStatusPaused)
+	dbx.PersistBestEffort(h.DB, "pause_vm 回写状态", func() error {
+		return h.DB.Model(&vm).Update("status", model.VMStatusPaused).Error
+	})
 	Success(c, gin.H{"vm": vm.Name, "message": "虚拟机已暂停"})
 }
 
@@ -271,11 +285,21 @@ func (h *VMHandler) ResumeVM(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	if err := h.Virt.ResumeDomain(vm.Name); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
-	h.DB.Model(&vm).Update("status", model.VMStatusRunning)
+	dbx.PersistBestEffort(h.DB, "resume_vm 回写状态", func() error {
+		return h.DB.Model(&vm).Update("status", model.VMStatusRunning).Error
+	})
 	Success(c, gin.H{"vm": vm.Name, "message": "虚拟机已恢复"})
 }
 
@@ -287,6 +311,14 @@ func (h *VMHandler) SetVcpu(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	var req struct {
 		VCPU int `json:"vcpu"`
@@ -321,11 +353,17 @@ func (h *VMHandler) SetVcpu(c *gin.Context) {
 			return
 		}
 	}
-	// libvirt 侧已生效，DB 摘要回写失败会产生持久不一致（克隆/容量统计以 DB 为准），必须留痕
-	if err := h.DB.Model(&vm).Update("vcpu", req.VCPU).Error; err != nil {
-		LogError(c, fmt.Errorf("回写 vcpu 到数据库失败 vm=%s: %w", vm.Name, err))
+	// libvirt 侧已生效，DB 回写失败 = 持久配置漂移（vms.v_cpu 才是克隆/容量统计/备份还原的依据）：
+	// 不能只 LogError 让前端看到纯成功，否则运维无从知道要补一次同步。
+	// 列名必须写结构体字段对应的 v_cpu（不是字段名 vcpu），写错会每次都回写失败且同样被静默吞掉。
+	if err := h.DB.Model(&vm).Update("v_cpu", req.VCPU).Error; err != nil {
+		LogError(c, fmt.Errorf("[配置漂移-需同步] 虚拟机 %s 的 vCPU 已在 libvirt 调整为 %d，但回写数据库失败: %w",
+			vm.Name, req.VCPU, err))
+		Created(c, "vCPU 已在虚拟机上生效，但记录到数据库失败，请重试或联系管理员同步",
+			gin.H{"vm": vm.Name, "vcpu": req.VCPU, "db_synced": false})
+		return
 	}
-	Success(c, gin.H{"vm": vm.Name, "vcpu": req.VCPU})
+	Success(c, gin.H{"vm": vm.Name, "vcpu": req.VCPU, "db_synced": true})
 }
 
 // SetMemory 调整内存（对应 virsh setmem），同步 DB。
@@ -335,6 +373,14 @@ func (h *VMHandler) SetMemory(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	var req struct {
 		MemoryMB int `json:"memory_mb"`
@@ -367,10 +413,15 @@ func (h *VMHandler) SetMemory(c *gin.Context) {
 			return
 		}
 	}
+	// 同 SetVcpu：回写失败必须显式暴露为「部分成功」，见该函数注释。
 	if err := h.DB.Model(&vm).Update("memory_mb", req.MemoryMB).Error; err != nil {
-		LogError(c, fmt.Errorf("回写 memory_mb 到数据库失败 vm=%s: %w", vm.Name, err))
+		LogError(c, fmt.Errorf("[配置漂移-需同步] 虚拟机 %s 的内存已在 libvirt 调整为 %dMB，但回写数据库失败: %w",
+			vm.Name, req.MemoryMB, err))
+		Created(c, "内存已在虚拟机上生效，但记录到数据库失败，请重试或联系管理员同步",
+			gin.H{"vm": vm.Name, "memory_mb": req.MemoryMB, "db_synced": false})
+		return
 	}
-	Success(c, gin.H{"vm": vm.Name, "memory_mb": req.MemoryMB})
+	Success(c, gin.H{"vm": vm.Name, "memory_mb": req.MemoryMB, "db_synced": true})
 }
 
 // SetAutostart 设置开机自启（对应 virsh autostart）。
@@ -427,6 +478,12 @@ func (h *VMHandler) CloneVM(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "虚拟机不存在")
 		return
 	}
+	// 克隆期间禁止源机被并发改动（双开提交会克隆出两份脏卷）
+	release, ok := h.lockVM(c, src.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	var req struct {
 		Name        string `json:"name" binding:"required"`
 		StoragePool string `json:"storage_pool"`
@@ -467,14 +524,25 @@ func (h *VMHandler) StartVM(c *gin.Context) {
 		return
 	}
 
-	// 调用 libvirt 启动
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
+
+	// 调用 libvirt 启动（后台可能正跑 delete_vm/stop_vm，上面已先挡一层）
 	if err := h.Virt.StartDomain(vm.Name); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	// 更新状态
-	h.DB.Model(&vm).Update("status", model.VMStatusRunning)
+	// 更新状态（写失败重试并留痕：状态漂移会让仪表盘统计与批量判断失真）
+	dbx.PersistBestEffort(h.DB, "start_vm 回写状态", func() error {
+		return h.DB.Model(&vm).Update("status", model.VMStatusRunning).Error
+	})
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
@@ -492,6 +560,11 @@ func (h *VMHandler) StopVM(c *gin.Context) {
 	if !ok {
 		return
 	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	payload := map[string]interface{}{"vm_id": vm.ID}
 	userID, username := taskUserFromContext(c)
 	vmID := vm.ID
@@ -503,17 +576,72 @@ func (h *VMHandler) StopVM(c *gin.Context) {
 	Accepted(c, "任务已提交", gin.H{"task_id": task.ID})
 }
 
-// RestartVM 重启虚拟机
+// lockVM 获取该虚拟机的进程内操作互斥锁（非阻塞）。
+// 失败已写好 409 响应，调用方直接 return；成功必须 defer release()。
+//
+// 与 guardVMIdle 互补而非替代：锁拦住「同一瞬间并发进来的两个请求」（双开、误触、
+// 脚本重放最常见的形态），guardVMIdle 拦住「HTTP 已返回但后台任务仍在跑」的时间窗。
+func (h *VMHandler) lockVM(c *gin.Context, vmID uint) (func(), bool) {
+	release, ok := vmlock.Try(vmID)
+	if !ok {
+		Fail(c, http.StatusConflict, "该虚拟机有操作正在进行，请稍后再试")
+		return nil, false
+	}
+	return release, true
+}
+
+// guardVMIdle 校验该 VM 当前没有未终结的异步任务（pending/running），返回 true 表示可以下发。
+//
+// restart 是同步下发 libvirt reboot 的写操作：若此刻后台正跑 delete_vm/clone/stop_vm，
+// 会对正在 undefine/迁移的域发 reboot，产生不可预期的域状态与脏卷，因此必须先挡住。
+// 查询失败一律 fail-closed（拒绝下发）：DB 抖动时宁可让用户再点一次，也不能并发写域。
+func (h *VMHandler) guardVMIdle(c *gin.Context, vmID uint) bool {
+	var n int64
+	err := h.DB.Model(&model.Task{}).
+		Where("vm_id = ? AND status IN ?", vmID, []string{model.TaskStatusPending, model.TaskStatusRunning}).
+		Count(&n).Error
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "检查虚拟机任务状态失败", err)
+		return false
+	}
+	if n > 0 {
+		Fail(c, http.StatusConflict, "该虚拟机有任务正在执行，请稍后再试")
+		return false
+	}
+	return true
+}
+
+// RestartVM 重启虚拟机（对应 virsh reboot，需已运行）。
+// 与 StopVM/DeleteVM 保持一致：下发前过 submitTaskGuard + guardVMIdle；
+// 成功后按既有写法回写 vms.status——不回写会让状态机与 libvirt 实际状态不一致，
+// 仪表盘统计与批量操作判断全部失真。
 func (h *VMHandler) RestartVM(c *gin.Context) {
+	if !h.submitTaskGuard(c) {
+		return
+	}
 	vm, ok := h.findVM(c)
 	if !ok {
 		return
 	}
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	// 调用 libvirt 重启
 	if err := h.Virt.RebootDomain(vm.Name); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
+	}
+
+	// 回写状态：reboot 成功后域处于 running（常量值带空格，勿写字面量）
+	// libvirt 已重启成功，DB 回写失败不翻成失败响应，只留痕（与 ListVMs 状态回写同口径）
+	if err := h.DB.Model(&vm).Update("status", model.VMStatusRunning).Error; err != nil {
+		LogError(c, err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -532,6 +660,11 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 	if !ok {
 		return
 	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	payload := map[string]interface{}{"vm_id": vm.ID}
 	userID, username := taskUserFromContext(c)
 	vmID := vm.ID

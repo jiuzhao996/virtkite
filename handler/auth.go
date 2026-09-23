@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"sync"
@@ -9,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/dbx"
 	"github.com/jiuzhao/vmops/service/setting"
 	"gorm.io/gorm"
 )
@@ -183,9 +185,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// 更新最后登录时间（best-effort：登录已成功，回写失败不值得中断响应，留注释声明意图）
+	// 更新最后登录时间（best-effort：登录已成功，回写失败不值得中断响应）。
+	// 不能写成 `_ = h.DB...Update(...)` 静默吞掉：审计时间丢失无任何告警，
+	// 排查「用户最后一次登录是什么时候」时会得到错误答案；走 helper 至少留痕
+	// （失败已在 helper 内按次数打日志，这里不返回错误，绝不影响登录结果）。
 	now := time.Now()
-	_ = h.DB.Model(&user).Update("last_login", &now).Error
+	dbx.PersistBestEffort(h.DB, fmt.Sprintf("登录时间回写 user=%s", user.Username), func() error {
+		return h.DB.Model(&user).Update("last_login", &now).Error
+	})
 
 	Created(c, "登录成功", LoginResponse{
 		AccessToken: token,

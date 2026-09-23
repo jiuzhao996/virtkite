@@ -1,12 +1,14 @@
 package console
 
 import (
+	"fmt"
 	"log"
 	"runtime/debug"
 	"sync"
 	"time"
 
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/dbx"
 	"gorm.io/gorm"
 )
 
@@ -145,11 +147,18 @@ func (r *Registry) TouchByToken(token string) {
 	}
 }
 
+// DB 收口必须留痕：写失败会在表里留下永远 active 的僵尸会话——清扫器按 active 判定，
+// 列表与管理端强断看到的都是脏数据，而 WS 已断开、内存映射已删，再也无人来补这一笔。
+// 故走 dbx：重试 3 次 + 醒目日志；此处确实无处可补（调用方是 WS 关闭路径），
+// helper 内已按次数与最终结果全程留痕，不再静默丢弃。
+//
 // Close 标记会话关闭并释放持有资源（WS 关闭/连接断开时调用，幂等）。
 func (r *Registry) Close(id uint) {
 	now := time.Now()
-	_ = r.DB.Model(&model.ConsoleSession{ID: id}).Where("status = ?", "active").Updates(map[string]interface{}{
-		"status": "closed", "ended_at": now,
+	dbx.PersistBestEffort(r.DB, fmt.Sprintf("控制台会话收口 id=%d", id), func() error {
+		return r.DB.Model(&model.ConsoleSession{ID: id}).Where("status = ?", "active").Updates(map[string]interface{}{
+			"status": "closed", "ended_at": now,
+		}).Error
 	})
 	r.mu.Lock()
 	delete(r.conns, id)

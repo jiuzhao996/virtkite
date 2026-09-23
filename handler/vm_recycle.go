@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/dbx"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
@@ -128,17 +129,22 @@ func (h *VMRecycleHandler) Restore(c *gin.Context) {
 
 	// 域仍在：同步一次实时状态（删除流程 undefine 成功才会软删，域存在多为异常残留，
 	// 比如任务中途失败；如实呈现比假装「干净恢复」更有用）。
+	// 状态回写走 dbx：写失败会让回收站记录的状态与 libvirt 实际状态分叉，
+	// 且没有第二次同步机会（列表会一直显示旧状态），必须重试 + 醒目留痕。
+	// 不回滚恢复本身（记录已恢复成功），但如实告知前端「状态未落库」，别让前端拿它当已同步。
 	state, err := h.Virt.GetDomainState(vm.Name)
 	if err == nil {
-		if err := h.DB.Model(&vm).Update("status", state).Error; err != nil {
-			// 状态同步失败不回滚恢复本身，完整错误进日志即可
-			LogError(c, err)
+		msg := "已恢复（libvirt 中仍存在同名域，状态已同步）"
+		if err := dbx.Persist(h.DB, fmt.Sprintf("回收站恢复状态同步 vm=%s", vm.Name), func() error {
+			return h.DB.Model(&vm).Update("status", state).Error
+		}); err != nil {
+			msg = fmt.Sprintf("已恢复，但状态回写失败（%s），列表状态可能与实际不一致，请刷新重试", state)
 		}
 		Success(c, gin.H{
 			"restored":       true,
 			"domain_defined": true,
 			"status":         state,
-			"message":        "已恢复（libvirt 中仍存在同名域，状态已同步）",
+			"message":        msg,
 		})
 		return
 	}

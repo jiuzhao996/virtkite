@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/dbx"
 	"gorm.io/gorm"
 )
 
@@ -210,7 +211,10 @@ func (h *HostHandler) TestHost(c *gin.Context) {
 	// 测试ping
 	out, err := exec.Command("ping", "-c", "1", "-W", "2", host.SSHIP).Output()
 	if err != nil {
-		h.DB.Model(&host).Update("status", "unreachable")
+		// 同上：探测结论照常返回，不可达状态回写失败只留痕（DB 抖动时列表会继续显示旧状态）
+		dbx.PersistBestEffort(h.DB, fmt.Sprintf("宿主机不可达状态回写 id=%d", id), func() error {
+			return h.DB.Model(&host).Update("status", "unreachable").Error
+		})
 		Success(c, gin.H{
 			"reachable": false,
 		})
@@ -228,8 +232,12 @@ func (h *HostHandler) TestHost(c *gin.Context) {
 			}
 		}
 	}
-	// 连通则回写状态（列表不再 unknown）
-	h.DB.Model(&host).Update("status", "reachable")
+	// 连通则回写状态（列表不再 unknown）。
+	// 探测结果本身要如实返回，状态回写属 best-effort：写失败不阻断响应，
+	// 但必须留痕（helper 内重试 3 次 + 醒目日志）——否则列表长期停在旧状态且无人知晓。
+	dbx.PersistBestEffort(h.DB, fmt.Sprintf("宿主机连通状态回写 id=%d", id), func() error {
+		return h.DB.Model(&host).Update("status", "reachable").Error
+	})
 
 	Success(c, gin.H{
 		"reachable":  true,

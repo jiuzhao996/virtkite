@@ -102,6 +102,9 @@ func (h *DashboardHandler) Capacity(c *gin.Context) {
 	cores := runtime.NumCPU()
 	memKB := uint64(0)
 	if f, err := os.Open("/proc/meminfo"); err == nil {
+		// defer 而非分支末尾裸 Close：扫描过程中任何提前 return/异常都不留悬挂 fd。
+		// 本处在 if 块内而非循环体内，defer 到函数返回时执行即为正确作用域。
+		defer f.Close()
 		sc := bufio.NewScanner(f)
 		for sc.Scan() {
 			if strings.HasPrefix(sc.Text(), "MemTotal") {
@@ -109,7 +112,6 @@ func (h *DashboardHandler) Capacity(c *gin.Context) {
 				break
 			}
 		}
-		f.Close()
 	}
 	if cores <= 0 || memKB == 0 {
 		// 兜底：本机读数失败时用首台登记宿主机（字段可能为 0，届时 has_host=false）

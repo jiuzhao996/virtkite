@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -136,9 +137,12 @@ func AuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 更新最后登录时间
+		// 更新最后登录时间（best-effort）：审计时间写不进去只降级为缺一条记录，
+		// 因此仅记日志、不阻断登录；静默吞掉错误则数据库故障永远不会被发现。
 		now := time.Now()
-		db.Model(&user).Update("last_login", &now)
+		if err := db.Model(&user).Update("last_login", &now).Error; err != nil {
+			log.Printf("[auth] 记录最后登录时间失败 user=%s err=%v", user.Username, err)
+		}
 
 		// 将用户信息存储到上下文
 		c.Set("user_id", user.ID)

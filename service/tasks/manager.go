@@ -36,6 +36,11 @@ const (
 	maxListLimit = 200
 	// maxErrorLen Task.Error 最大长度（截断，单位 rune）。
 	maxErrorLen = 500
+	// finalWriteAttempts 终态写入（success/failed）的最大尝试次数。
+	finalWriteAttempts = 3
+	// finalWriteBackoff 终态写入重试的退避基数：第 n 次失败后睡 n*基数，
+	// 三次最多累计 300ms——worker 循环不会被一次 DB 抖动拖垮。
+	finalWriteBackoff = 100 * time.Millisecond
 )
 
 // WorkerCount / QueueBufferSize 供系统设置页展示真实生效值（handler/settings 快照读取）。
@@ -264,12 +269,11 @@ func (m *Manager) run(id uint) {
 	fn, ok := m.executors[task.Type]
 	m.mu.RUnlock()
 	if !ok {
-		task.Status = statusFailed
-		task.Error = fmt.Sprintf("未知任务类型: %s", task.Type)
-		// 终态写入失败会导致任务永久卡 running（全量审计 P0），必须留痕
-		if err := m.DB.Save(&task).Error; err != nil {
-			log.Printf("[tasks] 任务置 failed 失败（将卡 running）id=%d err=%v", id, err)
-		}
+		// 终态写入失败会导致任务永久卡 running（全量审计 P1），走重试 + 留痕
+		m.updateTaskFields(id, map[string]interface{}{
+			"status": statusFailed,
+			"error":  fmt.Sprintf("未知任务类型: %s", task.Type),
+		}, "未知任务类型")
 		return
 	}
 
@@ -278,11 +282,10 @@ func (m *Manager) run(id uint) {
 		if err := json.Unmarshal([]byte(task.Payload), &payload); err != nil {
 			// 原始解析错误只进日志，DB 只存用户友好文案
 			log.Printf("[tasks] 任务参数损坏 id=%d type=%s err=%v", id, task.Type, err)
-			task.Status = statusFailed
-			task.Error = "任务参数损坏，无法执行"
-			if err := m.DB.Save(&task).Error; err != nil {
-				log.Printf("[tasks] 任务置 failed 失败（将卡 running）id=%d err=%v", id, err)
-			}
+			m.updateTaskFields(id, map[string]interface{}{
+				"status": statusFailed,
+				"error":  "任务参数损坏，无法执行",
+			}, "任务参数损坏")
 			return
 		}
 	}
@@ -300,13 +303,14 @@ func (m *Manager) run(id uint) {
 		m.markFailed(id, friendlyError(err))
 		return
 	}
-	_ = m.DB.Model(&model.Task{ID: id}).Updates(map[string]interface{}{
+	// 成功终态：写失败同样会造僵尸任务，必须走重试 + 留痕（旧实现 _ = 静默吞掉）
+	m.updateTaskFields(id, map[string]interface{}{
 		"status":   statusSuccess,
 		"progress": 100,
 		"result":   execCtx.Task.Result,
 		"vm_id":    execCtx.Task.VMID,
 		"vm_name":  execCtx.Task.VMName,
-	})
+	}, "成功终态")
 }
 
 // runExecutor 调度 executor 并兜住 panic：panic 时把 panic 值与完整堆栈
@@ -323,25 +327,79 @@ func runExecutor(fn Executor, ctx *ExecContext) (err error) {
 	return fn(ctx)
 }
 
+// updateTaskFields 按字段更新任务行，失败时有限重试（finalWriteAttempts 次、短退避）。
+//
+// 为什么不能像旧实现那样 `_ = m.DB...Updates(...)` 静默吞掉：终态写入是任务的唯一收口，
+// 写失败等于任务永久停在 running——worker 已释放、HTTP 已返回，前端轮询无限转圈，
+// 依赖「该 VM 无运行中任务」的后续操作（删除/克隆/导出）被永久阻塞，且全程无任何告警。
+// 触发条件很常见：DB 瞬时抖动、连接池打满、行锁超时恰好发生在任务执行完毕那一刹那。
+//
+// 幂等性：Updates 按主键做等值字段写（非累加、非 CAS），重复执行结果一致，
+// 重试不会让任务被结算两次。
+//
+// 不无限重试：累计退避约 300ms 即放弃，worker 继续取下一个任务；重试仍失败只留痕
+// （醒目 ERROR 日志），不阻塞 worker，也不把已执行成功的任务翻成 failed 制造假失败——
+// 卡住的僵尸任务由进程重启时的 sweepOrphanRunning 兜底清扫。
+//
+// scene 只用于日志区分场景（如「成功终态」「失败终态」），不参与 SQL。
+// 不返回 error：失败已在内部按次数与最终结果全程留痕，返回去调用方也无处可补，
+// 再让调用方处理只会引出一堆无人处理的返回值（或被 `_ =` 吞回老问题）。
+func (m *Manager) updateTaskFields(id uint, values map[string]interface{}, scene string) {
+	var lastErr error
+	for attempt := 1; attempt <= finalWriteAttempts; attempt++ {
+		lastErr = m.DB.Model(&model.Task{ID: id}).Updates(values).Error
+		if lastErr == nil {
+			if attempt > 1 {
+				log.Printf("[tasks] 终态写入重试成功 id=%d 场景=%s 第 %d 次", id, scene, attempt)
+			}
+			return
+		}
+		log.Printf("[tasks] 终态写入失败 id=%d 场景=%s 第 %d/%d 次 err=%v",
+			id, scene, attempt, finalWriteAttempts, lastErr)
+		if attempt < finalWriteAttempts {
+			time.Sleep(finalWriteBackoff * time.Duration(attempt))
+		}
+	}
+	// 醒目留痕：任务将卡在非终态（前端无限转圈 + 后续写操作被阻塞），需运维介入
+	log.Printf("[tasks] !!! 终态写入最终失败，任务将卡在 running id=%d 场景=%s err=%v", id, scene, lastErr)
+}
+
 // markFailed 按字段把任务置 failed（避免 Save 全行回写冲掉 Report 已上报的 progress）。
 // 自带 recover：panic 兜底路径也走这里，DB 层再出意外也不能把进程带走。
+// 写失败走 updateTaskFields 的重试与留痕，不再静默丢弃。
 func (m *Manager) markFailed(id uint, msg string) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[tasks] 置 failed 时 panic id=%d panic=%v", id, r)
 		}
 	}()
-	_ = m.DB.Model(&model.Task{ID: id}).Updates(map[string]interface{}{
+	m.updateTaskFields(id, map[string]interface{}{
 		"status": statusFailed,
 		"error":  msg,
-	})
+	}, "失败终态")
 }
 
 // reporter 返回写入指定任务进度的 Report 函数（msg 暂不持久化）。
+//
+// 进度回写是高频 best-effort：进度丢一两帧无后果，重试反而放大 DB 压力，故只写一次、
+// 不重试；但绝不能像旧实现那样 `_ = ...Update(...)` 静默吞掉——DB 抖动时前端进度条会
+// 停在某个百分比不动，排查时却没有任何线索。折中留痕：同一任务内首次失败打一条日志，
+// 之后连续失败不再重复刷屏，写成功后复位（下次失败仍会留痕）。
+//
+// 不走 dbx.Persist 的原因：helper 每次失败必打日志且必重试，与这里「高频 + 只留首次」
+// 的诉求冲突；语义不同的写入点各自选 helper 或直接留痕，见 service/dbx 包注释。
 func (m *Manager) reporter(id uint) ProgressFunc {
+	logged := false
 	return func(pct int, msg string) {
 		_ = msg
-		_ = m.DB.Model(&model.Task{ID: id}).Update("progress", pct)
+		if err := m.DB.Model(&model.Task{ID: id}).Update("progress", pct).Error; err != nil {
+			if !logged {
+				logged = true
+				log.Printf("[tasks] 进度回写失败，前端进度条可能卡住 id=%d err=%v", id, err)
+			}
+			return
+		}
+		logged = false
 	}
 }
 
