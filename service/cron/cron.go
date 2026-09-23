@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/notify"
 	"github.com/jiuzhao/vmops/service/virt"
@@ -39,6 +40,14 @@ const (
 const (
 	// defaultBackupDir 数据库备份默认输出目录（Scheduler.BackupDir 为空时使用）。
 	defaultBackupDir = "/home/jiuzhao/vmops/data/backup"
+	// dbContainerName 备份目标容器：mysqldump 在 MySQL 容器内执行（宿主机不装 mysql 客户端）。
+	dbContainerName = "vmops-mysql"
+	// defaultDBUser / defaultDBName：配置缺失或 config 未初始化（如单测）时的兜底，与 config 默认值一致。
+	defaultDBUser = "vmops"
+	defaultDBName = "vmops"
+	// mysqlPwdEnv 口令传给 mysqldump 的环境变量名：mysqldump 原生识别，避免口令出现在命令行
+	// 参数里（容器内 ps / docker inspect 都能看到 -p<明文>）。
+	mysqlPwdEnv = "MYSQL_PWD"
 	// dbBackupTimeout mysqldump 最长执行时间，防容器假死把调度协程吊死。
 	dbBackupTimeout = 10 * time.Minute
 	// maxLookaheadDays Next 逐分钟探测的最大天数，防「永不匹配的表达式」（如 2 月 31 日）死循环。
@@ -477,23 +486,53 @@ func (s *Scheduler) runDBBackup(st model.ScheduledTask) (string, error) {
 	}
 	defer f.Close()
 
+	// 备份用的库账号与口令一律取自全局配置（DB_USER / DB_NAME / DB_PASSWORD），不再写死：
+	// 硬编码口令会与配置形成隐式耦合——运维按配置改了库口令后，定时任务静默失败（错误只进
+	// 任务日志），真要恢复时才发现没有一份可用备份。
+	user, dbName, password := dbBackupCreds()
+
 	ctx, cancel := context.WithTimeout(context.Background(), dbBackupTimeout)
 	defer cancel()
 	// 参数必须走数组形式（不经过 shell 拼接）；等价命令：
-	//   docker exec vmops-mysql mysqldump -uvmops -pvmops123 vmops
-	cmd := exec.CommandContext(ctx, "docker", "exec", "vmops-mysql",
-		"mysqldump", "-uvmops", "-pvmops123", "vmops")
+	//   docker exec -e MYSQL_PWD=*** vmops-mysql mysqldump -uvmops vmops
+	args := []string{"exec"}
+	if password != "" {
+		args = append(args, "-e", mysqlPwdEnv+"="+password)
+	} else {
+		// 口令为空时不能拼出裸 "-p"：mysqldump 会把它当成「等待交互输入口令」而挂到超时，
+		// 表现为备份任务假死且无输出，比直接报连接失败更难排查。
+		log.Printf("[cron] 警告：DB_PASSWORD 为空，mysqldump 将以无口令方式连接；若库要求口令请配置 DB_PASSWORD")
+	}
+	args = append(args, dbContainerName, "mysqldump", "-u"+user, dbName)
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdout = f
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("mysqldump 执行失败: %w（stderr: %s）", err, strings.TrimSpace(errBuf.String()))
+		// errBuf 可能回显命令片段，故只截取有限长度；口令经 env 传递不会出现在命令行里
+		return "", fmt.Errorf("mysqldump 执行失败: %w（stderr: %s）", err, truncateRunes(strings.TrimSpace(errBuf.String()), 500))
 	}
 	log.Printf("[cron] 数据库备份完成 file=%s", outPath)
 
 	keep := keepOrDefault(st.Keep)
 	s.pruneBackups(dir, keep)
 	return fmt.Sprintf("备份完成 %s（已保留最近 %d 份）", outPath, keep), nil
+}
+
+// dbBackupCreds 取备份用的数据库账号、库名与口令（供 runDBBackup 拼 mysqldump）。
+// config 未初始化（单测或独立调用）时回退到保守默认值，避免 nil 解引用 panic。
+func dbBackupCreds() (user, dbName, password string) {
+	user, dbName = defaultDBUser, defaultDBName
+	if config.GlobalConfig == nil {
+		return user, dbName, ""
+	}
+	if config.GlobalConfig.DBUser != "" {
+		user = config.GlobalConfig.DBUser
+	}
+	if config.GlobalConfig.DBName != "" {
+		dbName = config.GlobalConfig.DBName
+	}
+	return user, dbName, config.GlobalConfig.DBPassword
 }
 
 // pruneBackups 只保留最近 keep 份备份（文件名内嵌时间戳，字典序即时间序）。

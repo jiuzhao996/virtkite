@@ -15,6 +15,11 @@
   `/grafana/` 前缀，与子路径服务冲突表现为 301 重定向死循环——必须去掉尾斜杠透传完整路径
   （`proxy_pass http://127.0.0.1:13000;`，存档 kpyun.conf 即正确写法）。
 - **公网暴露加固**（.env）：SERVER_MODE=release + 强随机 JWT_SECRET_KEY + CORS_ORIGINS=kpyun.fun。
+- **环境变量模板**：仓库根 `.env.example` 是唯一事实源（必填/可选变量清单 + 生成命令），
+  新部署 `cp .env.example .env && chmod 600 .env` 后逐个填值。**必填**：`DB_PASSWORD`、
+  `MYSQL_ROOT_PASSWORD`、`GRAFANA_ADMIN_PASSWORD`、`JWT_SECRET_KEY`、`CREDENTIAL_MASTER_KEY`
+  （VM SSH 凭据加密主密钥，必须与 `JWT_SECRET_KEY` 完全不同，否则轮换 JWT 会连带废掉历史凭据）；
+  缺失时 `docker compose config` 直接报错拒绝启动。
 - **隧道持久化**：两端 systemd（Restart=always，frp 心跳自动重连）；旧 SSH 反向隧道方案（virtkite-tunnel）已 disable 备用。
 
 ## 双存储监控（✅ 已上线）

@@ -3,15 +3,11 @@ package handler
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"runtime/debug"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -94,8 +90,10 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 		port = 22
 	}
 
-	// 目标白名单校验：拨号参数完全来自浏览器，不校验等于把平台变成跳板机
-	if err := validateSSHTarget(&vm, auth.Host, port); err != nil {
+	// 目标白名单校验内建于 vmssh.NewOptions：拨号参数完全来自浏览器，不校验等于把平台
+	// 变成跳板机；Options 不可字面量构造，所以这条防线无法被后续新模块「忘记调用」
+	opts, err := vmssh.NewOptions(vm.IP, auth.Host, port, auth.User, auth.Password)
+	if err != nil {
 		log.Printf("[terminal] 目标被拒 vm=%s(%d) target=%s:%d user=%s from=%s reason=%v",
 			vm.Name, vm.ID, auth.Host, port, auth.User, c.ClientIP(), err)
 		_ = conn.WriteJSON(gin.H{"type": "error", "msg": "连接目标未通过安全校验（仅允许该虚拟机已记录 IP 或私有网段地址）"})
@@ -105,17 +103,8 @@ func (h *TerminalHandler) Connect(c *gin.Context) {
 	log.Printf("[terminal] SSH 拨号 vm=%s(%d) target=%s:%d user=%s from=%s",
 		vm.Name, vm.ID, auth.Host, port, auth.User, c.ClientIP())
 
-	// SSH 连接目标主机
-	sshConfig := &ssh.ClientConfig{
-		User: auth.User,
-		Auth: []ssh.AuthMethod{ssh.Password(auth.Password)},
-		// 主机密钥 TOFU 校验（与 service/vmssh 同一回调工厂）：首连记录指纹、再连比对，
-		// 不一致即拒绝。目标是平台自建的短生命周期虚拟机，重建即换密钥，人工核对
-		// known_hosts 不可操作，故采用自动 TOFU；范围另由上面的 validateSSHTarget 收敛。
-		HostKeyCallback: vmssh.TOFUHostKeyCallback(),
-		Timeout:         8 * time.Second,
-	}
-	client, err := ssh.Dial("tcp", net.JoinHostPort(auth.Host, itoa(port)), sshConfig)
+	// SSH 连接目标主机（走 vmssh.Dial —— 全仓库唯一的 ssh.Dial 出口，主机密钥 TOFU 校验也在其中）
+	client, err := vmssh.Dial(opts)
 	if err != nil {
 		log.Printf("[terminal] SSH 拨号失败 host=%s:%d err=%v", auth.Host, port, err)
 		// 完整错误（可能含内网拓扑/banner）只进服务端日志，WS 帧给固定文案（全量审计 P1）；
@@ -255,47 +244,17 @@ readLoop:
 	_ = client.Close()
 }
 
-// validateSSHTarget 校验 Web 终端的 SSH 拨号目标。
+// validateSSHTarget 校验 Web 终端的 SSH 拨号目标（「平台不当跳板机」白名单）。
 //
 // 原实现里 host/port/user/password 全部取自浏览器首帧且零校验，配合 RBAC 对 GET 的放行，
 // 任何登录用户都能驱动服务器向任意地址发起 SSH 连接 —— 平台等于免费的跳板机、
 // 内网端口扫描器与口令爆破器。本函数把目标收敛到「本机管理的虚拟机」范围内。
 //
-// 约束由强到弱：
-//  1. 平台已记录该 VM 的 IP（vm.IP 非空）→ 目标必须与之精确一致；
-//  2. 未记录 IP（无 guest agent 时的常态）→ 只接受私有网段的 IP 字面量
-//     （IPv4 为 RFC1918 三段，IPv6 为 ULA fd00::/8，net.IP.IsPrivate 同时覆盖两者），
-//     并排除环回（否则可 SSH 进宿主机自身）、链路本地、组播与未指定地址；
-//     不接受主机名，避免 DNS 解析到公网或 DNS rebinding 绕过；
-//  3. 端口必须落在 1-65535。
-//
-// 返回的错误文案会直接回显到前端终端，因此一律为中文且不含内部细节。
+// 判定规则（已登记 IP 精确匹配，否则仅放行私有网段、排环回/组播等）与错误文案统一收在
+// vmssh.ValidateTarget：文件管理与异步任务 executor 都要复用同一把尺子，
+// 只有收在一处才能保证「新增调用点不会漏校验」。
 func validateSSHTarget(vm *model.VM, host string, port int) error {
-	if port < 1 || port > 65535 {
-		return fmt.Errorf("端口不合法（须在 1-65535 之间）")
-	}
-
-	// 平台已知该虚拟机地址时，只允许连它自己
-	if recorded := strings.TrimSpace(vm.IP); recorded != "" {
-		if host != recorded {
-			return fmt.Errorf("只能连接该虚拟机自身地址 %s", recorded)
-		}
-		return nil
-	}
-
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return fmt.Errorf("目标必须是 IP 地址（不支持主机名）")
-	}
-	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
-		return fmt.Errorf("该地址不允许作为终端目标（环回 / 链路本地 / 组播）")
-	}
-	if !ip.IsPrivate() {
-		// net.IP.IsPrivate 对 IPv4 判 RFC1918、对 IPv6 判 fc00::/7（含 fd00::/8 ULA），
-		// 文案与实现对齐（此前只写 IPv4 网段，曾误导排查）
-		return fmt.Errorf("仅允许 IPv4 私有网段或 IPv6 ULA（fd00::/8）地址")
-	}
-	return nil
+	return vmssh.ValidateTarget(vm.IP, host, port)
 }
 
 // itoa 简易整型转字符串，避免额外 import。

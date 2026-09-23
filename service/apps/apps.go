@@ -134,15 +134,32 @@ docker --version
 	{
 		ID:       "wordpress",
 		Name:     "WordPress",
-		Desc:     "博客/CMS（Docker Compose 版：WordPress + MySQL 8，宿主端口 8088）",
+		Desc:     "博客/CMS（Docker Compose 版：WordPress + MySQL 8，宿主端口 8088；数据库口令安装时随机生成并回显一次）",
 		Category: "cms",
 		Detect:   `docker ps --format '{{.Names}}' | grep -q wordpress`,
+		// 安全约定（新增应用请照此办理）：脚本里不得出现任何固定口令字面量——
+		// 固定口令等于所有装了该应用的虚拟机共用一把众所周知的钥匙。
+		// 这里在虚拟机内运行时随机生成，并回显到 stdout：
+		// 任务结果只保留 stdout 尾部 1000 字（service/tasks/app_tasks.go: appOutTail），
+		// 故回显必须放在脚本末尾；前端「安装输出」直接展示该字段（web/src/views/AppStore.vue）。
 		Install: `# 安装 WordPress（Docker Compose 版）：wordpress + mysql:8 双服务，宿主端口 8088 映射容器 80
 set -e
 command -v docker >/dev/null 2>&1 || { echo "未检测到 docker，请先安装 docker-engine 应用"; exit 1; }
 docker ps --format '{{.Names}}' | grep -q '^wordpress$' && exit 0
+# 运行时随机生成数据库口令：优先 openssl，缺失时回落到 /dev/urandom。
+# 只取字母数字，避免口令里的特殊字符破坏 YAML 与 URL 解析。
+rand_pass() {
+  openssl rand -hex 16 2>/dev/null || tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 24
+}
+WP_DB_PASSWORD=$(rand_pass)
+WP_ROOT_PASSWORD=$(rand_pass)
+# 生成失败即中止：空口令会让数据库裸奔，宁可安装失败也不静默降级
+if [ -z "$WP_DB_PASSWORD" ] || [ -z "$WP_ROOT_PASSWORD" ]; then
+  echo "随机口令生成失败，已中止安装（请确认虚拟机内 openssl 或 /dev/urandom 可用）"
+  exit 1
+fi
 mkdir -p /opt/wordpress
-cat > /opt/wordpress/docker-compose.yml <<'EOF'
+cat > /opt/wordpress/docker-compose.yml <<EOF
 services:
   wordpress:
     image: wordpress:latest
@@ -153,7 +170,7 @@ services:
       WORDPRESS_DB_HOST: db
       WORDPRESS_DB_NAME: wordpress
       WORDPRESS_DB_USER: wordpress
-      WORDPRESS_DB_PASSWORD: wordpress123
+      WORDPRESS_DB_PASSWORD: $WP_DB_PASSWORD
     restart: unless-stopped
   db:
     image: mysql:8
@@ -161,8 +178,8 @@ services:
     environment:
       MYSQL_DATABASE: wordpress
       MYSQL_USER: wordpress
-      MYSQL_PASSWORD: wordpress123
-      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_PASSWORD: $WP_DB_PASSWORD
+      MYSQL_ROOT_PASSWORD: $WP_ROOT_PASSWORD
     volumes:
       - db_data:/var/lib/mysql
     restart: unless-stopped
@@ -171,6 +188,11 @@ volumes:
 EOF
 cd /opt/wordpress
 docker compose up -d 2>/dev/null || docker-compose up -d
+# 凭据回显（必须留在 stdout 末尾：任务结果只保留尾部，前端安装输出展示该内容）
+echo "WordPress 安装完成：http://<虚拟机IP>:8088"
+echo "⚠️ 以下口令为本次随机生成，仅显示这一次，请立即保存（后续可查 /opt/wordpress/docker-compose.yml）："
+echo "  数据库用户 wordpress 口令: $WP_DB_PASSWORD"
+echo "  数据库 root 口令: $WP_ROOT_PASSWORD"
 `,
 	},
 	{

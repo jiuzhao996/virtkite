@@ -3,6 +3,7 @@ package vnc
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -37,14 +38,18 @@ func NewTokenStore() *TokenStore {
 
 // Generate 为指定 VM 生成访问令牌并记录 host:port。
 // 每次调用生成新 token，旧 token 失效（保证一次性）。
-func (s *TokenStore) Generate(vmID uint, host string, port int) string {
+// 随机源读取失败（熵源故障）时返回错误且不签发令牌——全零/可预测 token 等同放行任意连接，
+// 不能带病签发，故此处必须把 crypto/rand 的错误往上抛而不是忽略。
+func (s *TokenStore) Generate(vmID uint, host string, port int) (string, error) {
+	// 生成随机 token（持锁前读取，避免随机源抖动拉长临界区）
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("读取随机数失败：%w", err)
+	}
+	token := hex.EncodeToString(b)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	// 生成随机 token
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	token := hex.EncodeToString(b)
 
 	// 移除该 VM 旧 token
 	if old, ok := s.byID[vmID]; ok {
@@ -58,7 +63,7 @@ func (s *TokenStore) Generate(vmID uint, host string, port int) string {
 		ExpireAt:  time.Now().Add(TTLResolver()),
 		CreatedAt: time.Now(),
 	}
-	return token
+	return token, nil
 }
 
 // Lookup 根据 token 返回 host:port。已过期或不存在返回 ok=false。

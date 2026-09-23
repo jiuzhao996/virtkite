@@ -17,6 +17,12 @@ type Config struct {
 	JWTSecretKey     string
 	JWTExpireMinutes int
 
+	// 凭据加密主密钥（VM SSH 凭据落库用的 AES-256-GCM 主密钥）。
+	// 必须与 JWT 密钥分离：二者同源会让「轮换 JWT_SECRET_KEY」连带废掉全部历史凭据
+	// （报错表现为「凭据不存在或已损坏」，极易被误判为数据损坏而触发重装）。
+	// 未配置（空）时由 handler.CredentialMasterSecret 回落到 JWTSecretKey 并打醒目警告。
+	CredentialMasterKey string
+
 	// 服务器配置
 	ServerPort string
 	ServerMode string
@@ -60,15 +66,21 @@ var GlobalConfig *Config
 func Init() {
 	GlobalConfig = &Config{
 		// 数据库配置
-		DBHost:     getEnv("DB_HOST", "127.0.0.1"),
-		DBPort:     getEnvAsInt("DB_PORT", 3306),
-		DBUser:     getEnv("DB_USER", "vmops"),
-		DBPassword: getEnv("DB_PASSWORD", "vmops123"),
+		DBHost: getEnv("DB_HOST", "127.0.0.1"),
+		DBPort: getEnvAsInt("DB_PORT", 3306),
+		DBUser: getEnv("DB_USER", "vmops"),
+		// 口令不再提供默认值：此前默认 vmops123 与 docker-compose.yml 的弱口令互为影子，
+		// 源码外泄即等于库口令外泄；且运维改了库口令后，未设此变量的环境会静默连库失败。
+		// 部署必须显式提供（见 .env.example），缺失时由连接错误直接暴露，好过带弱口令"跑起来"。
+		DBPassword: getEnv("DB_PASSWORD", ""),
 		DBName:     getEnv("DB_NAME", "vmops"),
 
 		// JWT配置
 		JWTSecretKey:     getEnv("JWT_SECRET_KEY", "vmops-jwt-secret-key-change-in-production"),
 		JWTExpireMinutes: getEnvAsInt("JWT_EXPIRE_MINUTES", 1440),
+
+		// 凭据加密主密钥（独立配置项，留空即回落 JWT 密钥并告警；新部署一律显式配置）
+		CredentialMasterKey: getEnv("CREDENTIAL_MASTER_KEY", ""),
 
 		// 服务器配置。默认 release（安全默认）：裸部署不再落入"默认 JWT 密钥 + CORS *"
 		// 的可伪造态；本地开发由 start.sh 显式 export SERVER_MODE=debug。

@@ -1,3 +1,18 @@
+# ⚠️ 部署必读：本文件不再内含任何口令字面量，全部经 .env 注入且为「必填」占位（${VAR:?提示}）。
+# 缺变量时 docker compose 直接报错拒绝启动——宁可起不来，也不要带着公开弱口令上线。
+#
+# 在同目录创建 .env（chmod 600，切勿入库），至少提供以下变量：
+#   DB_PASSWORD=<强随机>            # MySQL 业务账号 vmops 的口令（mysql 与应用共用，必须一致）
+#   MYSQL_ROOT_PASSWORD=<强随机>    # MySQL root 口令（仅初始化与健康检查使用）
+#   GRAFANA_ADMIN_PASSWORD=<强随机> # Grafana admin 口令
+#   JWT_SECRET_KEY=<强随机>         # 会话签名密钥
+#   CREDENTIAL_MASTER_KEY=<强随机>  # VM SSH 凭据落库加密主密钥（必须独立于 JWT 密钥）
+# 完整变量清单与生成命令见仓库根 .env.example（cp .env.example .env 后逐个填值）
+#
+# 🔄 存量部署迁移（仓库历史上出现过 vmops123 / root123 / admin 等弱口令，已全部视为泄露）：
+#   1) 改库内口令：ALTER USER 'vmops'@'%' IDENTIFIED BY '<新口令>';（root 同理）
+#   2) 把新口令写进 .env（MYSQL_PASSWORD 只在数据卷首次初始化时生效，改 .env 不会自动改库内口令）
+#   3) docker compose up -d 重启生效；Grafana 需登录后改密或删除 grafana-data 卷重建
 services:
   mysql:
     image: mysql:8.0.36
@@ -6,14 +21,16 @@ services:
     environment:
       MYSQL_DATABASE: vmops
       MYSQL_USER: vmops
-      MYSQL_PASSWORD: vmops123
-      MYSQL_ROOT_PASSWORD: root123
+      # 业务账号 vmops 的口令：与应用侧 DB_PASSWORD 必须是同一个值，故共用一个变量
+      MYSQL_PASSWORD: ${DB_PASSWORD:?请在 .env 中设置 DB_PASSWORD（openssl rand -hex 24）}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 中设置 MYSQL_ROOT_PASSWORD（openssl rand -hex 24）}
     ports:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot123"]
+      # 健康检查用 root 口令探测：变量插值在 YAML 解析前完成，-p 与口令拼接后即 "-p<明文>"
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:?请在 .env 中设置 MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,10 +48,15 @@ services:
       DB_HOST: mysql
       DB_PORT: "3306"
       DB_USER: vmops
-      DB_PASSWORD: vmops123
+      # 必须与 mysql 服务的 MYSQL_PASSWORD 一致（同一变量），改库口令后两处同步生效
+      DB_PASSWORD: ${DB_PASSWORD:?请在 .env 中设置 DB_PASSWORD（openssl rand -hex 24）}
       DB_NAME: vmops
       # ⚠️ 生产环境请务必改掉下面的 JWT 密钥
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?请在 .env 中设置强随机 JWT_SECRET_KEY（openssl rand -hex 32）}
+      # 凭据加密主密钥（VM SSH 口令落库用 AES-256-GCM）：必须与 JWT 密钥分离——
+      # 二者同源会让「轮换 JWT_SECRET_KEY」连带废掉全部历史凭据（表现为解密失败）。
+      # 留空会回落 JWT 密钥并打警告日志，等于新特性未生效，故这里设为必填。
+      CREDENTIAL_MASTER_KEY: ${CREDENTIAL_MASTER_KEY:?请在 .env 中设置强随机 CREDENTIAL_MASTER_KEY（openssl rand -hex 32），切勿与 JWT_SECRET_KEY 相同}
       SERVER_PORT: "8080"
       # 监控中心代理查询告警用（compose 网络内用服务名；宿主机直跑默认 127.0.0.1:9093）
       ALERTMANAGER_URL: http://alertmanager:9093
@@ -111,7 +133,7 @@ services:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
 
-  # Grafana：预置数据源 + vmops 看板（admin/admin，首次登录后改密）
+  # Grafana：预置数据源 + vmops 看板（口令见 .env 的 GRAFANA_ADMIN_PASSWORD）
   grafana:
     image: grafana/grafana:13.2.1
     container_name: vmops-grafana
@@ -121,8 +143,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?请在 .env 中设置 GRAFANA_ADMIN_PASSWORD（openssl rand -hex 24）}
       # 供产品「监控中心」页 iframe 嵌入：开匿名只读 + 允许被嵌入（Grafana 11 默认拒绝）
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer

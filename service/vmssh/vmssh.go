@@ -14,6 +14,7 @@ package vmssh
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -30,12 +31,44 @@ import (
 const DefaultTimeout = 15 * time.Second
 
 // Options SSH 连接参数（口令仅内存传递，不落盘、不进日志，与 Web 终端一致）。
+//
+// 字段一律不可导出，是刻意的：外部无法用字面量自行拼装，唯一出口是 NewOptions，
+// 而 NewOptions 强制过 ValidateTarget 白名单。
+//
+// 背景（胰腺癌级教训）：SSH 拨号参数完全来自浏览器请求体，校验原本分散在各个
+// handler 调用点「记得就调一次」。新增应用安装模块时漏了一行，平台直接变成免费
+// 跳板机（内网横扫/爆破/投递脚本，源 IP 全算在服务器上），而代码读起来完全正常、
+// 测试也全绿。把校验下沉进构造函数后，「绕过白名单外连任意地址」从「靠人记得」
+// 变成了「编译期做不到」。
 type Options struct {
-	Host     string // 目标 IP
-	Port     int    // SSH 端口，<=0 时取默认 22
-	User     string
-	Password string
+	host      string
+	port      int
+	user      string
+	password  string
+	validated bool // 是否经 NewOptions 校验；零值为 false，拨号入口一律拒绝
 }
+
+// NewOptions 构造连接参数并强制做拨号目标白名单校验（ValidateTarget）。
+// recordedIP 为平台登记的该虚拟机 IP（vm.IP），空值时退回「仅私有网段」口径。
+// port <= 0 时取默认 22。
+func NewOptions(recordedIP, host string, port int, user, password string) (Options, error) {
+	if port <= 0 {
+		port = 22
+	}
+	// 先补默认端口再校验：ValidateTarget 要求端口落在 1-65535
+	if err := ValidateTarget(recordedIP, host, port); err != nil {
+		return Options{}, err
+	}
+	return Options{host: host, port: port, user: user, password: password, validated: true}, nil
+}
+
+// Host / Port / User 只读访问器（口令不外露：只在本包内用于组装 ClientConfig）。
+func (o Options) Host() string { return o.host }
+func (o Options) Port() int    { return o.port }
+func (o Options) User() string { return o.user }
+
+// Addr 返回 host:port 形式的拨号地址（IPv6 自动加方括号）。
+func (o Options) Addr() string { return net.JoinHostPort(o.host, strconv.Itoa(o.port)) }
 
 // runResult 单次命令执行的完整结果（缓冲区归 goroutine 私有，经通道移交，
 // 超时路径下主流程不再触碰缓冲区，避免与仍在收尾的 goroutine 产生数据竞争）。
@@ -51,26 +84,36 @@ func Run(opts Options, cmd string, timeout time.Duration) (stdout string, stderr
 	return RunWithStdin(opts, cmd, nil, timeout)
 }
 
+// clientConfig 组装 SSH 客户端配置（主机密钥 TOFU 校验，论证见包注释安全约定）。
+func clientConfig(opts Options) *ssh.ClientConfig {
+	return &ssh.ClientConfig{
+		User: opts.user,
+		Auth: []ssh.AuthMethod{ssh.Password(opts.password)},
+		// 主机密钥 TOFU 校验（hostkey.go）：首连记录指纹、再连比对，不一致即拒绝。
+		// 目标是平台自建、IP 由 DHCP 动态分配的短生命周期虚拟机，重建即换主机密钥，
+		// 人工核对 known_hosts 不可操作，故采用自动 TOFU；范围另由 ValidateTarget 收敛。
+		HostKeyCallback: TOFUHostKeyCallback(),
+		Timeout:         8 * time.Second, // TCP 拨号超时（ssh.Dial 内部用它做 net.DialTimeout）
+	}
+}
+
+// Dial 建立 SSH 连接——**全仓库唯一的 ssh.Dial 出口**（终端桥与 Run 一族都走这里）。
+// opts 必须来自 NewOptions：未经校验的零值一律拒绝，杜绝「绕过白名单直接拨号」。
+func Dial(opts Options) (*ssh.Client, error) {
+	if !opts.validated {
+		return nil, errors.New("SSH 连接参数未经安全校验（必须经 NewOptions 构造）")
+	}
+	return ssh.Dial("tcp", opts.Addr(), clientConfig(opts))
+}
+
 // RunWithStdin 在 Run 的基础上向命令的 stdin 喂入 stdin 内容（nil 表示不写 stdin），
 // 供「cat > 路径」式的文件写入使用。命令非零退出返回 *ssh.ExitError，stderr 带远程报错原文。
 func RunWithStdin(opts Options, cmd string, stdin io.Reader, timeout time.Duration) (stdout string, stderr string, err error) {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	if opts.Port <= 0 {
-		opts.Port = 22
-	}
 
-	config := &ssh.ClientConfig{
-		User: opts.User,
-		Auth: []ssh.AuthMethod{ssh.Password(opts.Password)},
-		// 主机密钥 TOFU 校验（与 handler/terminal.go 同一回调工厂），论证见包注释（安全约定）；
-		// 中间人风险由指纹比对 + 调用方的 validateSSHTarget 私有网段白名单双重收敛。
-		HostKeyCallback: TOFUHostKeyCallback(),
-		Timeout:         8 * time.Second, // TCP 拨号超时（ssh.Dial 内部用它做 net.DialTimeout）
-	}
-
-	client, err := ssh.Dial("tcp", net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port)), config)
+	client, err := Dial(opts)
 	if err != nil {
 		// 完整错误（可能含内网拓扑 / banner）交由调用方记服务端日志，链路必须保留
 		return "", "", fmt.Errorf("SSH 连接失败: %w", err)
@@ -92,7 +135,7 @@ func RunWithStdin(opts Options, cmd string, stdin io.Reader, timeout time.Durati
 			// 自起 goroutine 必须自带 recover（gin Recovery 只覆盖 HTTP 请求链）
 			defer func() {
 				if rec := recover(); rec != nil {
-					log.Printf("[vmssh] stdin 写入 panic host=%s:%d panic=%v\n%s", opts.Host, opts.Port, rec, debug.Stack())
+					log.Printf("[vmssh] stdin 写入 panic host=%s:%d panic=%v\n%s", opts.host, opts.port, rec, debug.Stack())
 				}
 			}()
 			defer w.Close() // 写完关管道，远端 cat 才能收到 EOF 正常退出

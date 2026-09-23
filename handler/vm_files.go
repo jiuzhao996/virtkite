@@ -95,9 +95,10 @@ func (h *VMFilesHandler) resolve(c *gin.Context, req *vmFilesReq, op string) (vm
 	if port == 0 {
 		port = 22
 	}
-	// 复用终端的目标白名单：已记录 IP 精确匹配，否则仅放行 RFC1918 私有网段（排环回/组播）
-	if err := validateSSHTarget(&record, req.Host, port); err != nil {
-		// 其错误文案本就是面向用户的中文白名单说明（见 terminal.go），经 friendlyMessage 安全透出
+	// 目标白名单校验内建于 vmssh.NewOptions：Options 字段不可导出、无法字面量构造，
+	// 因此「不校验就拨号」在编译期就写不出来（错误文案本就是面向用户的中文白名单说明）
+	opts, err := vmssh.NewOptions(record.IP, req.Host, port, req.User, req.Password)
+	if err != nil {
 		log.Printf("[vm-files] 目标被拒 op=%s vm=%s(%d) target=%s:%d user=%s from=%s reason=%v",
 			op, record.Name, record.ID, req.Host, port, req.User, c.ClientIP(), err)
 		ErrorResponse(c, http.StatusBadRequest, err)
@@ -106,7 +107,7 @@ func (h *VMFilesHandler) resolve(c *gin.Context, req *vmFilesReq, op string) (vm
 	// 留痕：谁、从哪、对哪个目标做了什么（口令不记录）
 	log.Printf("[vm-files] %s vm=%s(%d) target=%s:%d user=%s from=%s",
 		op, record.Name, record.ID, req.Host, port, req.User, c.ClientIP())
-	return &record, vmssh.Options{Host: req.Host, Port: port, User: req.User, Password: req.Password}, true
+	return &record, opts, true
 }
 
 // checkPath 远程路径合法性：非空且以 / 开头（拒绝相对路径，避免语义随登录 shell 起始目录漂移）。

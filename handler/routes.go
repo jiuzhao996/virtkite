@@ -13,7 +13,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/service/console"
 	"github.com/jiuzhao/vmops/service/cron"
@@ -21,16 +20,19 @@ import (
 	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
+	"github.com/jiuzhao/vmops/service/vnc"
 	"gorm.io/gorm"
 )
 
 // Deps handler 层统一依赖（批次 0：新增 handler 一律从 Deps 取依赖）。
 type Deps struct {
-	DB                *gorm.DB
-	Virt              *virt.Virt
-	Tasks             *tasks.Manager
-	Sessions          *console.Registry
-	SettingMgr        *setting.Manager
+	DB         *gorm.DB
+	Virt       *virt.Virt
+	Tasks      *tasks.Manager
+	Sessions   *console.Registry
+	SettingMgr *setting.Manager
+	// VNCTokens 全局唯一 VNC 令牌库：签发与解析必须共用同一实例，由 main 装配一次。
+	VNCTokens         *vnc.TokenStore
 	AlertmanagerURL   string
 	PrometheusURL     string
 	AlertWebhookToken string
@@ -42,7 +44,8 @@ type Deps struct {
 func RegisterPublic(r *gin.Engine, deps Deps) {
 	authHandler := NewAuthHandler(deps.DB)
 	authHandler.SetSettingMgr(deps.SettingMgr) // 安全入口动态校验 + 密码策略依赖
-	vncHandler := NewVNCHandler(deps.DB, deps.Sessions)
+	// 与 RegisterAll 内签发 handler 共用 deps.VNCTokens，否则解析恒失败
+	vncHandler := NewVNCHandler(deps.DB, deps.Sessions, deps.VNCTokens)
 	alertWebhookHandler := NewAlertWebhookHandler(deps.DB, deps.AlertWebhookToken)
 	metricsHandler := NewMetricsHandler(deps.DB)
 
@@ -98,17 +101,23 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	dashboardHandler := NewDashboardHandler(deps.DB)
 	storageHandler := NewStorageHandler(deps.DB, deps.Tasks)
 	networkHandler := NewNetworkHandler()
-	vncHandler := NewVNCHandler(deps.DB, deps.Sessions)
+	// 与 RegisterPublic 内解析 handler 共用 deps.VNCTokens（同一实例是 VNC 链路存活的前提）
+	vncHandler := NewVNCHandler(deps.DB, deps.Sessions, deps.VNCTokens)
 	terminalHandler := NewTerminalHandler(deps.DB, deps.Sessions)
 	monitorHandler := NewMonitorHandler(deps.DB, deps.AlertmanagerURL)
 	historyHandler := NewHistoryHandler(deps.DB, deps.PrometheusURL)
 	dockerHandler := NewDockerHandler()
 	appsHandler := NewAppsHandler(deps.DB, deps.Tasks)
 	vmFilesHandler := NewVMFilesHandler(deps.DB)
+	// 离线挂载守卫：启动对账清理上次进程遗留的 FUSE 挂载点，并挂上 SIGINT/SIGTERM 退出钩子
+	StartOfflineMountGuard()
 	vmHandler := NewVMHandler(deps.DB, deps.Tasks, deps.Sessions)
 	aiHandler := NewAIHandler(deps.DB, deps.SettingMgr)
-	vmCredHandler := NewVMCredentialHandler(deps.DB, config.GlobalConfig.JWTSecretKey)
+	// 凭据主密钥走独立配置项（回落与告警见 CredentialMasterSecret），不再直接喂 JWT 密钥
+	vmCredHandler := NewVMCredentialHandler(deps.DB, CredentialMasterSecret())
 	vmFilesHandler.SetVMCredentialHandler(vmCredHandler)
+	// 应用商店安装：use_saved（或未带口令）走服务端凭据，明文不落 task.payload
+	appsHandler.SetVMCredentialHandler(vmCredHandler)
 	lokiHandler := NewLokiHandler(deps.LokiURL)
 	appStoreV2 := NewAppStoreV2Handler()
 	cronScheduler := &cron.Scheduler{DB: deps.DB, Virt: deps.Virt, BackupDir: ""}

@@ -3,10 +3,13 @@ package tasks
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/apps"
+	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/vmssh"
 )
 
@@ -41,19 +44,27 @@ func buildDetectCmd(detect string) string {
 
 // RegisterAppTasks 注册应用商店与云镜像市场任务 executor。检测走 handler 同步 SSH（快速、用户在线等待），
 // 这里注册 app_install；image_download（云镜像市场下载）一并挂入（v3 批次 H）。
-func RegisterAppTasks(m *Manager) {
+//
+// masterSecret 为凭据主密钥（与 handler.NewVMCredentialHandler 同源，main.go 注入
+// handler.CredentialMasterSecret()——二者必须一致，否则「保存凭据」与「安装取凭据」互相解不开）：
+// app_install 要在服务端解密 SSH 凭据，未注入即无法安装（fail-closed，绝不降级成空口令）。
+func RegisterAppTasks(m *Manager, masterSecret string) {
 	if m == nil {
 		return
 	}
-	m.Register("app_install", execAppInstall)
+	m.Register("app_install", func(ctx *ExecContext) error {
+		return execAppInstall(ctx, masterSecret)
+	})
 	RegisterImageDownload(m)
 }
 
 // execAppInstall 在虚拟机内经 SSH 执行应用安装脚本（executor 内禁引用 gin/handler）。
-// payload：{app_id*, host*, port?, user*, password*}。
-// 凭据只进 payload（随任务入库，与 create_vm 的 cloud_init 密码同一口径），
-// 日志与错误文案一律不含 password。
-func execAppInstall(ctx *ExecContext) error {
+// payload：{app_id*, host*, port?, credential_id? | user* + password_enc* + salt*}。
+//
+// 凭据口径（P0 修复）：payload 随任务入库，绝不再放明文口令 —— 要么放 vm_credentials 的
+// 引用 ID（推荐，handler 的 use_saved 通道），要么放 HTTP 边界加密后的密文与盐。
+// 明文只在 executor 内存里存在一瞬，用来组装 vmssh.Options；日志与错误文案一律不含口令。
+func execAppInstall(ctx *ExecContext, masterSecret string) error {
 	if err := checkExecContext(ctx); err != nil {
 		return err
 	}
@@ -67,14 +78,6 @@ func execAppInstall(ctx *ExecContext) error {
 	if !ok || host == "" {
 		return errors.New("缺少目标主机地址参数")
 	}
-	user, ok := strParam(payload, "user")
-	if !ok || user == "" {
-		return errors.New("缺少 SSH 用户名参数")
-	}
-	password, ok := strParam(payload, "password")
-	if !ok || password == "" {
-		return errors.New("缺少 SSH 密码参数")
-	}
 	port := 22
 	if p, ok := intParam(payload, "port"); ok && p > 0 && p <= 65535 {
 		port = p
@@ -85,7 +88,17 @@ func execAppInstall(ctx *ExecContext) error {
 		return fmt.Errorf("应用 %s 不在内置应用目录中", appID)
 	}
 
-	opt := vmssh.Options{Host: host, Port: port, User: user, Password: password}
+	// 目标白名单复核（纵深防御）：handler 提交时校验过一次，这里按库中 VM 的当前登记地址
+	// 再校一次——payload 是持久化数据，历史任务/将来的新提交点都可能带着它进来，
+	// 不能因为「提交点校验过」就无条件信任。校验内建于 vmssh.NewOptions，无法绕过。
+	user, password, err := resolveSSHCredential(ctx, masterSecret)
+	if err != nil {
+		return err
+	}
+	opt, err := vmssh.NewOptions(taskRecordedIP(ctx), host, port, user, password)
+	if err != nil {
+		return fmt.Errorf("安装目标未通过安全校验: %w", err)
+	}
 
 	// 1) 已装检测：连接失败（err）与未安装（NOT_INSTALLED 标记）两类结果彻底分开。
 	reportProgress(ctx, 5, "正在检测 "+app.Name+" 是否已安装")
@@ -123,6 +136,63 @@ func execAppInstall(ctx *ExecContext) error {
 		"output": truncate(installOut, appOutTail),
 	}, taskVMID(ctx), ctx.Task.VMName)
 	return nil
+}
+
+// taskRecordedIP 取任务关联虚拟机的登记 IP，作为 SSH 拨号目标白名单的最强约束口径。
+// VM 查不到时返回空串（ValidateTarget 随后退回「仅私有网段」口径）并留痕供排查。
+func taskRecordedIP(ctx *ExecContext) string {
+	recordedIP := ""
+	if ctx.Task.VMID != nil && *ctx.Task.VMID > 0 {
+		var vm model.VM
+		if err := ctx.DB.First(&vm, *ctx.Task.VMID).Error; err != nil {
+			// 查不到也不断言放行：退回私有网段校验，并留痕供排查
+			log.Printf("[tasks] app_install 复核目标时未找到虚拟机 vm_id=%d err=%v", *ctx.Task.VMID, err)
+		} else {
+			recordedIP = vm.IP
+		}
+	}
+	return recordedIP
+}
+
+// resolveSSHCredential 取安装用 SSH 凭据明文（只在本 executor 内存里流转，不入日志、不回写 DB）。
+//
+//   - credential_id 通道：按 ID 读 vm_credentials 并解密；必须校验该凭据属于任务关联的 VM，
+//     否则会出现「拿 A 机器的口令去连 B 机器地址」的混淆代理人问题（地址虽被白名单收敛，
+//     凭据却是别人的，等于跨机复用）；
+//   - password_enc + salt 通道：兼容「当场输入口令」的旧前端，handler 已在 HTTP 边界加密。
+func resolveSSHCredential(ctx *ExecContext, masterSecret string) (user, password string, err error) {
+	if masterSecret == "" {
+		return "", "", errors.New("服务端未配置凭据主密钥，无法解析 SSH 凭据")
+	}
+	if id, ok := intParam(ctx.Payload, "credential_id"); ok && id > 0 {
+		var cred model.VMCredential
+		if derr := ctx.DB.First(&cred, uint(id)).Error; derr != nil {
+			return "", "", fmt.Errorf("读取虚拟机凭据失败: %w", derr)
+		}
+		if ctx.Task.VMID == nil || cred.VMID != *ctx.Task.VMID {
+			return "", "", errors.New("凭据与目标虚拟机不匹配，请重新提交安装任务")
+		}
+		plain, derr := secretbox.OpenWithMaster(masterSecret, cred.Salt, cred.PasswordEnc)
+		if derr != nil {
+			return "", "", fmt.Errorf("凭据解密失败: %w", derr)
+		}
+		return cred.User, string(plain), nil
+	}
+	user, ok := strParam(ctx.Payload, "user")
+	if !ok || user == "" {
+		return "", "", errors.New("缺少 SSH 用户名参数")
+	}
+	cipherB64, ok1 := strParam(ctx.Payload, "password_enc")
+	salt, ok2 := strParam(ctx.Payload, "salt")
+	if !ok1 || !ok2 || cipherB64 == "" || salt == "" {
+		// 明文 password 已不再受理：老任务带着它进来只会被拒，不会拿去拨号
+		return "", "", errors.New("缺少 SSH 凭据参数（口令不得以明文传递）")
+	}
+	plain, derr := secretbox.OpenWithMaster(masterSecret, salt, cipherB64)
+	if derr != nil {
+		return "", "", fmt.Errorf("SSH 口令解密失败: %w", derr)
+	}
+	return user, string(plain), nil
 }
 
 // taskVMID 取任务已关联的 VM ID（Submit 时由 manager 写入；缺失回 0）。

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -19,12 +20,20 @@ type VNCHandler struct {
 	Sessions *console.Registry
 }
 
-// NewVNCHandler 创建控制台处理器
-func NewVNCHandler(db *gorm.DB, sessions *console.Registry) *VNCHandler {
+// NewVNCHandler 创建控制台处理器。
+//
+// tokens 必须由外部注入共享实例：签发（POST /api/vms/:id/vnc-token，认证组内）与解析
+// （GET /api/vnc/token/:token，公开组）分属两个路由注册函数，若各自 new 一个 TokenStore，
+// 签发写进 A 库的 token 在 B 库里永远查不到——接口全程 200、无任何报错，控制台业务链却整条死掉。
+// 统一由 Deps 装配下发，禁止在 handler 内部自建。
+func NewVNCHandler(db *gorm.DB, sessions *console.Registry, tokens *vnc.TokenStore) *VNCHandler {
+	if tokens == nil {
+		panic("NewVNCHandler: VNC TokenStore 未注入，必须由 Deps 提供共享实例")
+	}
 	return &VNCHandler{
 		DB:       db,
 		Virt:     virt.New(),
-		Token:    vnc.NewTokenStore(),
+		Token:    tokens,
 		Sessions: sessions,
 	}
 }
@@ -56,7 +65,12 @@ func (h *VNCHandler) RequestToken(c *gin.Context) {
 		return
 	}
 
-	token := h.Token.Generate(vm.ID, "127.0.0.1", port)
+	// 随机源故障时 Generate 返回错误：此时不签发、不返回 token（带病 token 等同放行任意连接）
+	token, err := h.Token.Generate(vm.ID, "127.0.0.1", port)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, fmt.Errorf("生成 VNC 令牌失败：%w", err))
+		return
+	}
 
 	// 记录 VNC 会话（关闭事件不可见，靠 token 解析刷新 + 过期清扫收敛）
 	if h.Sessions != nil {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/secretbox"
 	"gorm.io/gorm"
@@ -24,17 +25,38 @@ const maxSavedPasswordLen = 256
 // MasterSecret 未注入时全部端点 503 关闭（fail-closed：绝不落明文也不假解密）。
 type VMCredentialHandler struct {
 	DB           *gorm.DB
-	MasterSecret string // 主密钥，见 NewVMCredentialHandler 的注入建议
+	MasterSecret string // 主密钥，来源见 CredentialMasterSecret（独立配置项，不与 JWT 密钥共用）
 }
 
 // NewVMCredentialHandler 创建 SSH 凭据托管处理器。
 //
-// MasterSecret 建议注入 config.GlobalConfig.JWTSecretKey（main.go 挂载时传入）：
-// 同源信任（都是「平台级、env 注入、泄露即全局失守」的密钥，信任边界完全一致），
-// 且不新增一个一旦遗漏就回退成空值的敏感配置项。代价是轮换 JWT 密钥会使已存凭据
-// 不可解密（ResolveFor 报错引导用户重存，fail-closed 不产出错误明文），属可接受取舍。
+// MasterSecret 一律由 CredentialMasterSecret() 提供（routes.go 挂载时传入），不要就地传
+// config.GlobalConfig.JWTSecretKey——那会把凭据生命周期绑死在 JWT 密钥上（见下方说明）。
 func NewVMCredentialHandler(db *gorm.DB, masterSecret string) *VMCredentialHandler {
 	return &VMCredentialHandler{DB: db, MasterSecret: masterSecret}
+}
+
+// CredentialMasterSecret 选取凭据加密主密钥（每次服务启动调用一次，注入 VMCredentialHandler）。
+//
+// 优先级：CREDENTIAL_MASTER_KEY（独立配置项，新部署必配） > JWT_SECRET_KEY（历史行为，兼容回落）。
+//
+// 为什么必须解耦：早期实现直接复用 JWT 主密钥，于是「按安全规范轮换 JWT_SECRET_KEY」
+// 会连带废掉库里全部历史凭据——ResolveFor 全线解密失败，报错却表现为「凭据不存在或已损坏」，
+// 极易被误判成数据损坏而触发重装/重建，造成真实损失。二者信任边界虽相同（平台级 env 密钥），
+// 但生命周期必须各自独立。
+//
+// 回落路径绝不静默：只打 ⚠️ 日志不足以阻止事故，但至少让「本部署仍是绑定态」这件事
+// 在每次启动的日志里可见，而不是等轮换那天才炸。
+//
+// 迁移（已从回落态切到独立密钥的存量部署）：历史凭据仍是旧密钥加密的，需跑一次重加密——
+// go run ./scripts/credential-rekey --apply（默认 dry-run，详见该文件的用法说明）。
+func CredentialMasterSecret() string {
+	if key := config.GlobalConfig.CredentialMasterKey; key != "" {
+		// 已独立配置：此后轮换 JWT_SECRET_KEY 不会动摇任何已存凭据
+		return key
+	}
+	log.Printf("⚠️⚠️ [vm-cred] 未配置 CREDENTIAL_MASTER_KEY，VM 凭据仍复用 JWT_SECRET_KEY 加密：此时轮换 JWT_SECRET_KEY 会导致历史凭据全部解密失败（表现为「凭据不存在或已损坏」）。请尽快配置独立的 CREDENTIAL_MASTER_KEY（首次可直接复用当前 JWT_SECRET_KEY 的值，配置后二者即解耦）")
+	return config.GlobalConfig.JWTSecretKey
 }
 
 // ready 功能闸：主密钥未注入（如旧配置热升级到本版本）时一切读写一律 503。
@@ -205,6 +227,49 @@ func (h *VMCredentialHandler) Delete(c *gin.Context) {
 	Success(c, gin.H{"message": "已删除保存的凭据"})
 }
 
+// resolveVMForCred 凭据通道公共前置：取 VM → 授权可见性（对齐 vm_files.resolve 的
+// 「查无此项」语义：非 admin 未持有效授权与不存在同响应，不泄露资产存在性）。
+// vmID 来自调用方已解析的 uint（非路径原串），无注入面；db.First 自动过滤软删 VM。
+func (h *VMCredentialHandler) resolveVMForCred(c *gin.Context, vmID uint) (*model.VM, bool) {
+	var vm model.VM
+	if err := h.DB.First(&vm, vmID).Error; err != nil {
+		Fail(c, http.StatusNotFound, "虚拟机不存在")
+		return nil, false
+	}
+	if !vmVisible(c, h.DB, vm.ID) {
+		Fail(c, http.StatusNotFound, "虚拟机不存在")
+		return nil, false
+	}
+	return &vm, true
+}
+
+// CredentialRefFor 取该 VM 已托管凭据的「引用」：只回记录 ID / 用户名 / 端口，绝不回明文。
+//
+// 用途：异步任务（app_install）把引用 ID 写进 task.payload，由 executor 在服务端解密取用，
+// 明文口令因此既不进 HTTP 响应、也不落库（tasks.payload 随任务入库，是泄露面）。
+// 与 ResolveFor 的分工：ResolveFor 给同步通道（当场 SSH 拨号），本函数给异步通道（延迟拨号）。
+//
+// 约定同 ResolveFor：ok=false 时错误响应已写好，调用方直接 return。
+func (h *VMCredentialHandler) CredentialRefFor(c *gin.Context, vmID uint) (credID uint, user string, port int, ok bool) {
+	if !h.ready(c) {
+		return 0, "", 0, false
+	}
+	vm, ok := h.resolveVMForCred(c, vmID)
+	if !ok {
+		return 0, "", 0, false
+	}
+	var rec model.VMCredential
+	if err := h.DB.Where("vm_id = ?", vm.ID).First(&rec).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			Fail(c, http.StatusBadRequest, "该虚拟机尚未配置保存的凭据，请先在凭据面板保存后再安装")
+			return 0, "", 0, false
+		}
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return 0, "", 0, false
+	}
+	return rec.ID, rec.User, rec.Port, true
+}
+
 // ResolveFor 取回 VM 已保存的 SSH 凭据明文——导出给其他 handler 内部使用：
 // 文件管理 / 应用商店的 use_saved=true 通道由后端解密直接组装 vmssh.Options，
 // 前端无需重输口令。⚠️ 明文只在服务端内存流转：不写日志、不进响应体、不落盘。
@@ -220,14 +285,8 @@ func (h *VMCredentialHandler) ResolveFor(c *gin.Context, vmID uint) (user string
 	if !h.ready(c) {
 		return "", 0, "", false
 	}
-	var vm model.VM
-	// db.First 自动过滤软删 VM；vmID 来自调用方已解析的 uint（非路径原串），无注入面
-	if err := h.DB.First(&vm, vmID).Error; err != nil {
-		Fail(c, http.StatusNotFound, "虚拟机不存在")
-		return "", 0, "", false
-	}
-	if !vmVisible(c, h.DB, vm.ID) {
-		Fail(c, http.StatusNotFound, "虚拟机不存在")
+	vm, ok := h.resolveVMForCred(c, vmID)
+	if !ok {
 		return "", 0, "", false
 	}
 	var rec model.VMCredential
