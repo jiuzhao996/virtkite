@@ -233,7 +233,7 @@ const router = useRouter()
 const { canOperate } = useAuth()
 
 // echarts 不解析 var()，需要真实色值：挂载时读一次 CSS 变量（避免散落 hex）
-const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2a9da5')
+const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2e6bd6')
 // 内存曲线与仪表盘同色（--color-success 绿）；原 --color-warning 橙与 CPU 阈值色混淆
 const CHART_MEM_COLOR = cssVar('--color-success', '#16a34a')
 const CHART_BASELINE_COLOR = cssVar('--color-border-strong', '#cbd5e1')
@@ -763,7 +763,7 @@ onUnmounted(() => {
   padding: 3px 10px;
   border-radius: 999px;
   white-space: nowrap;
-  background: #f1f5f9;
+  background: var(--status-off-bg);
   color: var(--color-info);
 }
 .vm-status .status-dot {
@@ -774,23 +774,23 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .vm-status.st-running {
-  background: #ecfdf5;
+  background: var(--status-running-bg);
   color: var(--color-success);
 }
 .vm-status.st-running .status-dot {
   animation: breathe-ring 1.6s ease-in-out infinite;
 }
 .vm-status.st-paused {
-  background: #fffbeb;
+  background: var(--status-paused-bg);
   color: var(--color-warning);
 }
 .vm-status.st-error {
-  background: #fef2f2;
+  background: var(--status-error-bg);
   color: var(--color-danger);
 }
 .vm-status.st-shut-off,
 .vm-status.st-stopped {
-  background: #f1f5f9;
+  background: var(--status-off-bg);
   color: var(--color-info);
 }
 @keyframes breathe-ring {

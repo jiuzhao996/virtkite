@@ -1,6 +1,10 @@
 <template>
   <el-container class="layout">
-    <el-aside :width="collapsed ? '64px' : '180px'" class="aside">
+    <el-aside
+      :width="asideWidth"
+      class="aside"
+      :class="{ 'aside-mobile': isMobile, 'aside-mobile-open': isMobile && drawerOpen }"
+    >
       <div class="brand" :class="{ collapsed }">
         <template v-if="!collapsed">
           <img class="brand-logo" src="/brand/mark-white.svg" alt="鸢航" />
@@ -11,7 +15,7 @@
         <img v-else class="brand-logo" src="/brand/mark-white.svg" alt="鸢航" style="margin: 0 auto" />
       </div>
       <el-menu
-        v-if="!collapsed"
+        v-if="!collapsed || isMobile"
         :default-active="activeIndex"
         router
         class="menu"
@@ -52,7 +56,7 @@
           </template>
         </template>
       </el-menu>
-      <div v-else class="collapse-nav">
+      <div v-else-if="collapsed && !isMobile" class="collapse-nav">
         <template v-for="item in navItems" :key="item.index">
         <el-tooltip
           v-if="!item.adminOnly || isAdmin"
@@ -84,6 +88,15 @@
         <!-- 顶栏不放页面标题（职责在页面自身页头，避免双标题重复）；
              改为全局搜索（VM 名直达详情，对标云控制台顶栏分工）+ 全屏切换 -->
         <div class="header-left">
+          <!-- 移动端汉堡：打开侧栏抽屉（桌面端隐藏） -->
+          <el-button
+            v-if="isMobile"
+            text
+            :icon="Menu"
+            class="menu-btn"
+            aria-label="打开菜单"
+            @click="drawerOpen = true"
+          />
           <el-select
             v-model="searchSel"
             class="global-search"
@@ -167,12 +180,14 @@
       </el-main>
     </el-container>
   </el-container>
+  <!-- 移动端抽屉遮罩：点击关闭侧栏 -->
+  <div v-if="isMobile && drawerOpen" class="drawer-backdrop" @click="drawerOpen = false" />
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Monitor, Odometer, Picture, Setting, Share, SwitchButton, Tickets, Timer, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Odometer, Picture, Setting, Share, SwitchButton, Tickets, Timer, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { roleText, vmStatusText, vmStatusTag } from '../utils/format'
@@ -194,6 +209,22 @@ watch(collapsed, (v) => {
 })
 
 const role = computed(() => (state.user && state.user.role) || '')
+
+// 移动端：侧栏转固定抽屉（<768px）。桌面端走折叠逻辑，移动端始终全宽抽屉。
+const isMobile = ref(false)
+const drawerOpen = ref(false)
+function checkMobile() {
+  isMobile.value = window.matchMedia('(max-width: 768px)').matches
+  if (!isMobile.value) drawerOpen.value = false
+}
+// 抽屉宽度：移动端固定 220px，桌面端按折叠态 64/180
+const asideWidth = computed(() =>
+  isMobile.value ? '220px' : collapsed.value ? '64px' : '180px'
+)
+// 路由切换自动收起抽屉（手机选完菜单即关闭）
+watch(() => route.path, () => {
+  drawerOpen.value = false
+})
 
 // 分组导航：group 字段同时驱动展开态（el-menu-item-group）与折叠态 v-for，
 // adminOnly 过滤在 menuGroups 里统一做。层级思路：资源组 = 用户生产消费的对象（虚拟机/镜像），
@@ -290,10 +321,13 @@ async function loadActiveTasks() {
   }
 }
 onMounted(() => {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   loadActiveTasks()
   taskTimer = setInterval(loadActiveTasks, getPollInterval('tasks', POLL_DEFAULTS.tasks))
 })
 onUnmounted(() => {
+  window.removeEventListener('resize', checkMobile)
   if (taskTimer) clearInterval(taskTimer)
 })
 
@@ -314,7 +348,7 @@ function onUserCommand(cmd) {
   height: 100vh;
 }
 .aside {
-  background: linear-gradient(180deg, var(--color-primary) 0%, var(--el-color-primary-dark-2) 100%);
+  background: linear-gradient(180deg, var(--brand-deep-1) 0%, var(--brand-deep-2) 100%);
   border-right: none;
   display: flex;
   flex-direction: column;
@@ -580,5 +614,55 @@ function onUserCommand(cmd) {
 .aside-collapse-bar:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
+}
+
+/* 移动端：侧栏转固定抽屉（<768px 生效；桌面端维持弹性布局） */
+.aside-mobile {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  z-index: 1001;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  box-shadow: var(--shadow-xl);
+}
+.aside-mobile-open {
+  transform: translateX(0);
+}
+/* 移动端抽屉不显示底部折叠条（始终全宽展示分组菜单） */
+.aside-mobile .aside-collapse-bar {
+  display: none;
+}
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(13, 36, 68, 0.45); /* 深空蓝半透明遮罩 */
+  z-index: 1000;
+}
+.menu-btn {
+  color: var(--color-muted-foreground);
+}
+
+/* 窄屏响应式：压缩主区内边距、放开顶栏搜索宽度，避免横向溢出 */
+@media (max-width: 768px) {
+  .header-left {
+    max-width: none;
+    margin-right: 8px;
+  }
+  .global-search {
+    min-width: 0;
+  }
+  .main {
+    padding: 16px;
+  }
+}
+@media (max-width: 480px) {
+  .main {
+    padding: 12px;
+  }
+  .header-right {
+    gap: 8px;
+  }
 }
 </style>

@@ -9,6 +9,8 @@
       @load="bgOk = true"
       @error="bgOk = false"
     />
+    <!-- 品牌墙：深蓝背景上的大尺寸白鸢水印，营造纵深（mark-white 在深蓝上可见） -->
+    <img class="brand-watermark" src="/brand/mark-white.svg" aria-hidden="true" alt="" />
     <!-- 系统公告（公开接口，无需认证）：非空即展示，置于登录卡片上方同宽展示 -->
     <div class="login-stack">
       <el-alert
@@ -21,7 +23,7 @@
       />
       <el-card class="login-card" shadow="always">
         <div class="login-brand">
-          <img class="logo" src="/brand/logo-teal.svg" alt="鸢航 VirtKite" />
+          <img class="logo" src="/brand/logo-blue.svg" alt="鸢航 VirtKite" />
           <h1>鸢航 <span class="en">VirtKite</span></h1>
           <p>基于 KVM 的轻量级私有云管理平台</p>
         </div>
@@ -146,6 +148,25 @@ async function submit() {
 }
 .login-bg.on {
   opacity: 1;
+}
+.brand-watermark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(440px, 70vw);
+  height: auto;
+  transform: translate(-50%, -50%);
+  opacity: 0.1;
+  z-index: 1;
+  pointer-events: none;
+  animation: brand-float 7s ease-in-out infinite;
+}
+@keyframes brand-float {
+  0%, 100% { transform: translate(-50%, -54%); }
+  50% { transform: translate(-50%, -46%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand-watermark { animation: none; }
 }
 .login-stack {
   position: relative;

@@ -70,7 +70,7 @@ export function vmStatusHex(status) {
   if (status === 'paused') return cssVar('--color-warning', '#d97706')
   if (status === 'shut off' || status === 'stopped') return cssVar('--color-info', '#64748b')
   if (status === 'error') return cssVar('--color-danger', '#dc2626')
-  return cssVar('--color-primary', '#2a9da5')
+  return cssVar('--color-primary', '#2e6bd6')
 }
 
 /* ==================== 用户角色 ==================== */

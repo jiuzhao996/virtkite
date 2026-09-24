@@ -393,7 +393,7 @@ const actionLabelMap = ref({ ...FALLBACK_ACTION_LABELS })
 const HOST_POINTS = 60
 
 // echarts 不解析 var()，主机曲线需要真实色值：cssVar 由 utils/format.js 提供
-const primaryColor = cssVar('--el-color-primary', '#2a9da5')
+const primaryColor = cssVar('--el-color-primary', '#2e6bd6')
 const memChartColor = cssVar('--color-success', '#16a34a')
 // 图例 / 轴标签等文字与线条颜色同样必须取真实值（原处传 var() 会静默失效回退黑色）
 const chartMutedColor = cssVar('--color-muted-foreground', '#64748b')
@@ -445,7 +445,7 @@ const stats = computed(() => {
     { label: '运行中', icon: VideoPlay, color: 'var(--color-accent)', value: o.running_vm_count || 0, to: '/vms' },
     { label: '存储池', icon: FolderOpened, color: 'var(--color-warning)', value: o.pool_count || 0, to: '/storage' },
     { label: '网络', icon: Connection, color: 'var(--color-secondary)', value: o.network_count || 0, to: '/networks' },
-    { label: '镜像', icon: Picture, color: '#7c3aed', value: o.image_count || 0, to: '/images' },
+    { label: '镜像', icon: Picture, color: 'var(--color-violet)', value: o.image_count || 0, to: '/images' },
     { label: '用户', icon: User, color: 'var(--color-info)', value: o.user_count || 0, to: '/users', adminOnly: true },
     { label: '审计', icon: Document, color: 'var(--color-info)', value: o.audit_count || 0, to: '/audit' }
   ]

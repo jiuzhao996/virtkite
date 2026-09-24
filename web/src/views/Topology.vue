@@ -60,8 +60,8 @@ const emptyText = computed(() =>
 )
 
 /* ---------- 节点分类与配色（echarts 不解析 var()，取真实色值） ---------- */
-const COLOR_HOST = () => cssVar('--color-primary', '#2a9da5')
-const COLOR_POOL = () => cssVar('--color-accent', '#217d83')
+const COLOR_HOST = () => cssVar('--color-primary', '#2e6bd6')
+const COLOR_POOL = () => cssVar('--color-accent', '#2e6bd6')
 const COLOR_MUTED = () => cssVar('--color-muted-foreground', '#475569')
 
 // 分类顺序即图例顺序：宿主机 / 存储池 / 四种 VM 运行状态（legend 点选即过滤）

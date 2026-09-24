@@ -17,37 +17,52 @@
 
 ### Color Palette
 
+> **品牌叙事（鸢航 VirtKite）**：深空蓝海面 + 鸢蓝纸鸢 + 金色牵线。交互主色用鸢蓝，深色表面用深空蓝，金色仅作点缀（不作正文，对比度不足）。
+
 | Role | Hex | CSS Variable |
 |------|------|--------------|
-| Primary | `#2A9DA5` | `--color-primary` |
+| Primary（交互主色：按钮/链接/激活态） | `#2E6BD6` | `--color-primary` / `--el-color-primary` |
 | On Primary | `#FFFFFF` | `--color-on-primary` |
-| Secondary | `#1D8F96` | `--color-secondary` |
-| On Secondary | `#FFFFFF` | `--color-on-secondary` |
-| Accent/CTA | `#217D83` | `--color-accent` |
-| On Accent/CTA | `#FFFFFF` | `--color-on-accent` |
+| Secondary（深空蓝：次级强调/深色点缀） | `#1B3A62` | `--color-secondary` |
+| Accent/CTA | `#2E6BD6` | `--color-accent` |
+| Kite Blue（鸢蓝浅版：hover/浅底强调） | `#6DB6FF` | `--color-kite` |
+| Gold（金：仅装饰点缀） | `#FFD268` | `--color-gold` |
+| Violet（紫色：分类标识，如镜像） | `#7C3AED` | `--color-violet` |
+| Brand Deep 1（侧栏/登录渐变起点） | `#0D2444` | `--brand-deep-1` |
+| Brand Deep 2（侧栏/登录渐变终点） | `#1B3A62` | `--brand-deep-2` |
 | Background | `#F8FAFC` | `--color-background` |
 | Foreground | `#1E293B` | `--color-foreground` |
 | Card | `#FFFFFF` | `--color-card` |
-| Card Foreground | `#1E293B` | `--color-card-foreground` |
 | Muted | `#E9EFF8` | `--color-muted` |
 | Muted Foreground | `#475569` | `--color-muted-foreground` |
 | Border | `#E2E8F0` | `--color-border` |
-| Destructive | `#DC2626` | `--color-destructive` |
-| On Destructive | `#FFFFFF` | `--color-on-destructive` |
-| Ring | `#2A9DA5` | `--color-ring` |
+| Success（运行/成功） | `#16A34A` | `--color-success` |
+| Warning（暂停/警告） | `#D97706` | `--color-warning` |
+| Danger（异常/删除） | `#DC2626` | `--color-danger` |
+| Info（关机/中性） | `#64748B` | `--color-info` |
+| Ring（焦点环） | `#2E6BD6` | `--color-ring` |
 
-**Color Notes:** 浅色管理端 · 品牌青（Light tech + brand teal）
+**Color Notes:** 浅色管理端 · 深空蓝 + 鸢蓝 + 金（KVM 私有云控制台，对标 1Panel / 公有云控制台密度）。
 
 ### Typography
 
-- **Heading Font:** Poppins
-- **Body Font:** Open Sans
-- **Mood:** modern, professional, clean, corporate, friendly, approachable
-- **Google Fonts:** [Poppins + Open Sans](https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap)
+- **Display / Body Font（拉丁/数字）：** Manrope（带几何辨识度）
+- **CJK Font（中文）：** Noto Sans SC（回退 PingFang SC / Microsoft YaHei / 系统黑体）
+- **Mood:** modern, professional, clean, technical, trustworthy
+- **加载方式：** `index.html` 中 `<link>` 引入（已配 `preconnect` + `display=swap`），**不要**在 CSS 里 `@import` 整包。
 
-**CSS Import:**
+**index.html：**
+```html
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+```
+
+**CSS 变量：**
 ```css
-@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap');
+--font-body: 'Manrope', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+--font-display: 'Manrope', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+--font-mono: 'Cascadia Code', 'Fira Code', ui-monospace, Consolas, monospace;
 ```
 
 ### Spacing Variables
@@ -82,7 +97,7 @@
 ```css
 /* Primary Button */
 .btn-primary {
-  background: #2A9DA5;
+  background: #2E6BD6;
   color: white;
   padding: 12px 24px;
   border-radius: 8px;
@@ -99,8 +114,8 @@
 /* Secondary Button */
 .btn-secondary {
   background: transparent;
-  color: #2A9DA5;
-  border: 2px solid #2A9DA5;
+  color: #2E6BD6;
+  border: 2px solid #2E6BD6;
   padding: 12px 24px;
   border-radius: 8px;
   font-weight: 600;
@@ -139,9 +154,9 @@
 }
 
 .input:focus {
-  border-color: #2A9DA5;
+  border-color: #2E6BD6;
   outline: none;
-  box-shadow: 0 0 0 3px #2563EB20;
+  box-shadow: 0 0 0 3px rgba(46, 107, 214, 0.2);
 }
 ```
 
@@ -167,28 +182,34 @@
 
 ## Style Guidelines
 
-**Style:** Glassmorphism
+**Style:** Flat Light · 扁平浅色管理端（Flat, clean, density-first）
 
-**Keywords:** Frosted glass, transparent, blurred background, layered, vibrant background, light source, depth, multi-layer
+**Keywords:** Flat surfaces, subtle shadows, semantic color, clear hierarchy, data-dense, 8px grid, brand blue
 
-**Best For:** Modern SaaS, financial dashboards, high-end corporate, lifestyle apps, modal overlays, navigation
+**Best For:** 运维/云控制台、B 端 dashboard、内部平台。对标 1Panel / 公有云控制台。
 
-**Key Effects:** Backdrop blur (10-20px), subtle border (1px solid rgba white 0.2), light reflection, Z-depth
+**Key Effects:** 浅灰页面底（`--color-background`）+ 白卡片（`--shadow-sm` 软阴影）；交互主色统一鸢蓝；深空蓝只用于侧栏/登录等品牌表面；金色仅点缀。
 
 ### Page Pattern
 
-**Pattern Name:** Hero + Features + CTA
+**Pattern Name:** Dashboard / 列表 + 卡片（管理端通用）
 
-- **Conversion Strategy:** Deep CTA placement. For CTA label text, verify at least 4.5:1 against the button fill; use 7:1 only when the product explicitly targets AAA normal-text contrast. Keep focus and component boundaries independently visible. Disable hero parallax under reduced motion and render its static final state.
-- **CTA Placement:** Hero (sticky) + Bottom
-- **Section Order:** Hero with headline/image > Value prop > Key features (3-5) > CTA section > Footer
+- **布局骨架：** 固定侧栏（可折叠 / 移动端抽屉）+ 顶栏（全局搜索 + 任务铃 + 用户）→ 内容区 `router-view`。
+- **列表页：** 工具栏（主操作实底 primary，次要操作 plain）+ 筛选栏 + 卡片网格（`auto-fill minmax`，窄屏塌缩单列）或 `el-table`（桌面）。
+- **仪表盘：** 统计卡（可点跳转）→ 资源大盘 → 状态环/容量 → 实时性能表 → 告警/平台信息。
+- **密度：** Density 8/10，正文 14px、次要 12px、卡片标题 15px。**不**为「大字展示字体」牺牲信息密度。
 
 ---
 
 ## Anti-Patterns (Do NOT Use)
 
+- ❌ 纯白/纯灰平铺背景无层次（用 `--color-background` + 白卡 + 软阴影营造层次）
+- ❌ 两套品牌色混用（深空蓝 vs 鸢蓝必须区分：深空蓝=深色表面，鸢蓝=交互主色）
+- ❌ 金色 `#FFD268` 用于正文/按钮文字（对比度不足，仅装饰）
+- ❌ 超大展示字体挤压控制台信息密度
+- ❌ 移动端无抽屉/无塌缩（侧栏必须转抽屉，表格/网格塌缩单列）
 - ❌ Excessive animation
-- ❌ Dark mode by default
+- ❌ Dark mode by default（当前仅维护浅色主题）
 
 ### Additional Forbidden Patterns
 
