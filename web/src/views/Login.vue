@@ -9,7 +9,7 @@
       @load="bgOk = true"
       @error="bgOk = false"
     />
-    <!-- 品牌墙：深蓝背景上的大尺寸白鸢水印，营造纵深（mark-white 在深蓝上可见） -->
+    <!-- 品牌墙：青绿深底上的大尺寸白鸢水印，营造纵深（mark-white 在深色底上可见） -->
     <img class="brand-watermark" src="/brand/mark-white.svg" aria-hidden="true" alt="" />
     <!-- 系统公告（公开接口，无需认证）：非空即展示，置于登录卡片上方同宽展示 -->
     <div class="login-stack">
@@ -23,7 +23,7 @@
       />
       <el-card class="login-card" shadow="always">
         <div class="login-brand">
-          <img class="logo" src="/brand/logo-blue.svg" alt="鸢航 VirtKite" />
+          <img class="logo" src="/brand/logo-teal.svg" alt="鸢航 VirtKite" />
           <h1>鸢航 <span class="en">VirtKite</span></h1>
           <p>基于 KVM 的轻量级私有云管理平台</p>
         </div>
@@ -132,8 +132,8 @@ async function submit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 深空蓝对齐品牌色板（AGENTS 品牌规范：#0d2444 → #1b3a62） */
-  background: linear-gradient(160deg, #0d2444 0%, #14304f 45%, #1b3a62 100%);
+  /* 品牌青绿深色渐变（AGENTS 品牌规范：#2a9da5 → #217d83） */
+  background: linear-gradient(160deg, #1d8f96 0%, #157078 45%, #0f5257 100%);
   padding: 24px;
   overflow: hidden;
 }

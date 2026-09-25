@@ -233,7 +233,7 @@ const router = useRouter()
 const { canOperate } = useAuth()
 
 // echarts 不解析 var()，需要真实色值：挂载时读一次 CSS 变量（避免散落 hex）
-const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2e6bd6')
+const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2a9da5')
 // 内存曲线与仪表盘同色（--color-success 绿）；原 --color-warning 橙与 CPU 阈值色混淆
 const CHART_MEM_COLOR = cssVar('--color-success', '#16a34a')
 const CHART_BASELINE_COLOR = cssVar('--color-border-strong', '#cbd5e1')

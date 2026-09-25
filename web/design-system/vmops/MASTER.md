@@ -21,10 +21,10 @@
 
 | Role | Hex | CSS Variable |
 |------|------|--------------|
-| Primary（交互主色：按钮/链接/激活态） | `#2E6BD6` | `--color-primary` / `--el-color-primary` |
+| Primary（交互主色：按钮/链接/激活态） | `#2A9DA5` | `--color-primary` / `--el-color-primary` |
 | On Primary | `#FFFFFF` | `--color-on-primary` |
 | Secondary（深空蓝：次级强调/深色点缀） | `#1B3A62` | `--color-secondary` |
-| Accent/CTA | `#2E6BD6` | `--color-accent` |
+| Accent/CTA | `#2A9DA5` | `--color-accent` |
 | Kite Blue（鸢蓝浅版：hover/浅底强调） | `#6DB6FF` | `--color-kite` |
 | Gold（金：仅装饰点缀） | `#FFD268` | `--color-gold` |
 | Violet（紫色：分类标识，如镜像） | `#7C3AED` | `--color-violet` |
@@ -40,7 +40,7 @@
 | Warning（暂停/警告） | `#D97706` | `--color-warning` |
 | Danger（异常/删除） | `#DC2626` | `--color-danger` |
 | Info（关机/中性） | `#64748B` | `--color-info` |
-| Ring（焦点环） | `#2E6BD6` | `--color-ring` |
+| Ring（焦点环） | `#2A9DA5` | `--color-ring` |
 
 **Color Notes:** 浅色管理端 · 深空蓝 + 鸢蓝 + 金（KVM 私有云控制台，对标 1Panel / 公有云控制台密度）。
 
@@ -97,7 +97,7 @@
 ```css
 /* Primary Button */
 .btn-primary {
-  background: #2E6BD6;
+  background: #2A9DA5;
   color: white;
   padding: 12px 24px;
   border-radius: 8px;
@@ -114,8 +114,8 @@
 /* Secondary Button */
 .btn-secondary {
   background: transparent;
-  color: #2E6BD6;
-  border: 2px solid #2E6BD6;
+  color: #2A9DA5;
+  border: 2px solid #2A9DA5;
   padding: 12px 24px;
   border-radius: 8px;
   font-weight: 600;
@@ -154,7 +154,7 @@
 }
 
 .input:focus {
-  border-color: #2E6BD6;
+  border-color: #2A9DA5;
   outline: none;
   box-shadow: 0 0 0 3px rgba(46, 107, 214, 0.2);
 }

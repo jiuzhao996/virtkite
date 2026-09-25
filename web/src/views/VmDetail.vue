@@ -496,7 +496,7 @@ const { isAdmin, canOperate } = useAuth()
 const id = route.params.id
 
 // echarts 不解析 var()，实时曲线需要真实色值：挂载时读一次 CSS 变量
-const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2e6bd6')
+const CHART_CPU_COLOR = cssVar('--el-color-primary', '#2a9da5')
 const CHART_MEM_COLOR = cssVar('--color-warning', '#d97706')
 const CHART_AXIS_COLOR = cssVar('--color-info', '#64748b')
 

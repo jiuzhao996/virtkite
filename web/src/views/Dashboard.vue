@@ -393,7 +393,7 @@ const actionLabelMap = ref({ ...FALLBACK_ACTION_LABELS })
 const HOST_POINTS = 60
 
 // echarts 不解析 var()，主机曲线需要真实色值：cssVar 由 utils/format.js 提供
-const primaryColor = cssVar('--el-color-primary', '#2e6bd6')
+const primaryColor = cssVar('--el-color-primary', '#2a9da5')
 const memChartColor = cssVar('--color-success', '#16a34a')
 // 图例 / 轴标签等文字与线条颜色同样必须取真实值（原处传 var() 会静默失效回退黑色）
 const chartMutedColor = cssVar('--color-muted-foreground', '#64748b')

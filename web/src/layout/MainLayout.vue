@@ -430,6 +430,9 @@ function onUserCommand(cmd) {
   align-items: center;
   gap: 4px;
   padding: 10px 0;
+  /* 折叠态图标同样可能超出 100vh：不滚动的话底部收起/展开条会被 .aside 的 overflow:hidden 裁掉（用户反馈"找不到收回侧边栏"） */
+  overflow-y: auto;
+  min-height: 0;
 }
 .collapse-item {
   width: 44px;
@@ -599,6 +602,7 @@ function onUserCommand(cmd) {
 }
 .aside-collapse-bar {
   margin: auto 12px 12px;
+  flex-shrink: 0; /* 菜单区滚动时折叠条必须常驻可见，不允许被压缩出视野 */
   padding: 9px 12px;
   display: flex;
   align-items: center;

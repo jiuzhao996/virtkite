@@ -1,20 +1,20 @@
-/* ============ VMOps 设计 Token（浅色管理端 · 鸢航品牌：深空蓝 + 鸢蓝 + 金） ============ */
+/* ============ VMOps 设计 Token（浅色管理端 · 品牌青） ============ */
 :root {
   /* 主色：鸢蓝（Element Plus 主题变量全覆盖，交互主色：按钮/链接/激活态） */
-  --el-color-primary: #2e6bd6;
-  --el-color-primary-light-3: #6d97e2;
-  --el-color-primary-light-5: #97b5eb;
-  --el-color-primary-light-7: #c0d3f3;
-  --el-color-primary-light-8: #d5e1f7;
-  --el-color-primary-light-9: #eaf0fb;
-  --el-color-primary-dark-2: #2556ab;
+  --el-color-primary: #2a9da5;
+  --el-color-primary-light-3: #7cc6cb;
+  --el-color-primary-light-5: #a5d8dc;
+  --el-color-primary-light-7: #cde9eb;
+  --el-color-primary-light-8: #dff1f2;
+  --el-color-primary-light-9: #eef8f9;
+  --el-color-primary-dark-2: #217d83;
 
-  /* 语义色（鸢航品牌：深空蓝底 + 鸢蓝 + 金点缀） */
-  --color-primary: #2e6bd6;          /* 交互主色：按钮 / 链接 / 激活文字 */
+  /* 语义色（鸢航品牌：青绿主色 + 金点缀） */
+  --color-primary: #2a9da5;          /* 交互主色：按钮 / 链接 / 激活文字 */
   --color-on-primary: #ffffff;
-  --color-secondary: #1b3a62;        /* 深空蓝：次级强调 / 深色文字点缀 */
-  --color-accent: #2e6bd6;           /* CTA / 运行态高亮（与主色同源，保证可读性） */
-  --color-kite: #6db6ff;             /* 鸢蓝浅版：hover / 浅底强调 */
+  --color-secondary: #1d8f96;        /* 青绿深版：次级强调 / 深色文字点缀 */
+  --color-accent: #217d83;           /* CTA / 运行态高亮（与主色同源，保证可读性） */
+  --color-kite: #7cc6cb;             /* 青绿浅版：hover / 浅底强调 */
   --color-gold: #ffd268;             /* 金：仅装饰点缀（logo 牵线 / 强调线），不作正文 */
   --color-violet: #7c3aed;           /* 紫色：仅镜像等分类标识， intentional */
   --color-success: #16a34a;         /* 成功/运行 */
@@ -22,9 +22,9 @@
   --color-danger: #dc2626;
   --color-info: #64748b;
 
-  /* 品牌深空蓝（侧栏 / 登录背景渐变） */
-  --brand-deep-1: #0d2444;
-  --brand-deep-2: #1b3a62;
+  /* 品牌青绿（侧栏 / 登录背景渐变，回归 teal） */
+  --brand-deep-1: #2a9da5;
+  --brand-deep-2: #217d83;
 
   /* 状态徽标浅底（与语义色呼应，集中管理，避免页面散落 hex） */
   --status-running-bg: #ecfdf5;
