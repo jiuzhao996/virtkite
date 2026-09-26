@@ -7,6 +7,7 @@ import (
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
@@ -16,7 +17,9 @@ import (
 // 纯 Go 驱动 glebarez/sqlite（无 CGO），仅测试代码 import，生产代码不碰。
 func testDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+		Logger: logger.Discard, // 静默 GORM 内部日志（record not found 等），保持测试输出干净
+	})
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
@@ -31,16 +34,23 @@ func testDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// seedUser 造用户：bcrypt 哈希经 middleware.HashPassword 生成（与生产同链路）
+// seedUser 造用户：bcrypt 哈希经 middleware.HashPassword 生成（与生产同链路）。
+// 注意：IsActive 有 gorm default:true 标签，显式 false 是零值会被 Create 省略而落列默认——
+// 非活跃用户必须 Create 后再 Update 显式写 false。
 func seedUser(t *testing.T, db *gorm.DB, username, password, role string, active bool) *model.User {
 	t.Helper()
 	hash, err := middleware.HashPassword(password)
 	if err != nil {
 		t.Fatalf("生成哈希失败: %v", err)
 	}
-	u := &model.User{Username: username, PasswordHash: hash, Role: role, IsActive: active}
+	u := &model.User{Username: username, PasswordHash: hash, Role: role, IsActive: true}
 	if err := db.Create(u).Error; err != nil {
 		t.Fatalf("造用户失败: %v", err)
+	}
+	if !active {
+		if err := db.Model(u).Update("is_active", false).Error; err != nil {
+			t.Fatalf("置为禁用失败: %v", err)
+		}
 	}
 	return u
 }
@@ -74,8 +84,10 @@ func TestAuthenticate(t *testing.T) {
 		t.Fatalf("累计 5 次密码错误应触发限流锁定")
 	}
 
-	// 用户不存在 → 拒绝且计数
-	_, _, _ = a.authenticate("10.1.0.3", "ghost", "whatever")
+	// 用户不存在 → 拒绝且计数（5 次后锁定，证明不存在的用户名同样计爆破成本）
+	for i := 0; i < 5; i++ {
+		_, _, _ = a.authenticate("10.1.0.3", "ghost", "whatever")
+	}
 	if locked, _ := a.limiter.blocked("10.1.0.3"); !locked {
 		t.Fatalf("用户不存在的失败应计数")
 	}
