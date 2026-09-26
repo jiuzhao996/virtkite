@@ -104,7 +104,7 @@
 ## 当前有效遗留清单（2026-09-26 逐项核实代码后收敛；勿在文档中宣称已解决）
 
 - **原始 XML 直定义端点**：`POST /api/networks/xml`、`PUT /api/networks/:name` 接受原始 libvirt XML；`PUT /api/vms/:id/xml` 已收权 admin（2026-09-26 routes.go 核实在位）
-- **`/metrics` 未设 `METRICS_TOKEN` 时公开**（启动日志有告警提示；设置后要求 Bearer）
+- ~~`/metrics` 公开~~ **已核实为陈旧信息（2026-09-26）**：.env 自 v3.3 起即配置 METRICS_TOKEN，实测无 token 401 / 带 token 200（prometheus.yml 的 vmops job 一直在发配对凭证）
 - **JWT 仍支持 `?token=` 查询参数传递**（`middleware/jwt.go`，WS 无法设 Header 的设计取舍；会进代理日志/Referer/审计）
 - **历史 `tasks.payload` 明文待人工清洗**：`scripts/purge-task-secrets` 未执行，执行前须先 mysqldump 单表备份
 - **多宿主机是空壳**：`virt.New` 固定 `qemu:///system`，宿主机模块仅登记与状态采集，跨宿主机操作列论文展望

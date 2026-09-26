@@ -252,3 +252,14 @@
 - **环境坑**：本机 2222 被 JumpServer 参照容器（vmops-jms-ref）占用，vmops 跳板冒烟走 2322；两端口归属由部署侧决定。
 - 冒烟 7/7 全 PASS（真实 ssh 客户端：登录/菜单/选单/node1 shell/命令回显/exit 回菜单/爆破锁定）；go test -race 18 包全绿；终审（fresh reviewer）I-1/I-2 已修，4 个 Minor 同址修复，4 个 Minor 列 deferred。
 - deferred minors：hostkey 错误链 %v 截断；回菜单后方向键多字节残留重显；Start 启动横幅先于 listen 结果；jump 会话 last_seen 不刷新。
+
+---
+
+### 4A 教学闭环批次（2026-09-26 下午，用户组授权 + 申请审批流 + 命令黑名单）
+
+- **用户组授权**：新表 user_groups / user_group_members / vm_group_grants；grantedVMIDs/vmVisible 扩展为「直接授权 ∪ 组授权」并集（过期口径逐字一致，成员退出组即时失效）；admin API /api/user-groups CRUD + SetMembers（全量替换成员）+ /api/vms/:id/group-grants 三端点；前端 UserList 组管理 tab（member_ids 回显）+ VmDetail 按组授权面板。删 VM 时组授权同批回收。
+- **授权申请+审批流**：新表 grant_requests；申请挂 /api/vms/:id/grant-request（⚠️ 不能走 findVM——可见性闸对申请者=死锁 404，改直查存在性）；GET /api/vms/apply-catalog 输出**显式最小 DTO**（整模型序列化会带出 uuid/ip 空值字段形态）；批准=写 vm_grants（已有有效授权取更晚者，只延长不缩短）；前端 GrantRequests.vue（学生申请卡+我的申请；教师审批队列）。E2E：stu 申请→admin 批 8h→stu 列表立现 node1。
+- **jumpd 命令黑名单**：forwardKeys 行缓冲拦截（逐字节透传保 vim 交互，\r 行判定归一化匹配）；命中→整行不送 + 目标 tty 发 Ctrl-U 清残留行（防下次回车误执行）+ 红字提示 + audit_logs 落行（Action=jumpd.cmd_blocked）。settings 键 jumpd_cmd_blacklist（UpdateSettings 显式分发——只加白名单不动 Update 会 400「没有需要更新的配置项」）。E2E：touch 标记→rm -rf 拦截→文件仍在→审计可见。
+- **收口**：/metrics「公开」为陈旧信息（.env v3.3 已配 METRICS_TOKEN，实测 401/200）——AGENTS 遗留清单已更正；砍 POST /api/networks/xml 与 PUT /api/networks/:name（⚠️ 二者皆有前端消费：NetworkList XML 定义/编辑双弹窗连带删除，表单建网保留）；砍 loki/promtail 容器（能力留应用商店，Monitor 日志卡文案改重装指引）。
+- **⚠️ 环境坑（复发）**：vmops.pid 陈旧 → kill 落空 → 新进程绑不上 8080 静默死亡 → 旧二进制继续服务（改完代码「不生效」先 `ss -ltnp | grep 8080` 核对 pid 与二进制时间，pkill 全清再起）。
+- 测试增量：组授权可见性 2 + 黑名单纯函数 3；E2E：审批闭环、拦截确定性（标记文件法——命令回显会污染 contains 断言，验证执行与否须用文件内容/存在性等带外证据）。
