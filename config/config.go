@@ -59,6 +59,11 @@ type Config struct {
 
 	// Loki 日志栈地址（监控中心日志查询代理用；compose 内 http://loki:3100）
 	LokiURL string
+
+	// SSH 跳板入口（jumpd）：JUMPD_ENABLED=1 才启动；监听 JUMPD_PORT（默认 2222）。
+	// 默认关闭——公网部署须先评估口令爆破面（服务内有 per-IP 限流兜底）
+	JumpdEnabled bool
+	JumpdPort    int
 }
 
 var GlobalConfig *Config
@@ -113,6 +118,8 @@ func Init() {
 
 		// Alertmanager webhook 令牌
 		AlertWebhookToken: getEnv("ALERT_WEBHOOK_TOKEN", ""),
+		JumpdEnabled:      getEnv("JUMPD_ENABLED", "") == "1",
+		JumpdPort:         getEnvAsInt("JUMPD_PORT", 2222),
 	}
 }
 

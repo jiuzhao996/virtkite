@@ -197,6 +197,8 @@ func (s *Server) listenAndServe(port int) {
 		return
 	}
 	config := &ssh.ServerConfig{
+		// ⚠️ 主机密钥必须 AddHostKey 注册：漏掉时 NewServerConn 立即失败（ssh: server has no host keys），
+		// 表现为连接被静默重置——本次实现曾踩中，留注释防回退
 		PasswordCallback: func(meta ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			ip := meta.RemoteAddr().String()
 			if host, _, splitErr := net.SplitHostPort(ip); splitErr == nil {
@@ -217,6 +219,7 @@ func (s *Server) listenAndServe(port int) {
 			}, nil
 		},
 	}
+	config.AddHostKey(s.signer)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -234,7 +237,8 @@ func (s *Server) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 	defer conn.Close()
 	sconn, chans, reqs, err := ssh.NewServerConn(conn, config)
 	if err != nil {
-		// 认证失败/客户端挥手，握手错误已由 PasswordCallback 留痕，这里不再刷屏
+		// 认证失败已在 PasswordCallback 留痕；其余握手错误（版本协商/KEX 异常）值得记录
+		log.Printf("[jumpd] SSH 握手未完成 from %s: %v", conn.RemoteAddr(), err)
 		return
 	}
 	defer sconn.Close()
@@ -263,8 +267,44 @@ func (s *Server) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 	}()
 
 	// 认证上下文经 Permissions 传递（握手时已认证，不做二次查询）
+	// viewer/未知角色：认证已放行（密码失败无法携带文案），在此会话层拒绝
+	if !roleAllowed(user.Role) {
+		s.rejectReadOnly(chans)
+		return
+	}
 	isAdmin := user.Role == "admin"
 	s.menuLoop(user, isAdmin, clientIP, chans)
+}
+
+// rejectReadOnly 只读角色的会话层拒绝：接受通道、等 shell 请求就绪后给出中文提示并正常退出
+func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
+	select {
+	case newCh := <-chans:
+		ch, inReqs, err := newCh.Accept()
+		if err != nil {
+			return
+		}
+		defer ch.Close()
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[jumpd] 只读拒绝请求循环异常: %v\n%s", r, debug.Stack())
+				}
+			}()
+			for req := range inReqs {
+				if req.Type == "pty-req" || req.Type == "shell" {
+					req.Reply(true, nil)
+				} else if req.WantReply {
+					req.Reply(false, nil)
+				}
+			}
+		}()
+		time.Sleep(300 * time.Millisecond) // 等客户端完成 pty/shell 请求、终端就绪再写提示
+		io.WriteString(ch, "\r\n✗ 只读角色不支持终端登录（viewer 无资产终端权限）\r\n")
+		sendExitStatus(ch)
+	case <-time.After(30 * time.Second):
+		// 客户端始终不开会话通道，超时收工
+	}
 }
 
 // menuLoop 菜单主循环：每个 session channel 一轮菜单；桥接结束后 channel 不关闭、
@@ -361,6 +401,7 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 		case "next":
 			page = act.page
 		case "select":
+			log.Printf("[jumpd] %s(%s) 选中 VM#%d，开始重验与连接", user.Username, clientIP, act.vmID)
 			s.bridgeSession(ch, user, isAdmin, clientIP, act.vmID, term, int(termW), int(termH), &activeMu, &activeTS)
 			// 桥接结束（用户在目标机 exit / 连接断开）→ 原地重回菜单
 		default:
@@ -420,18 +461,8 @@ func (s *Server) bridgeSession(ch ssh.Channel, user *model.User, isAdmin bool, c
 		activeMu.Unlock()
 	}()
 
-	// 回放用户侧终端类型与窗口尺寸（window-change 已持续转发）
-	if err := ts.RequestPty(term, h, w, nil); err != nil {
-		io.WriteString(ch, "\r\n✗ 申请伪终端失败，已回到菜单\r\n")
-		closeJumpSession(s.DB, sid, "PTY 失败")
-		return
-	}
-	if err := ts.Shell(); err != nil {
-		io.WriteString(ch, "\r\n✗ 启动目标 shell 失败，已回到菜单\r\n")
-		closeJumpSession(s.DB, sid, "shell 失败")
-		return
-	}
-
+	// ⚠️ 管道必须在 RequestPty/Shell 之前取：Session 启动后 StdinPipe 会报
+	// 「ssh: StdinPipe after process started」（handler/terminal.go 同序）
 	stdin, err := ts.StdinPipe()
 	if err != nil {
 		closeJumpSession(s.DB, sid, "stdin 失败")
@@ -443,6 +474,18 @@ func (s *Server) bridgeSession(ch ssh.Channel, user *model.User, isAdmin bool, c
 		return
 	}
 	stderr, _ := ts.StderrPipe()
+
+	// 回放用户侧终端类型与窗口尺寸（window-change 已持续转发）
+	if err := ts.RequestPty(term, h, w, nil); err != nil {
+		io.WriteString(ch, "\r\n✗ 申请伪终端失败，已回到菜单\r\n")
+		closeJumpSession(s.DB, sid, "PTY 失败")
+		return
+	}
+	if err := ts.Shell(); err != nil {
+		io.WriteString(ch, "\r\n✗ 启动目标 shell 失败，已回到菜单\r\n")
+		closeJumpSession(s.DB, sid, "shell 失败")
+		return
+	}
 
 	// 双向桥：用户⇄目标机；任一侧结束即收尾回菜单。均带 recover（强制标准第 10 条）
 	done := make(chan struct{}, 3)

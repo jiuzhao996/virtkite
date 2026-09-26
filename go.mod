@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/digitalocean/go-libvirt v0.0.0-20260814190004-1a83157e1858
 	github.com/gin-gonic/gin v1.9.1
-	github.com/glebarez/sqlite v1.11.0
+	github.com/glebarez/sqlite v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
@@ -13,7 +13,7 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	golang.org/x/crypto v0.54.0
 	gorm.io/driver/mysql v1.5.2
-	gorm.io/gorm v1.25.7
+	gorm.io/gorm v1.25.5
 )
 
 require (

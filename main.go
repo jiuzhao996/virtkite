@@ -19,6 +19,7 @@ import (
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/console"
 	"github.com/jiuzhao/vmops/service/cron"
+	"github.com/jiuzhao/vmops/service/jumpd"
 	monitor "github.com/jiuzhao/vmops/service/monitor"
 	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
@@ -86,6 +87,10 @@ func main() {
 	// Prometheus file_sd 目标文件写入（服务发现闭环：平台建 VM → VM 的 node_exporter
 	// 自动进抓取目标）。FILE_SD_PATH 未配置时内部直接不启动。
 	monitor.StartFileSDWriter(db, config.GlobalConfig.FileSDPath, time.Minute)
+
+	// SSH 跳板入口（JUMPD_ENABLED=1 开启）：认证/菜单/审计复用平台现有体系；
+	// 主机密钥生成或加载失败 fail-closed 拒绝启动；随进程生命周期，不做优雅关闭。
+	jumpd.Start(db, config.GlobalConfig.JumpdEnabled, config.GlobalConfig.JumpdPort, handler.CredentialMasterSecret())
 
 	// 初始化Gin
 	if config.GlobalConfig.ServerMode == "release" {

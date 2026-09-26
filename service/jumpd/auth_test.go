@@ -100,18 +100,26 @@ func TestAuthenticate(t *testing.T) {
 	}
 }
 
-func TestAuthenticateViewerRejected(t *testing.T) {
+func TestAuthenticateViewerPassesToSessionLayer(t *testing.T) {
 	db := testDB(t)
 	seedUser(t, db, "viewer1", "goodpass", "viewer", true)
 	seedUser(t, db, "admin1", "goodpass", "admin", true)
 	a := &authenticator{DB: db, limiter: newLimiter(time.Minute, 5)}
 
-	_, msg, err := a.authenticate("10.2.0.1", "viewer1", "goodpass")
-	if err == nil || !strings.Contains(msg, "只读角色不支持终端登录") {
-		t.Fatalf("viewer 应被拒绝且文案正确: err=%v msg=%q", err, msg)
+	// Ruling：SSH 密码失败无法携带自定义文案，viewer 改为认证放行、会话层拒绝
+	// （server.go rejectReadOnly），此处断言放行 + 角色白名单把 viewer 挡在会话层
+	u, msg, err := a.authenticate("10.2.0.1", "viewer1", "goodpass")
+	if err != nil || u == nil || msg != "" {
+		t.Fatalf("viewer 认证应放行（会话层拒绝）: err=%v msg=%q", err, msg)
+	}
+	if roleAllowed("viewer") {
+		t.Fatalf("viewer 不应通过角色白名单")
+	}
+	if !roleAllowed("operator") || !roleAllowed("admin") {
+		t.Fatalf("operator/admin 应通过角色白名单")
 	}
 	if locked, _ := a.limiter.blocked("10.2.0.1"); locked {
-		t.Fatalf("viewer 拒绝是权限语义，不应计入爆破限流")
+		t.Fatalf("合法登录不应计入爆破限流")
 	}
 
 	if u, msg, err := a.authenticate("10.2.0.2", "admin1", "goodpass"); err != nil || u == nil {

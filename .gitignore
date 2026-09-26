@@ -51,3 +51,4 @@ gui-test-screenshots/
 
 # 会话工具工作目录
 .workbuddy/
+.superpowers/

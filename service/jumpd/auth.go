@@ -47,11 +47,9 @@ func (a *authenticator) authenticate(ip, username, password string) (*model.User
 		return nil, "账号已被禁用", fmt.Errorf("账号已禁用")
 	}
 
-	// 角色白名单：admin/operator 可用；viewer 与未知角色一律拒绝（fail-closed）
-	if !roleAllowed(u.Role) {
-		return nil, "只读角色不支持终端登录", fmt.Errorf("角色 %q 无终端权限", u.Role)
-	}
-
+	// viewer 的拒绝不在认证层做：SSH 密码失败无法携带自定义文案（客户端只能看到
+	// 通用 Permission denied），改为认证放行、由会话层提示后断开（server.go rejectReadOnly，
+	// 对齐 Gitea/koko 的惯例）。limiter 照常 success（这是合法登录不是爆破）。
 	a.limiter.success(ip)
 	return &u, "", nil
 }
