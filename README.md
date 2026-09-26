@@ -60,7 +60,8 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **应用商店（v3）**（参考 1Panel（GPLv3）声明式 compose 应用包设计模式：应用级+版本级 `data.yml`（动态表单）+ `docker-compose.yml` `${VAR}` 占位 → 写 `.env` → `docker compose up -d`，变量替换交给 compose 原生插值；内置 20 个应用（nginx / mysql / redis / minio / gitea / jenkins / n8n 等），安装走异步任务、安装前端口占用预检、卸载保留数据目录；Docker 不可用时页面级禁用安装）
 - [x] **VM 应用（v3）**（不经容器往虚拟机里装软件：SSH 在客户机内幂等执行安装脚本，10 个内置应用（nginx/mysql/redis/php/nodejs/docker-engine 等），已装检测自动跳过）
 - [x] **AI 运维助手（v3）**（OpenAI 兼容 `/chat/completions` 代理：API Key 只存服务端永不下发前端；`with_context` 注入平台环境摘要（VM/容器/告警统计），能答「我平台几台虚拟机在跑」；SSE 流式逐段转发；助手只读问答、不具备任何写操作能力；viewer 403）
-- [x] **SSH 凭据托管（v3）**（AES-256-GCM 加密落库：主密钥运行时注入不落库 + 每条记录随机盐，数据库泄露后凭据不可直接可读；文件管理 / VM 应用安装「使用已保存凭据」后端自行解密消费，明文不出服务端）
+- [x] **SSH 跳板入口（v3.6，借鉴堡垒机 4A）**（任意终端工具 `ssh <用户名>@<宿主机> -p 2222` 直达资产：平台密码认证 + per-IP 爆破限流 → 交互式资产菜单只列「有效授权 ∩ 运行中 ∩ 有 IP ∩ 已托管凭据」→ 连接前现查重验（授权/状态/IP 任何一项失效当场拒绝）→ vmssh 安全链桥接直达 VM shell；exit 回菜单、q 断开；会话落 console_sessions 审计。`JUMPD_ENABLED=1` 开启，默认关闭）
+- [x] **SSH 凭据托管（v3）（AES-256-GCM 加密落库：主密钥运行时注入不落库 + 每条记录随机盐，数据库泄露后凭据不可直接可读；文件管理 / VM 应用安装「使用已保存凭据」后端自行解密消费，明文不出服务端）
 - [x] **VM 文件管理（v3：双通道）**（在线通道：SSH/SFTP 浏览/上传/下载/删除/建目录，管开机机；离线通道：guestmount 只读挂载关机机系统盘，不依赖 VM 内 SSH；运行中 VM 一律拒绝离线挂载防磁盘锁，挂载只读——宁可浏览受限不可损坏磁盘）
 - [x] **计划任务（v3）**（自研五字段 cron 解析（百行纯函数可单测，不引第三方）+ 整分 tick 调度器：定时快照 / mysqldump 数据库备份；启停 / 立即运行 / 执行记录（成功失败与耗时））
 - [x] **Loki 日志栈（v3）**（以应用商店 compose 包一键交付（loki + promtail），监控中心提供 LogQL 查询与标签接口——指标 + 日志 + 告警完整可观测性）
@@ -73,7 +74,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **系统公告 + 安全入口（v3）**（公告板登录页与仪表盘公开展示（admin 经设置页编辑）；登录接口可设安全入口暗号，无暗号请求一律 404 伪装；建用户/改密密码复杂度校验）
 - [x] **安全加固**（路径参数主键统一解析防 SQL 注入 / libvirt XML 全部走 `encoding/xml` / JWT 锁定 HS256 / SSH 目标白名单 / release 密钥强校验）
 - [x] E2E 回归脚本（`scripts/smoke.sh`，23 项断言）
-- [x] 单元测试（216 个顶层测试函数 / 约 1114 个子用例 / 14 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
+- [x] 单元测试（252 个顶层测试函数 / 207 个 `t.Run` 子测试分组 / 18 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
 - [x] 前端工程化（路由懒加载 + manualChunks 分包：首屏下载量 −50%；`utils/format.js` 收敛 10 余处重复；图标全部换成 `@element-plus/icons-vue`）
 
 
@@ -184,7 +185,7 @@ docker compose up -d prometheus grafana alertmanager
 
 ```bash
 ./scripts/smoke.sh          # E2E 23 项：只读接口 + metrics + 创建/删除 task 全链路 + 硬件管理
-go test -race ./...         # 单元测试 216 个顶层函数 / 约 1114 个子用例 / 14 个测试包（必须带 -race）
+go test -race ./...         # 单元测试 252 个顶层函数 / 18 个测试包（必须带 -race）
 go build ./... && go vet ./... && gofmt -l .
 ```
 
