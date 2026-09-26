@@ -21,6 +21,7 @@ const routes = [
       { path: 'vms/new', name: 'vm-create', component: () => import('../views/CreateVmWizard.vue'), meta: { requiresOperate: true } },
       { path: 'docker', name: 'docker', component: () => import('../views/DockerList.vue'), meta: { requiresOperate: true } },
       { path: 'apps', name: 'apps', component: () => import('../views/AppStore.vue'), meta: { requiresOperate: true } },
+      { path: 'grant-requests', name: 'grant-requests', component: () => import('../views/GrantRequests.vue'), meta: { requiresOperate: true } },
       // IA 精简批次（2026-09）：拓扑图并入仪表盘 tab、AI 助手改顶栏抽屉、cloud-init 模板并入设置页。
       // 三个旧地址保留重定向，旧书签/文档链接不断链
       { path: 'topology', redirect: { path: '/dashboard', query: { tab: 'topology' } } },

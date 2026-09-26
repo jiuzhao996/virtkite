@@ -66,6 +66,7 @@ func Init() {
 		&model.UserGroup{},
 		&model.UserGroupMember{},
 		&model.VMGroupGrant{},
+		&model.GrantRequest{},
 		&model.CronRun{},
 		&model.VMCredential{},
 		&model.ScheduledTask{},

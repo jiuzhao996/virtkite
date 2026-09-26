@@ -86,6 +86,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	authHandler := NewAuthHandler(deps.DB)
 	authHandler.SetSettingMgr(deps.SettingMgr)
 	userHandler := NewUserHandler(deps.DB)
+	grantReqHandler := &GrantRequestHandler{DB: deps.DB}
 	userHandler.SetSettingMgr(deps.SettingMgr) // 改密/建用户密码策略
 	vmExportHandler := NewVMExportHandler(deps.DB, deps.Virt)
 	recycleHandler := NewVMRecycleHandler(deps.DB, deps.Virt)
@@ -137,6 +138,17 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		users.POST("", userHandler.CreateUser)
 		users.PUT("/:id", userHandler.UpdateUser)
 		users.DELETE("/:id", userHandler.DeleteUser)
+	}
+
+	// 授权申请：我的申请（登录即可看）
+	api.GET("/grant-requests/mine", grantReqHandler.ListMine)
+	// 授权审批（仅管理员）
+	grantsAdmin := api.Group("/grant-requests")
+	grantsAdmin.Use(middleware.AdminMiddleware())
+	{
+		grantsAdmin.GET("", grantReqHandler.ListRequests)
+		grantsAdmin.POST("/:id/approve", grantReqHandler.Approve)
+		grantsAdmin.POST("/:id/reject", grantReqHandler.Reject)
 	}
 
 	// 用户组管理（仅管理员）：教学场景按组批量授权
@@ -215,6 +227,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.GET("/:id/grants", vmHandler.ListVMGrants)
 		vms.POST("/:id/grants", vmHandler.GrantVM)
 		vms.DELETE("/:id/grants/:gid", vmHandler.RevokeVMGrant)
+		// 授权申请（v3.6）：学生自助申请 → 教师审批（挂 vms 前缀以通过 operator 写权限）
+		vms.GET("/apply-catalog", vmHandler.ApplyCatalog)
+		vms.POST("/:id/grant-request", vmHandler.ApplyForAsset)
 		// 组授权（v3.6）：组 → 资产，组内成员批量获得可见性
 		vms.GET("/:id/group-grants", vmHandler.ListVMGroupGrants)
 		vms.POST("/:id/group-grants", vmHandler.GrantVMToGroup)

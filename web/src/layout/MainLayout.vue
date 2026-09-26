@@ -203,7 +203,7 @@
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 // 图标按需显式 import：Share/Tickets 随拓扑图与 cloud-init 独立菜单项撤销一并移除
-import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Odometer, Picture, Setting, SwitchButton, Timer, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Odometer, Picture, Setting, SwitchButton, Ticket, Timer, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { roleText, vmStatusText, vmStatusTag } from '../utils/format'
@@ -258,6 +258,7 @@ const navItems = [
   { index: '/images', label: '镜像管理', icon: Picture, group: '资源' },
   // 应用商店/Docker 管理为 operator+ 页面（路由 requiresOperate）：operateOnly 让 viewer 不再看到点进去被弹回的菜单项
   { index: '/apps', label: '应用商店', icon: Goods, group: '资源', operateOnly: true },
+  { index: '/grant-requests', label: '资产申请', icon: Ticket, group: '资源', operateOnly: true },
   { index: '/hosts', label: '宿主机', icon: Cpu, group: '基础设施' },
   { index: '/storage', label: '存储池', icon: FolderOpened, group: '基础设施' },
   { index: '/networks', label: '网络', icon: Connection, group: '基础设施' },
