@@ -23,7 +23,7 @@ func testDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存库失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.User{}, &model.VM{}, &model.VMGrant{}, &model.VMCredential{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.VM{}, &model.VMGrant{}, &model.VMCredential{}, &model.ConsoleSession{}); err != nil {
 		t.Fatalf("AutoMigrate 失败: %v", err)
 	}
 	t.Cleanup(func() {

@@ -41,7 +41,7 @@ func (h *SessionHandler) ListSessions(c *gin.Context) {
 	if status := c.Query("status"); status == "active" || status == "closed" {
 		query = query.Where("status = ?", status)
 	}
-	if t := c.Query("type"); t == "vnc" || t == "ssh" || t == "serial" {
+	if t := c.Query("type"); t == "vnc" || t == "ssh" || t == "serial" || t == "jump" {
 		query = query.Where("type = ?", t)
 	}
 	if q := c.Query("vm_name"); q != "" {

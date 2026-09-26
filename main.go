@@ -275,7 +275,7 @@ func sweepStaleRecords(db *gorm.DB) {
 		log.Printf("🧹 收敛残留任务 %d 个", r1.RowsAffected)
 	}
 	r2 := db.Model(&model.ConsoleSession{}).
-		Where("status = ? AND type IN ?", "active", []string{"ssh", "serial"}).
+		Where("status = ? AND type IN ?", "active", []string{"ssh", "serial", "jump"}).
 		Updates(map[string]interface{}{"status": "closed", "ended_at": now})
 	if r2.Error == nil && r2.RowsAffected > 0 {
 		log.Printf("🧹 收敛残留控制台会话 %d 个", r2.RowsAffected)
