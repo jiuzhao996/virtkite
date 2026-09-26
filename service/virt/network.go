@@ -219,7 +219,6 @@ func (v *Virt) DefineNetwork(xml string) error {
 	return nil
 }
 
-// UpdateNetwork 编辑网络（对应 virsh net-destroy + net-undefine + net-define + net-start）。
 // 运行中的网络先停止再重建，并保留原 autostart 设置。
 func (v *Virt) UpdateNetwork(name, xml string) error {
 	l, err := v.getConn()

@@ -344,35 +344,57 @@
           />
           <el-card shadow="never">
             <div class="grant-form">
-              <el-select v-model="groupGrantForm.groupId" filterable placeholder="按用户组授权（教学班）" style="width: 260px">
-                <el-option v-for="g in userGroups" :key="g.id" :label="g.name + '（' + g.member_count + ' 人）'" :value="g.id" />
-              </el-select>
-              <el-date-picker
-                v-model="groupGrantForm.expiresAt"
-                type="datetime"
-                placeholder="到期时间（留空 = 长期）"
-                value-format="YYYY-MM-DDTHH:mm:ssZ"
-                style="width: 200px"
-              />
-              <el-button type="primary" :disabled="!groupGrantForm.groupId" :loading="groupGrantSaving" @click="submitGroupGrant">授权给组</el-button>
-            </div>
-            <div class="grant-form" style="margin-bottom: 12px">
-              <el-select v-model="grantForm.userId" filterable placeholder="选择要授权的用户" style="width: 260px">
+              <el-radio-group v-model="grantSubjectType" :disabled="grantSaving">
+                <el-radio-button value="user">按用户</el-radio-button>
+                <el-radio-button value="group">按用户组</el-radio-button>
+              </el-radio-group>
+              <el-select
+                v-if="grantSubjectType === 'user'"
+                v-model="grantForm.userId"
+                filterable
+                placeholder="选择要授权的用户"
+                style="width: 240px"
+              >
                 <el-option v-for="u in grantUsers" :key="u.id" :label="u.username + '（' + u.role + '）'" :value="u.id" />
+              </el-select>
+              <el-select
+                v-else
+                v-model="groupGrantForm.groupId"
+                filterable
+                placeholder="选择用户组（教学班）"
+                style="width: 240px"
+              >
+                <el-option v-for="g in userGroups" :key="g.id" :label="g.name + '（' + g.member_count + ' 人）'" :value="g.id" />
               </el-select>
               <el-date-picker
                 v-model="grantForm.expiresAt"
                 type="datetime"
                 placeholder="到期时间（留空 = 长期有效）"
                 value-format="YYYY-MM-DDTHH:mm:ssZ"
-                style="width: 260px"
+                style="width: 210px"
               />
-              <el-button type="primary" :disabled="!grantForm.userId" @click="submitGrant">授权</el-button>
+              <el-button
+                type="primary"
+                :disabled="grantSubjectType === 'user' ? !grantForm.userId : !groupGrantForm.groupId"
+                :loading="grantSaving"
+                @click="submitGrant"
+              >授权</el-button>
             </div>
-            <el-table :data="grants" size="small" border style="width: 100%" v-loading="grantsLoading">
+            <el-table :data="grantSubjects" size="small" border style="width: 100%" v-loading="grantsLoading">
               <template #empty><el-empty description="暂无授权（该虚拟机当前仅管理员可见）" :image-size="70" /></template>
-              <el-table-column prop="username" label="用户" min-width="140" />
-              <el-table-column label="有效期" min-width="180">
+              <el-table-column label="类型" width="96">
+                <template #default="{ row }">
+                  <el-tag :type="row.subjectType === 'user' ? 'primary' : 'warning'" effect="plain" size="small">
+                    {{ row.subjectType === 'user' ? '用户' : '用户组' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="subjectName" label="名称" min-width="150">
+                <template #default="{ row }">
+                  {{ row.subjectName }}<span v-if="row.subjectType === 'group'" class="input-help">（{{ row.memberLabel }}）</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="有效期" min-width="170">
                 <template #default="{ row }">
                   <el-tag v-if="!row.expires_at" size="small" effect="light">长期有效</el-tag>
                   <span v-else>{{ grantExpiryText(row.expires_at) }}</span>
@@ -383,33 +405,12 @@
               </el-table-column>
               <el-table-column label="操作" width="100" fixed="right">
                 <template #default="{ row }">
-                  <el-button size="small" type="danger" :icon="Delete" @click="revokeGrant(row)">收回</el-button>
+                  <el-button size="small" type="danger" :icon="Delete" @click="revokeSubject(row)">收回</el-button>
                 </template>
               </el-table-column>
             </el-table>
           </el-card>
-          <el-card shadow="never" style="margin-top: 12px">
-            <div class="card-title" style="margin-bottom: 10px">组授权（组内成员全部可见）</div>
-            <el-table :data="groupGrants" size="small" border style="width: 100%" v-loading="groupGrantsLoading">
-              <template #empty><el-empty description="暂无组授权" :image-size="60" /></template>
-              <el-table-column prop="group_name" label="用户组" min-width="160" />
-              <el-table-column label="有效期" min-width="180">
-                <template #default="{ row }">
-                  <el-tag v-if="!row.expires_at" size="small" effect="light">长期有效</el-tag>
-                  <span v-else>{{ grantExpiryText(row.expires_at) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="授权时间" min-width="170">
-                <template #default="{ row }">{{ grantExpiryText(row.created_at) }}</template>
-              </el-table-column>
-              <el-table-column label="操作" width="100" fixed="right">
-                <template #default="{ row }">
-                  <el-button size="small" type="danger" :icon="Delete" @click="revokeGroupGrant(row)">收回</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-card>
-        </section>
+</section>
       </el-main>
     </el-container>
 
@@ -1065,9 +1066,10 @@ const grantForm = ref({ userId: null, expiresAt: null })
 // 组授权（教学班批量可见性）
 const userGroups = ref([])
 const groupGrants = ref([])
-const groupGrantsLoading = ref(false)
-const groupGrantSaving = ref(false)
 const groupGrantForm = ref({ groupId: null, expiresAt: null })
+// 统一授权表单：主体类型（用户/用户组）+ 到期
+const grantSubjectType = ref('user')
+const grantSaving = ref(false)
 
 async function loadGrants() {
   grantsLoading.value = true
@@ -1091,49 +1093,95 @@ async function loadUserGroups() {
 }
 
 async function loadGroupGrants() {
-  groupGrantsLoading.value = true
   try {
     const res = await api.listVMGroupGrants(id)
     groupGrants.value = (res.data && res.data.items) || []
   } catch (e) {
     ElMessage.error(taskErrorMessage(e, '获取组授权列表失败'))
-  } finally {
-    groupGrantsLoading.value = false
   }
 }
 
-async function submitGroupGrant() {
-  groupGrantSaving.value = true
+// grantSubjects 用户授权 ∪ 组授权的统一视图（表格数据源，按授权时间倒序）
+const grantSubjects = computed(() => {
+  const groupMeta = new Map(userGroups.value.map((g) => [g.id, g]))
+  const users = grants.value.map((g) => ({
+    key: 'u' + g.id,
+    subjectType: 'user',
+    subjectName: g.username,
+    memberLabel: '',
+    expires_at: g.expires_at,
+    created_at: g.created_at,
+    rawId: g.id
+  }))
+  const groups = groupGrants.value.map((g) => ({
+    key: 'g' + g.id,
+    subjectType: 'group',
+    subjectName: g.group_name,
+    memberLabel: (groupMeta.get(g.group_id) || {}).member_count != null ? groupMeta.get(g.group_id).member_count + ' 人' : '',
+    expires_at: g.expires_at,
+    created_at: g.created_at,
+    rawId: g.id
+  }))
+  return [...users, ...groups].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+})
+
+async function submitGrant() {
+  grantSaving.value = true
   try {
-    const payload = { group_id: groupGrantForm.value.groupId }
-    if (groupGrantForm.value.expiresAt) payload.expires_at = groupGrantForm.value.expiresAt
-    const res = await api.grantVMToGroup(id, payload)
-    ElMessage.success((res.data && res.data.message) || '已授权给组')
-    groupGrantForm.value = { groupId: null, expiresAt: null }
-    loadGroupGrants()
+    if (grantSubjectType.value === 'user') {
+      if (!grantForm.value.userId) {
+        ElMessage.warning('请选择要授权的用户')
+        return
+      }
+      const payload = { user_id: grantForm.value.userId }
+      if (grantForm.value.expiresAt) payload.expires_at = grantForm.value.expiresAt
+      const res = await api.grantVM(id, payload)
+      ElMessage.success((res && res.message) || '已授权')
+      grantForm.value = { userId: null, expiresAt: null }
+      await loadGrants()
+    } else {
+      if (!groupGrantForm.value.groupId) {
+        ElMessage.warning('请选择要授权的用户组')
+        return
+      }
+      const payload = { group_id: groupGrantForm.value.groupId }
+      if (groupGrantForm.value.expiresAt) payload.expires_at = groupGrantForm.value.expiresAt
+      const res = await api.grantVMToGroup(id, payload)
+      ElMessage.success((res.data && res.data.message) || '已授权给组')
+      groupGrantForm.value = { groupId: null, expiresAt: null }
+      await loadGroupGrants()
+    }
   } catch (e) {
-    ElMessage.error(taskErrorMessage(e, '组授权失败'))
+    ElMessage.error(taskErrorMessage(e, '授权失败'))
   } finally {
-    groupGrantSaving.value = false
+    grantSaving.value = false
   }
 }
 
-async function revokeGroupGrant(row) {
+async function revokeSubject(row) {
+  const isUser = row.subjectType === 'user'
   try {
-    await ElMessageBox.confirm(`确定收回组「${row.group_name}」对该虚拟机的授权？组内成员将立即不可见。`, '收回组授权', {
-      type: 'warning',
-      confirmButtonText: '收回',
-      confirmButtonClass: 'el-button--danger'
-    })
+    await ElMessageBox.confirm(
+      isUser
+        ? '确定收回 ' + row.subjectName + ' 对该虚拟机的授权？收回后对方立即不可见、不可操作。'
+        : '确定收回组「' + row.subjectName + '」的组授权？组内成员将立即不可见。',
+      '收回授权',
+      { type: 'warning', confirmButtonText: '收回', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
   } catch {
     return
   }
   try {
-    await api.revokeVMGroupGrant(id, row.id)
-    ElMessage.success('已收回')
-    loadGroupGrants()
+    if (isUser) {
+      await api.revokeVMGrant(id, row.rawId)
+      await loadGrants()
+    } else {
+      await api.revokeVMGroupGrant(id, row.rawId)
+      await loadGroupGrants()
+    }
+    ElMessage.success('已收回授权')
   } catch (e) {
-    ElMessage.error(taskErrorMessage(e, '收回失败'))
+    ElMessage.error(taskErrorMessage(e, '收回授权失败'))
   }
 }
 
@@ -1147,41 +1195,7 @@ async function loadGrantUsers() {
   }
 }
 
-async function submitGrant() {
-  if (!grantForm.value.userId) {
-    ElMessage.warning('请选择要授权的用户')
-    return
-  }
-  try {
-    const payload = { user_id: grantForm.value.userId }
-    if (grantForm.value.expiresAt) payload.expires_at = grantForm.value.expiresAt
-    const res = await api.grantVM(id, payload)
-    ElMessage.success((res && res.message) || '已授权')
-    grantForm.value = { userId: null, expiresAt: null }
-    await loadGrants()
-  } catch (e) {
-    ElMessage.error(taskErrorMessage(e, '授权失败'))
-  }
-}
 
-async function revokeGrant(row) {
-  try {
-    await ElMessageBox.confirm(
-      '确定收回 ' + row.username + ' 对该虚拟机的授权？收回后对方立即不可见、不可操作。',
-      '收回授权',
-      { type: 'warning', confirmButtonText: '收回', cancelButtonText: '取消' }
-    )
-  } catch {
-    return
-  }
-  try {
-    await api.revokeVMGrant(id, row.id)
-    ElMessage.success('已收回授权')
-    await loadGrants()
-  } catch (e) {
-    ElMessage.error(taskErrorMessage(e, '收回授权失败'))
-  }
-}
 
 function grantExpiryText(v) {
   if (!v) return '—'
