@@ -236,3 +236,19 @@
 - **AI 助手抽屉化**：撤销独立页面，改 MainLayout 顶栏按钮（ChatDotRound，canOperate 可见）拉起 `el-drawer size=520px`。AiChat.vue 加 `embedded` prop：隐藏 page-head 换紧凑工具行（模型名/上下文开关/清空），`.ai-page.embedded` 高度改 100%（抽屉体高度确定，height:100% 生效）。**MainLayout 用 `defineAsyncComponent` 引 AiChat**——否则 marked/DOMPurify 被拖进静态入口 chunk（构建实测 AiChat 独立 chunk 83.8KB 未进 index）。el-drawer 首开才渲染、关闭仅隐藏：会话常驻、进行中 SSE 不被打断。`/ai` 保留重定向。
 - **cloud-init 模板并入设置页**：CloudInitTemplates.vue 加 `embedded` prop（隐藏页头/alert，新建按钮移到卡头 `<template v-if="embedded" #header>`），Settings.vue 末尾 `<CloudInitTemplates embedded />`（外包 .ci-wrap 补 16px 间距）。**语义变化：模板管理从 operator 收紧到 admin**（设置页 admin-only）；operator 在向导里的「套用模板」下拉不受影响，向导「管理模板」按钮改 `v-if="isAdmin"` 指向 /settings。`/cloud-init-templates` 保留重定向。
 - **文档同步**：docs/05 §8 页面清单重写（23 视图+嵌入组件）、docs/09 演示动线（①三 tab/②拓扑走仪表盘 tab/⑩AI 走顶栏按钮/§3 路由表）。
+
+---
+
+### SSH 跳板入口 jumpd 批次（2026-09-26，JumpServer 式任意终端直连资产）
+
+**功能**：`ssh <用户名>@<宿主机> -p2222`（JUMPD_PORT 可改，JUMPD_ENABLED=1 开启，默认关）→ 平台密码认证（users 表 bcrypt + per-IP 限流 1 分钟 5 次）→ 交互式资产菜单（只列「有效授权∩运行中∩有 IP∩已托管凭据」，admin 豁免授权）→ 数字选单 → 连接前现查重验 → vmssh 桥接直达 VM shell；exit 回菜单、q 断开；会话落 console_sessions（type="jump"）。实施：docs/superpowers/plans/2026-09-26-ssh-jump.md（TDD 六任务）+ 终审修复轮。
+
+- **⚠️ 勿回退：ch 的读者必须唯一（keyStream）**。桥接用户→VM 方向曾用 `safeCopy(stdin, ch)` 直接读用户 channel——桥接结束后该 goroutine 阻塞残留，与菜单循环抢同一 channel 的字节（实测：菜单被逐字节重绘、命令输出丢失、exit 吃键）。现行模型：keyStream 单读者 → 桥接期 forwardKeys 消费 → 结束后未消费字节归还菜单。
+- **⚠️ 勿回退：Session 的 StdinPipe/StdoutPipe 必须在 RequestPty/Shell 之前取**——之后取报 "StdinPipe after process started"（handler/terminal.go 同序）。
+- **⚠️ ssh.ServerConfig 必须 AddHostKey**：漏注册时 NewServerConn 立即失败（server has no host keys），表现为连接被静默重置、零日志（首版踩中，已留注释）。
+- **SSH 协议的密码失败无法携带自定义文案**（客户端只见 Permission denied）：viewer 拒绝改「认证放行 + 会话层提示后断开」（Gitea/koko 惯例）；限流锁定的效果用「锁定后正确密码也拒」验证。
+- **parsePTYReq 守卫 +12**：term 声明长度后必须放得下 w+h 共 8 字节（终审 I-1 越界 panic 实锤）。
+- **⚠️ 环境坑（存量数据）**：node1 的 vm_credentials 是旧 JWT 主密钥加密的历史数据，独立 CREDENTIAL_MASTER_KEY 上线后全平台 saved 凭据通道都解不开——`scripts/credential-rekey --apply` 迁移修复；guest root 口令经 `virsh set-user-password` 对齐平台记录（平台即事实源）。
+- **环境坑**：本机 2222 被 JumpServer 参照容器（vmops-jms-ref）占用，vmops 跳板冒烟走 2322；两端口归属由部署侧决定。
+- 冒烟 7/7 全 PASS（真实 ssh 客户端：登录/菜单/选单/node1 shell/命令回显/exit 回菜单/爆破锁定）；go test -race 18 包全绿；终审（fresh reviewer）I-1/I-2 已修，4 个 Minor 同址修复，4 个 Minor 列 deferred。
+- deferred minors：hostkey 错误链 %v 截断；回菜单后方向键多字节残留重显；Start 启动横幅先于 listen 结果；jump 会话 last_seen 不刷新。
