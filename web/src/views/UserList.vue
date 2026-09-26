@@ -7,6 +7,8 @@
       </div>
     </div>
 
+    <el-tabs v-model="activeTab">
+      <el-tab-pane label="用户" name="users">
     <el-card shadow="never">
       <div class="toolbar">
         <div class="toolbar-left">
@@ -75,6 +77,11 @@
         </template>
       </el-table>
     </el-card>
+      </el-tab-pane>
+      <el-tab-pane label="用户组" name="groups" lazy>
+        <UserGroups />
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- 新建 / 编辑（复用一个弹窗：editingId 区分模式；编辑不含密码，改密码由用户本人操作） -->
     <el-dialog v-model="dialog" :title="editingId ? '编辑用户' : '新建用户'" width="440px">
@@ -122,8 +129,10 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { errMsg, fmtDateTime } from '../utils/format'
+import UserGroups from './UserGroups.vue'
 
 const { state, isAdmin } = useAuth()
+const activeTab = ref('users')
 const users = ref([])
 const loading = ref(false)
 const dialog = ref(false)

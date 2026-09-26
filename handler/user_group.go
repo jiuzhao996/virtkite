@@ -23,15 +23,28 @@ func (h *UserGroupHandler) ListGroups(c *gin.Context) {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
+	// 一次拉全量成员关系，按组聚合出成员数与成员 ID 列表（成员弹窗回显用）
+	type memberRow struct {
+		GroupID uint
+		UserID  uint
+	}
+	var memberRows []memberRow
+	h.DB.Model(&model.UserGroupMember{}).Select("group_id", "user_id").Scan(&memberRows)
+	memberCount := map[uint]int64{}
+	memberIDs := map[uint][]uint{}
+	for _, m := range memberRows {
+		memberCount[m.GroupID]++
+		memberIDs[m.GroupID] = append(memberIDs[m.GroupID], m.UserID)
+	}
 	type groupItem struct {
 		model.UserGroup
-		MemberCount int64 `json:"member_count"`
-		GrantCount  int64 `json:"grant_count"`
+		MemberCount int64   `json:"member_count"`
+		GrantCount  int64   `json:"grant_count"`
+		MemberIDs   []uint  `json:"member_ids"`
 	}
 	items := make([]groupItem, 0, len(groups))
 	for _, g := range groups {
-		item := groupItem{UserGroup: g}
-		h.DB.Model(&model.UserGroupMember{}).Where("group_id = ?", g.ID).Count(&item.MemberCount)
+		item := groupItem{UserGroup: g, MemberCount: memberCount[g.ID], MemberIDs: memberIDs[g.ID]}
 		h.DB.Model(&model.VMGroupGrant{}).Where("group_id = ?", g.ID).Count(&item.GrantCount)
 		items = append(items, item)
 	}

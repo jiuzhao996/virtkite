@@ -135,6 +135,23 @@ export const api = {
   setImageTemplate: (id, is_template) => unwrap(http.put('/images/' + id + '/template', { is_template })),
   cloneImage: (id, payload) => unwrap(http.post('/images/' + id + '/clone', payload)),
 
+  // 用户组（教学场景按组批量授权）
+  listUserGroups: () => unwrap(http.get('/user-groups')),
+  createUserGroup: (payload) => unwrap(http.post('/user-groups', payload)),
+  updateUserGroup: (id, payload) => unwrap(http.put('/user-groups/' + id, payload)),
+  deleteUserGroup: (id) => unwrap(http.delete('/user-groups/' + id)),
+  setUserGroupMembers: (id, userIds) => unwrap(http.post('/user-groups/' + id + '/members', { user_ids: userIds })),
+  listVMGroupGrants: (id) => unwrap(http.get('/vms/' + id + '/group-grants')),
+  grantVMToGroup: (id, payload) => unwrap(http.post('/vms/' + id + '/group-grants', payload)),
+  revokeVMGroupGrant: (id, gid) => unwrap(http.delete('/vms/' + id + '/group-grants/' + gid)),
+  // 授权申请/审批（v3.6）
+  listApplyCatalog: () => unwrap(http.get('/vms/apply-catalog')),
+  applyForAsset: (id, payload) => unwrap(http.post('/vms/' + id + '/grant-request', payload)),
+  listMyRequests: () => unwrap(http.get('/grant-requests/mine')),
+  listGrantRequests: (params) => unwrap(http.get('/grant-requests', { params })),
+  approveGrantRequest: (id, payload) => unwrap(http.post('/grant-requests/' + id + '/approve', payload)),
+  rejectGrantRequest: (id, payload) => unwrap(http.post('/grant-requests/' + id + '/reject', payload)),
+
   // 网络
   listNetworks: () => unwrap(http.get('/networks')),
   getNetwork: (name) => unwrap(http.get('/networks/' + name)),
