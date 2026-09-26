@@ -284,7 +284,7 @@
         </div>
       </template>
 
-      <el-alert v-if="lokiError" type="warning" :closable="false" show-icon title="Loki 未连接或查询失败">
+      <el-alert v-if="lokiError" type="warning" :closable="false" show-icon title="日志栈（Loki）未启用（v3.6 起默认裁剪，可经应用商店 compose 包一键重装）">
         <template #default>
           <div class="loki-retry">
             <span>典型原因：日志栈（Loki / Promtail）未启动，或 LogQL 语法有误。</span>
