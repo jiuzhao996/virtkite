@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"time"
 
@@ -67,7 +68,11 @@ func loadMenuAssets(db *gorm.DB, user *model.User, isAdmin bool) ([]menuVM, erro
 func revalidateSelection(db *gorm.DB, user *model.User, vmID uint, isAdmin bool, masterSecret string) (*jumpTarget, error) {
 	var vm model.VM
 	if err := db.First(&vm, vmID).Error; err != nil {
-		return nil, fmt.Errorf("虚拟机不存在或已删除")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("虚拟机不存在或已删除")
+		}
+		log.Printf("[jumpd] 重验查库失败，fail-closed 拒绝: %v", err)
+		return nil, fmt.Errorf("服务暂时不可用，请稍后再试")
 	}
 	if vm.Status != model.VMStatusRunning {
 		return nil, fmt.Errorf("虚拟机不在运行中，无法连接")
@@ -248,7 +253,11 @@ func (s *Server) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 	}
 	ext := sconn.Permissions.Extensions
 	user := &model.User{}
-	fmt.Sscanf(ext["jumpd.uid"], "%d", &user.ID)
+	if uid, parseErr := strconv.ParseUint(ext["jumpd.uid"], 10, 64); parseErr == nil {
+		user.ID = uint(uid)
+	} else {
+		log.Printf("[jumpd] 认证上下文 uid 解析失败（理论不可达，Permissions 为自家构造）: %v", parseErr)
+	}
 	user.Username = ext["jumpd.username"]
 	user.Role = ext["jumpd.role"]
 
@@ -280,6 +289,10 @@ func (s *Server) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 	select {
 	case newCh := <-chans:
+		if newCh.ChannelType() != "session" {
+			newCh.Reject(ssh.UnknownChannelType, "jumpd 仅支持 session 通道")
+			return
+		}
 		ch, inReqs, err := newCh.Accept()
 		if err != nil {
 			return
@@ -311,6 +324,10 @@ func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 // 原地重回菜单（对齐 koko 行为：用户 exit 后见菜单，q 才真正断开）。
 func (s *Server) menuLoop(user *model.User, isAdmin bool, clientIP string, chans <-chan ssh.NewChannel) {
 	for newCh := range chans {
+		if newCh.ChannelType() != "session" {
+			newCh.Reject(ssh.UnknownChannelType, "jumpd 仅支持 session 通道")
+			continue
+		}
 		ch, inReqs, err := newCh.Accept()
 		if err != nil {
 			continue
@@ -319,9 +336,63 @@ func (s *Server) menuLoop(user *model.User, isAdmin bool, clientIP string, chans
 	}
 }
 
+// keyStream 通道的单读者包装：整个连接里只有这个 goroutine 读 ch，
+// 菜单阶段消费 keyStream、桥接阶段由 forwardKeys 消费——杜绝两个读者抢同一 channel
+// （终审 I-2：原 safeCopy(stdin, ch) 在桥接结束后阻塞残留，与菜单抢按键）
+type keyStream struct {
+	ch chan byte
+}
+
+func startKeyReader(ch ssh.Channel) *keyStream {
+	ks := &keyStream{ch: make(chan byte, 128)}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[jumpd] 键流读取异常: %v\n%s", r, debug.Stack())
+			}
+			close(ks.ch)
+		}()
+		buf := make([]byte, 256)
+		for {
+			n, err := ch.Read(buf)
+			for i := 0; i < n; i++ {
+				ks.ch <- buf[i]
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return ks
+}
+
+// forwardKeys 桥接期按键转发：ks → 目标 stdin；桥接结束（waitDone 关闭）即停，
+// 停止后未消费的字节留在 ks 里归菜单读取
+func forwardKeys(ks *keyStream, stdin io.Writer, waitDone <-chan struct{}) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[jumpd] 按键转发异常: %v\n%s", r, debug.Stack())
+		}
+	}()
+	for {
+		select {
+		case b, ok := <-ks.ch:
+			if !ok {
+				return
+			}
+			if _, err := stdin.Write([]byte{b}); err != nil {
+				return
+			}
+		case <-waitDone:
+			return
+		}
+	}
+}
+
 // runSession 单 channel 的「菜单 ⇄ 桥接」循环
 func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *model.User, isAdmin bool, clientIP string) {
 	defer ch.Close()
+	ks := startKeyReader(ch)
 
 	var term = "xterm-256color"
 	var termW, termH uint32 = 80, 24
@@ -386,12 +457,13 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 		io.WriteString(ch, renderMenu(items, page, pages))
 
 		// 注：ssh.Channel 接口无读超时（SetReadDeadline 不存在），菜单空闲不设超时——
-		// 用辅助 goroutine 实现超时会与桥接阶段抢同一 channel 的字节流，风险大于收益。
 		// 空闲连接由客户端侧断开或部署层（防火墙/代理空闲回收）兜底。
 		var key [1]byte
-		if _, err := ch.Read(key[:]); err != nil {
-			return // 客户端断开
+		b, ok := <-ks.ch
+		if !ok {
+			return // 连接断开（键流随 channel 关闭而关闭）
 		}
+		key[0] = b
 
 		act := handleMenuKey(key[0], page, pages, shown)
 		switch act.kind {
@@ -402,7 +474,7 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 			page = act.page
 		case "select":
 			log.Printf("[jumpd] %s(%s) 选中 VM#%d，开始重验与连接", user.Username, clientIP, act.vmID)
-			s.bridgeSession(ch, user, isAdmin, clientIP, act.vmID, term, int(termW), int(termH), &activeMu, &activeTS)
+			s.bridgeSession(ch, ks, user, isAdmin, clientIP, act.vmID, term, int(termW), int(termH), &activeMu, &activeTS)
 			// 桥接结束（用户在目标机 exit / 连接断开）→ 原地重回菜单
 		default:
 			// stay：无效键，重显菜单
@@ -412,7 +484,7 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 
 // bridgeSession 重验 → 解密 → vmssh 拨号 → PTY 回放 → 双向桥。
 // 连接前必须现查重验（Review Focus #1/#2：菜单展示后授权/状态/IP 都可能已变）。
-func (s *Server) bridgeSession(ch ssh.Channel, user *model.User, isAdmin bool, clientIP string, vmID uint, term string, w, h int, activeMu *sync.Mutex, activeTS **ssh.Session) {
+func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, isAdmin bool, clientIP string, vmID uint, term string, w, h int, activeMu *sync.Mutex, activeTS **ssh.Session) {
 	tgt, err := revalidateSelection(s.DB, user, vmID, isAdmin, s.masterSecret)
 	if err != nil {
 		io.WriteString(ch, "\r\n✗ "+err.Error()+"，已回到菜单\r\n")
@@ -473,7 +545,11 @@ func (s *Server) bridgeSession(ch ssh.Channel, user *model.User, isAdmin bool, c
 		closeJumpSession(s.DB, sid, "stdout 失败")
 		return
 	}
-	stderr, _ := ts.StderrPipe()
+	stderr, stderrErr := ts.StderrPipe()
+	if stderrErr != nil {
+		// stderr 透传缺失只影响诊断信息，会话可继续：留痕而非失败（终审 Minor-1）
+		log.Printf("[jumpd] 会话 %d stderr 管道获取失败（继续无 stderr 透传）: %v", sid, stderrErr)
+	}
 
 	// 回放用户侧终端类型与窗口尺寸（window-change 已持续转发）
 	if err := ts.RequestPty(term, h, w, nil); err != nil {
@@ -487,12 +563,32 @@ func (s *Server) bridgeSession(ch ssh.Channel, user *model.User, isAdmin bool, c
 		return
 	}
 
-	// 双向桥：用户⇄目标机；任一侧结束即收尾回菜单。均带 recover（强制标准第 10 条）
-	done := make(chan struct{}, 3)
-	go func() { safeCopy(ch, stdout, sid); done <- struct{}{} }()
-	go func() { safeCopy(stdin, ch, sid); done <- struct{}{} }()
-	go func() { safeCopy(ch.Stderr(), stderr, sid); done <- struct{}{} }()
-	<-done
+	// 目标会话结束信号（用户 exit / 目标侧断开）
+	waitDone := make(chan struct{})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[jumpd] 会话等待异常: %v\n%s", r, debug.Stack())
+			}
+			close(waitDone)
+		}()
+		_ = ts.Wait()
+	}()
+
+	// 双向桥：VM→用户走 safeCopy（ch 写侧并发安全）；用户→VM 走 forwardKeys——
+	// 单读者模型（终审 I-2）：ch 的读者只有 keyStream 一个，桥接期由 forwardKeys
+	// 消费，结束后未消费字节归还菜单；绝不 safeCopy(stdin, ch) 再开第二个读者
+	go func() { safeCopy(ch, stdout, sid) }()
+	if stderr != nil {
+		go func() { safeCopy(ch.Stderr(), stderr, sid) }()
+	}
+	forwardDone := make(chan struct{})
+	go func() { forwardKeys(ks, stdin, waitDone); close(forwardDone) }()
+
+	select {
+	case <-waitDone: // 主路径：用户在目标机 exit / 目标侧断开
+	case <-forwardDone: // 用户侧连接断开（键流关闭）
+	}
 
 	io.WriteString(ch, "\r\n\r\n[目标会话已结束，回到菜单]\r\n")
 	closeJumpSession(s.DB, sid, "会话结束")
@@ -509,7 +605,8 @@ func parsePTYReq(payload []byte) (term string, w, h uint32) {
 		return "xterm-256color", 80, 24
 	}
 	tl := binary.BigEndian.Uint32(payload[:4])
-	if int(tl)+9 > len(payload) {
+	// 守卫 +12：term(tl) 之后必须完整放得下 w+h 共 8 字节（终审 I-1：+9 会让 h 越界读 panic）
+	if int(tl)+12 > len(payload) {
 		return "xterm-256color", 80, 24
 	}
 	term = string(payload[4 : 4+tl])
