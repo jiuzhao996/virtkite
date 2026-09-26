@@ -27,6 +27,10 @@
           <el-input-number v-model="writable.vnc_stale_min" :min="5" :max="1440" controls-position="right" />
           <span class="unit">分钟（超时无活动将被清扫收敛）</span>
         </el-form-item>
+        <el-form-item label="跳板命令黑名单">
+          <el-input v-model="writable.jumpd_cmd_blacklist" placeholder="逗号分隔，留空 = 内置默认（rm -rf, mkfs, dd if= …）" />
+          <div class="input-help">学生经 SSH 跳板敲入的整行命中任一子串即被拦截并写入审计（大小写/多空格自动归一）</div>
+        </el-form-item>
       </el-form>
       <p class="tip">以上配置持久化在数据库中，保存后立即生效，无需重启后端。</p>
     </el-card>
@@ -179,7 +183,8 @@ const saving = ref(false)
 const writable = reactive({
   default_storage_pool: 'vmops',
   vnc_token_ttl_min: 5,
-  vnc_stale_min: 60
+  vnc_stale_min: 60,
+  jumpd_cmd_blacklist: ''
 })
 
 // 安全设置（批次 D）：security_entrance / password_min_length，独立保存；
@@ -258,6 +263,7 @@ async function load() {
     if (w.default_storage_pool) writable.default_storage_pool = w.default_storage_pool
     if (w.vnc_token_ttl_min) writable.vnc_token_ttl_min = Number(w.vnc_token_ttl_min) || writable.vnc_token_ttl_min
     if (w.vnc_stale_min) writable.vnc_stale_min = Number(w.vnc_stale_min) || writable.vnc_stale_min
+    if (w.jumpd_cmd_blacklist !== undefined) writable.jumpd_cmd_blacklist = w.jumpd_cmd_blacklist || ''
     // 快照含 ai_* 当前值（api_key 为明文，表单以密码框掩码展示）；
     // 兼容键位于 writable 节或快照顶层两种返回形态
     const snap = res.data || {}
@@ -287,7 +293,8 @@ async function saveWritable() {
     await api.updateSettings({
       default_storage_pool: writable.default_storage_pool,
       vnc_token_ttl_min: writable.vnc_token_ttl_min,
-      vnc_stale_min: writable.vnc_stale_min
+      vnc_stale_min: writable.vnc_stale_min,
+      jumpd_cmd_blacklist: writable.jumpd_cmd_blacklist
     })
     ElMessage.success('已保存并生效')
     load()

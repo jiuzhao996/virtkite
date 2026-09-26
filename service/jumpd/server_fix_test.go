@@ -104,7 +104,7 @@ func TestKeyStreamForwardStopsOnQuit(t *testing.T) {
 	quit := make(chan struct{})
 	forwardDone := make(chan struct{})
 	go func() {
-		forwardKeys(ks, stdin, quit)
+		forwardKeys(ks, stdin, quit, nil)
 		close(forwardDone)
 	}()
 

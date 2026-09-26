@@ -83,6 +83,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		PasswordMinLength  *int    `json:"password_min_length"` // 密码最小长度（0=关闭策略）
 		Announcement       *string `json:"announcement"`        // 系统公告（空串=撤下公告）
 		AlertNotifyURL     *string `json:"alert_notify_url"`    // 告警触发通知 webhook（空串=关闭；进 All() 快照回显——GET /api/settings 本就 admin-only，见 setting.All 注释）
+		JumpdCmdBlacklist  *string `json:"jumpd_cmd_blacklist"` // SSH 跳板命令黑名单（空串=用内置默认；进 All() 快照回显）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数错误")
@@ -207,7 +208,19 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 	// 入库后 best-effort 推送飞书/钉钉）。空串=关闭；写入即生效。值进 All() 快照回显
 	// （GET /api/settings 本就 admin-only，不回显会导致设置页刷新后永远显示为空、
 	// 无法核对是否已配置——与 service/setting 的 All 注释同口径）。
-	if req.AlertNotifyURL != nil {
+	if req.JumpdCmdBlacklist != nil {
+		if err := setting.Validate(setting.KeyJumpdCmdBlacklist, *req.JumpdCmdBlacklist); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.Settings.Set(setting.KeyJumpdCmdBlacklist, *req.JumpdCmdBlacklist); err != nil {
+			LogError(c, err)
+			Fail(c, http.StatusInternalServerError, "保存跳板命令黑名单失败")
+			return
+		}
+		updated = append(updated, "跳板命令黑名单")
+	}
+		if req.AlertNotifyURL != nil {
 		if err := setting.Validate(setting.KeyAlertNotifyURL, *req.AlertNotifyURL); err != nil {
 			Fail(c, http.StatusBadRequest, err.Error())
 			return

@@ -90,6 +90,10 @@ func main() {
 
 	// SSH 跳板入口（JUMPD_ENABLED=1 开启）：认证/菜单/审计复用平台现有体系；
 	// 主机密钥生成或加载失败 fail-closed 拒绝启动；随进程生命周期，不做优雅关闭。
+	// 命令黑名单来自系统设置（jumpd_cmd_blacklist 键，设置页可改），空值回退内置默认
+	jumpd.CmdBlacklistResolver = func() []string {
+		return jumpd.ParseBlacklist(settingMgr.GetStr(setting.KeyJumpdCmdBlacklist, ""))
+	}
 	jumpd.Start(db, config.GlobalConfig.JumpdEnabled, config.GlobalConfig.JumpdPort, handler.CredentialMasterSecret())
 
 	// 初始化Gin

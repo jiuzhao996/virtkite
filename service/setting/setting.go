@@ -27,6 +27,7 @@ const (
 	KeyAIModel            = "ai_model"             // 模型名（如 deepseek-chat / glm-4）
 	KeySecurityEntrance   = "security_entrance"    // 登录安全入口口令（空=关闭；设置后登录须携带 X-Entrance 头或 ?entrance= 参数）
 	KeyPasswordMinLength  = "password_min_length"  // 密码最小长度（0=关闭策略；默认 8）
+	KeyJumpdCmdBlacklist  = "jumpd_cmd_blacklist"  // SSH 跳板命令黑名单（逗号分隔子串，空=用内置默认；经 jumpd.CmdBlacklistResolver 消费，进 All() 快照供设置页回显）
 	KeyAnnouncement       = "announcement"         // 系统公告（登录页与仪表盘展示；空=无公告；写入口 PUT /api/settings，公开读 GET /api/announcement）
 	KeyAlertNotifyURL     = "alert_notify_url"     // 告警触发通知 webhook（飞书/钉钉机器人 incoming 地址；空=关闭；经 handler.AlertNotifyURLResolver 消费，进 All() 快照供设置页回显——GET /api/settings 为 admin-only）
 )
@@ -167,6 +168,12 @@ func (m *Manager) Announcement() string {
 	return m.GetStr(KeyAnnouncement, "")
 }
 
+// JumpdCmdBlacklist SSH 跳板命令黑名单原始串（逗号分隔子串；空=用 jumpd 内置默认）。
+// 消费方是 jumpd.CmdBlacklistResolver（桥接期行拦截）。进 All() 快照供设置页回显。
+func (m *Manager) JumpdCmdBlacklist() string {
+	return m.GetStr(KeyJumpdCmdBlacklist, "")
+}
+
 // AlertNotifyURL 告警触发通知的 webhook 地址（空=关闭出站通知）。
 // 消费方是 handler.AlertNotifyURLResolver（告警 webhook 入库后 best-effort 推送）。
 // 进 All() 快照（见 All 注释）：管理员自配地址，设置页需回显核对是否已启用。
@@ -194,6 +201,15 @@ func Validate(key, value string) error {
 	case KeyAIAPIKey:
 		if len(strings.TrimSpace(value)) == 0 || len(value) > 300 {
 			return fmt.Errorf("取值长度需在 1-300 之间")
+		}
+		return nil
+	case KeyJumpdCmdBlacklist:
+		// 空值=用内置默认黑名单；有值时限长（逗号分隔子串，防止手滑塞超长串）
+		if value == "" {
+			return nil
+		}
+		if len(value) > 500 {
+			return fmt.Errorf("黑名单过长（上限 500 字符）")
 		}
 		return nil
 	case KeySecurityEntrance:

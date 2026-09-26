@@ -9,6 +9,7 @@ import (
 	"net"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -368,18 +369,48 @@ func startKeyReader(ch ssh.Channel) *keyStream {
 
 // forwardKeys 桥接期按键转发：ks → 目标 stdin；桥接结束（waitDone 关闭）即停，
 // 停止后未消费的字节留在 ks 里归菜单读取
-func forwardKeys(ks *keyStream, stdin io.Writer, waitDone <-chan struct{}) {
+// onBlockedFn 命令拦截回调（bridgeSession 注入）：落审计 + 写用户提示。
+// 独立成参数以便单测（不依赖 DB / channel）。
+type onBlockedFn func(line string)
+
+func forwardKeys(ks *keyStream, stdin io.Writer, waitDone <-chan struct{}, onBlocked onBlockedFn) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[jumpd] 按键转发异常: %v\n%s", r, debug.Stack())
 		}
 	}()
+	blacklist := currentBlacklist()
+	var line []byte // 当前行输入缓冲（仅用户侧字节，与目标输出无关）
 	for {
 		select {
 		case b, ok := <-ks.ch:
 			if !ok {
 				return
 			}
+			if b == '\r' || b == '\n' {
+				// 行结束：先判黑名单再决定放行
+				lineStr := strings.TrimSpace(string(line))
+				if matchBlacklist(lineStr, blacklist) {
+					// 拦截整行：目标机 tty 里已回显的命令用 Ctrl-U（0x15）清行，
+					// 防止用户下一条命令的回车把残留行误执行；本地缓冲清零
+					if _, wErr := stdin.Write([]byte{0x15, '\r'}); wErr != nil {
+						return
+					}
+					io.WriteString(stdin, "\r\n")
+					if onBlocked != nil {
+						onBlocked(lineStr)
+					}
+				} else {
+					// 正常放行：补发行结束符（逐字节已透传，这里只送回车）
+					if _, wErr := stdin.Write([]byte{b}); wErr != nil {
+						return
+					}
+				}
+				line = line[:0]
+				continue
+			}
+			// 非行结束字节照常透传（vim/htop 等全屏交互不受影响）
+			line = append(line, b)
 			if _, err := stdin.Write([]byte{b}); err != nil {
 				return
 			}
@@ -583,7 +614,26 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 		go func() { safeCopy(ch.Stderr(), stderr, sid) }()
 	}
 	forwardDone := make(chan struct{})
-	go func() { forwardKeys(ks, stdin, waitDone); close(forwardDone) }()
+	go func() {
+		onBlocked := func(line string) {
+			// 审计落行：Action=jumpd.cmd_blocked，审计中心操作日志 tab 直接可见
+			now := time.Now()
+			audit := model.AuditLog{
+				UserID: &user.ID, Username: user.Username,
+				Action: "jumpd.cmd_blocked", ObjectType: "vm", ObjectID: &vmID,
+				Detail:   "拦截高危命令: " + line,
+				SourceIP: clientIP, Status: "blocked", CreatedAt: now,
+			}
+			dbx.PersistBestEffort(s.DB, "jumpd-cmd-blocked", func() error {
+				return s.DB.Create(&audit).Error
+			})
+			log.Printf("[jumpd] 已拦截高危命令 user=%s vm=%d cmd=%q", user.Username, vmID, line)
+			// 用户提示（写在目标 tty 流里，拦谁都看得见）
+			io.WriteString(ch, "\r\n\033[31m✗ 危险命令已被安全策略拦截并审计：\033[0m"+line+"\r\n")
+		}
+		forwardKeys(ks, stdin, waitDone, onBlocked)
+		close(forwardDone)
+	}()
 
 	select {
 	case <-waitDone: // 主路径：用户在目标机 exit / 目标侧断开
