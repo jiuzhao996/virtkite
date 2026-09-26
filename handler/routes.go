@@ -250,8 +250,6 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		networks.GET("", networkHandler.ListNetworks)
 		networks.GET("/:name", networkHandler.GetNetwork)
 		networks.POST("", networkHandler.CreateNetwork)
-		networks.POST("/xml", networkHandler.DefineNetworkXML)
-		networks.PUT("/:name", networkHandler.UpdateNetwork)
 		networks.PUT("/:name/autostart", networkHandler.SetNetworkAutostart)
 		networks.POST("/:name/start", networkHandler.StartNetwork)
 		networks.POST("/:name/stop", networkHandler.StopNetwork)

@@ -81,43 +81,6 @@ func (h *NetworkHandler) CreateNetwork(c *gin.Context) {
 	Success(c, gin.H{"name": req.Name, "gateway": req.Gateway})
 }
 
-// DefineNetworkXML 从 XML 定义网络
-func (h *NetworkHandler) DefineNetworkXML(c *gin.Context) {
-	var req struct {
-		XML string `json:"xml" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
-		return
-	}
-
-	if err := h.Virt.DefineNetwork(req.XML); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-
-	Success(c, gin.H{"message": "网络已定义"})
-}
-
-// UpdateNetwork 编辑网络（body: {xml}，对应 virsh net-destroy + net-undefine + net-define + net-start）。
-func (h *NetworkHandler) UpdateNetwork(c *gin.Context) {
-	name := c.Param("name")
-	var req struct {
-		XML string `json:"xml" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
-		return
-	}
-
-	if err := h.Virt.UpdateNetwork(name, req.XML); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-
-	Success(c, gin.H{"name": name, "message": "网络已更新"})
-}
-
 // SetNetworkAutostart 设置网络自启动 PUT /api/networks/:name/autostart（body: {autostart: bool}）。
 func (h *NetworkHandler) SetNetworkAutostart(c *gin.Context) {
 	name := c.Param("name")

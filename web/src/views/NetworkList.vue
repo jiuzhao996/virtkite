@@ -10,7 +10,6 @@
         <div class="toolbar-left">
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">新建 NAT 网络</el-button>
-          <el-button v-if="isAdmin" :icon="Document" @click="openXML">从 XML 定义</el-button>
         </div>
         <div class="toolbar-right">
           <el-tag type="success" effect="plain" size="small">运行 {{ activeCount }}</el-tag>
@@ -56,7 +55,6 @@
               :loading="rowBusy.has(row.name)"
               @click="act(row, row.active ? 'stop' : 'start')"
             >{{ row.active ? '停止' : '启动' }}</el-button>
-            <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openEdit(row)">编辑 XML</el-button>
             <el-button v-if="isAdmin" size="small" type="danger" plain :icon="Delete" @click="remove(row)">删除</el-button>
           </div>
         </el-card>
@@ -80,37 +78,14 @@
       </template>
     </el-dialog>
 
-    <!-- 从 XML 定义 -->
-    <el-dialog v-model="xmlDialog" title="从 XML 定义网络" width="640px">
-      <div class="xml-toolbar">
-        <el-button size="small" :icon="MagicStick" @click="formatXmlText(xmlForm)">格式化</el-button>
-      </div>
-      <el-input v-model="xmlForm.xml" type="textarea" :rows="14" class="edit-input" placeholder="<network>...</network>" />
-      <template #footer>
-        <el-button @click="xmlDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="defineXML">定义</el-button>
-      </template>
-    </el-dialog>
 
-    <!-- 编辑网络 XML -->
-    <el-dialog v-model="editDialog" :title="'编辑网络 XML - ' + (editRow.name || '')" width="680px">
-      <el-alert type="info" :closable="false" show-icon class="edit-tip" title="保存后网络将按新 XML 重建，XML 中的网络名称需保持不变" />
-      <div class="xml-toolbar">
-        <el-button size="small" :icon="MagicStick" @click="formatXmlText(editForm)">格式化</el-button>
-      </div>
-      <el-input v-model="editForm.xml" type="textarea" :rows="16" class="edit-input" />
-      <template #footer>
-        <el-button @click="editDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveEdit">保存</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, Document, VideoPlay, VideoPause, Delete, Edit, MagicStick } from '@element-plus/icons-vue'
+import { Refresh, Plus, VideoPlay, VideoPause, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { errMsg, isCancel } from '../utils/format'
@@ -123,13 +98,8 @@ const saving = ref(false)
 // 启停按行 busy（与自启开关 autostartBusy 同款）：请求中按钮 loading 禁用
 const rowBusy = ref(new Set())
 const createDialog = ref(false)
-const xmlDialog = ref(false)
-const editDialog = ref(false)
-const editRow = ref({})
 
 const createForm = ref({ name: '', gateway: '' })
-const xmlForm = ref({ xml: '' })
-const editForm = ref({ xml: '' })
 
 const activeCount = computed(() => networks.value.filter((n) => n.active).length)
 const autostartCount = computed(() => networks.value.filter((n) => n.autostart).length)
@@ -169,14 +139,6 @@ async function createNetwork() {
   }
 }
 
-function openXML() {
-  xmlForm.value = { xml: '' }
-  xmlDialog.value = true
-}
-
-// ===== XML 格式化（纯浏览器端，无外部依赖） =====
-// 递归序列化带两空格缩进：只保留元素子节点（元素间的空白文本节点正是要清掉的旧排版），
-// libvirt 网络 XML 无混合内容，文本叶子节点去首尾空白后原样内联
 function prettyXml(node, indent) {
   const pad = indent == null ? '' : indent
   const childPad = indent == null ? '  ' : indent + '  '
@@ -193,111 +155,6 @@ function prettyXml(node, indent) {
 }
 
 // 格式化 XML 编辑框内容：parseFromString 检查 parsererror，失败给中文提示不改动原文
-function formatXmlText(target) {
-  const src = (target.value.xml || '').trim()
-  if (!src) {
-    ElMessage.warning('请先填写 XML')
-    return
-  }
-  let doc
-  try {
-    doc = new DOMParser().parseFromString(src, 'application/xml')
-    if (doc.getElementsByTagName('parsererror').length) throw new Error('parsererror')
-  } catch (e) {
-    ElMessage.error('XML 解析失败，请检查标签是否闭合、属性引号是否完整')
-    return
-  }
-  target.value.xml = prettyXml(doc.documentElement) + '\n'
-  ElMessage.success('已格式化')
-}
-
-async function defineXML() {
-  if (!xmlForm.value.xml.trim()) {
-    ElMessage.warning('请填写 XML')
-    return
-  }
-  saving.value = true
-  try {
-    await api.defineNetworkXML({ xml: xmlForm.value.xml })
-    ElMessage.success('网络已定义')
-    xmlDialog.value = false
-    await load()
-  } catch (e) {
-    ElMessage.error(errMsg(e, '定义失败'))
-  } finally {
-    saving.value = false
-  }
-}
-
-// 编辑 XML：先取当前 XML 填充，保存时提交新 XML
-async function openEdit(row) {
-  editRow.value = row
-  editForm.value.xml = ''
-  editDialog.value = true
-  try {
-    const res = await api.getNetwork(row.name)
-    editForm.value.xml = (res.data && res.data.xml) || ''
-  } catch (e) {
-    ElMessage.error(errMsg(e, '获取网络 XML 失败'))
-    editDialog.value = false
-  }
-}
-
-async function saveEdit() {
-  if (!editForm.value.xml.trim()) {
-    ElMessage.warning('请填写 XML')
-    return
-  }
-  saving.value = true
-  try {
-    await api.updateNetwork(editRow.value.name, editForm.value.xml)
-    ElMessage.success('网络已更新')
-    editDialog.value = false
-    await load()
-  } catch (e) {
-    ElMessage.error(errMsg(e, '更新失败'))
-  } finally {
-    saving.value = false
-  }
-}
-
-async function act(row, type) {
-  // 仅停止弹确认（瞬断该网络上所有虚拟机的流量，属破坏性操作）；
-  // 启动是无损操作，不再过度确认
-  if (type === 'stop') {
-    try {
-      await ElMessageBox.confirm(
-        `确定停止网络「${row.name}」？该网络上运行中的虚拟机将立即失去网络连接。`,
-        '确认停止',
-        {
-          type: 'warning',
-          confirmButtonText: '停止',
-          cancelButtonText: '取消',
-          confirmButtonClass: 'el-button--danger'
-        }
-      )
-    } catch {
-      return
-    }
-  }
-  // 按行 busy：请求期间按钮转 loading 并禁用，防连点重复下发
-  rowBusy.value.add(row.name)
-  rowBusy.value = new Set(rowBusy.value)
-  try {
-    if (type === 'start') await api.startNetwork(row.name)
-    else await api.stopNetwork(row.name)
-    ElMessage.success(type === 'start' ? '网络已启动' : '网络已停止')
-    await load()
-  } catch (e) {
-    ElMessage.error(errMsg(e, '操作失败'))
-  } finally {
-    rowBusy.value.delete(row.name)
-    rowBusy.value = new Set(rowBusy.value)
-  }
-}
-
-// 自启动开关（对应 virsh net-autostart on|off）：按行 busy，成功后本地回写不整表刷新
-const autostartBusy = ref(new Set())
 async function toggleAutostart(row, value) {
   autostartBusy.value.add(row.name)
   autostartBusy.value = new Set(autostartBusy.value)
