@@ -254,6 +254,10 @@ func execDeleteVM(ctx *ExecContext) error {
 	if err := ctx.DB.Where("vm_id = ?", vm.ID).Delete(&model.VMGrant{}).Error; err != nil {
 		log.Printf("[tasks] 回收授权失败（VM 已删，授权悬挂）vm=%s err=%v", vm.Name, err)
 	}
+	// 组级授权同批回收（授权随资产消亡）
+	if err := ctx.DB.Where("vm_id = ?", vm.ID).Delete(&model.VMGroupGrant{}).Error; err != nil {
+		log.Printf("[tasks] 回收组授权失败（VM 已删，授权悬挂）vm=%s err=%v", vm.Name, err)
+	}
 
 	// 结果里带上被守卫保留的卷，让用户知道哪些共享文件刻意没删（前端任务详情可见）
 	result := map[string]interface{}{"vm": vm.Name}

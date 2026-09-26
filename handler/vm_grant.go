@@ -34,10 +34,16 @@ func vmVisible(c *gin.Context, db *gorm.DB, vmID uint) bool {
 		// 查询失败按未授权处理（fail-closed），但必须留痕否则用户"全部 VM 消失"无从排查
 		log.Printf("[grant] 授权查询失败（按未授权处理）vm=%d user=%d err=%v", vmID, *uid, err)
 	}
-	return cnt > 0
+	if cnt > 0 {
+		return true
+	}
+	// 组授权并集：用户所属组的有效组授权同样可见（教学场景「全班开一批实验机」）
+	vmIDs := groupGrantedVMIDs(db, *uid)
+	return vmIDs[vmID]
 }
 
-// grantedVMIDs 非 admin 用户的全部有效授权 VM 集合（列表过滤用）。
+// grantedVMIDs 非 admin 用户的全部有效授权 VM 集合（列表过滤用）：
+// 直接授权 ∪ 组授权（用户所属组的有效 vm_group_grants）。
 func grantedVMIDs(db *gorm.DB, userID uint) map[uint]bool {
 	var ids []uint
 	if err := db.Model(&model.VMGrant{}).
@@ -48,6 +54,37 @@ func grantedVMIDs(db *gorm.DB, userID uint) map[uint]bool {
 	}
 	set := make(map[uint]bool, len(ids))
 	for _, id := range ids {
+		set[id] = true
+	}
+	for id := range groupGrantedVMIDs(db, userID) {
+		set[id] = true
+	}
+	return set
+}
+
+// groupGrantedVMIDs 用户经「所属组 → 组授权」间接持有的有效 VM 集合。
+// 过期判定与直接授权逐字一致（expires_at IS NULL OR > now）。
+func groupGrantedVMIDs(db *gorm.DB, userID uint) map[uint]bool {
+	set := map[uint]bool{}
+	var groupIDs []uint
+	if err := db.Model(&model.UserGroupMember{}).
+		Where("user_id = ?", userID).
+		Pluck("group_id", &groupIDs).Error; err != nil {
+		log.Printf("[grant] 组成员查询失败（按空集处理）user=%d err=%v", userID, err)
+		return set
+	}
+	if len(groupIDs) == 0 {
+		return set
+	}
+	var vmIDs []uint
+	if err := db.Model(&model.VMGroupGrant{}).
+		Where("group_id IN ?", groupIDs).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
+		Pluck("vm_id", &vmIDs).Error; err != nil {
+		log.Printf("[grant] 组授权查询失败（按空集处理）user=%d err=%v", userID, err)
+		return set
+	}
+	for _, id := range vmIDs {
 		set[id] = true
 	}
 	return set

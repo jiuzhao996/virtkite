@@ -139,6 +139,18 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		users.DELETE("/:id", userHandler.DeleteUser)
 	}
 
+	// 用户组管理（仅管理员）：教学场景按组批量授权
+	ugHandler := &UserGroupHandler{DB: deps.DB}
+	userGroups := api.Group("/user-groups")
+	userGroups.Use(middleware.AdminMiddleware())
+	{
+		userGroups.GET("", ugHandler.ListGroups)
+		userGroups.POST("", ugHandler.CreateGroup)
+		userGroups.PUT("/:id", ugHandler.UpdateGroup)
+		userGroups.DELETE("/:id", ugHandler.DeleteGroup)
+		userGroups.POST("/:id/members", ugHandler.SetMembers)
+	}
+
 	// SSH 主机指纹管理（仅管理员）：TOFU 首连记录的 host_keys，VM 重建换密钥后
 	// 由管理员删旧指纹放行重录。暂无前端入口，curl/后续页面消费（记录在案）。
 	sshHostKeysHandler := NewSSHHostKeyHandler(deps.DB)
@@ -203,6 +215,10 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.GET("/:id/grants", vmHandler.ListVMGrants)
 		vms.POST("/:id/grants", vmHandler.GrantVM)
 		vms.DELETE("/:id/grants/:gid", vmHandler.RevokeVMGrant)
+		// 组授权（v3.6）：组 → 资产，组内成员批量获得可见性
+		vms.GET("/:id/group-grants", vmHandler.ListVMGroupGrants)
+		vms.POST("/:id/group-grants", vmHandler.GrantVMToGroup)
+		vms.DELETE("/:id/group-grants/:gid", vmHandler.RevokeVMGroupGrant)
 		// VM 文件管理（v2 批次 2：SSH 在线通道，凭据请求期内存透传不落盘）
 		vms.POST("/:id/files/list", vmFilesHandler.List)
 		vms.POST("/:id/files/download", vmFilesHandler.Download)
