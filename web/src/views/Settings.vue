@@ -3,8 +3,7 @@
     <div class="page-head">
       <div>
         <h2 class="page-title">系统设置</h2>
-        <span class="page-desc">平台运行参数，保存进数据库、立即生效无需重启；生效配置的只读快照见仪表盘「平台信息」卡，界面轮询偏好已移至顶栏「个人中心」</span>
-      </div>
+        <span class="page-desc">平台运行参数，保存进数据库、立即生效无需重启；生效配置的只读快照见仪表盘「平台信息」卡，界面轮询偏好已移至顶栏「个人中心」，cloud-init 模板管理亦在本页</span>      </div>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
@@ -58,7 +57,7 @@
           <el-input v-model="ai.model" placeholder="如 deepseek-chat" clearable />
         </el-form-item>
       </el-form>
-      <p class="tip">配置后可在「AI 助手」页使用智能问答；Key 保存在服务端，不会下发到浏览器。</p>
+      <p class="tip">配置后可通过顶栏「AI 助手」使用智能问答；Key 保存在服务端，不会下发到浏览器。</p>
     </el-card>
 
     <!-- 安全设置（批次 D）：安全入口 + 密码策略，独立保存 -->
@@ -157,6 +156,11 @@
       </el-form>
       <p class="tip">公告对全部用户公开（含未登录的登录页），请勿填写敏感信息；清空内容并保存即撤下公告。仪表盘对同一内容仅提示一次，内容变更后重新提示。</p>
     </el-card>
+
+    <!-- cloud-init 模板（IA 精简批次并入）：创建向导「云镜像 + cloud-init」面板一键套用的初始化模板 -->
+    <div class="ci-wrap">
+      <CloudInitTemplates embedded />
+    </div>
   </div>
 </template>
 
@@ -166,6 +170,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, QuestionFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, fmtDateTimeLocale } from '../utils/format'
+import CloudInitTemplates from './CloudInitTemplates.vue'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -378,6 +383,10 @@ onMounted(() => {
 <style scoped>
 .mb {
   margin-bottom: 16px;
+}
+/* cloud-init 模板嵌入块：自身自带 el-card，只需补与前卡的间距 */
+.ci-wrap {
+  margin-top: 16px;
 }
 .card-title {
   font-weight: 600;

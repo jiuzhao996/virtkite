@@ -59,7 +59,7 @@
       <div v-else-if="collapsed && !isMobile" class="collapse-nav">
         <template v-for="item in navItems" :key="item.index">
         <el-tooltip
-          v-if="!item.adminOnly || isAdmin"
+          v-if="(!item.adminOnly || isAdmin) && (!item.operateOnly || canOperate)"
           :content="item.label"
           placement="right"
         >
@@ -120,6 +120,16 @@
           </el-tooltip>
         </div>
         <div class="header-right">
+          <!-- AI 助手：顶栏抽屉形态（IA 精简批次撤销独立页面），operator+ 可见 -->
+          <el-tooltip v-if="canOperate" content="AI 运维助手" placement="bottom">
+            <el-button
+              text
+              :icon="ChatDotRound"
+              class="ai-btn"
+              aria-label="打开 AI 运维助手"
+              @click="aiOpen = true"
+            />
+          </el-tooltip>
           <!-- 任务铃：有进行中的后台任务时亮角标，点开看进度、跳任务中心 -->
           <el-popover trigger="click" width="320">
             <template #reference>
@@ -182,20 +192,31 @@
   </el-container>
   <!-- 移动端抽屉遮罩：点击关闭侧栏 -->
   <div v-if="isMobile && drawerOpen" class="drawer-backdrop" @click="drawerOpen = false" />
+
+  <!-- AI 助手抽屉（IA 精简批次）：会话仅存内存，抽屉关闭仅隐藏；宽度 520px 兼顾气泡排版与代码块 -->
+  <el-drawer v-model="aiOpen" title="AI 运维助手" size="520px" :append-to-body="true">
+    <AiChat embedded />
+  </el-drawer>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Odometer, Picture, Setting, Share, SwitchButton, Tickets, Timer, User, UserFilled } from '@element-plus/icons-vue'
+// 图标按需显式 import：Share/Tickets 随拓扑图与 cloud-init 独立菜单项撤销一并移除
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Odometer, Picture, Setting, SwitchButton, Timer, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { roleText, vmStatusText, vmStatusTag } from '../utils/format'
 import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
 
+// AI 助手抽屉：异步组件避免 marked/DOMPurify 进入口 chunk；el-drawer 首次打开才渲染内容，
+// 关闭仅隐藏不清空（会话常驻，进行中的流式回答不被打断）
+const AiChat = defineAsyncComponent(() => import('../views/AiChat.vue'))
+const aiOpen = ref(false)
+
 const route = useRoute()
 const router = useRouter()
-const { state, isAdmin, logout } = useAuth()
+const { state, isAdmin, canOperate, logout } = useAuth()
 
 // 侧栏折叠状态持久化：ref 工厂读初始值，watch 写回（刷新后保持上次的折叠选择）
 const COLLAPSED_KEY = 'vmops-sidebar-collapsed'
@@ -227,34 +248,35 @@ watch(() => route.path, () => {
 })
 
 // 分组导航：group 字段同时驱动展开态（el-menu-item-group）与折叠态 v-for，
-// adminOnly 过滤在 menuGroups 里统一做。层级思路：资源组 = 用户生产消费的对象（虚拟机/镜像），
-// 宿主机与存储池/网络同属基础设施（提供算力/存储/网络）；会话管理并入审计中心（审计页 tab）；
-// 个人资料/改密码/轮询偏好收进顶栏「个人中心」（对标 JumpServer 审计模块与云控制台顶栏分工）。
+// adminOnly / operateOnly 过滤在 menuGroups 里统一做。层级思路（IA 精简批次）：
+// 资源组 = 用户生产消费的对象（虚拟机/镜像/应用商店）；基础设施 = 平台底座
+// （宿主机 KVM 宿主/存储池/网络/Docker 容器运行时）；拓扑并入仪表盘 tab、AI 助手改顶栏抽屉、
+// cloud-init 模板并入设置页（原三个独立菜单项与「应用」分组已撤销）。
 const navItems = [
   { index: '/dashboard', label: '仪表盘', icon: DataLine, group: '总览' },
-  { index: '/topology', label: '拓扑图', icon: Share, group: '总览' },
   { index: '/vms', label: '虚拟机', icon: Monitor, group: '资源' },
   { index: '/images', label: '镜像管理', icon: Picture, group: '资源' },
-  { index: '/docker', label: 'Docker 管理', icon: Box, group: '资源' },
-  { index: '/ai', label: 'AI 助手', icon: ChatDotRound, group: '应用' },
-  { index: '/apps', label: '应用商店', icon: Goods, group: '应用' },
+  // 应用商店/Docker 管理为 operator+ 页面（路由 requiresOperate）：operateOnly 让 viewer 不再看到点进去被弹回的菜单项
+  { index: '/apps', label: '应用商店', icon: Goods, group: '资源', operateOnly: true },
   { index: '/hosts', label: '宿主机', icon: Cpu, group: '基础设施' },
   { index: '/storage', label: '存储池', icon: FolderOpened, group: '基础设施' },
   { index: '/networks', label: '网络', icon: Connection, group: '基础设施' },
+  { index: '/docker', label: 'Docker 管理', icon: Box, group: '基础设施', operateOnly: true },
   { index: '/tasks', label: '任务中心', icon: List, group: '运维' },
   { index: '/audit', label: '审计中心', icon: Document, group: '运维' },
-  // cloud-init 模板：操作员即可用（路由 requiresOperate，非 adminOnly），故不开 adminOnly
-  { index: '/cloud-init-templates', label: 'cloud-init 模板', icon: Tickets, group: '运维' },
   { index: '/crons', label: '计划任务', icon: Timer, group: '运维', adminOnly: true },
   { index: '/recycle-bin', label: '回收站', icon: Delete, group: '运维', adminOnly: true },
-  { index: '/toolbox', label: '工具箱', icon: Odometer, group: '运维', adminOnly: true },
+  // 工具箱（进程 Top/磁盘诊断）：低频管理员功能，归管理组而非运维组（运维组只留任务/审计/回收等动线）
+  { index: '/toolbox', label: '工具箱', icon: Odometer, group: '管理', adminOnly: true },
   { index: '/users', label: '用户管理', icon: User, group: '管理', adminOnly: true },
   { index: '/settings', label: '系统设置', icon: Setting, group: '管理', adminOnly: true }
 ]
 
 const menuGroups = computed(() => {
-  const visible = navItems.filter((it) => !it.adminOnly || isAdmin.value)
-  const order = ['总览', '资源', '应用', '基础设施', '运维', '管理']
+  const visible = navItems.filter(
+    (it) => (!it.adminOnly || isAdmin.value) && (!it.operateOnly || canOperate.value)
+  )
+  const order = ['总览', '资源', '基础设施', '运维', '管理']
   return order
     .map((name) => ({ name, items: visible.filter((it) => it.group === name) }))
     .filter((g) => g.items.length > 0)
@@ -511,6 +533,10 @@ function onUserCommand(cmd) {
   margin-left: auto;
 }
 .fs-btn {
+  color: var(--color-muted-foreground);
+}
+/* 顶栏 AI 助手按钮（icon-only，配色对齐全屏钮） */
+.ai-btn {
   color: var(--color-muted-foreground);
 }
 .header-right {

@@ -325,3 +325,15 @@
 - **验证**：`gofmt`/`go build ./...`/`go vet ./...` 零输出，`go test ./...` 17 个包全绿，`golangci-lint run ./...` 零告警。
 - **协作教训**：并行子 agent 改同一文件会**静默吃掉**对方改动（本次 `registry.go`、`host.go` 各发生一次，靠 `git diff` 复核才发现）。派发并行子 agent 时文件域必须严格不重叠。
 - **仍未处理（勿宣称已解决）**：P1 遗留五项（原始 XML 直定义 / `/metrics` 公开 / 登录无限流 / CORS `*`）继续有效；JWT 仍支持 `?token=` 查询参数传递（会进代理日志/Referer/审计）；VNC 解析路由按设计无鉴权（凭一次性 token）；历史 `tasks.payload` 明文待人工清洗；`vm_tasks.go` 5 处状态字面量未换常量；多宿主机是空壳。
+
+### IA 精简批次（2026-09-26，侧栏 18 项 → 12 项，「应用」分组撤销）
+
+起因：用户反馈「页面很多、分布不合理、冗余」。逐页核查后确定归位方案并一次落地，纯前端改动，零后端变更。
+
+- **菜单重排（勿回退成六组/应用组）**：侧栏 5 组 → 4 组平铺起点——**资源**=虚拟机/镜像管理/应用商店（用户生产消费的对象）；**基础设施**=宿主机/存储池/网络/Docker 管理（平台底座，Docker=容器运行时与宿主机/存储/网络同层）；**运维**=任务中心/审计中心/计划任务/回收站；**管理**=工具箱/用户管理/系统设置。总览组仅剩仪表盘（单项目组平铺不渲染分组标题）。DockerList 内部已有 容器/镜像/网络/卷/编排 5 个 tab 保持不动，应用商店维持独立页面（曾评估并入 Docker 第六 tab，用户否决「都塞一页」，2400 行巨页不可取）。
+- **新增 `operateOnly` 菜单过滤**：应用商店与 Docker 管理路由是 `requiresOperate`，此前 viewer 看得到菜单点进去被弹回仪表盘。`navItems` 加 `operateOnly` 标记，`menuGroups` computed 与**折叠态 `collapse-nav` 的 v-if 两处都要过滤**（历史上展开/折叠两份清单不同步过）。实测 viewer 侧栏 8 项、operator 12 项。
+- **拓扑图并入仪表盘第三 tab**（概览/监控/拓扑）：Topology.vue 加 `embedded` prop 隐藏页头 + `activeTick` prop——lazy tab 切走再切回时 echarts 容器从 display:none 恢复不自动重算，Dashboard 的 `onTabChange` 在「已挂载过再激活」时对 `topoTick` 自增，子组件 watch 它做 `chart.resize()`（首次激活前的自增无人监听，无副作用）。`/topology` 保留重定向 `→ /dashboard?tab=topology`（Dashboard onMounted 的 query.tab 白名单同步加了 topology）。
+- **AI 助手抽屉化**：撤销独立页面，改 MainLayout 顶栏按钮（ChatDotRound，canOperate 可见）拉起 `el-drawer size=520px`。AiChat.vue 加 `embedded` prop：隐藏 page-head 换紧凑工具行（模型名/上下文开关/清空），`.ai-page.embedded` 高度改 100%（抽屉体高度确定，height:100% 生效）。**MainLayout 用 `defineAsyncComponent` 引 AiChat**——否则 marked/DOMPurify 被拖进静态入口 chunk（构建实测 AiChat 独立 chunk 83.8KB 未进 index）。el-drawer 首开才渲染、关闭仅隐藏：会话常驻、进行中 SSE 不被打断。`/ai` 保留重定向。
+- **cloud-init 模板并入设置页**：CloudInitTemplates.vue 加 `embedded` prop（隐藏页头/alert，新建按钮移到卡头 `<template v-if="embedded" #header>`），Settings.vue 末尾 `<CloudInitTemplates embedded />`（外包 .ci-wrap 补 16px 间距）。**语义变化：模板管理从 operator 收紧到 admin**（设置页 admin-only）；operator 在向导里的「套用模板」下拉不受影响，向导「管理模板」按钮改 `v-if="isAdmin"` 指向 /settings。`/cloud-init-templates` 保留重定向。
+- **验证**：`npm run build` 成功（vendor-element-plus 超限告警为既有刻意保留）；后端重启后 playwright 冒烟 **25 断言全绿**（admin：菜单结构/三 tab/拓扑 canvas 渲染与重激活/AI 抽屉打开与内容/三旧路由重定向/设置页含模板卡；viewer：菜单 8 项无应用商店/Docker/AI、无顶栏按钮；operator：见应用商店+Docker+AI 按钮、无用户/设置）。演示账号密码见 docs/09（admin/Password1、stu 与 user/123456）。
+- **文档同步**：docs/05 §8 页面清单重写（23 视图+嵌入组件）、docs/09 演示动线（①三 tab/②拓扑走仪表盘 tab/⑩AI 走顶栏按钮/§3 路由表）。

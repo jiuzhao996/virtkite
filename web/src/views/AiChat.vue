@@ -1,7 +1,7 @@
 <template>
-  <div v-loading="statusLoading" class="ai-page">
-    <!-- 页头：标题 + 带平台上下文开关 + 清空会话（布局走全局 .page-head/.page-title） -->
-    <div class="page-head">
+  <div v-loading="statusLoading" class="ai-page" :class="{ embedded }">
+    <!-- 页头：独立页面形态保留完整页头；抽屉形态（IA 精简批次）只留紧凑工具行，标题由抽屉头承担 -->
+    <div v-if="!embedded" class="page-head">
       <div>
         <h2 class="page-title">AI 运维助手</h2>
         <span class="page-desc">
@@ -21,6 +21,18 @@
         </el-tooltip>
         <el-button :icon="Delete" :disabled="!messages.length" @click="clearSession">清空会话</el-button>
       </div>
+    </div>
+    <div v-else class="head-actions drawer-actions">
+      <span class="drawer-desc">
+        {{ ai.configured ? '模型 ' + ai.model : '基于平台实时状态的智能运维问答' }}
+      </span>
+      <el-tooltip
+        content="开启后助手可感知平台虚拟机、容器与告警的实时状态，回答更准确"
+        placement="top"
+      >
+        <span class="ctx-label">带平台上下文<el-switch v-model="withContext" aria-label="带平台上下文" /></span>
+      </el-tooltip>
+      <el-button :icon="Delete" :disabled="!messages.length" @click="clearSession">清空会话</el-button>
     </div>
 
     <!-- 状态获取失败（区别于「未配置」：后者是正常引导，前者是请求出错可重试） -->
@@ -140,6 +152,12 @@ import DOMPurify from 'dompurify'
 // POST /ai/chat 是 SSE 流式，axios 拿不到 ReadableStream，必须用原生 fetch（见 streamAnswer）。
 import http from '../api'
 import { TOKEN_KEY } from '../store/auth'
+
+// embedded：抽屉形态（MainLayout 顶栏拉起）。true 时隐藏页头只留工具行，
+// 容器改为撑满抽屉体高度（会话状态仍在本组件内存，抽屉关闭仅隐藏不清空）
+const props = defineProps({
+  embedded: { type: Boolean, default: false }
+})
 
 // markdown 渲染（assistant 消息）：breaks 让单个换行也断行，对齐聊天软件习惯
 marked.setOptions({ breaks: true })
@@ -416,6 +434,21 @@ onBeforeUnmount(() => {
   min-height: 460px;
   display: flex;
   flex-direction: column;
+}
+/* 抽屉形态：撑满抽屉体（el-drawer__body 已是 flex 容器高度的 100%），不按独立页留头高 */
+.ai-page.embedded {
+  height: 100%;
+  min-height: 0;
+}
+/* 抽屉形态的紧凑工具行：替代独立页的 page-head，右对齐一行放下模型名/上下文开关/清空 */
+.drawer-actions {
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.drawer-desc {
+  color: var(--color-muted-foreground);
+  font-size: 0.85rem;
+  margin-right: auto;
 }
 
 .head-actions {

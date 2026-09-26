@@ -21,9 +21,11 @@ const routes = [
       { path: 'vms/new', name: 'vm-create', component: () => import('../views/CreateVmWizard.vue'), meta: { requiresOperate: true } },
       { path: 'docker', name: 'docker', component: () => import('../views/DockerList.vue'), meta: { requiresOperate: true } },
       { path: 'apps', name: 'apps', component: () => import('../views/AppStore.vue'), meta: { requiresOperate: true } },
-      { path: 'ai', name: 'ai', component: () => import('../views/AiChat.vue'), meta: { requiresOperate: true } },
-      { path: 'cloud-init-templates', name: 'cloud-init-templates', component: () => import('../views/CloudInitTemplates.vue'), meta: { requiresOperate: true } },
-      { path: 'topology', name: 'topology', component: () => import('../views/Topology.vue') },
+      // IA 精简批次（2026-09）：拓扑图并入仪表盘 tab、AI 助手改顶栏抽屉、cloud-init 模板并入设置页。
+      // 三个旧地址保留重定向，旧书签/文档链接不断链
+      { path: 'topology', redirect: { path: '/dashboard', query: { tab: 'topology' } } },
+      { path: 'ai', redirect: '/dashboard' },
+      { path: 'cloud-init-templates', redirect: '/settings' },
       { path: 'recycle-bin', name: 'recycle-bin', component: () => import('../views/RecycleBin.vue'), meta: { requiresAdmin: true } },
       { path: 'toolbox', name: 'toolbox', component: () => import('../views/Toolbox.vue'), meta: { requiresAdmin: true } },
       { path: 'crons', name: 'crons', component: () => import('../views/CronList.vue'), meta: { requiresAdmin: true } },

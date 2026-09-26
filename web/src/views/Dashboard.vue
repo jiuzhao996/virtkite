@@ -289,6 +289,10 @@
         <!-- ⚠️ 必须用 MonitorView：Monitor 已被 @element-plus/icons-vue 的显示器图标占用 -->
         <MonitorView v-if="visitedTabs.has('monitor')" embedded />
       </el-tab-pane>
+      <el-tab-pane label="拓扑" name="topology" lazy>
+        <!-- 拓扑图并入仪表盘第三 tab（IA 精简批次）；active-tick 用于 tab 切回时触发子图 resize -->
+        <TopologyView v-if="visitedTabs.has('topology')" embedded :active-tick="topoTick" />
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -298,6 +302,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, reactive } from 'v
 import echarts from '../utils/echarts'
 import { ArrowRight, Refresh, Cpu, InfoFilled, Monitor, VideoPlay, FolderOpened, Connection, Picture, User, Document } from '@element-plus/icons-vue'
 import MonitorView from './Monitor.vue'
+import TopologyView from './Topology.vue'
 import { api } from '../api'
 import { useRoute } from 'vue-router'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
@@ -412,14 +417,20 @@ let hostTimer = null
 let vmTimer = null
 let alertTimer = null
 
-// 概览/监控 tab：visitedTabs 记录已激活过的监控 tab（配合 lazy，首次激活挂载后常驻）。
+// 概览/监控/拓扑 tab：visitedTabs 记录已激活过的 tab（配合 lazy，首次激活挂载后常驻）。
 // 切回概览时 echarts 容器从 display:none 恢复，需要手动 resize 一次否则图不渲染。
 const activeTab = ref('overview')
 const visitedTabs = reactive(new Set(['overview']))
+// 拓扑 tab 重激活信号：拓扑子图已挂载后再切回时 +1，TopologyView watch 它做 chart.resize()
+const topoTick = ref(0)
 const route = useRoute()
 function onTabChange(name) {
   if (name === 'monitor') visitedTabs.add('monitor')
-  else nextTick(() => chart && chart.resize())
+  else if (name === 'topology') {
+    const revisit = visitedTabs.has('topology')
+    visitedTabs.add('topology')
+    if (revisit) topoTick.value++
+  } else nextTick(() => chart && chart.resize())
 }
 const capacity = ref({ has_host: false, vm_count: 0, allocated_vcpu: 0, allocated_mem_mb: 0, physical_cores: 0, physical_mem_mb: 0, cpu_ratio: 0, mem_ratio: 0 })
 async function loadCapacity() {
@@ -645,10 +656,10 @@ function initChart() {
 const onResize = () => chart && chart.resize()
 
 onMounted(async () => {
-  // 兼容旧书签：/monitor 重定向到 /dashboard?tab=monitor 时直达监控 tab
-  if (route.query.tab === 'monitor') {
-    activeTab.value = 'monitor'
-    visitedTabs.add('monitor')
+  // 兼容旧书签：/monitor、/topology 重定向到 /dashboard?tab=xx 时直达对应 tab
+  if (route.query.tab === 'monitor' || route.query.tab === 'topology') {
+    activeTab.value = route.query.tab
+    visitedTabs.add(route.query.tab)
   }
   await loadAll()
   await nextTick()

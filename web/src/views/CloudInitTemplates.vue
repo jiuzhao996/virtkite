@@ -1,6 +1,7 @@
 <template>
   <div>
-    <div class="page-head">
+    <!-- 独立页头仅独立路由形态展示；嵌入设置页（IA 精简批次）时标题由卡头承担 -->
+    <div v-if="!embedded" class="page-head">
       <div>
         <h3 class="page-title">cloud-init 模板</h3>
         <p class="page-desc">可复用的初始化配置（主机名 / 用户 / 密码 / SSH 公钥 / 网络），创建向导「云镜像 + cloud-init」方式下一键套用</p>
@@ -9,6 +10,7 @@
     </div>
 
     <el-alert
+      v-if="!embedded"
       type="info"
       :closable="false"
       show-icon
@@ -17,6 +19,13 @@
     />
 
     <el-card shadow="never">
+      <!-- 嵌入形态补卡头：标题 + 新建入口（原在独立页头，随页头一起隐藏了） -->
+      <template v-if="embedded" #header>
+        <div class="ci-card-head">
+          <span class="ci-card-title">cloud-init 模板</span>
+          <el-button type="primary" :icon="Plus" @click="openCreate">新建模板</el-button>
+        </div>
+      </template>
       <div class="toolbar">
         <span class="count">共 {{ items.length }} 个模板</span>
         <div class="toolbar-right">
@@ -116,6 +125,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, fmtDateTime } from '../utils/format'
+
+// embedded：嵌入设置页形态（隐藏独立页头与提示条，新建入口移到卡头）
+const props = defineProps({
+  embedded: { type: Boolean, default: false }
+})
 
 // 合法 IPv4（0-255 四段）；静态 IP / 网关保存前拦截，格式错误直接提示不提交
 const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
@@ -268,5 +282,14 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: var(--space-lg);
+}
+/* 嵌入形态卡头（设置页承载时的标题行） */
+.ci-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ci-card-title {
+  font-weight: 600;
 }
 </style>

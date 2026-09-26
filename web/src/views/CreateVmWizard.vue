@@ -138,7 +138,8 @@
                   <template #empty><span class="opt-hint">暂无模板，可点击右侧「存为模板」创建</span></template>
                 </el-select>
                 <el-button text type="primary" :icon="Plus" @click="saveAsTemplate">存为模板</el-button>
-                <el-button text type="primary" @click="router.push('/cloud-init-templates')">管理模板</el-button>
+                <!-- 模板管理入口在系统设置页（IA 精简批次并入），设置页 admin-only，故仅管理员可见 -->
+                <el-button v-if="isAdmin" text type="primary" @click="router.push('/settings')">管理模板</el-button>
               </div>
               <el-form label-width="110px" class="ci-form">
                 <el-form-item label="主机名">
@@ -430,7 +431,7 @@ import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 
 const router = useRouter()
-const { canOperate } = useAuth()
+const { canOperate, isAdmin } = useAuth()
 if (!canOperate.value) router.replace({ name: 'vms' })
 
 const step = ref(0)

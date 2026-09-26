@@ -1,6 +1,7 @@
 <template>
   <div>
-    <div class="page-head">
+    <!-- 独立页头仅独立路由形态展示；嵌入仪表盘 tab（IA 精简批次）时由 tab 承担标题 -->
+    <div v-if="!embedded" class="page-head">
       <div>
         <h2 class="page-title">虚拟化拓扑</h2>
         <span class="page-desc">以宿主机为中心展示存储池与虚拟机的从属关系：池节点大小按容量、虚拟机节点颜色按运行状态、大小按内存；拖拽节点可整理布局，滚轮缩放，点击图例可按状态过滤</span>
@@ -31,7 +32,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import echarts from '../utils/echarts'
@@ -43,6 +44,20 @@ echarts.use([GraphChart])
 
 import http from '../api'
 import { errMsg, cssVar, vmStatusText, vmStatusHex, fmtSizeBytes, nowClock } from '../utils/format'
+
+// embedded：嵌入仪表盘 tab 形态（隐藏独立页头）。
+// activeTick：宿主编排的重激活信号——tab 切走再切回时容器从 display:none 恢复，
+// echarts 不会自动重算尺寸，宿主每次数值 +1 触发一次 resize（首次挂载前的自增无人监听，无副作用）
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+  activeTick: { type: Number, default: 0 }
+})
+watch(
+  () => props.activeTick,
+  () => {
+    if (props.embedded && chart) nextTick(() => chart && chart.resize())
+  }
+)
 
 const vms = ref([])
 const pools = ref([])
