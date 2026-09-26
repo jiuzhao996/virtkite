@@ -48,3 +48,6 @@ deploy/tls/
 
 gui-test-screenshots/
 .~*.docx
+
+# 会话工具工作目录
+.workbuddy/
