@@ -12,7 +12,7 @@
 
 Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**——纸鸢掠浪而行，正是「鸢航」；金色虚线自浪间牵向鸢身，"断而未断"，是平台与虚拟机之间的管理通道。品牌口号一句话：**把你的私有云放上天，线始终在手中。**
 
-对标 virt-manager 核心功能（创建向导/硬件管理/控制台/存储池/网络/快照），辅以 PVE 式增量克隆（qcow2 backing chain）与 cloud-init 快速初始化。v3 起参考 1Panel（GPLv3，借鉴设计模式而非引入代码）吸收运维面板能力（容器管理 / 应用商店 / 计划任务 / 工具箱 / AI 助手），但保持 KVM 私有云定位，不做建站赛道。
+对标 virt-manager 核心功能（创建向导/硬件管理/控制台/存储池/网络/快照），辅以 PVE 式增量克隆（qcow2 backing chain）与 cloud-init 快速初始化。v3 起参考 1Panel（GPLv3，借鉴设计模式而非引入代码）吸收运维面板能力（容器管理 / 应用商店 / 计划任务 / AI 助手），但保持 KVM 私有云定位，不做建站赛道。
 
 ## 技术栈
 
@@ -24,7 +24,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 | 容器 | Docker CLI / Docker Engine API（`service/dockerx` 封装：结构化输出 + exec TTY 容器终端）+ docker compose |
 | 前端 | Vue 3 + Vite + Element Plus + vue-router + ECharts |
 | 监控 | 内建 Prometheus exporter + Prometheus + Grafana + Alertmanager |
-| 日志 | Loki + Promtail（以应用商店 compose 包一键交付，LogQL 经后端代理查询） |
+| 日志 | Loki + Promtail（可选增量，compose 模板存档于 deploy/；LogQL 经后端代理查询） |
 | AI | OpenAI 兼容 API 代理（SSE 流式 + 平台上下文注入，Key 只存服务端） |
 | 部署 | 二进制直跑 / Docker / docker-compose |
 
@@ -57,7 +57,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] 存量 VM 导入 / 纳管
 - [x] **监控闭环**（Prometheus file_sd 服务发现自动下发 running 且已知 IP 的 VM 目标；Alertmanager webhook 告警网关按 fingerprint 去重入库 + 分页历史；**告警出站通知**（v3.4：设置页配置飞书/钉钉机器人地址，仅新增 firing 或 resolved→firing 推送、同 fingerprint 重复去重，best-effort 不影响 webhook 响应）；`vms.ip` DHCP 租约 + QGA 双通道回填）
 - [x] **容器管理（v3：KVM 域 + Docker 容器「双运行时」统一面板）**（容器 / 镜像 / 网络 / 卷 / 编排（compose 项目级启停）五 tab + **容器创建**（v3.4：名称/镜像/端口映射/挂载卷/环境变量/重启策略/启动命令 → `docker run` 参数映射，纯函数校验，本地缺镜像自动拉取）+ 容器终端（WebSocket ↔ Docker Engine API exec TTY，支持运行中调窗）+ 日志查看（跟随/下载/tail 行数）+ 资源占用实时统计 + 批量启停删与悬空镜像/容器清理；viewer 403，容器终端与 SSH 终端共用 `console.Conn` 写锁 + recover 纪律与会话强断）
-- [x] **应用商店（v3）**（参考 1Panel（GPLv3）声明式 compose 应用包设计模式：应用级+版本级 `data.yml`（动态表单）+ `docker-compose.yml` `${VAR}` 占位 → 写 `.env` → `docker compose up -d`，变量替换交给 compose 原生插值；内置 20 个应用（nginx / mysql / redis / minio / gitea / jenkins / n8n 等），安装走异步任务、安装前端口占用预检、卸载保留数据目录；Docker 不可用时页面级禁用安装）
+- [x] **应用商店（v3，SSH 脚本版）**（选虚拟机 → 一键装 nginx/mysql/redis/php/nodejs/docker-engine 等常用服务：安装走异步任务，虚拟机内经 SSH 幂等执行内置脚本，已装自动跳过；compose 版应用商店已于 2026-09-26 砍除，模板存档 deploy/）
 - [x] **VM 应用（v3）**（不经容器往虚拟机里装软件：SSH 在客户机内幂等执行安装脚本，10 个内置应用（nginx/mysql/redis/php/nodejs/docker-engine 等），已装检测自动跳过）
 - [x] **AI 运维助手（v3）**（OpenAI 兼容 `/chat/completions` 代理：API Key 只存服务端永不下发前端；`with_context` 注入平台环境摘要（VM/容器/告警统计），能答「我平台几台虚拟机在跑」；SSE 流式逐段转发；助手只读问答、不具备任何写操作能力；viewer 403）
 - [x] **SSH 跳板入口（v3.6，借鉴堡垒机 4A）**（任意终端工具 `ssh <用户名>@<宿主机> -p 2222` 直达资产：平台密码认证 + per-IP 爆破限流 → 交互式资产菜单只列「有效授权 ∩ 运行中 ∩ 有 IP ∩ 已托管凭据」→ 连接前现查重验（授权/状态/IP 任何一项失效当场拒绝）→ vmssh 安全链桥接直达 VM shell；exit 回菜单、q 断开；会话落 console_sessions 审计；**命令黑名单**：rm -rf/mkfs/dd 等高危命令整行拦截并落审计（大小写/多空格归一，设置页可配）。`JUMPD_ENABLED=1` 开启，默认关闭）
@@ -65,7 +65,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **SSH 凭据托管（v3）（AES-256-GCM 加密落库：主密钥运行时注入不落库 + 每条记录随机盐，数据库泄露后凭据不可直接可读；文件管理 / VM 应用安装「使用已保存凭据」后端自行解密消费，明文不出服务端）
 - [x] **VM 文件管理（v3：双通道）**（在线通道：SSH/SFTP 浏览/上传/下载/删除/建目录，管开机机；离线通道：guestmount 只读挂载关机机系统盘，不依赖 VM 内 SSH；运行中 VM 一律拒绝离线挂载防磁盘锁，挂载只读——宁可浏览受限不可损坏磁盘）
 - [x] **计划任务（v3）**（自研五字段 cron 解析（百行纯函数可单测，不引第三方）+ 整分 tick 调度器：定时快照 / mysqldump 数据库备份；启停 / 立即运行 / 执行记录（成功失败与耗时））
-- [x] **Loki 日志栈（v3）**（以应用商店 compose 包一键交付（loki + promtail），监控中心提供 LogQL 查询与标签接口——指标 + 日志 + 告警完整可观测性）
+- [x] **Loki 日志栈（v3，可选增量）**（默认裁剪不随栈部署，compose 模板存档 deploy/docker-compose.loki.yml；监控中心提供 LogQL 查询与标签接口——指标 + 日志 + 告警完整可观测性）
 - [x] **云镜像市场（v3）**（内置官方云镜像清单一键提交下载任务（异步、流式落盘、完成自动登记镜像库），镜像管理页第三 tab）
 - [x] **VM 导出/导入（v3）**（tar.gz 全量包 = 域 XML + 系统盘卷；导出 gzip/tar 两级 writer 管道直写响应体，不落临时盘不整载内存；导入失败按副作用逆序清理）
 - [x] **回收站（v3）**（删除是软删——回收站页可视化软删 VM：恢复 / 彻底清除（admin），删错机器的后悔药）
@@ -85,7 +85,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - Node.js 18+（仅前端开发 / 构建需要）
 - MySQL 8.0+（或 Docker）
 - libvirt + KVM（运行虚拟机的宿主机）
-- Docker（可选：容器管理与容器形态的应用商店需要，未安装时相关页面显示不可用提示）
+- Docker（可选：容器管理页需要，未安装时相关页面显示不可用提示）
 - Prometheus / Grafana / Loki（可选，Docker compose 一键栈，见监控章节）
 
 ## 快速开始

@@ -48,7 +48,7 @@ import { ref, provide, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
-import { errMsg } from '../../utils/format'
+import { errMsg } from '../utils/format'
 
 const route = useRoute()
 const router = useRouter()

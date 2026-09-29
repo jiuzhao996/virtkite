@@ -22,7 +22,7 @@ const routes = [
       // Docker 管理：1Panel 式子路由页面组（布局壳 index.vue + 五个子页），'' 重定向到容器页
       {
         path: 'docker',
-        component: () => import('../views/docker/index.vue'),
+        component: () => import('../views/DockerPage.vue'),
         meta: { requiresOperate: true },
         children: [
           { path: '', redirect: { name: 'docker-containers' } },

@@ -118,7 +118,6 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	// 应用商店安装：use_saved（或未带口令）走服务端凭据，明文不落 task.payload
 	appsHandler.SetVMCredentialHandler(vmCredHandler)
 	lokiHandler := NewLokiHandler(deps.LokiURL)
-	appStoreV2 := NewAppStoreV2Handler()
 	cronScheduler := &cron.Scheduler{DB: deps.DB, Virt: deps.Virt, BackupDir: ""}
 	cronScheduler.Start() // 内部自起 goroutine（整分 tick）
 	cronsHandler := NewCronsHandler(deps.DB, cronScheduler)
@@ -350,7 +349,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		apps.GET("/:id", appsHandler.Get)
 	}
 
-	// 应用商店 v2（声明式 compose 应用包，1Panel 对标）
+	// cloud-init 配置模板（operator/admin：创建向导「套用模板/保存为模板」与管理页共用）
 	citHandler := NewCloudInitTemplateHandler(deps.DB)
 	cit := api.Group("/cloud-init-templates")
 	cit.Use(middleware.OperatorMiddleware())
@@ -360,16 +359,6 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		cit.POST("", citHandler.Create)
 		cit.PUT("/:id", citHandler.Update)
 		cit.DELETE("/:id", citHandler.Delete)
-	}
-
-	v2 := api.Group("/appstore")
-	v2.Use(middleware.NonViewerMiddleware())
-	{
-		v2.GET("", appStoreV2.ListV2)
-		v2.GET("/status", appStoreV2.StatusV2)
-		v2.GET("/:key", appStoreV2.GetV2)
-		v2.POST("/:key/install", appStoreV2.InstallV2)
-		v2.POST("/:key/uninstall", appStoreV2.UninstallV2)
 	}
 
 	// 回收站（v3 批次 N：软删 VM 可视化恢复/彻底清除，仅管理员）
