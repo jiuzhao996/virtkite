@@ -75,9 +75,9 @@ func menuPage(items []menuVM, page int) ([]menuVM, int) {
 func renderMenu(items []menuVM, page, pages int, keyword string) string {
 	var b strings.Builder
 	// 提示条（koko 惯例：进来就是可用信息，无产品横幅）
-	tip := "提示: 输入编号直接登录 | / + 关键词 搜索 | h 帮助 | q 退出"
+	tip := "提示: 编号登录 ｜ / 搜索 ｜ Esc 清搜索 ｜ p/n 翻页 ｜ q 退出"
 	if keyword != "" {
-		tip = fmt.Sprintf("搜索 \"%s\" 共 %d 台 | 回车清除搜索恢复全量 | 编号登录", keyword, len(items))
+		tip = fmt.Sprintf("搜索 \"%s\"：共 %d 台 ｜ Esc 返回全量", keyword, len(items))
 	}
 	b.WriteString(tip + "\r\n\r\n")
 
