@@ -8,7 +8,7 @@ import (
 	"github.com/jiuzhao/vmops/model"
 )
 
-// 资产菜单纯函数层：过滤/分页/渲染/按键解析全部无 DB、无网络副作用。
+// 资产菜单纯函数层：过滤/分页/搜索/渲染/按键解析全部无 DB、无网络副作用。
 // ⚠️ 菜单映射只携带 VM ID——连接前的授权/状态/IP 重验在 server.go 现查现判
 // （Review Focus #1：菜单展示到按键选择之间存在时间窗，授权可能已过期）。
 
@@ -66,57 +66,53 @@ func menuPage(items []menuVM, page int) ([]menuVM, int) {
 	return items[lo:hi], pages
 }
 
-// renderMenu 渲染菜单文本：「编号. 名称 (IP)」每行一条 + 页码提示 + 操作提示。
-// 终端对齐三要素（v3.6 排练发现：原版框线阶梯错位）：
-//  1. 每行统一宽度（中文字符显示宽=2，右侧补空格到框宽再补右边框）；
-//  2. 全部换行用 \r\n（终端 LF 不回车，纯 \n 会逐行右移成阶梯）；
-//  3. 框宽固定 46 显示列，行内容超宽截断（IP 过长不破坏对齐）。
-func renderMenu(items []menuVM, page, pages int) string {
-	const boxW = 46 // 框体内容宽度（显示列，不含边框字符）
+// renderMenu 渲染资产列表（koko 形态对标，见 docs/koko-menu-reference.md）：
+// 一行提示 + 表格（ID/名称/地址）+ 页脚信息条；搜索词高亮过滤在 loadMenuAssets 之外由
+// server 传入 keyword 后走 filterByKeyword。终端对齐三要素（排练教训）：
+//  1. 列宽固定（显示列口径，CJK=2），行内容补齐/截断；
+//  2. 全部换行 \r\n；
+//  3. 无装饰性横幅——首行即提示条（koko 惯例）。
+func renderMenu(items []menuVM, page, pages int, keyword string) string {
 	var b strings.Builder
-	// row 拼一行：│ + 内容(补齐/截断到 boxW 显示列) + │ + \r\n
-	row := func(content string) {
-		w := 0
-		var sb strings.Builder
-		for _, r := range content {
-			rw := 1
-			if r > 0x2E80 { // CJK 及全角区显示宽按 2 计
-				rw = 2
-			}
-			if w+rw > boxW { // 超宽截断（显示列口径）
-				break
-			}
-			sb.WriteRune(r)
-			w += rw
-		}
-		for w < boxW {
-			sb.WriteByte(' ')
-			w++
-		}
-		b.WriteString("│ " + sb.String() + " │\r\n")
+	// 提示条（koko 惯例：进来就是可用信息，无产品横幅）
+	tip := "提示: 输入编号直接登录 | / + 关键词 搜索 | h 帮助 | q 退出"
+	if keyword != "" {
+		tip = fmt.Sprintf("搜索 \"%s\" 共 %d 台 | 回车清除搜索恢复全量 | 编号登录", keyword, len(items))
 	}
-	line := strings.Repeat("─", boxW+2)
-	b.WriteString("┌" + line + "┐\r\n")
-	row("鸢航 VirtKite 资产菜单（只显示你有权连接的虚拟机）")
-	b.WriteString("├" + line + "┤\r\n")
+	b.WriteString(tip + "\r\n\r\n")
+
+	// 表格：列宽 = 名称 20 / 地址 16（显示列）
+	nameW, ipW := 20, 16
+	// 表头
+	b.WriteString(fmt.Sprintf("  %-4s %-*s %-*s\r\n", "ID", nameW, "名称", ipW, "地址"))
+	b.WriteString("  " + strings.Repeat("-", 4+nameW+ipW+2) + "\r\n")
 	shown, _ := menuPage(items, page)
 	if len(shown) == 0 {
-		row("暂无可连接资产：需运行中、有 IP、已托管凭据")
+		b.WriteString("  （无匹配资产：需运行中、有 IP、已托管凭据" + map[bool]string{true: "、匹配搜索", false: ""}[keyword != ""] + "）\r\n")
 	}
 	for i, vm := range shown {
-		fmt.Fprintf(&b, "│ %d. %s (%s)", i+1, vm.Name, vm.IP)
-		// 手工补齐这一行（内容含用户数据，走同一宽度口径）
-		w := 3 + 2 + len(fmt.Sprintf("%d. ", i+1)) + displayWidth(vm.Name) + 2 + displayWidth(vm.IP) + 2
-		for w < boxW {
-			b.WriteString(" ")
-			w++
-		}
-		b.WriteString(" │\r\n")
+		b.WriteString(fmt.Sprintf("  %-4d %-*s %-*s\r\n", i+1, nameW, truncateWidth(vm.Name, nameW), ipW, truncateWidth(vm.IP, ipW)))
 	}
-	b.WriteString("├" + line + "┤\r\n")
-	row(fmt.Sprintf("第 %d/%d 页 ｜ 数字选择 ｜ j 下一页 ｜ q 断开", page, pages))
-	b.WriteString("└" + line + "┘\r\n")
+	// 页脚信息条
+	b.WriteString("\r\n")
+	b.WriteString(fmt.Sprintf("  页码 %d/%d ｜ 共 %d 台 ｜ [p]上一页 [n]下一页\r\n", page, pages, len(items)))
 	return b.String()
+}
+
+// truncateWidth 按显示宽截断（CJK=2）
+func truncateWidth(s string, max int) string {
+	w := 0
+	for i, r := range s {
+		rw := 1
+		if r > 0x2E80 {
+			rw = 2
+		}
+		if w+rw > max {
+			return s[:i]
+		}
+		w += rw
+	}
+	return s
 }
 
 // displayWidth 字符串显示宽（CJK=2，其他=1）
@@ -132,15 +128,15 @@ func displayWidth(s string) int {
 	return w
 }
 
-// menuAction 按键解析结果：select 选中 / next 翻页 / quit 退出 / stay 无效键重显
+// menuAction 按键解析结果：select 选中 / next 翻下页 / prev 翻上页 / quit 退出 / stay 无效键
 type menuAction struct {
 	kind string
 	vmID uint
 	page int
 }
 
-// handleMenuKey 解析单个按键：'1'-'9' 选中当前页对应行；'j' 翻下页（末页回首页）；
-// 'q' 退出；其余键一律 stay（不产生任何拨号目标——连接目标唯一来源是菜单选中项）。
+// handleMenuKey 解析单个按键：'1'-'9' 选中当前页对应行；'n' 下页（循环）；'p' 上页（循环）；
+// 'q' 退出；其余键 stay（不产生拨号目标——连接目标唯一来源是菜单选中项）。
 func handleMenuKey(key byte, page, pages int, shown []menuVM) menuAction {
 	switch {
 	case key >= '1' && key <= '9':
@@ -149,12 +145,18 @@ func handleMenuKey(key byte, page, pages int, shown []menuVM) menuAction {
 			return menuAction{kind: "select", vmID: shown[idx].ID, page: page}
 		}
 		return menuAction{kind: "stay", page: page}
-	case key == 'j':
+	case key == 'n':
 		next := page + 1
 		if next > pages {
 			next = 1
 		}
 		return menuAction{kind: "next", page: next}
+	case key == 'p':
+		prev := page - 1
+		if prev < 1 {
+			prev = pages
+		}
+		return menuAction{kind: "prev", page: prev}
 	case key == 'q':
 		return menuAction{kind: "quit", page: page}
 	}

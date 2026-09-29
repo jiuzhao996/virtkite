@@ -476,6 +476,7 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 	}
 
 	page := 1
+	keyword := "" // 搜索词（koko 交互：/ 进入，回车提交，空行清除）
 	for {
 		items, err := loadMenuAssets(s.DB, user, isAdmin)
 		if err != nil {
@@ -484,8 +485,19 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 			sendExitStatus(ch)
 			return
 		}
+		if keyword != "" { // 搜索：名称/地址子串匹配（大小写不敏感）
+			kw := strings.ToLower(keyword)
+			filtered := items[:0]
+			for _, it := range items {
+				if strings.Contains(strings.ToLower(it.Name), kw) || strings.Contains(strings.ToLower(it.IP), kw) {
+					filtered = append(filtered, it)
+				}
+			}
+			items = filtered
+			page = 1
+		}
 		shown, pages := menuPage(items, page)
-		io.WriteString(ch, renderMenu(items, page, pages))
+		io.WriteString(ch, renderMenu(items, page, pages, keyword))
 
 		// 注：ssh.Channel 接口无读超时（SetReadDeadline 不存在），菜单空闲不设超时——
 		// 空闲连接由客户端侧断开或部署层（防火墙/代理空闲回收）兜底。
@@ -496,12 +508,24 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 		}
 		key[0] = b
 
+		// '/' 进入搜索：行式读取关键词（空行清除搜索），提交后重显菜单
+		if key[0] == '/' {
+			io.WriteString(ch, "\r\n搜索: ")
+			line, rerr := readLine(ks, ch)
+			if rerr != nil {
+				return
+			}
+			keyword = strings.TrimSpace(line)
+			io.WriteString(ch, "\r\n")
+			continue
+		}
+
 		act := handleMenuKey(key[0], page, pages, shown)
 		switch act.kind {
 		case "quit":
 			sendExitStatus(ch)
 			return
-		case "next":
+		case "next", "prev":
 			page = act.page
 		case "select":
 			log.Printf("[jumpd] %s(%s) 选中 VM#%d，开始重验与连接", user.Username, clientIP, act.vmID)
@@ -642,6 +666,34 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 
 	io.WriteString(ch, "\r\n\r\n[目标会话已结束，回到菜单]\r\n")
 	closeJumpSession(s.DB, sid, "会话结束")
+}
+
+// readLine 从键流读一行：可打印字符回显、退格回显 "\b \b"（擦掉终端上的字符），
+// 回车结束。io.Writer 由调用方注入（ch）。
+func readLine(ks *keyStream, echo io.Writer) (string, error) {
+	var line []byte
+	for {
+		b, ok := <-ks.ch
+		if !ok {
+			return "", fmt.Errorf("连接断开")
+		}
+		switch b {
+		case '\r', '\n':
+			return string(line), nil
+		case 0x7f, 0x08: // 退格：终端擦除（光标左移一格 + 空格覆盖 + 再左移）
+			if len(line) > 0 {
+				line = line[:len(line)-1]
+				io.WriteString(echo, "\b \b")
+			}
+		case 0x03: // Ctrl-C：中止搜索，返回空行
+			return "", nil
+		default:
+			if b >= 0x20 && b < 0x7f { // 只收可打印字符
+				line = append(line, b)
+				echo.Write([]byte{b})
+			}
+		}
+	}
 }
 
 // sendExitStatus 以 0 状态关闭 channel，客户端正常退出

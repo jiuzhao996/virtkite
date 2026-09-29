@@ -68,8 +68,8 @@ func TestMenuPage(t *testing.T) {
 	}
 
 	// 渲染文本：「编号. 名称 (IP)」+ 页码提示
-	text := renderMenu(items, 1, 3)
-	for _, want := range []string{"1. ", "(192.168.122.1)", "1/3", "\r\n"} {
+	text := renderMenu(items, 1, 3, "")
+	for _, want := range []string{"ID", "名称", "地址", "1", "192.168.122.1", "页码 1/3", "\r\n"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("菜单文本缺 %q：\n%s", want, text)
 		}
@@ -96,11 +96,17 @@ func TestHandleMenuKey(t *testing.T) {
 	}
 
 	// j 翻页、末页回首页；q 退出；非法键 stay
-	if act := handleMenuKey('j', 1, pages, shown); act.kind != "next" || act.page != 2 {
-		t.Fatalf("j 应翻到第 2 页，得到 %+v", act)
+	if act := handleMenuKey('n', 1, pages, shown); act.kind != "next" || act.page != 2 {
+		t.Fatalf("n 应翻到第 2 页，得到 %+v", act)
 	}
-	if act := handleMenuKey('j', pages, pages, shown); act.kind != "next" || act.page != 1 {
-		t.Fatalf("末页按 j 应回第 1 页，得到 %+v", act)
+	if act := handleMenuKey('n', pages, pages, shown); act.kind != "next" || act.page != 1 {
+		t.Fatalf("末页按 n 应回第 1 页，得到 %+v", act)
+	}
+	if act := handleMenuKey('p', 2, pages, shown); act.kind != "prev" || act.page != 1 {
+		t.Fatalf("p 应翻到第 1 页，得到 %+v", act)
+	}
+	if act := handleMenuKey('p', 1, pages, shown); act.kind != "prev" || act.page != pages {
+		t.Fatalf("首页按 p 应循环到末页，得到 %+v", act)
 	}
 	if act := handleMenuKey('q', 1, pages, shown); act.kind != "quit" {
 		t.Fatalf("q 应退出，得到 %+v", act)
