@@ -290,3 +290,10 @@
 - **⚠️ Vue 经典坑（两连）**：①批量补丁改内存字符串漏 write 落盘，打印"16 个已补"实则零变更——批量编辑后必须立即 grep 落盘验证；②`close-on-click-modal="false"` 静态 attribute 传的是字符串 "false"（truthy），Element Plus 的 Boolean prop 视为 true、行为纹丝不动——**Boolean prop 必须 `:v-bind` 表达式**。排查链：DOM 行为不符 → 源文件/构建产物/页面实际加载 chunk 三层核对 → 组件 props 运行时检查 → Vue boolean casting 语义。
 - el-link `:underline="false"` → `underline="never"`（EP 2.x 新 API），console 弃用警告清零。
 - 冒烟 5/5：遮罩点击不关×2、内容保留、警告清零、零 JS 报错。
+
+### 工具箱砍除（2026-09-26 深夜 III，用户拍板「工具箱很没有用」）
+
+- 实锤依据：三卡片中「磁盘」与宿主机/存储池重叠、「进程 Top」为最低频信息；Docker prune/任务清理两个动作前端入口早已在各自治页（卷页 prune/任务中心清理），工具箱是重复壳。
+- 全链路移除：Toolbox.vue（321 行）/ handler/toolbox.go（226 行）/ 4 个端点 / 路由 + 菜单项 + Odometer 图标。菜单 12→11 项（admin 视角）。
+- ⚠️ 删码教训（同款复发）：正则 `[^}]*` 遇 `} },` 双花括号截断——JS 路由行尾是 `} },`，两次正则删除均失败；**按行 sed 最稳**。dockerx import 残留同批清理（go build 拦截）。
+- 冒烟 6/6：菜单无入口/旧 URL 无残留内容/users、settings、crons 无回归/零报错；go -race 18 包全绿。

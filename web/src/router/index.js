@@ -41,7 +41,6 @@ const routes = [
       { path: 'ai', redirect: '/dashboard' },
       { path: 'cloud-init-templates', redirect: '/settings' },
       { path: 'recycle-bin', name: 'recycle-bin', component: () => import('../views/RecycleBin.vue'), meta: { requiresAdmin: true } },
-      { path: 'toolbox', name: 'toolbox', component: () => import('../views/Toolbox.vue'), meta: { requiresAdmin: true } },
       { path: 'crons', name: 'crons', component: () => import('../views/CronList.vue'), meta: { requiresAdmin: true } },
       { path: 'vms/:id', name: 'vm-detail', component: () => import('../views/VmDetail.vue') },
       { path: 'hosts', name: 'hosts', component: () => import('../views/HostList.vue') },

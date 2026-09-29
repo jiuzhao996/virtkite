@@ -16,7 +16,6 @@ import (
 	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/service/console"
 	"github.com/jiuzhao/vmops/service/cron"
-	"github.com/jiuzhao/vmops/service/dockerx"
 	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
@@ -90,7 +89,6 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	userHandler.SetSettingMgr(deps.SettingMgr) // 改密/建用户密码策略
 	vmExportHandler := NewVMExportHandler(deps.DB, deps.Virt)
 	recycleHandler := NewVMRecycleHandler(deps.DB, deps.Virt)
-	toolboxHandler := NewToolboxHandler(deps.DB, dockerx.New(), "/home/jiuzhao/vmops/data")
 	imageMarketHandler := NewImageMarketHandler(deps.DB, deps.Tasks)
 	containerTerminalHandler := NewContainerTerminalHandler(deps.Sessions)
 	hostHandler := NewHostHandler(deps.DB)
@@ -384,14 +382,6 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	}
 
 	// 工具箱（v3 批次 E：进程/磁盘/清理，仅管理员）
-	toolbox := api.Group("/toolbox")
-	toolbox.Use(middleware.AdminMiddleware())
-	{
-		toolbox.GET("/processes", toolboxHandler.Processes)
-		toolbox.GET("/disk", toolboxHandler.DiskUsage)
-		toolbox.POST("/docker-prune", toolboxHandler.DockerPrune)
-		toolbox.POST("/tasks-purge", toolboxHandler.PurgeOldTasks)
-	}
 
 	// 计划任务（平台管理语义，仅管理员）
 	crons := api.Group("/crons")

@@ -203,7 +203,7 @@
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 // 图标按需显式 import：Share/Tickets 随拓扑图与 cloud-init 独立菜单项撤销一并移除
-import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Odometer, Picture, Setting, SwitchButton, Ticket, Timer, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Picture, Setting, SwitchButton, Ticket, Timer, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { roleText, vmStatusText, vmStatusTag } from '../utils/format'
@@ -268,7 +268,6 @@ const navItems = [
   { index: '/crons', label: '计划任务', icon: Timer, group: '运维', adminOnly: true },
   { index: '/recycle-bin', label: '回收站', icon: Delete, group: '运维', adminOnly: true },
   // 工具箱（进程 Top/磁盘诊断）：低频管理员功能，归管理组而非运维组（运维组只留任务/审计/回收等动线）
-  { index: '/toolbox', label: '工具箱', icon: Odometer, group: '管理', adminOnly: true },
   { index: '/users', label: '用户管理', icon: User, group: '管理', adminOnly: true },
   { index: '/settings', label: '系统设置', icon: Setting, group: '管理', adminOnly: true }
 ]

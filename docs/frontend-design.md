@@ -49,7 +49,6 @@
 ├─ 计划任务 /#crons              + 执行历史抽屉（分页）
 └─ 回收站 /#recycle-bin          adminOnly
 管理
-├─ 工具箱 /#toolbox              adminOnly
 ├─ 用户管理 /#users              tabs: 用户 | 用户组（组=教学批量授权）
 └─ 系统设置 /#settings           六卡片（运行参数含命令黑名单 / AI / 安全 / 密钥 / 告警 / 公告）
 
@@ -144,7 +143,7 @@ page-head（标题 + 描述 + 右侧主按钮）
 ## 7. 差距清单与路线图（v1.0 时点）
 
 ### 已达标 ✅
-信息架构（5 组 13 项）、Docker 子路由化、授权面板统一化、四个巨型文件拆分（DockerList 207/VmDetail 550/Dashboard 389）、composables×2、公共组件、防误触、深链（tab/节点/筛选入 URL）、无障碍基线。
+信息架构（5 组 11 项，工具箱已砍除）、Docker 子路由化、授权面板统一化、四个巨型文件拆分（DockerList 207/VmDetail 550/Dashboard 389）、composables×2、公共组件、防误触、深链（tab/节点/筛选入 URL）、无障碍基线。
 
 ### 待办（按收益排序，非本次实施）
 | 项 | 说明 | 优先级 |
