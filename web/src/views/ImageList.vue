@@ -126,7 +126,7 @@
     </el-tabs>
 
     <!-- 上传镜像 -->
-    <el-dialog v-model="dialog" title="上传镜像" width="500px">
+    <el-dialog :close-on-click-modal="false" v-model="dialog" title="上传镜像" width="500px">
       <el-form label-width="90px">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" placeholder="镜像名称" />

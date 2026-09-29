@@ -8,7 +8,7 @@
       <el-table-column label="名称" min-width="220" show-overflow-tooltip>
         <template #default="{ row }">
           <!-- 名称可点直达 VM 详情（列表页卡片「详情」同目标） -->
-          <el-link type="primary" :underline="false" @click="$router.push({ name: 'vm-detail', params: { id: row.id } })">
+          <el-link type="primary" underline="never" @click="$router.push({ name: 'vm-detail', params: { id: row.id } })">
             <span class="vm-name">
               <el-icon class="vm-icon"><Monitor /></el-icon>
               {{ row.name }}

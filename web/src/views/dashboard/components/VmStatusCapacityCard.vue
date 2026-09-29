@@ -3,7 +3,7 @@
     <template #header>
       <div class="alert-card-head">
         <span class="card-title">虚拟机状态</span>
-        <el-link type="primary" :underline="false" @click="$router.push('/vms')">查看全部</el-link>
+        <el-link type="primary" underline="never" @click="$router.push('/vms')">查看全部</el-link>
       </div>
     </template>
     <div v-if="vmStatus.length === 0" class="empty">暂无数据</div>

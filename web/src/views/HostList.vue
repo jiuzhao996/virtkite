@@ -50,7 +50,7 @@
     </el-dialog>
 
     <!-- 添加 / 编辑 复用一个弹窗：editingId 区分模式 -->
-    <el-dialog v-model="dialog" :title="editingId ? '编辑宿主机' : '添加宿主机'" width="480px">
+    <el-dialog :close-on-click-modal="false" v-model="dialog" :title="editingId ? '编辑宿主机' : '添加宿主机'" width="480px">
       <el-form ref="formRef" :model="form" :rules="formRules" label-width="90px">
         <el-form-item label="名称" prop="name">
           <el-input v-model="form.name" placeholder="如 kvm-node1" />

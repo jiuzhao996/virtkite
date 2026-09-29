@@ -63,7 +63,7 @@
     </el-card>
 
     <!-- 新建 NAT 网络 -->
-    <el-dialog v-model="createDialog" title="新建 NAT 网络" width="460px">
+    <el-dialog :close-on-click-modal="false" v-model="createDialog" title="新建 NAT 网络" width="460px">
       <el-form :model="createForm" label-width="80px">
         <el-form-item label="名称" required>
           <el-input v-model="createForm.name" placeholder="仅字母、数字、_、-" />

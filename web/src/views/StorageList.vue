@@ -88,7 +88,7 @@
     </el-row>
 
     <!-- 池信息编辑（角色 + 描述） -->
-    <el-dialog v-model="metaDialog" :title="'编辑池信息 - ' + metaForm.name" width="480px">
+    <el-dialog :close-on-click-modal="false" v-model="metaDialog" :title="'编辑池信息 - ' + metaForm.name" width="480px">
       <el-form :model="metaForm" label-width="80px">
         <el-form-item label="角色">
           <el-select v-model="metaForm.role" style="width: 100%">

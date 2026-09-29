@@ -1,6 +1,6 @@
 <template>
   <!-- 添加磁盘 -->
-  <el-dialog v-model="diskDialog" title="添加磁盘" width="460px">
+  <el-dialog :close-on-click-modal="false" v-model="diskDialog" title="添加磁盘" width="460px">
     <el-form ref="diskFormRef" :model="diskForm" :rules="diskRules" label-width="96px">
       <el-form-item label="设备类型" prop="device">
         <el-select v-model="diskForm.device" style="width: 100%">

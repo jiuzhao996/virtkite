@@ -95,7 +95,7 @@
     </el-card>
 
     <!-- 新建 / 编辑（复用一个弹窗：editingId 区分模式） -->
-    <el-dialog v-model="dialog" :title="editingId ? '编辑计划任务' : '新建计划任务'" width="480px">
+    <el-dialog :close-on-click-modal="false" v-model="dialog" :title="editingId ? '编辑计划任务' : '新建计划任务'" width="480px">
       <el-form label-width="90px">
         <el-form-item label="任务名称" required>
           <el-input v-model="form.name" placeholder="如：每晚上报 node1 快照" maxlength="100" />

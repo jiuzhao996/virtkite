@@ -42,7 +42,7 @@
     </el-table>
 
     <!-- 新建 / 编辑 -->
-    <el-dialog v-model="dialog" :title="editingId ? '编辑用户组' : '新建用户组'" width="420px">
+    <el-dialog :close-on-click-modal="false" v-model="dialog" :title="editingId ? '编辑用户组' : '新建用户组'" width="420px">
       <el-form :model="form" label-width="70px">
         <el-form-item label="组名" required>
           <el-input v-model="form.name" :disabled="!!editingId" placeholder="如「网络 2401 班」" />

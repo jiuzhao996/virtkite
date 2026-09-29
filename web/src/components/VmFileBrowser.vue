@@ -31,7 +31,7 @@
       <div class="fb-crumb">
         <el-breadcrumb separator="/">
           <el-breadcrumb-item v-for="(seg, i) in crumbs" :key="i">
-            <el-link :underline="false" @click="goTo(seg.path)">{{ seg.label }}</el-link>
+            <el-link underline="never" @click="goTo(seg.path)">{{ seg.label }}</el-link>
           </el-breadcrumb-item>
         </el-breadcrumb>
         <div class="fb-tools">
@@ -50,7 +50,7 @@
         <template #empty><el-empty description="目录为空" :image-size="60" /></template>
         <el-table-column label="名称" min-width="240">
           <template #default="{ row }">
-            <el-link :underline="false" class="fb-name" @click="row.is_dir ? enter(row) : download(row)">
+            <el-link underline="never" class="fb-name" @click="row.is_dir ? enter(row) : download(row)">
               <el-icon style="vertical-align: -2px; margin-right: 4px">
                 <Folder v-if="row.is_dir" />
                 <Document v-else />

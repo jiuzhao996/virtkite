@@ -27,7 +27,7 @@
     </el-card>
 
     <!-- 新建快照 -->
-    <el-dialog v-model="snapDialog" title="新建快照" width="440px">
+    <el-dialog :close-on-click-modal="false" v-model="snapDialog" title="新建快照" width="440px">
       <el-form label-width="72px">
         <el-form-item label="名称" required>
           <el-input v-model="snapForm.name" placeholder="如 snap-20260904" />

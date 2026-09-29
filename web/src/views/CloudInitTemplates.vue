@@ -72,7 +72,7 @@
     </el-card>
 
     <!-- 新建 / 编辑（复用一个弹窗：editingId 区分模式；字段与向导第 1 步 cloud-init 面板一致） -->
-    <el-dialog v-model="dialog" :title="editingId ? '编辑模板' : '新建模板'" width="520px">
+    <el-dialog :close-on-click-modal="false" v-model="dialog" :title="editingId ? '编辑模板' : '新建模板'" width="520px">
       <el-form :model="form" label-width="90px">
         <el-form-item label="模板名" required>
           <el-input v-model="form.name" placeholder="如「教学实验机默认配置」" maxlength="100" />

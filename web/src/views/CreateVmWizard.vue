@@ -387,7 +387,7 @@
       </div>
     </div>
 
-    <el-dialog v-model="diskDialog" title="添加磁盘" width="460px">
+    <el-dialog :close-on-click-modal="false" v-model="diskDialog" title="添加磁盘" width="460px">
       <el-form label-width="90px">
         <el-form-item label="磁盘类型">
           <el-radio-group v-model="diskForm.kind">

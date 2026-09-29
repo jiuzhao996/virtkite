@@ -84,7 +84,7 @@
     </el-tabs>
 
     <!-- 新建 / 编辑（复用一个弹窗：editingId 区分模式；编辑不含密码，改密码由用户本人操作） -->
-    <el-dialog v-model="dialog" :title="editingId ? '编辑用户' : '新建用户'" width="440px">
+    <el-dialog :close-on-click-modal="false" v-model="dialog" :title="editingId ? '编辑用户' : '新建用户'" width="440px">
       <el-form :model="form" label-width="80px">
         <el-form-item label="用户名" required>
           <el-input v-model="form.username" :disabled="!!editingId" placeholder="登录名" />
