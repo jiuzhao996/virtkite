@@ -51,30 +51,35 @@
 </template>
 
 <script setup>
-// 编排 tab：compose 项目列表与项目级操作（启动/停止/重启/下线）自持；惰性加载经 refresh() 由壳调，操作成功后经壳 reloadTab 强制重拉。
-import { ref } from 'vue'
+// 编排页（原编排 tab，1Panel 式子路由化）：compose 项目列表与项目级操作自持；
+// 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast），操作成功后本地 refresh 重拉。
+import { ref, inject, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { composeTag } from '../../../utils/docker-format'
 
-const props = defineProps({
-  loading: { type: Boolean, default: false },
-  reloadTab: { type: Function, required: true }
-})
+// 布局壳通信：失败上报 / 成功清 503 门控
+const { reportLoadError, clearLoadError } = inject('dockerPage')
 
 const composeProjects = ref([])
+const loading = ref(false)
 
-async function fetchCompose() {
-  const res = await http.get('/docker/compose')
-  composeProjects.value = (res.data.data || {}).items || []
+// 首次挂载 / 壳刷新按钮 / 操作成功后 共用的重拉入口
+async function refresh() {
+  loading.value = true
+  try {
+    const res = await http.get('/docker/compose')
+    composeProjects.value = (res.data.data || {}).items || []
+    clearLoadError()
+  } catch (e) {
+    reportLoadError(e, '获取编排项目失败')
+  } finally {
+    loading.value = false
+  }
 }
 
-// 惰性加载入口（壳 loadTab 调用），错误上抛交壳统一处理
-function refresh() {
-  return fetchCompose()
-}
-
+onMounted(refresh)
 defineExpose({ refresh })
 
 // ═══════════════ 编排（compose 项目）═══════════════
@@ -100,7 +105,7 @@ async function composeAction(row, action) {
     // 项目级操作可能重建多个容器（后端上限 2 分钟），放宽前端 15s 默认超时
     const res = await http.post('/docker/compose/' + encodeURIComponent(row.Name) + '/' + action, null, { timeout: 150000 })
     ElMessage.success((res.data.data && res.data.data.message) || '操作完成')
-    await props.reloadTab('compose')
+    await refresh()
   } catch (e) {
     ElMessage.error(errMsg(e, '编排操作失败'))
   } finally {

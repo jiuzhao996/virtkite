@@ -56,30 +56,35 @@
 </template>
 
 <script setup>
-// 网络 tab：数据 / 取数 / 创建对话框 / 删除自持；惰性加载经 refresh() 由壳调，操作成功后经壳 reloadTab 强制重拉。
-import { ref, reactive, nextTick } from 'vue'
+// 网络页（原网络 tab，1Panel 式子路由化）：数据 / 取数 / 创建对话框 / 删除自持；
+// 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast），操作成功后本地 refresh 重拉。
+import { ref, reactive, nextTick, inject, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { dockerTime } from '../../../utils/docker-format'
 
-const props = defineProps({
-  loading: { type: Boolean, default: false },
-  reloadTab: { type: Function, required: true }
-})
+// 布局壳通信：失败上报 / 成功清 503 门控
+const { reportLoadError, clearLoadError } = inject('dockerPage')
 
 const networks = ref([])
+const loading = ref(false)
 
-async function fetchNetworks() {
-  const res = await http.get('/docker/networks')
-  networks.value = (res.data.data || {}).items || []
+// 首次挂载 / 壳刷新按钮 / 操作成功后 共用的重拉入口
+async function refresh() {
+  loading.value = true
+  try {
+    const res = await http.get('/docker/networks')
+    networks.value = (res.data.data || {}).items || []
+    clearLoadError()
+  } catch (e) {
+    reportLoadError(e, '获取网络列表失败')
+  } finally {
+    loading.value = false
+  }
 }
 
-// 惰性加载入口（壳 loadTab 调用），错误上抛交壳统一处理
-function refresh() {
-  return fetchNetworks()
-}
-
+onMounted(refresh)
 defineExpose({ refresh })
 
 // ═══════════════ 网络 ═══════════════
@@ -106,7 +111,7 @@ async function removeNetwork(row) {
   try {
     await http.delete('/docker/networks/' + encodeURIComponent(row.Name))
     ElMessage.success(`已删除网络 ${row.Name}`)
-    await props.reloadTab('networks')
+    await refresh()
   } catch (e) {
     ElMessage.error(errMsg(e, '删除失败'))
   }
@@ -153,7 +158,7 @@ async function submitNetwork() {
     const res = await http.post('/docker/networks', payload)
     ElMessage.success((res.data.data && res.data.data.message) || '网络已创建')
     networkDialog.value = false
-    await props.reloadTab('networks')
+    await refresh()
   } catch (e) {
     ElMessage.error(errMsg(e, '创建网络失败'))
   } finally {

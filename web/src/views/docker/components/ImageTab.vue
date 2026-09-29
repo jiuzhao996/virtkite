@@ -71,30 +71,45 @@
 </template>
 
 <script setup>
-// 镜像 tab：搜索 / 拉取 / 清理 / 删除自持；镜像数据由壳持有（「创建容器」抽屉的候选下拉同源消费），
-// 操作成功后的强制重拉经壳 reloadTab('images')（保持共享 loading + 成功清 backendError 的原语义）。
-import { ref, computed, h } from 'vue'
+// 镜像页（原镜像 tab，1Panel 式子路由化）：数据自持（不再由壳共享镜像列表），搜索 / 拉取 / 清理 / 删除自洽；
+// 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast），操作成功后本地 refresh 重拉。
+import { ref, computed, inject, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import http from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { shortId, dockerSize, imageTime } from '../../../utils/docker-format'
 
-const props = defineProps({
-  images: { type: Array, default: () => [] },
-  loading: { type: Boolean, default: false },
-  // 操作成功后的强制重拉（壳的 loadTab(name, { force: true })，返回 Promise 供 await）
-  reloadTab: { type: Function, required: true }
-})
+// 布局壳通信：失败上报 / 成功清 503 门控
+const { reportLoadError, clearLoadError } = inject('dockerPage')
 
-// ── 镜像 tab：关键字搜索（仓库名 / Tag 前端过滤，与容器 tab 同款交互）──
+const images = ref([])
+const loading = ref(false)
+
+async function refresh() {
+  loading.value = true
+  try {
+    const res = await http.get('/docker/images')
+    images.value = (res.data.data || {}).items || []
+    clearLoadError()
+  } catch (e) {
+    reportLoadError(e, '获取镜像列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(refresh)
+defineExpose({ refresh })
+
+// ── 镜像页：关键字搜索（仓库名 / Tag 前端过滤，与容器页同款交互）──
 
 const imageKeyword = ref('')
 
 const filteredImages = computed(() => {
   const kw = imageKeyword.value.trim().toLowerCase()
-  if (!kw) return props.images
-  return props.images.filter((r) => `${r.Repository || ''} ${r.Tag || ''}`.toLowerCase().includes(kw))
+  if (!kw) return images.value
+  return images.value.filter((r) => `${r.Repository || ''} ${r.Tag || ''}`.toLowerCase().includes(kw))
 })
 
 // ═══════════════ 镜像：拉取 / 清理 / 删除 ═══════════════
@@ -120,7 +135,7 @@ async function confirmPull() {
     const res = await http.post('/docker/images/pull', { name }, { timeout: 0 })
     ElMessage.success((res.data.data && res.data.data.message) || '镜像拉取完成')
     pullDialog.value = false
-    await props.reloadTab('images')
+    await refresh()
   } catch (e) {
     ElMessage.error(errMsg(e, '镜像拉取失败'))
   } finally {
@@ -145,7 +160,7 @@ async function pruneImages() {
   try {
     const res = await http.post('/docker/prune', { type: 'images' })
     showPruneResult(res.data.data || {})
-    await props.reloadTab('images')
+    await refresh()
   } catch (e) {
     ElMessage.error(errMsg(e, '清理失败'))
   } finally {
@@ -183,7 +198,7 @@ async function removeImage(row) {
     // 镜像 ID 可能含特殊字符（sha256: 前缀），必须 encodeURIComponent
     await http.delete('/docker/images/' + encodeURIComponent(row.ID))
     ElMessage.success(`已删除镜像 ${full}`)
-    await props.reloadTab('images')
+    await refresh()
   } catch (e) {
     ElMessage.error(errMsg(e, '删除失败'))
   }

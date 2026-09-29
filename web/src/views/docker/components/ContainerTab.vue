@@ -203,34 +203,26 @@
 </template>
 
 <script setup>
-// 容器 tab：数据（containers / statsMap）与容器域全部交互（筛选/批量/行内操作/创建/终端）自持。
-// 壳经模板 ref 调 refresh()（惰性加载与 10s 静默轮询共用）；创建成功经 created 事件交壳切 tab 并重拉。
-import { ref, computed, reactive } from 'vue'
+// 容器页（原容器 tab，1Panel 式子路由化）：数据（containers / statsMap）与容器域全部交互自持。
+// 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast）；10s 静默轮询随本页走，
+// KeepAlive 下 onUnmounted 不触发，故用 onActivated/onDeactivated 显式启停轮询（防切走后后台空转）。
+import { ref, computed, reactive, inject, onMounted, onActivated, onDeactivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Delete } from '@element-plus/icons-vue'
 import http, { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { containerName, stateTag, stateText, portsText, dockerTime } from '../../../utils/docker-format'
+import { useAutoRefresh } from '../../../composables/useAutoRefresh'
 import ContainerTerminal from '../../../components/ContainerTerminal.vue'
 import ContainerInspectDrawer from './ContainerInspectDrawer.vue'
 import ContainerLogsDrawer from './ContainerLogsDrawer.vue'
 
-const props = defineProps({
-  // 共享 loading：惰性加载 / 顶部刷新时由壳持有，表格 v-loading 与拆分前一致
-  loading: { type: Boolean, default: false },
-  // 镜像列表（壳持有）：创建容器抽屉的镜像下拉候选来源
-  images: { type: Array, default: () => [] },
-  // 打开创建抽屉前由壳补拉镜像 tab（fire-and-forget）
-  ensureImages: { type: Function, required: true }
-})
-
-// 「自动刷新」开关由壳的 useAutoRefresh 持有并持久化（localStorage 键不变），本组件只双向透传
-const autoRefresh = defineModel('autoRefresh', { type: Boolean })
-
-const emit = defineEmits(['created'])
+// 布局壳通信：失败上报 / 成功清 503 门控
+const { reportLoadError, clearLoadError } = inject('dockerPage')
 
 const containers = ref([])
 const statsMap = ref({})
+const loading = ref(false)
 
 async function fetchContainers() {
   const res = await http.get('/docker/containers')
@@ -250,10 +242,54 @@ async function fetchStats() {
   }
 }
 
-// 惰性加载与 10s 静默轮询共用的取数入口：列表 + stats 一起拉，错误上抛交壳处理（stats 内部静默）
-function refresh() {
-  return Promise.all([fetchContainers(), fetchStats()])
+// 首次挂载 / 壳刷新按钮 / 创建容器成功 共用的取数入口：列表 + stats 一起拉，
+// 成功清 503 门控，失败交壳上报（stats 内部静默）
+async function refresh() {
+  loading.value = true
+  try {
+    await Promise.all([fetchContainers(), fetchStats()])
+    clearLoadError()
+  } catch (e) {
+    reportLoadError(e, '获取容器列表失败')
+  } finally {
+    loading.value = false
+  }
 }
+
+// ═══════════════ 10s 静默轮询（KeepAlive 适配）═══════════════
+// 「自动刷新」开关：记忆到 localStorage（键不变，默认开）；runOnEnable=false 保持原行为——
+// 打开开关不立即请求，等下一个 10s 周期。定时器启停与持久化统一交 useAutoRefresh 托管。
+const { enabled: autoRefresh, start: startPolling, stop: stopPolling } = useAutoRefresh(silentRefresh, {
+  storageKey: 'vmops-docker-autorefresh',
+  intervalMs: 10000,
+  runOnEnable: false
+})
+
+// KeepAlive 下切走只 deactivate 不 unmount，useAutoRefresh 的 onUnmounted 清理不触发；
+// 必须配 onActivated/onDeactivated 显式启停，否则离开页面后轮询在后台空转。
+onActivated(() => startPolling())
+onDeactivated(stopPolling)
+
+// 静默轮询取数：本页不在激活态时定时器已被停掉（无需再守路由），只守并发与 loading；
+// 失败只在 503 时置壳门控 alert，其余不打扰用户（与拆分前行为一致）
+let refreshing = false
+async function silentRefresh() {
+  if (refreshing || loading.value) return
+  refreshing = true
+  try {
+    await Promise.all([fetchContainers(), fetchStats()])
+    clearLoadError()
+  } catch (e) {
+    if (e.response && e.response.status === 503) reportLoadError(e, 'Docker 服务不可用')
+  } finally {
+    refreshing = false
+  }
+}
+
+onMounted(() => {
+  refresh()
+  startPolling()
+})
 
 // ═══════════════ 容器：筛选 / 批量 / 行内操作 ═══════════════
 
@@ -495,16 +531,24 @@ const portsError = computed(() => {
   return ''
 })
 
-// 镜像下拉候选：本页镜像 tab 数据拼 Repository:Tag（跳过 <none> 悬空层）
-const imageOptions = computed(() =>
-  props.images
-    .filter((r) => r.Repository && r.Repository !== '<none>')
-    .map((r) => `${r.Repository}:${r.Tag || 'latest'}`)
-)
+// 镜像下拉候选：打开创建抽屉时自行拉取一次镜像列表（不再依赖壳的跨页共享 images），拼 Repository:Tag（跳过 <none> 悬空层）
+const imageOptions = ref([])
+
+async function fetchImageOptions() {
+  try {
+    const res = await http.get('/docker/images')
+    const items = (res.data.data || {}).items || []
+    imageOptions.value = items
+      .filter((r) => r.Repository && r.Repository !== '<none>')
+      .map((r) => `${r.Repository}:${r.Tag || 'latest'}`)
+  } catch (e) {
+    // fire-and-forget：候选拉取失败不阻断开抽屉，用户仍可手输任意镜像名
+  }
+}
 
 function openCreateDrawer() {
-  // 镜像 tab 未加载过时补拉一次（fire-and-forget），让下拉有候选；不影响手输任意镜像名
-  props.ensureImages()
+  // 打开抽屉即补拉镜像候选（fire-and-forget）；不影响手输任意镜像名
+  fetchImageOptions()
   createDrawer.value = true
 }
 
@@ -556,8 +600,8 @@ async function submitCreate() {
     })
     ElMessage.success('容器已创建')
     createDrawer.value = false
-    // 通知壳：跳回容器 tab 并强制重拉列表 + stats（壳 loadTab 内部即 Promise.all 两路；入口按钮只在容器 tab，tab 赋值属双保险）
-    emit('created')
+    // 强制重拉列表 + stats（本页即容器页，无需再切 tab）
+    await refresh()
   } catch (e) {
     ElMessage.error(errMsg(e, '创建容器失败'))
   } finally {

@@ -19,7 +19,20 @@ const routes = [
       { path: 'dashboard', name: 'dashboard', component: () => import('../views/Dashboard.vue') },
       { path: 'vms', name: 'vms', component: () => import('../views/VmList.vue') },
       { path: 'vms/new', name: 'vm-create', component: () => import('../views/CreateVmWizard.vue'), meta: { requiresOperate: true } },
-      { path: 'docker', name: 'docker', component: () => import('../views/DockerList.vue'), meta: { requiresOperate: true } },
+      // Docker 管理：1Panel 式子路由页面组（布局壳 index.vue + 五个子页），'' 重定向到容器页
+      {
+        path: 'docker',
+        component: () => import('../views/docker/index.vue'),
+        meta: { requiresOperate: true },
+        children: [
+          { path: '', redirect: { name: 'docker-containers' } },
+          { path: 'containers', name: 'docker-containers', component: () => import('../views/docker/components/ContainerTab.vue'), meta: { requiresOperate: true } },
+          { path: 'images', name: 'docker-images', component: () => import('../views/docker/components/ImageTab.vue'), meta: { requiresOperate: true } },
+          { path: 'networks', name: 'docker-networks', component: () => import('../views/docker/components/NetworkTab.vue'), meta: { requiresOperate: true } },
+          { path: 'volumes', name: 'docker-volumes', component: () => import('../views/docker/components/VolumeTab.vue'), meta: { requiresOperate: true } },
+          { path: 'compose', name: 'docker-compose', component: () => import('../views/docker/components/ComposeTab.vue'), meta: { requiresOperate: true } }
+        ]
+      },
       { path: 'apps', name: 'apps', component: () => import('../views/AppStore.vue'), meta: { requiresOperate: true } },
       { path: 'grant-requests', name: 'grant-requests', component: () => import('../views/GrantRequests.vue'), meta: { requiresOperate: true } },
       // IA 精简批次（2026-09）：拓扑图并入仪表盘 tab、AI 助手改顶栏抽屉、cloud-init 模板并入设置页。
