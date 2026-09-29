@@ -289,8 +289,6 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
   - 卷引用与保护：`GET /api/storage/pools/:name/volume-refs`（池级一次算全）；`DELETE .../volumes/:vol` 删除前算引用，任一命中返回 409 中文原因；`POST /api/storage/pools/:name/orphan-cleanup`（202 转 `cleanup_volumes` 任务，零引用才删）
   - 卷：`POST /api/storage/pools/:name/volumes`
   - 建池 `path` 须为规范绝对路径（不含 `..`、无结尾斜杠、非根目录）；建卷 `format` 仅接受 `qcow2` / `raw`
-- 网络：`GET /api/networks` `GET /api/networks/:name`（含 XML/autostart/DHCP） `POST /api/networks` `POST /api/networks/xml` `PUT /api/networks/:name` `PUT /api/networks/:name/autostart` `POST /api/networks/:name/start|stop` `DELETE /api/networks/:name`
-  - `POST /api/networks` 的 `gateway` 须为合法 IPv4；`POST /api/networks/xml` 与 `PUT /api/networks/:name` 仍接受原始 XML 直定义（admin 专属，尚未做结构校验）
 
 ### 任务 / 会话
 
@@ -368,10 +366,10 @@ vmops/
 ├── scripts/             # init-db.sql / smoke.sh（E2E 回归）/ start-novnc.sh
 ├── deploy/              # prometheus.yml / alerts.yml / alertmanager.yml / grafana 看板与 provisioning / docker-compose
 ├── web/                 # Vue3 + Vite 前端（26 个视图：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
-│                        #   DockerList(容器五 tab+终端+日志)/AppStore/AiChat/CronList/RecycleBin/Toolbox/CloudInitTemplates/
 │                        #   Host/Image(三 tab 含镜像市场)/Storage/Network/Task/Audit+SessionList/Settings/UserList/Profile/Login）
 │   ├── src/utils/format.js  # 状态文案/时间/尺寸/错误提取统一实现（收敛 10 余处重复）
 │   └── dist/            # 构建产物，由后端托管（路由懒加载 + manualChunks：首屏 −50%）
+├── docs-site/             # 官方文档站（VitePress，小白向从 0 到 1）
 └── docs/                # 设计 / 开发文档（含 api-contract / task-contract / ROADMAP v2/v3）
 ```
 
@@ -396,7 +394,6 @@ vmops/
 
 | 项 | 现状 | 影响面 |
 |---|---|---|
-| `POST /api/networks/xml`、`PUT /api/networks/:name` | 接受调用方原始 XML 直接定义，无结构校验（域的 `PUT /api/vms/:id/xml` 已收口仅 admin 可用） | 仅 admin 可达 |
 | `GET /metrics` | 未设置 `METRICS_TOKEN` 时公开（启动日志有提示）；设置后要求 Bearer/`?token=` 认证 | 生产建议开启令牌或以防火墙限制来源网段 |
 | `POST /api/auth/login` | ✅ 已限流（同 IP 1 分钟 5 次失败锁定）+ 可设安全入口暗号（无暗号一律 404 伪装） | 残余：无验证码，可换 IP 分布式爆破 |
 | CORS | `CORS_ORIGINS` 默认 `*`（release 模式下为 `*` 拒绝启动） | 生产需收敛为具体来源 |

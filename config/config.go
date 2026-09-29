@@ -99,7 +99,7 @@ func Init() {
 		ImageDir: getEnv("IMAGE_DIR", "/var/lib/libvirt/images"),
 
 		// cloud-init seed 镜像目录
-		SeedDir: getEnv("SEED_DIR", "/home/jiuzhao/vmops/data/seed"),
+		SeedDir: getEnv("SEED_DIR", "data/seed"),
 
 		// Grafana 地址
 		GrafanaURL: getEnv("GRAFANA_URL", "http://127.0.0.1:3000"),

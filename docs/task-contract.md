@@ -1,4 +1,6 @@
 ---
+
+> ⚠️ **冻结声明（2026-09-26）**：本文覆盖 6 种任务类型；代码现行 8 种（另含 `app_install`、`image_download`，见 service/tasks/）。现行任务契约事实源是 `service/tasks/` 与 docs/05 §6.5。本文仅作早期设计存档。
 title: "异步任务系统契约"
 description: "耗时操作（创建/删除/克隆/优雅关机）转后台任务：Task 模型、Manager API、Executor 签名、REST 接口（Wave 唯一事实源）"
 tags: [契约, task, 异步]

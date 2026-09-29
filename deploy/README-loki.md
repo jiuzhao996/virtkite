@@ -1,5 +1,8 @@
 # Loki 日志栈部署（deploy/docker-compose.loki.yml）
 
+> ⚠️ **状态（2026-09-26）**：Loki/Promtail 已从默认容器栈裁剪（本模板保留作可选增量重装用）。
+
+
 补齐平台日志能力：**Loki + Promtail**（Grafana 原生支持，单机内存占用小，替代 ELK）。
 容器日志与宿主机日志进 Loki 后，在 Grafana Explore 交互查询，也可经平台后端代理接口程序化查询。
 

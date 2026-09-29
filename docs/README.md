@@ -41,3 +41,17 @@
 - **代码优先于契约**：契约文档本身也可能与实现脱节（曾出现契约与代码同时把「增量克隆」写成 `StorageVolCreateXMLFrom`，而该接口实际不产生 backing file）。因此涉及虚拟化语义的描述，须以 `qemu-img` / `virsh` 的实际输出为最终判据，验收命令写进正文（见 05 §6.7.1、06 §8）。
 - 已知未处理项一律如实保留，禁止在任何文档里表述为已解决；三处清单需保持一致：README「已知未处理项」、`api-contract.md` 同名章节、`06` §9.3。
 - 文档以「大纲 + 要点 + 素材出处」起步，正文按 00 → 02 顺序逐步填充。
+
+## 历史与辅助文档（2026-09-26 索引重建时补录）
+
+| 文档 | 说明 |
+|---|---|
+| `archive/ROADMAP-v2/v3/v3.1/v3.3.md` | 历史批次规划（已全部实施完毕），正文引用为纯文本路径 |
+| `archive/architecture.md` | 早期部署图（内容已并入 03/07 与 deploy/README） |
+| `archive/design-system-MASTER.md` | 早期设计系统模板（已被 frontend-design.md 取代） |
+| `devlog-批次记录.md` | 全部历史批次记录（AGENTS.md 规范的唯一批次流水出处） |
+| `frontend-design.md` | 前端总体规划 v1.0（设计规范/信息架构/路线图，前端单一事实源） |
+| `ui-reference-jumpserver.md` | JumpServer v4 布局侦察笔记（GPL 只看行为，配 img/jms-*.png） |
+| `superpowers/plans/` | 施工计划书存档（ssh-jump / 4a-teaching / frontend-refactor） |
+| `任务书-*.docx/.md` | 毕设任务书（两种格式成对） |
+| `../docs-site/` | 官方文档站（VitePress，小白向从 0 到 1；`npm run docs:dev` 预览） |

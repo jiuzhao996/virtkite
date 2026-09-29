@@ -1,4 +1,6 @@
 ---
+
+> ⚠️ **冻结声明（2026-09-26）**：本契约快照于 2026-09-13，此后新增的端点（v3.6 组授权/资产申请、文件管理、export/import、回收站、/api/docker、/api/appstore、/api/crons、/api/ai 等）**未录入本文**。现行路由唯一事实源是 `handler/routes.go`；REST 叙述以 `docs/05-详细设计与实现.md` 为准。本文仅作早期接口设计存档。
 title: "API 契约"
 description: "鸢航 VirtKite 对齐 virt-manager + PVE 改造：后端 virt 层 Go 函数签名与 REST 接口契约（Wave 1/Wave 2 唯一事实源）"
 tags: [契约, virt-manager, PVE, 后端, 前端]

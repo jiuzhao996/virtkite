@@ -103,7 +103,6 @@
 
 ## 当前有效遗留清单（2026-09-26 逐项核实代码后收敛；勿在文档中宣称已解决）
 
-- **原始 XML 直定义端点**：`POST /api/networks/xml`、`PUT /api/networks/:name` 接受原始 libvirt XML；`PUT /api/vms/:id/xml` 已收权 admin（2026-09-26 routes.go 核实在位）
 - ~~`/metrics` 公开~~ **已核实为陈旧信息（2026-09-26）**：.env 自 v3.3 起即配置 METRICS_TOKEN，实测无 token 401 / 带 token 200（prometheus.yml 的 vmops job 一直在发配对凭证）
 - **JWT 仍支持 `?token=` 查询参数传递**（`middleware/jwt.go`，WS 无法设 Header 的设计取舍；会进代理日志/Referer/审计）
 - **历史 `tasks.payload` 明文待人工清洗**：`scripts/purge-task-secrets` 未执行，执行前须先 mysqldump 单表备份
@@ -111,7 +110,7 @@
 - **`validateSSHTarget` 放行 IPv6 ULA 但错误文案只写 IPv4 私有网段**（文案与实现不对齐）
 - **`.golangci.yml` 为 v1 schema**：升级 v2.x 会因字段改名报错，装 v1.64.8（`~/go/bin`，源码自建）
 
-已核实**解决**（勿再列为待办）：登录限流（`handler/auth.go` loginLimiter）、CORS release 禁 `*`（main.go 启动校验）、SSH 主机密钥 TOFU（全仓库 InsecureIgnoreHostKey 归零）、孤儿卷清理闭环、golangci-lint 已装、ImportVMs errors 数组前端已消费。
+已核实**解决**（勿再列为待办）：网络 XML 直定义两路由（2026-09-26 砍除）、登录限流（`handler/auth.go` loginLimiter）、CORS release 禁 `*`（main.go 启动校验）、SSH 主机密钥 TOFU（全仓库 InsecureIgnoreHostKey 归零）、孤儿卷清理闭环、golangci-lint 已装、ImportVMs errors 数组前端已消费。
 
 ## 历史批次记录（已外迁）
 

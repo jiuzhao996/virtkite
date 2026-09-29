@@ -175,7 +175,7 @@
 
 ### v3.3 优化升级批次（2026-09-20，1Panel 对标 + 全站 UI 审计修复 + 论文对齐，9 批次一次落地）
 
-- **规划文档 `docs/ROADMAP-v3.3.md`**：P0 论文对齐 / P1 演示防翻车 / P2 安全收口 / P3 工程质量四档 + 1Panel 借鉴清单（GPLv3，只学设计模式并注明来源，未引入其代码）+ 文件所有权矩阵。实施：前端 6 批（F1/F2/F3/F4/F5a/F5b）+ 后端 1 批（B1）+ 文档 2 批（D1/D2），22 路由 hash 冒烟零错误。
+- **规划文档 `docs/archive/ROADMAP-v3.3.md`**：P0 论文对齐 / P1 演示防翻车 / P2 安全收口 / P3 工程质量四档 + 1Panel 借鉴清单（GPLv3，只学设计模式并注明来源，未引入其代码）+ 文件所有权矩阵。实施：前端 6 批（F1/F2/F3/F4/F5a/F5b）+ 后端 1 批（B1）+ 文档 2 批（D1/D2），22 路由 hash 冒烟零错误。
 - **⚠️ Element Plus 中文 locale 已全局配置（main.js：`app.use(ElementPlus, { locale: zhCn })`）勿删**——全站 ElMessageBox 未显式传按钮文案的确认框、分页、日期组件的中文都靠它。
 - **⚠️ SSH 主机密钥 TOFU 已落地（勿回退成 InsecureIgnoreHostKey）**：`model/host_key.go`（host_keys 表，(host,port) 唯一索引）+ `service/vmssh/hostkey.go`（`TOFUHostKeyCallback` 包级注入，main.go 注入 GormHostKeyStore）。**fail-closed 贯穿**：store 未注入/Lookup 失败/Save 失败一律拒绝连接（放行=静默回退不校验）。terminal.go 与 vmssh.go 两处拨号全部收编，全仓库 InsecureIgnoreHostKey 归零。指纹不一致返回 `ErrHostKeyMismatch` 哨兵错误（terminal 用 errors.Is 识别后 WS 帧回显中文指引，是固定文案惯例的唯一例外）。管理端点 `GET|DELETE /api/ssh-host-keys`（admin 组，暂无前端 UI）。
 - **`PUT /api/vms/:id/xml` 已收权 admin**（`vm_xml.go` 内联 roleIsAdmin 闸 + vm_xml_test.go 三用例）：审计核实的真实缺口只有这一处——OperatorMiddleware 本就限定 operator 只写 /api/vms 前缀，networks 的写操作对 operator 天然 403，不要把「networks/xml 也要收权」当待办。
