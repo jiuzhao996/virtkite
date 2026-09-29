@@ -185,7 +185,9 @@ export const FALLBACK_ACTION_LABELS = {
   create_host: '添加宿主机', update_host: '更新宿主机', delete_host: '删除宿主机',
   upload_image: '上传镜像', delete_image: '删除镜像', set_image_template: '设置镜像模板', clone_image: '镜像创建虚拟机',
   create_network: '创建网络', update_network: '更新网络', delete_network: '删除网络',
-  create_volume: '创建存储卷', delete_volume: '删除存储卷', access: '访问'
+  create_volume: '创建存储卷', delete_volume: '删除存储卷',
+  'jumpd.cmd_blocked': '跳板拦截危险命令',
+  access: '访问'
 }
 
 /* ==================== 时间 ==================== */
