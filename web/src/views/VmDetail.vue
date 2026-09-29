@@ -523,6 +523,7 @@ import VmFileBrowser from '../components/VmFileBrowser.vue'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
+import { useAutoRefresh } from '../composables/useAutoRefresh'
 import { vmStatusText, vmStatusTag, usageColor, fmtRateBytes, nowClock, isCancel, cssVar } from '../utils/format'
 
 const route = useRoute()
@@ -552,7 +553,9 @@ const stats = ref(null)
 const cpuHistory = ref([])
 const memHistory = ref([])
 const perfChartEl = ref(null)
-let statsTimer = null
+// 性能轮询无用户开关：周期取 vmstats 偏好，挂载后起表、卸载自动清理（useAutoRefresh 托管）
+// 注意 start() 只起表不触发 fn，保持「挂载后等第一个周期（默认 2s）再拉」的原行为
+const { start: startStatsPolling } = useAutoRefresh(pollStats, { intervalMs: statsIntervalMs })
 let perfChart = null
 
 /* ---------- 快照 / XML ---------- */
@@ -1302,14 +1305,11 @@ onMounted(async () => {
   
   await loadXML()
   prefillStatsHistory()
-  statsTimer = setInterval(pollStats, statsIntervalMs)
+  startStatsPolling()
 })
 
 onUnmounted(() => {
-  if (statsTimer) {
-    clearInterval(statsTimer)
-    statsTimer = null
-  }
+  // statsTimer 清理由 useAutoRefresh 自带
   window.removeEventListener('resize', onWinResize)
   if (perfChart) {
     perfChart.dispose()

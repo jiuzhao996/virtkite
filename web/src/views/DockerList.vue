@@ -38,9 +38,9 @@
                 clearable
                 :prefix-icon="Search"
               />
-              <!-- 自动刷新：10s 静默轮询的总开关（记忆到 localStorage），关闭后定时器回调直接跳过 -->
+              <!-- 自动刷新：10s 静默轮询的总开关（记忆到 localStorage），关闭即整体停表（useAutoRefresh 托管） -->
               <div class="ct-auto" title="每 10 秒自动刷新容器列表与资源占用">
-                <el-switch v-model="autoRefresh" @change="onAutoRefreshChange" />
+                <el-switch v-model="autoRefresh" />
                 <span class="ct-auto-label">自动刷新</span>
               </div>
               <template v-if="selection.length">
@@ -490,13 +490,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, h, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, h, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Search, Download, Plus, Delete } from '@element-plus/icons-vue'
 import CopyButton from '../components/CopyButton.vue'
 import http, { api } from '../api'
 import ContainerTerminal from '../components/ContainerTerminal.vue'
 import { errMsg, isCancel, fmtDateTime, fmtDateTimeLocale, fmtSizeBytes } from '../utils/format'
+import { useAutoRefresh } from '../composables/useAutoRefresh'
 
 // ═══════════════ Tab 骨架与按需加载 ═══════════════
 // 首次进入某 tab 才拉取对应数据；右上刷新按钮强制重拉当前 tab。
@@ -508,13 +509,14 @@ const loadedTabs = ref([])
 // HTTP 503（Docker 守护进程不可用）时置为后端 message，页面顶部 alert 展示；成功加载后清空
 const backendError = ref('')
 
-// 「自动刷新」开关：容器视图 10s 轮询的总开关，记忆到 localStorage（默认开）
-const AUTO_REFRESH_KEY = 'vmops-docker-autorefresh'
-const autoRefresh = ref(localStorage.getItem(AUTO_REFRESH_KEY) !== '0')
-
-function onAutoRefreshChange(v) {
-  localStorage.setItem(AUTO_REFRESH_KEY, v ? '1' : '0')
-}
+// 「自动刷新」开关：容器视图 10s 轮询的总开关，记忆到 localStorage（默认开）。
+// 定时器启停与持久化统一交 useAutoRefresh 托管：关闭即整体停表；
+// runOnEnable=false 保持既有行为——打开开关不立即请求，等下一个 10s 周期。
+const { enabled: autoRefresh, start: startPolling } = useAutoRefresh(silentRefresh, {
+  storageKey: 'vmops-docker-autorefresh',
+  intervalMs: 10000,
+  runOnEnable: false
+})
 
 const containers = ref([])
 const images = ref([])
@@ -695,11 +697,10 @@ async function fetchCompose() {
 }
 
 // 容器视图 10s 静默轮询：列表 + stats 一起刷；不动 loading，失败不打扰用户（503 时同步顶部 alert）
-// 「自动刷新」开关关闭时回调直接 return（定时器保留，见 onMounted）
-let pollTimer = null
+// 「自动刷新」开关关闭时定时器整体停表（useAutoRefresh 托管），此处只需守住 tab/并发/loading
 let refreshing = false
 async function silentRefresh() {
-  if (!autoRefresh.value || tab.value !== 'containers' || refreshing || loading.value) return
+  if (tab.value !== 'containers' || refreshing || loading.value) return
   refreshing = true
   try {
     await Promise.all([fetchContainers(), fetchStats()])
@@ -959,7 +960,6 @@ const logsId = ref('')
 const logsTail = ref(200)
 const logsFollow = ref(false)
 const logsPreRef = ref(null)
-let logsTimer = null
 
 function openLogs(row) {
   logsId.value = row.ID
@@ -1000,25 +1000,19 @@ function scrollLogsBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
-function startLogsTimer() {
-  stopLogsTimer()
-  logsTimer = setInterval(async () => {
-    if (!logsDrawer.value || !logsId.value) return
-    try {
-      const near = logsNearBottom() // 更新内容前先记贴底状态，新日志到达后据此决定是否滚动
-      const res = await http.get('/docker/containers/' + logsId.value + '/logs', { params: { tail: logsTail.value } })
-      logsText.value = (res.data.data || {}).logs || ''
-      if (near) nextTick(scrollLogsBottom)
-    } catch (e) {
-      // 跟随轮询失败静默（下拉手动刷新会给错误提示），不打扰阅读
-    }
-  }, 2000)
-}
+// 跟随轮询统一交 useAutoRefresh 托管：start/stop 由下方 logsFollow / logsDrawer 两个 watch 驱动，
+// 组件卸载自动停表。回调内的 drawer/id 守卫保留（与原实现一致）。
+const { start: startLogsTimer, stop: stopLogsTimer } = useAutoRefresh(pullLogsFollow, { intervalMs: 2000 })
 
-function stopLogsTimer() {
-  if (logsTimer) {
-    clearInterval(logsTimer)
-    logsTimer = null
+async function pullLogsFollow() {
+  if (!logsDrawer.value || !logsId.value) return
+  try {
+    const near = logsNearBottom() // 更新内容前先记贴底状态，新日志到达后据此决定是否滚动
+    const res = await http.get('/docker/containers/' + logsId.value + '/logs', { params: { tail: logsTail.value } })
+    logsText.value = (res.data.data || {}).logs || ''
+    if (near) nextTick(scrollLogsBottom)
+  } catch (e) {
+    // 跟随轮询失败静默（下拉手动刷新会给错误提示），不打扰阅读
   }
 }
 
@@ -1463,12 +1457,9 @@ async function composeAction(row, action) {
 
 onMounted(() => {
   loadTab('containers')
-  pollTimer = setInterval(silentRefresh, 10000)
+  startPolling()
 })
-onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
-  stopLogsTimer()
-})
+// 两个轮询定时器（容器视图 10s / 日志跟随 2s）均由 useAutoRefresh 在卸载时自动清理
 </script>
 
 <style scoped>

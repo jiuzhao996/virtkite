@@ -316,7 +316,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { Aim, AlarmClock, InfoFilled, Memo, Refresh, Search, Loading, WarningFilled } from '@element-plus/icons-vue'
 import http, { api } from '../api'
 import { fmtDateTime, fmtDateTimeLocale } from '../utils/format'
-import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
+import { useAutoRefresh } from '../composables/useAutoRefresh'
 
 const alerts = ref([])
 const alertsLoading = ref(false)
@@ -520,7 +520,10 @@ async function queryLoki() {
   }
 }
 
-let timer = null
+// 实时告警轮询：无用户开关，周期取系统设置的 dashboard 偏好；卸载自动停表（useAutoRefresh 托管）。
+// start() 只起表不触发 fn——首拉仍由 onMounted 里的显式 loadAlerts() 负责，与原行为一致。
+const { start: startAlertsPolling } = useAutoRefresh(loadAlerts, { intervalKey: 'dashboard' })
+
 onMounted(() => {
   loadAlerts()
   loadHistory()
@@ -528,10 +531,10 @@ onMounted(() => {
   probeGrafana()
   armStuckTimer('overview')
   window.addEventListener('resize', onResize)
-  timer = setInterval(loadAlerts, getPollInterval('dashboard', POLL_DEFAULTS.dashboard))
+  startAlertsPolling()
 })
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
+  // 告警轮询定时器清理由 useAutoRefresh 自带
   window.removeEventListener('resize', onResize)
   Object.values(frameTimers).forEach(clearTimeout)
 })
