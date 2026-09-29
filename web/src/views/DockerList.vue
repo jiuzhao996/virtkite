@@ -492,7 +492,8 @@
 <script setup>
 import { ref, reactive, computed, h, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, CopyDocument, Search, Download, Plus, Delete } from '@element-plus/icons-vue'
+import { Refresh, Search, Download, Plus, Delete } from '@element-plus/icons-vue'
+import CopyButton from '../components/CopyButton.vue'
 import http, { api } from '../api'
 import ContainerTerminal from '../components/ContainerTerminal.vue'
 import { errMsg, isCancel, fmtDateTime, fmtDateTimeLocale, fmtSizeBytes } from '../utils/format'

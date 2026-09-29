@@ -228,6 +228,7 @@ import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { vmStatusText, vmStatusTag, usageColor, nowClock, errMsg, isCancel, cssVar } from '../utils/format'
+import { copyText } from '../utils/clipboard'
 
 const router = useRouter()
 const { canOperate } = useAuth()
@@ -594,12 +595,10 @@ function statusClass(status) {
 // 卡片 IP 一键复制：navigator.clipboard 仅在安全上下文可用（localhost / HTTPS），
 // 失败（http 部署 / 权限拒绝）降级为错误提示，不让点击无响应
 async function copyIP(ip) {
-  try {
-    await navigator.clipboard.writeText(ip)
-    ElMessage.success('已复制')
-  } catch (e) {
-    ElMessage.error('复制失败，请手动复制')
-  }
+  // http 部署（非安全上下文）时 navigator.clipboard 不可用，utils/clipboard 内置 execCommand 降级
+  const ok = await copyText(ip)
+  if (ok) ElMessage.success('已复制')
+  else ElMessage.error('复制失败，请手动复制')
 }
 
 async function action(vm, type) {
