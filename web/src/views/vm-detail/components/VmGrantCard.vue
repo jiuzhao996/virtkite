@@ -70,7 +70,7 @@
         <el-table-column label="授权时间" min-width="170">
           <template #default="{ row }">{{ grantExpiryText(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="danger" :icon="Delete" @click="revokeSubject(row)">收回</el-button>
           </template>

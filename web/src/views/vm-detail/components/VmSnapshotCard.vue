@@ -17,7 +17,7 @@
             <el-tag :type="row.stateTag" size="small" effect="light">{{ row.stateText }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button v-if="canOperate" size="small" :icon="RefreshLeft" @click="revertSnap(row)">回滚</el-button>
             <el-button v-if="canOperate" size="small" type="danger" :icon="Delete" @click="removeSnap(row)">删除</el-button>

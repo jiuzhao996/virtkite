@@ -277,7 +277,7 @@
             <el-table-column label="容量" width="110">
               <template #default="{ row }">{{ diskCapacityLabel(row) }}</template>
             </el-table-column>
-            <el-table-column v-if="diskRows.length > 1" label="操作" width="70" align="center">
+            <el-table-column v-if="diskRows.length > 1" label="操作" width="90" align="center">
               <template #default="{ row }">
                 <el-button v-if="!row.isSystem" size="small" type="danger" text :icon="Delete" title="移除该磁盘" aria-label="移除该磁盘" @click="removeDisk(row)" />
               </template>

@@ -63,7 +63,7 @@
         <el-table-column label="时长" width="110">
           <template #default="{ row }">{{ duration(row) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="110" fixed="right">
+        <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="isAdmin"

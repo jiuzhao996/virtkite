@@ -1,5 +1,12 @@
 <template>
   <div>
+    <div class="page-head">
+      <div>
+        <h3 class="page-title">用户组</h3>
+        <p class="page-desc">按教学班批量授权：组 → 资产授权后，组内成员即时获得可见性</p>
+      </div>
+    </div>
+    <el-card shadow="never">
     <div class="toolbar">
       <div class="toolbar-left">
         <el-select v-model="memberFilter" clearable placeholder="按成员筛组" style="width: 160px">
@@ -68,6 +75,7 @@
         <el-button type="primary" :loading="saving" @click="saveMembers">保存成员</el-button>
       </template>
     </el-dialog>
+    </el-card>
   </div>
 </template>
 

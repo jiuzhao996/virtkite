@@ -56,7 +56,7 @@
             <span class="mono">{{ fmtDateTime(row.updated_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="190" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" size="small" @click="copyTemplate(row)">复制</el-button>
             <el-button text type="primary" size="small" @click="openEdit(row)">编辑</el-button>

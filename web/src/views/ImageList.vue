@@ -64,7 +64,7 @@
                 <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" min-width="300" fixed="right">
+            <el-table-column label="操作" min-width="270" fixed="right">
               <template #default="{ row }">
                 <div class="ops">
                   <el-button v-if="isAdmin && row.is_template" size="small" type="primary" :icon="Cpu" @click="openClone(row)">基于此创建 VM</el-button>

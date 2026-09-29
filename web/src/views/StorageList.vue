@@ -165,7 +165,7 @@
             <el-tag v-else type="info" size="small" effect="plain">未使用</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="isAdmin && !hasImageRef(row)"
