@@ -302,3 +302,44 @@ button,
   font-size: var(--stat-label-fs);
   color: var(--color-muted-foreground);
 }
+
+/* ============ 移动端适配（≤768px）：表格页横滚收进容器、防整页横向溢出 ============ */
+/* 根因（2026-09-29 审计）：el-table 内部 min-width(≈780px) 撑破 .layout（scrollWidth 495+），
+   整页横向滚动。修法：main/body 锁 overflow-x；表格交给 EP 自带 el-scrollbar 横滚。 */
+@media (max-width: 768px) {
+  html, body {
+    overflow-x: hidden;
+  }
+  .layout, .layout > section, .el-main {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+  /* el-table 外层允许内部横滚（EP 自带 scrollbar），不再撑破父级 */
+  .el-table {
+    width: 100%;
+  }
+  .el-table__inner-wrapper {
+    max-width: 100%;
+  }
+  /* 卡片网格小屏单列已由 el-col :xs=24 覆盖；统计卡行 flex 允许换行 */
+  .el-row {
+    row-gap: 8px;
+  }
+  /* page-head 在窄屏改为纵向堆叠 */
+  .page-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  /* 对话框窄屏全宽化（默认 width 440~680px 超出 375 视口） */
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px);
+    margin: 5vh auto !important;
+  }
+  /* 顶栏搜索在小屏收窄（全局搜索框占位过大） */
+  .global-search {
+    min-width: 0;
+    max-width: 160px;
+  }
+}
