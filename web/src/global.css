@@ -342,4 +342,22 @@ button,
     min-width: 0;
     max-width: 160px;
   }
+  /* 顶栏左区搜索上限收紧（.header-left 默认 max-width 460 挤压右区） */
+  .header-left {
+    max-width: none;
+    flex: 1;
+  }
+  /* 顶栏右区收紧：角色徽标小屏隐藏（用户下拉里已有角色），防挤压裁切 */
+  .header-right .el-tag {
+    display: none;
+  }
+  .header-right {
+    gap: 8px;
+  }
+  .username {
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }

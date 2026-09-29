@@ -705,6 +705,15 @@ function onUserCommand(cmd) {
   }
 }
 @media (max-width: 480px) {
+  /* 顶栏右区窄屏精简：用户名与 AI 钮隐藏（AI 抽屉在窄屏体验一般，Web 端宽屏用），
+     保证右区不溢出视口；身份在头像下拉里 */
+  .username,
+  .ai-btn {
+    display: none;
+  }
+  .header-right {
+    gap: 6px;
+  }
   .main {
     padding: 12px;
   }
