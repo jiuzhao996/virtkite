@@ -69,7 +69,7 @@ func TestMenuPage(t *testing.T) {
 
 	// 渲染文本：「编号. 名称 (IP)」+ 页码提示
 	text := renderMenu(items, 1, 3)
-	for _, want := range []string{"1. ", "(192.168.122.1)", "1/3"} {
+	for _, want := range []string{"1. ", "(192.168.122.1)", "1/3", "\r\n"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("菜单文本缺 %q：\n%s", want, text)
 		}

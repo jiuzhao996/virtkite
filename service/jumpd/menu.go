@@ -66,23 +66,70 @@ func menuPage(items []menuVM, page int) ([]menuVM, int) {
 	return items[lo:hi], pages
 }
 
-// renderMenu 渲染菜单文本：「编号. 名称 (IP)」每行一条 + 页码提示 + 操作提示
+// renderMenu 渲染菜单文本：「编号. 名称 (IP)」每行一条 + 页码提示 + 操作提示。
+// 终端对齐三要素（v3.6 排练发现：原版框线阶梯错位）：
+//  1. 每行统一宽度（中文字符显示宽=2，右侧补空格到框宽再补右边框）；
+//  2. 全部换行用 \r\n（终端 LF 不回车，纯 \n 会逐行右移成阶梯）；
+//  3. 框宽固定 46 显示列，行内容超宽截断（IP 过长不破坏对齐）。
 func renderMenu(items []menuVM, page, pages int) string {
+	const boxW = 46 // 框体内容宽度（显示列，不含边框字符）
 	var b strings.Builder
-	b.WriteString("┌─────────────────────────────────────────────┐\n")
-	b.WriteString("│  鸢航 VirtKite 资产菜单（仅显示你有权连接的虚拟机）\n")
-	b.WriteString("├─────────────────────────────────────────────┤\n")
+	// row 拼一行：│ + 内容(补齐/截断到 boxW 显示列) + │ + \r\n
+	row := func(content string) {
+		w := 0
+		var sb strings.Builder
+		for _, r := range content {
+			rw := 1
+			if r > 0x2E80 { // CJK 及全角区显示宽按 2 计
+				rw = 2
+			}
+			if w+rw > boxW { // 超宽截断（显示列口径）
+				break
+			}
+			sb.WriteRune(r)
+			w += rw
+		}
+		for w < boxW {
+			sb.WriteByte(' ')
+			w++
+		}
+		b.WriteString("│ " + sb.String() + " │\r\n")
+	}
+	line := strings.Repeat("─", boxW+2)
+	b.WriteString("┌" + line + "┐\r\n")
+	row("鸢航 VirtKite 资产菜单（只显示你有权连接的虚拟机）")
+	b.WriteString("├" + line + "┤\r\n")
 	shown, _ := menuPage(items, page)
 	if len(shown) == 0 {
-		b.WriteString("  暂无可连接资产：需运行中、已获取 IP 且已在 Web 端托管 SSH 凭据\n")
+		row("暂无可连接资产：需运行中、有 IP、已托管凭据")
 	}
 	for i, vm := range shown {
-		fmt.Fprintf(&b, "  %d. %s (%s)\n", i+1, vm.Name, vm.IP)
+		fmt.Fprintf(&b, "│ %d. %s (%s)", i+1, vm.Name, vm.IP)
+		// 手工补齐这一行（内容含用户数据，走同一宽度口径）
+		w := 3 + 2 + len(fmt.Sprintf("%d. ", i+1)) + displayWidth(vm.Name) + 2 + displayWidth(vm.IP) + 2
+		for w < boxW {
+			b.WriteString(" ")
+			w++
+		}
+		b.WriteString(" │\r\n")
 	}
-	b.WriteString("├─────────────────────────────────────────────┤\n")
-	fmt.Fprintf(&b, "  第 %d/%d 页 ｜ 数字选择 ｜ j 下一页 ｜ q 断开退出\n", page, pages)
-	b.WriteString("└─────────────────────────────────────────────┘\n")
+	b.WriteString("├" + line + "┤\r\n")
+	row(fmt.Sprintf("第 %d/%d 页 ｜ 数字选择 ｜ j 下一页 ｜ q 断开", page, pages))
+	b.WriteString("└" + line + "┘\r\n")
 	return b.String()
+}
+
+// displayWidth 字符串显示宽（CJK=2，其他=1）
+func displayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		if r > 0x2E80 {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return w
 }
 
 // menuAction 按键解析结果：select 选中 / next 翻页 / quit 退出 / stay 无效键重显
