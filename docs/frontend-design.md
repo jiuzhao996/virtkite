@@ -151,7 +151,7 @@ page-head（标题 + 描述 + 右侧主按钮）
 | PageHead/Toolbar 组件化 | page-head 模板在 21 个文件重复，抽 `<PageHead>` + `<Toolbar>` 两组件 | 高（下批次首选） |
 | CreateVmWizard 分步组件化 | 1430 行，四步各一组件（向导天然内聚，此前刻意保留——做 PageHead 时顺带评估） | 中 |
 | 移动端体验补全 | 已有侧栏抽屉/响应式断点，但表格类页面小屏横向滚动未专门设计 | 中 |
-| 深色模式 | 令牌已集中（global.css CSS 变量），补 dark 值 + EP dark 切换 | 中（**进行中，2026-09-29 拍板提前**） |
+| 深色模式 | ✅ 已上线（html.dark 令牌层 + EP dark css-vars + 顶栏换肤开关，localStorage 持久化；冒烟 9/9） | 完成 |
 | 状态筛选入 URL | 列表页筛选入查询参数（Docker 树节点先例），刷新还原 | 低 |
 | 表格工具行组件化 | Toolbar 三件套（筛选/主操作/右图标组）模式重复，可抽 slots 组件 | 低 |
 
