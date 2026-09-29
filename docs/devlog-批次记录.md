@@ -283,3 +283,10 @@
 - **P4 VmDetail**：1596→550 行壳 + 5 组件；v-show 10 处分区常驻语义逐字保留（切走切回不丢状态）；useAutoRefresh(pollStats) 守卫链原样（非 running 不拉/perf 才重绘）；授权统一面板随 VmGrantCard 完全自持；概览/XML/文件管理按「不为拆而拆」留壳。
 - **⚠️ 冒烟假阳性双向教训**：①抽屉断言被隐藏的 AI 抽屉吸走（.el-drawer last() 空转通过）——断言必须打在「可见范围」内；②node1 关机导致 4 项 FAIL 属守卫按设计工作——先核环境状态再怀疑代码；③text=快照 多命中 strict 冲突被 catch 吞掉——用 .el-menu-item:has-text() 精确定位；④按钮文案「新建快照」与断言「创建快照」不符——断言以实际 UI 为准。
 - 五阶段全部完成：四个巨型文件（DockerList/VmDetail/Wizard 除外——Wizard 1430 行经评估维持，其向导步骤天然内聚拆分收益低）落 1Panel 粒度；新增 composables×2 + 公共组件×1 + 子组件目录×3；`npm run build` 全绿 + 真机冒烟全覆盖 + `go test -race` 18 包全绿。
+
+### 按钮体验批次（2026-09-26 深夜 II，防误触 + 警告清零）
+
+- **16 个表单对话框补 :close-on-click-modal="false"**：点遮罩不再丢已填表单；HostList 资源状态/审计详情两个只读对话框保留遮罩关闭。
+- **⚠️ Vue 经典坑（两连）**：①批量补丁改内存字符串漏 write 落盘，打印"16 个已补"实则零变更——批量编辑后必须立即 grep 落盘验证；②`close-on-click-modal="false"` 静态 attribute 传的是字符串 "false"（truthy），Element Plus 的 Boolean prop 视为 true、行为纹丝不动——**Boolean prop 必须 `:v-bind` 表达式**。排查链：DOM 行为不符 → 源文件/构建产物/页面实际加载 chunk 三层核对 → 组件 props 运行时检查 → Vue boolean casting 语义。
+- el-link `:underline="false"` → `underline="never"`（EP 2.x 新 API），console 弃用警告清零。
+- 冒烟 5/5：遮罩点击不关×2、内容保留、警告清零、零 JS 报错。
