@@ -174,8 +174,7 @@ func Start(db *gorm.DB, enabled bool, port int, masterSecret string) {
 	}
 	a := &authenticator{DB: db, limiter: newLimiter(time.Minute, 5)}
 	srv := &Server{DB: db, auth: a, signer: signer, masterSecret: masterSecret}
-	go srv.listenAndServe(port)
-	log.Printf("[jumpd] SSH 跳板入口已启动 :%d（ssh <用户名>@<宿主机> -p %d）", port, port)
+	go srv.listenAndServe(port) // 启动横幅由 listenAndServe 在 bind 成功后打印（失败时不再误报已启动）
 }
 
 // hostKeyPath 跳板主机密钥落盘路径（data/ 已 gitignore，部署侧创建）
@@ -202,6 +201,7 @@ func (s *Server) listenAndServe(port int) {
 		log.Printf("[jumpd] 监听 :%d 失败（端口被占用？）: %v", port, err)
 		return
 	}
+	log.Printf("[jumpd] SSH 跳板入口已启动 :%d（ssh <用户名>@<宿主机> -p %d）", port, port)
 	config := &ssh.ServerConfig{
 		// ⚠️ 主机密钥必须 AddHostKey 注册：漏掉时 NewServerConn 立即失败（ssh: server has no host keys），
 		// 表现为连接被静默重置——本次实现曾踩中，留注释防回退
@@ -515,6 +515,11 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 			return // 连接断开（键流随 channel 关闭而关闭）
 		}
 		key[0] = b
+		// 方向键/F 键为多字节 ESC 序列（ESC [ A/B/C/D…）：吞掉序列剩余字节，
+		// 只保留首个 ESC 当 stay，避免 [、A 被当独立键触发多次菜单重绘（deferred minor）
+		if key[0] == 0x1b {
+			drainEscSeq(ks)
+		}
 
 		// '/' 进入搜索：行式读取（回车提交；提交后仅重渲染不查库）
 		if key[0] == '/' {
@@ -675,6 +680,32 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 	// 单读者模型（终审 I-2）：ch 的读者只有 keyStream 一个，桥接期由 forwardKeys
 	// 消费，结束后未消费字节归还菜单；绝不 safeCopy(stdin, ch) 再开第二个读者
 	go func() { safeCopy(ch, stdout, sid) }()
+	// last_seen 心跳：60s 一次（会话页不显示"僵死"观感；bridge 结束即停）
+	heartbeatStop := make(chan struct{})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[jumpd] 会话心跳异常: %v\n%s", r, debug.Stack())
+			}
+		}()
+		t := time.NewTicker(60 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if sid != 0 {
+					dbx.PersistBestEffort(s.DB, "jumpd-session-touch", func() error {
+						return s.DB.Model(&model.ConsoleSession{}).
+							Where("id = ? AND status = ?", sid, sessionActive).
+							Update("last_seen", time.Now()).Error
+					})
+				}
+			case <-heartbeatStop:
+				return
+			}
+		}
+	}()
+	defer close(heartbeatStop)
 	if stderr != nil {
 		go func() { safeCopy(ch.Stderr(), stderr, sid) }()
 	}
@@ -707,6 +738,24 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 
 	io.WriteString(ch, "\r\n\r\n[目标会话已结束，回到菜单]\r\n")
 	closeJumpSession(s.DB, sid, "会话结束")
+}
+
+// drainEscSeq 吞掉 ESC 序列的剩余字节（CSI: '[' 后跟 0x40-0x7E 终止符；最多吞 8 字节防异常流）
+func drainEscSeq(ks *keyStream) {
+	for i := 0; i < 8; i++ {
+		select {
+		case b, ok := <-ks.ch:
+			if !ok {
+				return
+			}
+			// CSI 终止字节：0x40–0x7E（A/B/C/D/H/F 等）
+			if i >= 1 && b >= 0x40 && b <= 0x7e {
+				return
+			}
+		case <-time.After(200 * time.Millisecond):
+			return // 序列断流（孤立 ESC），交回菜单循环
+		}
+	}
 }
 
 // readLine 从键流读一行：可打印字符回显、退格回显 "\b \b"（擦掉终端上的字符），

@@ -27,7 +27,7 @@ func loadOrCreateHostKey(path string) (ssh.Signer, error) {
 		if parseErr != nil {
 			// fail-closed：宁可拒绝启动也不能让 known_hosts 静默失效
 			log.Printf("[jumpd] 主机密钥解析失败，拒绝启动（不覆盖原文件）: %v", parseErr)
-			return nil, fmt.Errorf("%w: %v", errHostKeyCorrupt, parseErr)
+			return nil, fmt.Errorf("%w: %w", errHostKeyCorrupt, parseErr)
 		}
 		return signer, nil
 	}
