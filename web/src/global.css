@@ -77,6 +77,66 @@
   --card-shadow-soft: 0 1px 4px rgba(31, 35, 41, 0.08);
 }
 
+
+/* ============ 深色模式（html.dark：EP dark + 项目令牌覆盖）============ */
+/* 切换机制：main.js 读 localStorage('vmops-theme')，dark 时给 <html> 挂 .dark 并开 EP 暗色 */
+html.dark {
+  /* EP 主题覆盖（青绿主色在暗底的亮化版） */
+  --el-color-primary: #3db1ba;
+  --el-color-primary-light-3: #2a9da5;
+  --el-color-primary-light-5: #23878e;
+  --el-color-primary-light-7: #1d6f75;
+  --el-color-primary-light-8: #175a5f;
+  --el-color-primary-light-9: #123f43;
+  --el-color-primary-dark-2: #6fcdd4;
+
+  /* 语义/中性色（暗底反转：底深字浅） */
+  --color-primary: #3db1ba;
+  --color-on-primary: #062a2d;
+  --color-secondary: #6fcdd4;
+  --color-accent: #5fc4cc;
+  --color-kite: #2a9da5;
+  --color-violet: #a78bfa;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-info: #94a3b8;
+
+  --brand-deep-1: #143436;
+  --brand-deep-2: #0d2527;
+
+  --status-running-bg: #052e1b;
+  --status-paused-bg: #33230a;
+  --status-error-bg: #3b0d0d;
+  --status-off-bg: #1e293b;
+
+  --color-background: #0b1220;
+  --color-foreground: #e2e8f0;
+  --color-muted: #16213a;
+  --color-muted-foreground: #94a3b8;
+  --color-card: #101a2e;
+  --color-border: #24334d;
+  --color-border-strong: #324464;
+
+  --table-header-bg: #16213a;
+  --card-shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.4);
+
+  /* EP 暗色变量对齐（未开 EP dark html 类时兜底核心几项） */
+  --el-bg-color: #101a2e;
+  --el-bg-color-overlay: #16213a;
+  --el-fill-color-blank: #101a2e;
+  --el-text-color-primary: #e2e8f0;
+  --el-text-color-regular: #cbd5e1;
+  --el-border-color: #24334d;
+  --el-border-color-light: #1c2a44;
+  --el-border-color-lighter: #182338;
+  color-scheme: dark;
+}
+
+/* 暗色下 EP 组件底色兜底（无需 EP dark html 类，直接压变量） */
+html.dark .el-card { --el-card-bg-color: var(--color-card); }
+html.dark body { background: var(--color-background); }
+
 html,
 body,
 #app {

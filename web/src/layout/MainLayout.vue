@@ -120,6 +120,12 @@
           </el-tooltip>
         </div>
         <div class="header-right">
+          <!-- 主题切换：浅色/深色（localStorage vmops-theme + html.dark，EP dark css-vars 联动） -->
+          <el-tooltip :content="isDark ? '切换浅色' : '切换深色'" placement="bottom">
+            <el-button text class="theme-btn" :aria-label="isDark ? '切换浅色模式' : '切换深色模式'" @click="toggleTheme">
+              <el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon>
+            </el-button>
+          </el-tooltip>
           <!-- AI 助手：顶栏抽屉形态（IA 精简批次撤销独立页面），operator+ 可见 -->
           <el-tooltip v-if="canOperate" content="AI 运维助手" placement="bottom">
             <el-button
@@ -213,6 +219,14 @@ import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
 // 关闭仅隐藏不清空（会话常驻，进行中的流式回答不被打断）
 const AiChat = defineAsyncComponent(() => import('../views/AiChat.vue'))
 const aiOpen = ref(false)
+
+// 深色模式：与 main.js 启动初始化同一 localStorage 键；切 html.dark 即全站联动
+const isDark = ref(document.documentElement.classList.contains('dark'))
+function toggleTheme() {
+  isDark.value = !isDark.value
+  document.documentElement.classList.toggle('dark', isDark.value)
+  try { localStorage.setItem('vmops-theme', isDark.value ? 'dark' : 'light') } catch (e) { /* 隐私模式忽略 */ }
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -537,6 +551,9 @@ function onUserCommand(cmd) {
 }
 /* 顶栏 AI 助手按钮（icon-only，配色对齐全屏钮） */
 .ai-btn {
+  color: var(--color-muted-foreground);
+}
+.theme-btn {
   color: var(--color-muted-foreground);
 }
 .header-right {
