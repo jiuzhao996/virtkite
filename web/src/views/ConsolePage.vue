@@ -139,6 +139,7 @@
           <div class="term-header">
             <div class="term-header-left">
               <span v-if="connected" class="term-status online">● 已连接</span>
+              <span v-else-if="connecting" class="term-status connecting">● 连接中</span>
               <span v-else class="term-status offline">○ 未连接</span>
             </div>
             <div class="term-header-center">
@@ -151,7 +152,10 @@
             </div>
           </div>
 
-          <div v-if="termError" class="term-error"><el-icon><WarningFilled /></el-icon>{{ termError }}</div>
+          <div v-if="termError" class="term-error">
+            <el-icon><WarningFilled /></el-icon>{{ termError }}
+            <el-button size="small" type="warning" plain class="term-error-retry" @click="reconnect">一键重连</el-button>
+          </div>
 
           <!-- SSH 连接表单 -->
           <div v-if="view === 'ssh' && !connected" class="ssh-form-wrap">
@@ -212,6 +216,7 @@
             </div>
             <div class="term-footer-right">
               <template v-if="connected">
+                <span class="term-shortcut" title="xterm 内置快捷键"><el-icon><InfoFilled /></el-icon>复制 Ctrl+Shift+C ｜ 粘贴 Ctrl+Shift+V / Ctrl+V</span>
                 <el-button size="small" class="ft-btn" title="粘贴剪贴板内容到终端（需浏览器授权剪贴板）" @click="pasteFromClipboard">
                   <el-icon><CopyDocument /></el-icon><span>粘贴</span>
                 </el-button>
@@ -444,7 +449,7 @@ function cleanupConnection() {
   }
   connected.value = false
   connecting.value = false
-  termError.value = ''
+  if (!(arguments[0] && arguments[0].keepError)) termError.value = ''
 }
 
 function select(v) {
@@ -778,7 +783,9 @@ function handleMsg(ev) {
       }
       ElMessage.error(msg.msg || '连接失败')
       termError.value = msg.msg || '连接失败'
-      disconnectFromTerminal()
+      // ⚠️ 不能走 disconnectFromTerminal——其 cleanupConnection 会清空 termError，
+      // 错误条瞬间消失（用户实测「点了连接啥也没发生」）。此处静默清理连接、保留错误显示
+      cleanupConnection({ keepError: true })
     } else if (msg.type === 'connected') {
       clearProbe()
       serialUnavailable.value = false
@@ -1119,7 +1126,11 @@ onUnmounted(() => {
 .term-status { white-space: nowrap; }
 .term-divider { color: rgba(88, 166, 255, 0.2); }
 .term-status.online { color: #3fb950; font-weight: 600; }
+.term-status.connecting { color: #d29922; font-weight: 600; animation: term-breathe 1.2s ease-in-out infinite; }
 .term-status.offline { color: #8b949e; }
+@keyframes term-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.term-error-retry { margin-left: 12px; }
+.term-shortcut { display: inline-flex; align-items: center; gap: 4px; color: #8b949e; font-size: 12px; margin-right: 8px; }
 .term-user { color: #c9d1d9; }
 .term-host { color: #8faac7; }
 .term-user, .term-host {
