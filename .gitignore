@@ -52,3 +52,8 @@ gui-test-screenshots/
 # 会话工具工作目录
 .workbuddy/
 .superpowers/
+
+# 文档站构建产物与依赖
+docs-site/node_modules/
+docs-site/.vitepress/cache/
+docs-site/.vitepress/dist/
