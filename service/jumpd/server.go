@@ -476,29 +476,37 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 	}
 
 	page := 1
-	keyword := "" // 搜索词（koko 交互：/ 进入，回车提交，空行清除）
-	for {
-		items, err := loadMenuAssets(s.DB, user, isAdmin)
-		if err != nil {
-			log.Printf("[jumpd] 菜单查询失败 user=%s: %v", user.Username, err)
-			io.WriteString(ch, "\r\n✗ 资产查询失败，请稍后重试\r\n")
-			sendExitStatus(ch)
-			return
-		}
-		if keyword != "" { // 搜索：名称/地址子串匹配（大小写不敏感）
+	keyword := "" // 搜索词（koko 交互：/ 进入，回车提交；Esc 清词回全量）
+	var items []menuVM // 菜单数据缓存：搜索/翻页/Esc 只重渲染，不重复查库（回车闪刷新的根因）
+	refreshItems := func() error {
+		var err error
+		items, err = loadMenuAssets(s.DB, user, isAdmin)
+		return err
+	}
+	if err := refreshItems(); err != nil {
+		log.Printf("[jumpd] 菜单查询失败 user=%s: %v", user.Username, err)
+		io.WriteString(ch, "\r\n✗ 资产查询失败，请稍后重试\r\n")
+		sendExitStatus(ch)
+		return
+	}
+	draw := func() { // 重渲染：搜索过滤与翻页都在缓存上做，无查库无闪屏
+		view := items
+		if keyword != "" {
 			kw := strings.ToLower(keyword)
-			filtered := items[:0]
+			view = nil
 			for _, it := range items {
 				if strings.Contains(strings.ToLower(it.Name), kw) || strings.Contains(strings.ToLower(it.IP), kw) {
-					filtered = append(filtered, it)
+					view = append(view, it)
 				}
 			}
-			items = filtered
 			page = 1
 		}
-		shown, pages := menuPage(items, page)
-		io.WriteString(ch, renderMenu(items, page, pages, keyword))
+		_, pages := menuPage(view, page)
+		io.WriteString(ch, "\r\n\r\n"+renderMenu(view, page, pages, keyword))
+	}
+	draw()
 
+	for {
 		// 注：ssh.Channel 接口无读超时（SetReadDeadline 不存在），菜单空闲不设超时——
 		// 空闲连接由客户端侧断开或部署层（防火墙/代理空闲回收）兜底。
 		var key [1]byte
@@ -508,7 +516,7 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 		}
 		key[0] = b
 
-		// '/' 进入搜索：行式读取关键词（空行清除搜索），提交后重显菜单
+		// '/' 进入搜索：行式读取（回车提交；提交后仅重渲染不查库）
 		if key[0] == '/' {
 			io.WriteString(ch, "\r\n搜索: ")
 			line, rerr := readLine(ks, ch)
@@ -516,10 +524,22 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 				return
 			}
 			keyword = strings.TrimSpace(line)
-			io.WriteString(ch, "\r\n")
+			page = 1
+			draw()
 			continue
 		}
 
+		// Esc：清搜索回全量（仅重渲染）
+		if key[0] == 0x1b {
+			if keyword != "" {
+				keyword = ""
+				page = 1
+				draw()
+			}
+			continue
+		}
+
+		shown, pages := menuPage(viewOf(items, keyword), page)
 		act := handleMenuKey(key[0], page, pages, shown)
 		switch act.kind {
 		case "quit":
@@ -527,14 +547,35 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 			return
 		case "next", "prev":
 			page = act.page
+			draw()
 		case "select":
 			log.Printf("[jumpd] %s(%s) 选中 VM#%d，开始重验与连接", user.Username, clientIP, act.vmID)
 			s.bridgeSession(ch, ks, user, isAdmin, clientIP, act.vmID, term, int(termW), int(termH), &activeMu, &activeTS)
 			// 桥接结束（用户在目标机 exit / 连接断开）→ 原地重回菜单
+			// 资产状态可能已变（开关机），重新查库并重绘
+			if rerr := refreshItems(); rerr != nil {
+				log.Printf("[jumpd] 菜单刷新失败 user=%s: %v", user.Username, rerr)
+			}
+			draw()
 		default:
 			// stay：无效键，重显菜单
 		}
 	}
+}
+
+// viewOf 按搜索词过滤缓存视图（keyword 为空返回原集合）
+func viewOf(items []menuVM, keyword string) []menuVM {
+	if keyword == "" {
+		return items
+	}
+	kw := strings.ToLower(keyword)
+	out := make([]menuVM, 0, len(items))
+	for _, it := range items {
+		if strings.Contains(strings.ToLower(it.Name), kw) || strings.Contains(strings.ToLower(it.IP), kw) {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // bridgeSession 重验 → 解密 → vmssh 拨号 → PTY 回放 → 双向桥。
