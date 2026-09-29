@@ -1,29 +1,30 @@
 <template>
   <div>
-    <div class="page-head">
-      <div>
-        <h3 class="page-title">用户管理</h3>
+    <PageHead title="用户管理">
+      <template #subtitle>
+        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
         <p class="page-desc">平台账号与角色（admin 管理员 / operator 操作员 / viewer 普通用户）</p>
-      </div>
-    </div>
+      </template>
+    </PageHead>
 
     <el-tabs v-model="activeTab">
       <el-tab-pane label="用户" name="users">
     <el-card shadow="never">
-      <div class="toolbar">
-        <div class="toolbar-left">
+      <!-- 原左右分组 gap 为 var(--space-lg)（12px），经 gap/right-gap 传入保持不变 -->
+      <Toolbar gap="var(--space-lg)" right-gap="var(--space-lg)">
+        <template #left>
           <el-select v-model="roleFilter" clearable placeholder="全部角色" style="width: 140px">
             <el-option label="管理员" value="admin" />
             <el-option label="操作员" value="operator" />
             <el-option label="普通用户" value="viewer" />
           </el-select>
-        </div>
-        <div class="toolbar-right">
+        </template>
+        <template #right>
           <span class="count">共 {{ filteredUsers.length }} 个账号</span>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">新建用户</el-button>
-        </div>
-      </div>
+        </template>
+      </Toolbar>
 
       <el-table :data="filteredUsers" v-loading="loading" stripe>
         <el-table-column prop="username" label="用户名" min-width="120" />
@@ -129,6 +130,8 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { errMsg, fmtDateTime } from '../utils/format'
+import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 import UserGroups from './UserGroups.vue'
 
 const { state, isAdmin } = useAuth()
@@ -242,11 +245,5 @@ onMounted(load)
 </script>
 
 <style scoped>
-/* .toolbar / .count 已收进 global.css；左右分组仅本地使用 */
-.toolbar-left,
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-lg);
-}
+/* .toolbar / .count 已收进 global.css；.toolbar-left/.toolbar-right 骨架与 gap 由 Toolbar 组件承担 */
 </style>

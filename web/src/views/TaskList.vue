@@ -1,14 +1,10 @@
 <template>
   <div v-loading="loading">
-    <div class="page-head">
-      <div>
-        <h2 class="page-title">任务中心</h2>
-        <span class="page-desc">创建、克隆、删除、关机等耗时操作都在后台异步执行，这里看每个任务的进度和结果；点「详情」可查看失败原因，以及删除虚拟机时被保护保留的共享卷</span>
-      </div>
-    </div>
+    <PageHead title="任务中心" subtitle="创建、克隆、删除、关机等耗时操作都在后台异步执行，这里看每个任务的进度和结果；点「详情」可查看失败原因，以及删除虚拟机时被保护保留的共享卷" />
     <el-card shadow="never">
-      <div class="toolbar">
-        <div class="toolbar-left">
+      <!-- 原左分组为 gap 8px + flex-wrap，经 wrap 传入保持不变；计数为 .toolbar 直接子元素走默认插槽 -->
+      <Toolbar wrap>
+        <template #left>
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 140px" @change="load">
             <el-option label="进行中" value="active" />
@@ -30,9 +26,9 @@
             :disabled="!finishedCount"
             @click="clearFinished"
           >清理本页已完成 ({{ finishedCount }})</el-button>
-        </div>
+        </template>
         <span class="count">共 {{ serverTotal }} 个任务<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span></span>
-      </div>
+      </Toolbar>
 
       <el-table :data="filteredItems" stripe border style="width: 100%">
         <template #empty><el-empty description="暂无任务" :image-size="80" /></template>
@@ -152,6 +148,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Delete, Search } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
+import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 import { useAuth } from '../store/auth'
 import { taskTypeText, taskStatusText, taskStatusTag, fmtDateTimeLocale, errMsg, isCancel } from '../utils/format'
 
@@ -309,13 +307,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* .page-head / .page-title / .toolbar / .count 已收进 global.css */
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+/* .page-head / .page-title / .toolbar / .count 已收进 global.css；.toolbar-left 骨架与 gap/换行由 Toolbar 组件承担 */
 .running-hint {
   color: var(--el-color-primary);
 }

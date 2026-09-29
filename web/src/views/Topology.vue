@@ -1,25 +1,21 @@
 <template>
   <div>
     <!-- 独立页头仅独立路由形态展示；嵌入仪表盘 tab（IA 精简批次）时由 tab 承担标题 -->
-    <div v-if="!embedded" class="page-head">
-      <div>
-        <h2 class="page-title">虚拟化拓扑</h2>
-        <span class="page-desc">以宿主机为中心展示存储池与虚拟机的从属关系：池节点大小按容量、虚拟机节点颜色按运行状态、大小按内存；拖拽节点可整理布局，滚轮缩放，点击图例可按状态过滤</span>
-      </div>
-    </div>
+    <PageHead v-if="!embedded" title="虚拟化拓扑" subtitle="以宿主机为中心展示存储池与虚拟机的从属关系：池节点大小按容量、虚拟机节点颜色按运行状态、大小按内存；拖拽节点可整理布局，滚轮缩放，点击图例可按状态过滤" />
 
     <el-card shadow="never">
-      <div class="toolbar">
-        <div class="toolbar-left">
+      <!-- 原左分组为 gap 8px 不换行（组件默认档）；计数为 .toolbar 直接子元素走默认插槽 -->
+      <Toolbar>
+        <template #left>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <span class="tp-hint">虚拟机 → 所属存储池 → 宿主机</span>
-        </div>
+        </template>
         <span class="count">
           虚拟机 {{ vms.length }} 台 · 存储池 {{ pools.length }} 个 · 网络 {{ networks.length }} 个<span
             v-if="updatedAt"
           > · 更新于 {{ updatedAt }}</span>
         </span>
-      </div>
+      </Toolbar>
 
       <div v-show="hasData" ref="chartRef" class="topo-chart" />
       <div v-if="!hasData" class="topo-empty">
@@ -36,6 +32,8 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import echarts from '../utils/echarts'
+import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 // utils/echarts 统一入口按需注册的图表清单里没有 graph 系列（此前只有折线图），
 // 本页需要 graph；按其文件头约定「新增图表特性必须补注册」，在本页就地补注册，
 // 不改动既有 utils/echarts.js（echarts.use 幂等，重复注册无副作用）
@@ -336,11 +334,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+/* .toolbar-left 骨架与 gap 由 Toolbar 组件承担 */
 .topo-chart {
   width: 100%;
   height: 560px;

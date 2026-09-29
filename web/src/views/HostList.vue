@@ -1,9 +1,9 @@
 <template>
   <div v-loading="loading">
-    <div class="page-head">
-      <h2 class="page-title">宿主机管理</h2>
+    <!-- 描述原本就是 .page-head 直接子元素（两端对齐把它排到右侧），经默认插槽保持同构 -->
+    <PageHead title="宿主机管理">
       <span class="page-desc">登记宿主机连接信息，采集连通性与实时状态</span>
-    </div>
+    </PageHead>
     <el-card shadow="never">
       <div class="toolbar">
         <div>
@@ -83,6 +83,7 @@ import { Refresh, Plus, Connection, DataLine, Edit, Delete } from '@element-plus
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { hostStatusText, hostStatusTag, errMsg, isCancel, fmtDateTimeLocale } from '../utils/format'
+import PageHead from '../components/PageHead.vue'
 
 const { isAdmin } = useAuth()
 

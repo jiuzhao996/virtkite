@@ -1,12 +1,12 @@
 <template>
   <div v-loading="loading">
-    <div class="page-head">
-      <h2 class="page-title">存储管理</h2>
+    <!-- 动作组原本就是 .page-head 直接子元素，经默认插槽保持同构（.page-actions 的 scoped 样式仍生效） -->
+    <PageHead title="存储管理">
       <div class="page-actions">
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreatePool">新建存储池</el-button>
       </div>
-    </div>
+    </PageHead>
 
     <!-- 汇总条：物理容量 / cloud-init 种子目录 / 默认存储池 -->
     <!-- dir 池容量是文件系统级的，同盘多池口径相同，取 items 里最大 capacity 及其 available，不再每行重复 -->
@@ -257,6 +257,7 @@ import { Refresh, Plus, FolderOpened, Edit, Delete, Collection, Brush } from '@e
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId } from '../utils/task.js'
+import PageHead from '../components/PageHead.vue'
 // 容量格式化 / 错误文案 / 取消判定统一走 utils/format.js（原本地三份实现已删）
 // 本页的 .page-head / .page-title / .toolbar / .count 与其他列表页逐字相同，已收进 global.css
 import { fmtSizeBytes, errMsg, isCancel, usageColor, clampPct } from '../utils/format'

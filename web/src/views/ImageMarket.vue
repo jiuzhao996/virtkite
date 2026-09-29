@@ -1,11 +1,6 @@
 <template>
   <div>
-    <div v-if="!embedded" class="page-head">
-      <div>
-        <h2 class="page-title">云镜像市场</h2>
-        <span class="page-desc">一键下载官方云镜像到存储池并自动登记进镜像库；下载为分钟级后台任务，可离开页面，进度可在任务中心继续跟踪</span>
-      </div>
-    </div>
+    <PageHead v-if="!embedded" title="云镜像市场" subtitle="一键下载官方云镜像到存储池并自动登记进镜像库；下载为分钟级后台任务，可离开页面，进度可在任务中心继续跟踪" />
 
     <el-card shadow="never">
       <div class="toolbar">
@@ -92,6 +87,7 @@ import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download, CircleCheck } from '@element-plus/icons-vue'
 import http, { api } from '../api'
+import PageHead from '../components/PageHead.vue'
 import { errMsg, clampPct } from '../utils/format'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 

@@ -1,11 +1,6 @@
 <template>
   <div>
-    <div class="page-head">
-      <div>
-        <h2 class="page-title">个人中心</h2>
-        <span class="page-desc">当前账号的资料与个性化设置；资料修改请联系管理员，密码与轮询偏好由你自行管理</span>
-      </div>
-    </div>
+    <PageHead title="个人中心" subtitle="当前账号的资料与个性化设置；资料修改请联系管理员，密码与轮询偏好由你自行管理" />
 
     <el-row :gutter="16">
       <!-- 个人资料（只读：UpdateUser 仅管理员可调） -->
@@ -77,6 +72,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
+import PageHead from '../components/PageHead.vue'
 import { errMsg, fmtDateTime } from '../utils/format'
 import { POLL_DEFAULTS, POLL_LABELS, getPollInterval, setPollInterval } from '../utils/settings'
 

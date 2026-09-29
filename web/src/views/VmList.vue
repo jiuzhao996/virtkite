@@ -1,11 +1,10 @@
 <template>
   <div v-loading="loading">
-      <div class="page-head">
-        <h2 class="page-title">虚拟机管理</h2>
-      </div>
+      <PageHead title="虚拟机管理" />
       <el-card shadow="never">
-        <div class="toolbar">
-          <div class="toolbar-left">
+        <!-- 原左分组为 gap 8px + flex-wrap，经 wrap 传入保持不变；计数为 .toolbar 直接子元素走默认插槽 -->
+        <Toolbar wrap>
+          <template #left>
             <!-- 刷新是次操作：default 描边（主操作「新建虚拟机」才用实底 primary） -->
             <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
             <el-button v-if="canOperate" type="primary" :icon="Plus" @click="router.push({ name: 'vm-create' })">新建虚拟机</el-button>
@@ -30,9 +29,9 @@
               >批量删除</el-button>
               <el-button text :disabled="bulkBusy" @click="checked = []">取消选择</el-button>
             </template>
-          </div>
+          </template>
           <span class="count">共 {{ total }} 台<span v-if="runningCount" class="running-hint"> · 运行中 {{ runningCount }} 台</span></span>
-        </div>
+        </Toolbar>
 
         <!-- 筛选栏（JumpServer 式：关键词 + 状态） -->
         <div class="filter-bar">
@@ -226,6 +225,8 @@ import { Refresh, Plus, Upload, VideoPlay, SwitchButton, Monitor, Delete, Search
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
+import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { vmStatusText, vmStatusTag, usageColor, nowClock, errMsg, isCancel, cssVar } from '../utils/format'
 import { copyText } from '../utils/clipboard'
@@ -691,13 +692,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* .page-head / .page-title / .toolbar / .count / .mono 已收进 global.css */
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+/* .page-head / .page-title / .toolbar / .count / .mono 已收进 global.css；.toolbar-left 骨架与 gap/换行由 Toolbar 组件承担 */
 .running-hint {
   color: var(--color-accent);
 }

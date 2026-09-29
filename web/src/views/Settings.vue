@@ -1,11 +1,8 @@
 <template>
   <div v-loading="loading">
-    <div class="page-head">
-      <div>
-        <h2 class="page-title">系统设置</h2>
-        <span class="page-desc">平台运行参数，保存进数据库、立即生效无需重启；生效配置的只读快照见仪表盘「平台信息」卡，界面轮询偏好已移至顶栏「个人中心」，cloud-init 模板管理亦在本页</span>      </div>
+    <PageHead title="系统设置" subtitle="平台运行参数，保存进数据库、立即生效无需重启；生效配置的只读快照见仪表盘「平台信息」卡，界面轮询偏好已移至顶栏「个人中心」，cloud-init 模板管理亦在本页">
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-    </div>
+    </PageHead>
 
     <!-- 可写配置：DB 持久化、写入即生效 -->
     <el-card shadow="never" class="mb">
@@ -175,6 +172,7 @@ import { Refresh, QuestionFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, fmtDateTimeLocale } from '../utils/format'
 import CloudInitTemplates from './CloudInitTemplates.vue'
+import PageHead from '../components/PageHead.vue'
 
 const loading = ref(false)
 const saving = ref(false)

@@ -1,8 +1,9 @@
 <template>
   <div v-loading="loading">
     <!-- 已并入「审计中心」的会话审计 tab：本组件不再带页面头，由 AuditList 提供标题与说明 -->
-    <div class="toolbar">
-      <div class="toolbar-left">
+    <!-- 原左分组为 gap 8px + flex-wrap，经 wrap 传入保持不变；计数为 .toolbar 直接子元素走默认插槽 -->
+    <Toolbar wrap>
+      <template #left>
         <el-button type="primary" :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
         <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 120px" @change="reload">
           <el-option label="进行中" value="active" />
@@ -15,9 +16,9 @@
         </el-select>
         <el-input v-model="q.vm_name" placeholder="按虚拟机名搜索" clearable style="width: 170px" @keyup.enter="reload" @clear="reload" />
         <el-input v-model="q.username" placeholder="按用户搜索" clearable style="width: 140px" @keyup.enter="reload" @clear="reload" />
-      </div>
+      </template>
       <span class="count">共 {{ total }} 个会话<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span></span>
-    </div>
+    </Toolbar>
       <!-- 仅当本页存在 VNC 会话时才说明「为什么断不开 VNC」，纯 SSH/串口列表不占版面 -->
       <el-alert
         v-if="hasVncSession"
@@ -97,6 +98,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
+import Toolbar from '../components/Toolbar.vue'
 import { sessionTypeText, sessionTypeTag, fmtDateTimeLocale, errMsg, isCancel } from '../utils/format'
 
 const { isAdmin } = useAuth()
@@ -192,13 +194,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* .page-head / .page-title / .toolbar / .count 已收进 global.css */
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+/* .page-head / .page-title / .toolbar / .count 已收进 global.css；.toolbar-left 骨架与 gap/换行由 Toolbar 组件承担 */
 .pager {
   margin-top: 12px;
   justify-content: flex-end;

@@ -1,12 +1,8 @@
 <template>
   <div>
-    <div class="page-head">
-      <div>
-        <h2 class="page-title">资产申请</h2>
-        <span class="page-desc">{{ isAdmin ? '教师审批台：处理学生的资产授权申请' : '向教师申请虚拟机的使用授权，批准后即可在「虚拟机」列表看到并操作' }}</span>
-      </div>
+    <PageHead title="资产申请" :subtitle="isAdmin ? '教师审批台：处理学生的资产授权申请' : '向教师申请虚拟机的使用授权，批准后即可在「虚拟机」列表看到并操作'">
       <el-button :icon="Refresh" :loading="loading" @click="loadAll">刷新</el-button>
-    </div>
+    </PageHead>
 
     <!-- 学生：申请入口（目录 = 全部运行中虚拟机的花名册，不含 IP 等敏感信息） -->
     <el-card v-if="!isAdmin" shadow="never" class="mb">
@@ -114,6 +110,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { errMsg, fmtDateTime } from '../utils/format'
+import PageHead from '../components/PageHead.vue'
 
 const { isAdmin } = useAuth()
 const loading = ref(false)

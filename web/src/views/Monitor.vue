@@ -2,13 +2,13 @@
   <div>
     <!-- 独立路由使用时显示页头；被仪表盘以 tab 嵌入时隐藏（标题与刷新归属外层），
          刷新按钮移到「实时告警」卡头部，两种形态都可用 -->
-    <div v-if="!embedded" class="page-head">
-      <div>
-        <h3 class="page-title">监控中心</h3>
+    <PageHead v-if="!embedded" title="监控中心">
+      <template #subtitle>
+        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
         <p class="page-desc">Alertmanager 实时告警 + Grafana 可视化看板（Prometheus 指标 30s 刷新）</p>
-      </div>
+      </template>
       <el-button :icon="Refresh" :loading="alertsLoading" @click="loadAlerts">刷新告警</el-button>
-    </div>
+    </PageHead>
 
     <!-- Grafana 看板（kiosk 模式嵌入；地址跟随当前访问主机，兼容宿主机直跑与 docker compose 两种形态）。
          看板是本页视觉主体放首屏，告警作为状态摘要放下方（有告警时卡片标红提示）。 -->
@@ -316,6 +316,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { Aim, AlarmClock, InfoFilled, Memo, Refresh, Search, Loading, WarningFilled } from '@element-plus/icons-vue'
 import http, { api } from '../api'
 import { fmtDateTime, fmtDateTimeLocale } from '../utils/format'
+import PageHead from '../components/PageHead.vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
 
 const alerts = ref([])

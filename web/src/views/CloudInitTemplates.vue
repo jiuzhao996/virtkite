@@ -1,13 +1,13 @@
 <template>
   <div>
     <!-- 独立页头仅独立路由形态展示；嵌入设置页（IA 精简批次）时标题由卡头承担 -->
-    <div v-if="!embedded" class="page-head">
-      <div>
-        <h3 class="page-title">cloud-init 模板</h3>
+    <PageHead v-if="!embedded" title="cloud-init 模板">
+      <template #subtitle>
+        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
         <p class="page-desc">可复用的初始化配置（主机名 / 用户 / 密码 / SSH 公钥 / 网络），创建向导「云镜像 + cloud-init」方式下一键套用</p>
-      </div>
+      </template>
       <el-button type="primary" :icon="Plus" @click="openCreate">新建模板</el-button>
-    </div>
+    </PageHead>
 
     <el-alert
       v-if="!embedded"
@@ -26,13 +26,14 @@
           <el-button type="primary" :icon="Plus" @click="openCreate">新建模板</el-button>
         </div>
       </template>
-      <div class="toolbar">
+      <!-- 原右侧分组 .toolbar-right 的 gap 为 var(--space-lg)（12px），经 right-gap 传入保持不变 -->
+      <Toolbar right-gap="var(--space-lg)">
         <span class="count">共 {{ items.length }} 个模板</span>
-        <div class="toolbar-right">
+        <template #right>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-button text type="primary" @click="$router.push('/vms/new')">去创建虚拟机 →</el-button>
-        </div>
-      </div>
+        </template>
+      </Toolbar>
 
       <el-table :data="items" v-loading="loading" stripe>
         <el-table-column prop="name" label="模板名" min-width="140" show-overflow-tooltip />
@@ -125,6 +126,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, fmtDateTime } from '../utils/format'
+import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 
 // embedded：嵌入设置页形态（隐藏独立页头与提示条，新建入口移到卡头）
 const props = defineProps({
@@ -277,12 +280,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-/* .toolbar / .count 已收进 global.css；右侧分组仅本地使用 */
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-lg);
-}
+/* .toolbar / .count 已收进 global.css；.toolbar-right 骨架与 gap 由 Toolbar 组件承担 */
 /* 嵌入形态卡头（设置页承载时的标题行） */
 .ci-card-head {
   display: flex;

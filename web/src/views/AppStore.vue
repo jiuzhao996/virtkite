@@ -1,11 +1,11 @@
 <template>
   <div>
-    <div class="page-head">
-      <div>
-        <h3 class="page-title">应用商店</h3>
+    <PageHead title="应用商店">
+      <template #subtitle>
+        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
         <p class="page-desc">选择一台虚拟机，一键安装常用服务（在虚拟机内通过 SSH 执行）</p>
-      </div>
-    </div>
+      </template>
+    </PageHead>
 
     <!-- 没有运行中的虚拟机时无法安装 -->
     <el-alert
@@ -115,6 +115,7 @@ import { Search } from '@element-plus/icons-vue'
 import http from '../api'
 import { errMsg, clampPct } from '../utils/format'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
+import PageHead from '../components/PageHead.vue'
 
 // ===== 应用列表与分类 =====
 const loading = ref(false)

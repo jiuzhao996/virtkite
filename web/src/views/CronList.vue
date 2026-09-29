@@ -1,15 +1,16 @@
 <template>
   <div>
-    <div class="page-head">
-      <div>
-        <h3 class="page-title">计划任务</h3>
+    <PageHead title="计划任务">
+      <template #subtitle>
+        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
         <p class="page-desc">按 cron 表达式定时执行虚拟机快照、数据库备份等例行运维动作</p>
-      </div>
-    </div>
+      </template>
+    </PageHead>
 
     <el-card shadow="never">
-      <div class="toolbar">
-        <div class="toolbar-left">
+      <!-- 原左右分组均为 gap 8px + flex-wrap，经 wrap 传入保持不变 -->
+      <Toolbar wrap right-wrap>
+        <template #left>
           <span class="count">共 {{ filteredItems.length }} 个任务</span>
           <!-- 前端过滤当前数据，不动服务端查询 -->
           <el-select v-model="actionFilter" placeholder="动作类型" clearable style="width: 140px">
@@ -19,12 +20,12 @@
             <el-option label="已启用" value="enabled" />
             <el-option label="已停用" value="disabled" />
           </el-select>
-        </div>
-        <div class="toolbar-right">
+        </template>
+        <template #right>
           <el-button type="primary" :icon="Plus" @click="openCreate">新建任务</el-button>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-        </div>
-      </div>
+        </template>
+      </Toolbar>
 
       <el-table v-loading="loading" :data="filteredItems" stripe size="small">
         <template #empty>
@@ -185,6 +186,8 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import http from '../api'
 import { errMsg, isCancel, fmtDateTime, vmStatusText } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
+import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 
 // ===== 列表 =====
 const items = ref([])
@@ -541,13 +544,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.toolbar-left,
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
+/* .toolbar-left / .toolbar-right 骨架与 gap/换行由 Toolbar 组件承担 */
 .expr-row {
   display: flex;
   gap: 8px;

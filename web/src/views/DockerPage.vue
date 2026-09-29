@@ -1,11 +1,11 @@
 <template>
   <div>
-    <div class="page-head">
-      <div>
-        <h2 class="page-title">Docker 管理</h2>
+    <PageHead title="Docker 管理">
+      <template #subtitle>
+        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
         <p class="page-desc">容器 / 镜像 / 网络 / 卷 / 编排一体化管理（对标 1Panel 容器页）</p>
-      </div>
-    </div>
+      </template>
+    </PageHead>
 
     <!-- 503 门控：Docker 守护进程不可用时顶部 alert，子页内容 v-show 隐藏（KeepAlive 下实例保留，重试直接调其 refresh） -->
     <el-alert v-if="backendError" type="error" :title="backendError" show-icon :closable="false" class="docker-gate">
@@ -45,6 +45,7 @@
 // 只持页头、顶部按钮条导航、503 门控与子页刷新转发；五个子页（components/*Tab.vue）各自取数自治。
 // 壳与子页经 provide('dockerPage') 通信：子页取数失败上报（503 置门控 alert，其余 toast）、成功清门控。
 import { ref, provide, nextTick } from 'vue'
+import PageHead from '../components/PageHead.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'

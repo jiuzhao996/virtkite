@@ -1,16 +1,17 @@
 <template>
   <div v-loading="loading">
-    <div class="page-head">
-      <h2 class="page-title">镜像管理</h2>
+    <!-- 描述原本就是 .page-head 直接子元素（两端对齐把它排到右侧），经默认插槽保持同构 -->
+    <PageHead title="镜像管理">
       <span class="page-desc">云镜像模板与 ISO 安装镜像分类查看，模板可直接用于创建虚拟机</span>
-    </div>
+    </PageHead>
 
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- Tab 1 云镜像/模板盘：登记列表（创建 VM「云镜像」方式的数据源） -->
       <el-tab-pane label="云镜像 / 模板盘" name="images">
         <el-card shadow="never">
-          <div class="toolbar">
-            <div class="toolbar-left">
+          <!-- 原左右分组 gap 为 var(--space-lg)（12px），经 gap/right-gap 传入保持不变 -->
+          <Toolbar gap="var(--space-lg)" right-gap="var(--space-lg)">
+            <template #left>
               <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
               <el-button v-if="isAdmin" type="primary" :icon="Upload" @click="openUpload">上传镜像</el-button>
               <el-input
@@ -24,12 +25,12 @@
                 <el-option label="全部镜像" value="" />
                 <el-option label="仅模板" value="true" />
               </el-select>
-            </div>
-            <div class="toolbar-right">
+            </template>
+            <template #right>
               <el-tag v-if="templateCount" type="primary" effect="plain" size="small">模板 {{ templateCount }}</el-tag>
               <span class="count">共 {{ filteredItems.length }} 个</span>
-            </div>
-          </div>
+            </template>
+          </Toolbar>
 
           <el-alert
             type="info"
@@ -81,15 +82,15 @@
       <!-- Tab 2 ISO 安装镜像：只读展示激活存储池中的 .iso 卷（创建 VM「本地安装介质」方式的数据源） -->
       <el-tab-pane label="ISO 安装镜像" name="iso">
         <el-card shadow="never">
-          <div class="toolbar">
-            <div class="toolbar-left">
+          <Toolbar gap="var(--space-lg)" right-gap="var(--space-lg)">
+            <template #left>
               <el-button :icon="Refresh" :loading="isoLoading" @click="loadIso">刷新</el-button>
               <span class="os-hint">ISO 为共享安装介质，管理（上传/删除）请到对应存储池</span>
-            </div>
-            <div class="toolbar-right">
+            </template>
+            <template #right>
               <span class="count">共 {{ isoItems.length }} 个</span>
-            </div>
-          </div>
+            </template>
+          </Toolbar>
 
           <el-alert
             type="info"
@@ -217,6 +218,8 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu, Search } from '@element-plus/icons-vue'
 import ImageMarket from './ImageMarket.vue'
+import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
@@ -467,13 +470,8 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* .page-head / .page-title / .page-desc / .toolbar / .count 已收进 global.css；.mono 的 font-family 亦然 */
-.toolbar-left,
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-lg);
-}
+/* .page-head / .page-title / .page-desc / .toolbar / .count 已收进 global.css；.mono 的 font-family 亦然；
+   .toolbar-left/.toolbar-right 骨架与 gap 由 Toolbar 组件承担 */
 .ops {
   display: flex;
   align-items: center;

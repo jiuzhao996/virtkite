@@ -1,22 +1,23 @@
 <template>
   <div v-loading="loading">
-    <div class="page-head">
-      <h2 class="page-title">网络管理</h2>
+    <!-- 描述原本就是 .page-head 直接子元素（两端对齐把它排到右侧），经默认插槽保持同构 -->
+    <PageHead title="网络管理">
       <span class="page-desc">管理 libvirt 虚拟网络：NAT、桥接、隔离网络</span>
-    </div>
+    </PageHead>
 
     <el-card shadow="never">
-      <div class="toolbar">
-        <div class="toolbar-left">
+      <!-- 原左右分组 gap 为 var(--space-lg)（12px），经 gap/right-gap 传入保持不变 -->
+      <Toolbar gap="var(--space-lg)" right-gap="var(--space-lg)">
+        <template #left>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">新建 NAT 网络</el-button>
-        </div>
-        <div class="toolbar-right">
+        </template>
+        <template #right>
           <el-tag type="success" effect="plain" size="small">运行 {{ activeCount }}</el-tag>
           <el-tag v-if="autostartCount" effect="plain" size="small">自启 {{ autostartCount }}</el-tag>
           <span class="count">共 {{ networks.length }} 个网络</span>
-        </div>
-      </div>
+        </template>
+      </Toolbar>
 
       <!-- 网络卡片（腾讯云风格）：网络属性多（网桥/转发/网关/DHCP），少量对象时卡片比表格信息层次更好 -->
       <el-empty v-if="!networks.length && !loading" description="暂无虚拟网络，点击「新建 NAT 网络」创建" :image-size="72" />
@@ -89,6 +90,8 @@ import { Refresh, Plus, VideoPlay, VideoPause, Delete } from '@element-plus/icon
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { errMsg, isCancel } from '../utils/format'
+import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 
 const { isAdmin } = useAuth()
 
@@ -190,13 +193,8 @@ onMounted(load)
 </script>
 
 <style scoped>
-/* .page-head / .page-title / .page-desc / .toolbar / .count 已收进 global.css；.mono 的 font-family 亦然 */
-.toolbar-left,
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-lg);
-}
+/* .page-head / .page-title / .page-desc / .toolbar / .count 已收进 global.css；.mono 的 font-family 亦然；
+   .toolbar-left/.toolbar-right 骨架与 gap 由 Toolbar 组件承担 */
 .mono {
   font-size: 0.85rem;
 }

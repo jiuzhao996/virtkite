@@ -1,17 +1,18 @@
 <template>
   <div>
-    <div class="page-head">
-      <div>
-        <h3 class="page-title">回收站</h3>
+    <PageHead title="回收站">
+      <template #subtitle>
+        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
         <p class="page-desc">删除的虚拟机在此保留，可一键恢复；记录永久保留，直至手动彻底清除；彻底清除将物理删除记录与无主卷</p>
-      </div>
-    </div>
+      </template>
+    </PageHead>
 
     <el-card shadow="never" v-loading="loading">
-      <div class="toolbar">
+      <!-- 计数与按钮原为 .toolbar 直接子元素（两端对齐左右分列），经默认插槽保持同构 -->
+      <Toolbar>
         <span class="count">共 {{ items.length }} 条记录</span>
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-      </div>
+      </Toolbar>
       <!-- 空态：回收站没有软删记录 -->
       <el-empty v-if="!loading && items.length === 0" description="回收站是空的" :image-size="80" />
       <el-table v-else :data="items" size="small">
@@ -86,6 +87,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, RefreshLeft, Delete, QuestionFilled } from '@element-plus/icons-vue'
 import http from '../api'
 import { errMsg, isCancel, vmStatusText, vmStatusTag, fmtDateTime } from '../utils/format'
+import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 
 // ===== 列表（GET /vms-recycle → {total, items}）=====
 const loading = ref(false)

@@ -1,17 +1,7 @@
 <template>
   <div v-loading="statusLoading" class="ai-page" :class="{ embedded }">
     <!-- 页头：独立页面形态保留完整页头；抽屉形态（IA 精简批次）只留紧凑工具行，标题由抽屉头承担 -->
-    <div v-if="!embedded" class="page-head">
-      <div>
-        <h2 class="page-title">AI 运维助手</h2>
-        <span class="page-desc">
-          {{
-            ai.configured
-              ? '模型 ' + ai.model + ' · 会话仅保存在当前页面，刷新或切页后丢失'
-              : '基于平台实时状态的智能运维问答'
-          }}
-        </span>
-      </div>
+    <PageHead v-if="!embedded" title="AI 运维助手" :subtitle="ai.configured ? '模型 ' + ai.model + ' · 会话仅保存在当前页面，刷新或切页后丢失' : '基于平台实时状态的智能运维问答'">
       <div class="head-actions">
         <el-tooltip
           content="开启后助手可感知平台虚拟机、容器与告警的实时状态，回答更准确"
@@ -21,7 +11,7 @@
         </el-tooltip>
         <el-button :icon="Delete" :disabled="!messages.length" @click="clearSession">清空会话</el-button>
       </div>
-    </div>
+    </PageHead>
     <div v-else class="head-actions drawer-actions">
       <span class="drawer-desc">
         {{ ai.configured ? '模型 ' + ai.model : '基于平台实时状态的智能运维问答' }}
@@ -148,6 +138,7 @@ import { ElMessageBox } from 'element-plus'
 import { ChatDotRound, Delete, MagicStick, Promotion, Refresh, User, VideoPause, Warning } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import PageHead from '../components/PageHead.vue'
 // GET /ai/status 走既有 axios 实例（baseURL=/api 已带 token 拦截器）；
 // POST /ai/chat 是 SSE 流式，axios 拿不到 ReadableStream，必须用原生 fetch（见 streamAnswer）。
 import http from '../api'

@@ -1,11 +1,11 @@
 <template>
   <div>
-    <div class="page-head">
-      <div>
-        <h3 class="page-title">用户组</h3>
+    <PageHead title="用户组">
+      <template #subtitle>
+        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
         <p class="page-desc">按教学班批量授权：组 → 资产授权后，组内成员即时获得可见性</p>
-      </div>
-    </div>
+      </template>
+    </PageHead>
     <el-card shadow="never">
     <div class="toolbar">
       <div class="toolbar-left">
@@ -85,6 +85,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, fmtDateTime } from '../utils/format'
+import PageHead from '../components/PageHead.vue'
 
 const groups = ref([])
 const users = ref([])

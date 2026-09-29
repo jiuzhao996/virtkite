@@ -1,11 +1,6 @@
 <template>
   <div v-loading="loading">
-    <div class="page-head">
-      <div>
-        <h2 class="page-title">审计中心</h2>
-        <span class="page-desc">操作日志记录谁、何时、对哪个对象做了什么、成功还是失败；控制台会话记录谁连过哪台虚拟机。均为只读记录，用于安全追溯</span>
-      </div>
-    </div>
+    <PageHead title="审计中心" subtitle="操作日志记录谁、何时、对哪个对象做了什么、成功还是失败；控制台会话记录谁连过哪台虚拟机。均为只读记录，用于安全追溯" />
 
     <el-tabs v-model="activeTab">
       <!-- 操作日志仅管理员可见（后端 /api/audit admin-only）；viewer 只能看会话流水 -->
@@ -158,6 +153,7 @@ import { useAuth } from '../store/auth'
 import { FALLBACK_ACTION_LABELS, fmtDateTime, errMsg } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
 import SessionList from './SessionList.vue'
+import PageHead from '../components/PageHead.vue'
 
 const { isAdmin } = useAuth()
 // 默认 tab：管理员落在操作日志，普通用户只有会话流水可看
