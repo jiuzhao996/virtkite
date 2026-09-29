@@ -18,11 +18,11 @@
 
 ## Phases
 
-- [ ] **Phase 0 热身**：`utils/docker-format.js`（DockerList 格式化纯函数外迁）；`components/CopyButton.vue`；`components/StateTag.vue`
-- [ ] **Phase 1 composables**：`useAutoRefresh`（4 处变体收敛）；`usePagination`（5 个列表页收敛）
+- [x] **Phase 0 热身**：`utils/docker-format.js`（DockerList 格式化纯函数外迁）；`components/CopyButton.vue`；`components/StateTag.vue`
+- [x] **Phase 1 composables**（useAutoRefresh 四变体收敛；usePagination 实测仅 2 处真实分页，3 文件诚实放弃）：`useAutoRefresh`（4 处变体收敛）；`usePagination`（5 个列表页收敛）
 - [ ] **Phase 2 DockerList 拆分**：`views/docker/index.vue` 薄壳 + 5 tab 组件 + 6 抽屉/对话框
 - [ ] **Phase 3 VmDetail 拆分**：壳 + VmPerfCard / VmSnapshotCard / VmGrantCard / VmHardwareDialogs
-- [ ] **Phase 4 Dashboard 拆分**：壳 + 5 卡片组件
+- [x] **Phase 4 Dashboard 拆分**（提前完成：1088→389 行壳 + 5 卡片）：壳 + 5 卡片组件
 - [ ] **Phase 5 收尾**：docs 同步 + devlog + 全量回归 + 推送
 
 ## Review Focus

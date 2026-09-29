@@ -263,3 +263,14 @@
 - **收口**：/metrics「公开」为陈旧信息（.env v3.3 已配 METRICS_TOKEN，实测 401/200）——AGENTS 遗留清单已更正；砍 POST /api/networks/xml 与 PUT /api/networks/:name（⚠️ 二者皆有前端消费：NetworkList XML 定义/编辑双弹窗连带删除，表单建网保留）；砍 loki/promtail 容器（能力留应用商店，Monitor 日志卡文案改重装指引）。
 - **⚠️ 环境坑（复发）**：vmops.pid 陈旧 → kill 落空 → 新进程绑不上 8080 静默死亡 → 旧二进制继续服务（改完代码「不生效」先 `ss -ltnp | grep 8080` 核对 pid 与二进制时间，pkill 全清再起）。
 - 测试增量：组授权可见性 2 + 黑名单纯函数 3；E2E：审批闭环、拦截确定性（标记文件法——命令回显会污染 contains 断言，验证执行与否须用文件内容/存在性等带外证据）。
+
+---
+
+### 前端重构批次（2026-09-26 晚，P0 热身 + P1 composables + P2 Dashboard 拆分，三代理并行）
+
+- **并行派发模式**：文件域严格不重叠（B=useAutoRefresh+DockerList/VmDetail/Monitor；C=usePagination+五个列表页；D=Dashboard 拆分），各自 `vite build --outDir /tmp/dist-XX` 验证防 dist 竞争，主控做并集联合构建 + 真机联合冒烟（10/10）后按域分三笔提交。
+- **useAutoRefresh**：四处「localStorage 开关+setInterval+卸载清理」变体收敛（DockerList×2/VmDetail/Monitor）；键名沿用、start 幂等、runOnEnable 语义逐一对齐原变体。
+- **usePagination 的诚实发现**：五列表页仅 2 处真实服务端分页（AuditList/CronList 抽屉），VmList/StorageList/ImageList 全量+前端筛选从未分页——给它们加分页=改行为，红线放弃接入。ImageList 的 total ref 是死状态（后续可清）。
+- **Dashboard 拆分**：1088→389 行壳 + 5 卡片子组件；echarts 生命周期随组件；切回概览补 resize 改 overviewTick 信号（对齐 TopologyView active-tick 模式）。
+- **⚠️ 教训（P0 实伤）**：脚本化删函数用「下一个分隔线」当边界会吞掉中间整段代码（copyLogs→═══ 之间夹着日志抽屉的 logsFollow 等，删完 build 过但运行白屏 ReferenceError）——删码必须用完整函数体精确锚点 + assert，且**构建通过≠运行正常**，必须浏览器冒烟。本次靠 git checkout 回滚重做。
+- 剩余：Phase 2（DockerList 拆分）与 Phase 3（VmDetail 拆分）待做——两者文件域与 useAutoRefresh 重叠，须串行。
