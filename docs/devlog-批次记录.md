@@ -274,3 +274,12 @@
 - **Dashboard 拆分**：1088→389 行壳 + 5 卡片子组件；echarts 生命周期随组件；切回概览补 resize 改 overviewTick 信号（对齐 TopologyView active-tick 模式）。
 - **⚠️ 教训（P0 实伤）**：脚本化删函数用「下一个分隔线」当边界会吞掉中间整段代码（copyLogs→═══ 之间夹着日志抽屉的 logsFollow 等，删完 build 过但运行白屏 ReferenceError）——删码必须用完整函数体精确锚点 + assert，且**构建通过≠运行正常**，必须浏览器冒烟。本次靠 git checkout 回滚重做。
 - 剩余：Phase 2（DockerList 拆分）与 Phase 3（VmDetail 拆分）待做——两者文件域与 useAutoRefresh 重叠，须串行。
+
+---
+
+### 前端重构批次 II（2026-09-26 深夜，P3 DockerList + P4 VmDetail 拆分，前端重构全计划收官）
+
+- **P3 DockerList**：1601→207 行壳（+原路径 8 行转发壳，路由 import 不可改）+ 8 组件；数据流混合式（壳持 tab/dockerAvailable/images/静默刷新，tab 自持 fetch 经 defineExpose refresh）；格式化切 utils/docker-format 消除双份。
+- **P4 VmDetail**：1596→550 行壳 + 5 组件；v-show 10 处分区常驻语义逐字保留（切走切回不丢状态）；useAutoRefresh(pollStats) 守卫链原样（非 running 不拉/perf 才重绘）；授权统一面板随 VmGrantCard 完全自持；概览/XML/文件管理按「不为拆而拆」留壳。
+- **⚠️ 冒烟假阳性双向教训**：①抽屉断言被隐藏的 AI 抽屉吸走（.el-drawer last() 空转通过）——断言必须打在「可见范围」内；②node1 关机导致 4 项 FAIL 属守卫按设计工作——先核环境状态再怀疑代码；③text=快照 多命中 strict 冲突被 catch 吞掉——用 .el-menu-item:has-text() 精确定位；④按钮文案「新建快照」与断言「创建快照」不符——断言以实际 UI 为准。
+- 五阶段全部完成：四个巨型文件（DockerList/VmDetail/Wizard 除外——Wizard 1430 行经评估维持，其向导步骤天然内聚拆分收益低）落 1Panel 粒度；新增 composables×2 + 公共组件×1 + 子组件目录×3；`npm run build` 全绿 + 真机冒烟全覆盖 + `go test -race` 18 包全绿。
