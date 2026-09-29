@@ -95,8 +95,8 @@
             class="pager"
             layout="total, sizes, prev, pager, next"
             :total="total"
-            :current-page="q.page"
-            v-model:page-size="q.page_size"
+            :current-page="page"
+            v-model:page-size="pageSize"
             :page-sizes="[20, 50, 100]"
             @current-change="onPage"
             @size-change="onPageSizeChange"
@@ -156,6 +156,7 @@ import { Search, RefreshLeft, Refresh, Download, View } from '@element-plus/icon
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { FALLBACK_ACTION_LABELS, fmtDateTime, errMsg } from '../utils/format'
+import { usePagination } from '../composables/usePagination'
 import SessionList from './SessionList.vue'
 
 const { isAdmin } = useAuth()
@@ -163,8 +164,6 @@ const { isAdmin } = useAuth()
 const activeTab = ref(isAdmin.value ? 'ops' : 'sessions')
 
 const items = ref([])
-const total = ref(0)
-const loading = ref(false)
 const range = ref(null)
 const detailDialog = ref(false)
 const current = ref(null)
@@ -185,7 +184,7 @@ function actionLabel(action) {
   return actionMap.value[action] || action
 }
 
-const q = reactive({ action: '', object_type: '', username: '', status: '', start: '', end: '', page: 1, page_size: 20 })
+const q = reactive({ action: '', object_type: '', username: '', status: '', start: '', end: '' })
 
 // 日期范围快捷项（今天 / 近 7 天 / 近 30 天），返回 Date 由 value-format 统一转 YYYY-MM-DD
 const dateShortcuts = [
@@ -227,26 +226,35 @@ function onRange(val) {
   search()
 }
 
-// 筛选条件变更：重置到第 1 页再查询
-function search() {
-  q.page = 1
-  load()
-}
+// 分页状态与流转收进 usePagination：筛选变更/改页大回第 1 页、翻页保留筛选。
+// search / onPage / onPageSizeChange / load 以解构别名保留原名，模板绑定零改动
+const {
+  page,
+  pageSize,
+  total,
+  loading,
+  handleCurrentChange: onPage,
+  handleSizeChange: onPageSizeChange,
+  reloadFromFirst: search,
+  reload: load
+} = usePagination(fetchAuditPage, { defaultPageSize: 20 })
 
-function onPage(p) {
-  q.page = p
-  load()
-}
-
-function onPageSizeChange() {
-  q.page = 1
-  load()
+// 单页获取：api 调用与响应解包留在页面内（composable 只管页码状态与流转）；
+// 异常自行捕获提示（fetcher 契约），返回 total 由 composable 同步
+async function fetchAuditPage({ page, pageSize }) {
+  try {
+    const res = await api.listAudit({ ...filterParams(), page, page_size: pageSize })
+    items.value = (res.data && res.data.items) || []
+    return (res.data && res.data.total) || 0
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取审计日志失败'))
+  }
 }
 
 function reset() {
-  Object.assign(q, { action: '', object_type: '', username: '', status: '', start: '', end: '', page: 1 })
+  Object.assign(q, { action: '', object_type: '', username: '', status: '', start: '', end: '' })
   range.value = null
-  load()
+  search()
 }
 
 // 组装查询参数（不含分页，导出时也复用：按当前筛选条件拉全量）
@@ -256,19 +264,6 @@ function filterParams() {
     if (q[k]) params[k] = q[k]
   }
   return params
-}
-
-async function load() {
-  loading.value = true
-  try {
-    const res = await api.listAudit({ ...filterParams(), page: q.page, page_size: q.page_size })
-    items.value = (res.data && res.data.items) || []
-    total.value = (res.data && res.data.total) || 0
-  } catch (e) {
-    ElMessage.error(errMsg(e, '获取审计日志失败'))
-  } finally {
-    loading.value = false
-  }
 }
 
 // ===== 导出 CSV（按当前筛选条件分页拉全量，上限 5000 条） =====

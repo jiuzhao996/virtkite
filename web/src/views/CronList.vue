@@ -184,6 +184,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import http from '../api'
 import { errMsg, isCancel, fmtDateTime, vmStatusText } from '../utils/format'
+import { usePagination } from '../composables/usePagination'
 
 // ===== 列表 =====
 const items = ref([])
@@ -466,10 +467,18 @@ async function runNow(row) {
 const drawerVisible = ref(false)
 const drawerTask = ref(null)
 const runs = ref([])
-const runsLoading = ref(false)
-const runsTotal = ref(0)
-const runsPage = ref(1)
-const runsPageSize = 20 // 与后端 ListRuns 默认页大小一致
+
+// 抽屉分页收进 usePagination；以解构别名保留 runsPage 等原名，模板绑定零改动。
+// 20 与后端 ListRuns 默认页大小一致（本页 layout 只有 total/prev/pager/next，无改页大入口）
+const {
+  page: runsPage,
+  pageSize: runsPageSize,
+  total: runsTotal,
+  loading: runsLoading,
+  handleCurrentChange: onRunsPageChange,
+  reloadFromFirst: resetRunsPage,
+  reload: loadRuns
+} = usePagination(fetchRuns, { defaultPageSize: 20 })
 
 const drawerTitle = computed(() =>
   drawerTask.value ? `执行历史 · ${drawerTask.value.name}` : '执行历史'
@@ -478,33 +487,25 @@ const drawerTitle = computed(() =>
 function openHistory(row) {
   drawerTask.value = row
   drawerVisible.value = true
-  runsPage.value = 1
   runs.value = [] // 先清上一任务的残留，避免换任务时闪旧数据
-  loadRuns()
+  resetRunsPage()
 }
 
-// 列表刷新（load）也会带着当前页码调这里，抽屉开着即同步最新历史
-async function loadRuns() {
+// 单页历史获取：解包留在页面内（本页走裸 http，解包路径 res.data.data 与 api.* 不同）；
+// 异常自行捕获提示（fetcher 契约），返回 total 由 composable 同步
+async function fetchRuns({ page, pageSize }) {
   if (!drawerTask.value) return
-  runsLoading.value = true
   try {
     // 返回 {total, page, page_size, items:[{id,task_name,started_at,finished_at,status,output}]}
     const res = await http.get(`/crons/${drawerTask.value.id}/runs`, {
-      params: { page: runsPage.value, page_size: runsPageSize }
+      params: { page, page_size: pageSize }
     })
     const d = (res.data && res.data.data) || {}
     runs.value = d.items || []
-    runsTotal.value = Number(d.total) || 0
+    return Number(d.total) || 0
   } catch (e) {
     ElMessage.error(errMsg(e, '获取执行历史失败'))
-  } finally {
-    runsLoading.value = false
   }
-}
-
-function onRunsPageChange(p) {
-  runsPage.value = p
-  loadRuns()
 }
 
 // ===== 删除 =====
