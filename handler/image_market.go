@@ -20,10 +20,11 @@ import (
 type marketItem struct {
 	Key      string `json:"key"`
 	Name     string `json:"name"`
-	OSName   string `json:"os_name"` // 须与 virt.OSList 的 Name 精确一致，前端才能按镜像自动选中 OS
-	URL      string `json:"url"`
-	SizeHint int64  `json:"size_hint"` // 当前实测约值（字节），「latest」类 URL 会随上游小版本浮动
-	Official string `json:"official"`  // 官方文档/下载页
+	OSName   string `json:"os_name"`  // 须与 virt.OSList 的 Name 精确一致，前端才能按镜像自动选中 OS
+	URL      string `json:"url"`      // 国内镜像源（默认下载走国内，分钟级 vs 官方源小时级）
+	SizeHint int64  `json:"size_hint"`
+	Official string `json:"official"` // 官方文档/下载页
+	CNURL    string `json:"-"`        // 官方源（可选；下载时用户可选官方/国内，双源互为备份）
 	Desc     string `json:"description"`
 }
 
@@ -34,114 +35,67 @@ type marketItem struct {
 //     镜像给最新稳定版（44），os_name 标到最近可选项；
 //   - 银河麒麟/openKylin：官方云镜像直链需注册或网络不可达（HEAD 实测），暂不入市场；
 //     可经 ISO 安装镜像方式安装（OSList 已有 Kylin V10 条目）。
+// marketCatalog 内置官方云镜像清单（只留最新稳定版；下载时可选国内源/官方源双源）。
+// 国内源（默认）：南京大学 mirror.nju.edu.cn（Ubuntu/Debian/Rocky/Alma 全系 200 实测，
+// 国内下载分钟级）；官方源为备选（国际链路小时级）。URL 均 HEAD 实测 200（2026-09-29）。
+// os_name 与 virt.OSList 对齐：Alma 9/10、openSUSE 16 已补条目；Fedora 标最近可选项；
+// 银河麒麟/openKylin 云镜像直链需注册（HEAD 不可达）不入市场，走 ISO 安装（OSList 已有）。
 var marketCatalog = []marketItem{
 	{
-		Key:      "ubuntu-26.04",
-		Name:     "Ubuntu 26.04 LTS",
-		OSName:   "Ubuntu 26.04 LTS",
-		URL:      "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img",
+		Key: "ubuntu-26.04", Name: "Ubuntu 26.04 LTS", OSName: "Ubuntu 26.04 LTS",
+		URL:      "https://mirror.nju.edu.cn/ubuntu-cloud-images/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img",
 		SizeHint: 625256960,
 		Official: "https://cloud-images.ubuntu.com/releases/26.04/release/",
+		CNURL:    "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img",
 		Desc:     "Ubuntu Server 26.04 LTS 官方云镜像（qcow2，预装 cloud-init）",
 	},
 	{
-		Key:      "ubuntu-24.04",
-		Name:     "Ubuntu 24.04 LTS",
-		OSName:   "Ubuntu 24.04 LTS",
-		URL:      "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img",
-		SizeHint: 625256960,
-		Official: "https://cloud-images.ubuntu.com/releases/24.04/release/",
-		Desc:     "Ubuntu Server 24.04 LTS 官方云镜像（qcow2，预装 cloud-init）",
-	},
-	{
-		Key:      "ubuntu-22.04",
-		Name:     "Ubuntu 22.04 LTS",
-		OSName:   "Ubuntu 22.04 LTS",
-		URL:      "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.img",
-		SizeHint: 735388672,
-		Official: "https://cloud-images.ubuntu.com/releases/22.04/release/",
-		Desc:     "Ubuntu Server 22.04 LTS 官方云镜像（qcow2，预装 cloud-init）",
-	},
-	{
-		Key:      "debian-13",
-		Name:     "Debian 13",
-		OSName:   "Debian 13",
-		URL:      "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
+		Key: "debian-13", Name: "Debian 13", OSName: "Debian 13",
+		URL:      "https://mirror.nju.edu.cn/debian-cdimage/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
 		SizeHint: 449314816,
 		Official: "https://cloud.debian.org/images/cloud/trixie/",
+		CNURL:    "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
 		Desc:     "Debian 13 (trixie) generic 官方云镜像（qcow2，预装 cloud-init）",
 	},
 	{
-		Key:      "debian-12",
-		Name:     "Debian 12",
-		OSName:   "Debian 12",
-		URL:      "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2",
-		SizeHint: 449314816,
-		Official: "https://cloud.debian.org/images/cloud/bookworm/",
-		Desc:     "Debian 12 (bookworm) generic 官方云镜像（qcow2，预装 cloud-init）",
-	},
-	{
-		Key:      "rocky-10",
-		Name:     "Rocky Linux 10",
-		OSName:   "Rocky Linux 10",
-		URL:      "https://download.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
+		Key: "rocky-10", Name: "Rocky Linux 10", OSName: "Rocky Linux 10",
+		URL:      "https://mirror.nju.edu.cn/rocky/10/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
 		SizeHint: 645988352,
-		Official: "https://wiki.rockylinux.org/",
+		Official: "https://download.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
+		CNURL:    "https://download.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
 		Desc:     "Rocky Linux 10 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
 	},
 	{
-		Key:      "rocky-9",
-		Name:     "Rocky Linux 9",
-		OSName:   "Rocky Linux 9",
-		URL:      "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2",
-		SizeHint: 645988352,
-		Official: "https://wiki.rockylinux.org/",
-		Desc:     "Rocky Linux 9 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
-	},
-	{
-		Key:      "almalinux-10",
-		Name:     "AlmaLinux 10",
-		OSName:   "AlmaLinux 10",
-		URL:      "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
+		Key: "almalinux-10", Name: "AlmaLinux 10", OSName: "AlmaLinux 10",
+		URL:      "https://mirror.nju.edu.cn/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
 		SizeHint: 589299712,
-		Official: "https://wiki.almalinux.org/cloud/",
+		Official: "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
+		CNURL:    "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
 		Desc:     "AlmaLinux 10 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
 	},
 	{
-		Key:      "almalinux-9",
-		Name:     "AlmaLinux 9",
-		OSName:   "AlmaLinux 9",
-		URL:      "https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2",
-		SizeHint: 589299712,
-		Official: "https://wiki.almalinux.org/cloud/",
-		Desc:     "AlmaLinux 9 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
-	},
-	{
-		Key:      "fedora-cloud",
-		Name:     "Fedora Cloud 44",
-		OSName:   "Fedora 40",
+		Key: "fedora-cloud", Name: "Fedora Cloud 44", OSName: "Fedora 40",
 		URL:      "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2",
 		SizeHint: 583729152,
 		Official: "https://alt.fedoraproject.org/cloud/",
-		Desc:     "Fedora Cloud Base 44 官方云镜像（qcow2，预装 cloud-init）",
+		CNURL:    "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2",
+		Desc:     "Fedora Cloud Base 44 官方云镜像（qcow2，预装 cloud-init；无国内镜像源）",
 	},
 	{
-		Key:      "opensuse-leap-16",
-		Name:     "openSUSE Leap 16",
-		OSName:   "openSUSE Leap 16",
+		Key: "opensuse-leap-16", Name: "openSUSE Leap 16", OSName: "openSUSE Leap 16",
 		URL:      "https://download.opensuse.org/distribution/leap/16.0/appliances/Leap-16.0-Minimal-VM.x86_64-Cloud.qcow2",
 		SizeHint: 337845760,
 		Official: "https://download.opensuse.org/distribution/leap/16.0/appliances/",
-		Desc:     "openSUSE Leap 16 Minimal-VM 官方云镜像（qcow2，最小化系统）",
+		CNURL:    "https://download.opensuse.org/distribution/leap/16.0/appliances/Leap-16.0-Minimal-VM.x86_64-Cloud.qcow2",
+		Desc:     "openSUSE Leap 16 Minimal-VM 官方云镜像（qcow2，最小化系统；官方源国内可达）",
 	},
 	{
-		Key:      "archlinux",
-		Name:     "Arch Linux",
-		OSName:   "Arch Linux",
+		Key: "archlinux", Name: "Arch Linux", OSName: "Arch Linux",
 		URL:      "https://mirrors.tuna.tsinghua.edu.cn/archlinux/images/latest/Arch-Linux-x86_64-cloudimg.qcow2",
 		SizeHint: 314572800,
 		Official: "https://geo.mirror.rackspace.com/archlinux/images/latest/",
-		Desc:     "Arch Linux 官方云镜像（qcow2，预装 cloud-init，清华镜像源滚动更新）",
+		CNURL:    "https://geo.mirror.rackspace.com/archlinux/images/latest/Arch-Linux-x86_64-cloudimg.qcow2",
+		Desc:     "Arch Linux 官方云镜像（qcow2，预装 cloud-init，滚动更新；清华源）",
 	},
 }
 
@@ -179,6 +133,7 @@ func (h *ImageMarketHandler) ListMarket(c *gin.Context) {
 			"name":        it.Name,
 			"os_name":     it.OSName,
 			"url":         it.URL,
+			"cn_url":      it.CNURL, // 官方源备选（前端「下载时可选官方/国内」）
 			"file_name":   fileName,
 			"size_hint":   it.SizeHint,
 			"official":    it.Official,
@@ -207,8 +162,9 @@ func (h *ImageMarketHandler) Download(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Key  string `json:"key" binding:"required"`
-		Pool string `json:"pool"`
+		Key    string `json:"key" binding:"required"`
+		Pool   string `json:"pool"`
+		Source string `json:"source"` // cn=国内镜像源（默认）| official=官方源
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
@@ -219,6 +175,11 @@ func (h *ImageMarketHandler) Download(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "云镜像市场中不存在："+req.Key)
 		return
 	}
+	// 双源：URL=国内镜像源（默认），CNURL=官方源。用户下载时可选，互为备份
+	downloadURL := item.URL
+	if req.Source == "official" && item.CNURL != "" {
+		downloadURL = item.CNURL
+	}
 	pool := req.Pool
 	if pool == "" {
 		pool = tasks.DefaultStoragePoolResolver()
@@ -228,7 +189,7 @@ func (h *ImageMarketHandler) Download(c *gin.Context) {
 		return
 	}
 	payload := map[string]interface{}{
-		"url":  item.URL,
+		"url":  downloadURL,
 		"name": item.Name,
 		"pool": pool,
 	}
