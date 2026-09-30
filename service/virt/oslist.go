@@ -16,13 +16,18 @@ type OSItem struct {
 // CloudInit 标志 = 该发行版官方云镜像预装 cloud-init（Rocky/CentOS/Debian/Fedora 同样预装，
 // 此前漏标导致向导选这些镜像时 cloud-init 面板不出现——2026-09 修正）。
 var OSList = []OSItem{
+	{Name: "Rocky Linux 10", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
+	{Name: "AlmaLinux 10", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
+	{Name: "AlmaLinux 9", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "CentOS Stream 9", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "CentOS Stream 8", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "Rocky Linux 9", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "Rocky Linux 8", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
+	{Name: "Ubuntu 26.04 LTS", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "Ubuntu 24.04 LTS", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "Ubuntu 22.04 LTS", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "Ubuntu 20.04 LTS", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
+	{Name: "Debian 13", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "Debian 12", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "Debian 11", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "openEuler 22.03", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
@@ -30,6 +35,7 @@ var OSList = []OSItem{
 	{Name: "Kylin V10 (银河麒麟)", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "UOS V20 (统信)", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "Fedora 40", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
+	{Name: "openSUSE Leap 16", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio", CloudInit: true},
 	{Name: "SUSE SLES 15", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio"},
 	{Name: "Arch Linux", OSType: "hvm", Arch: "x86_64", DiskBus: "virtio", NicModel: "virtio"},
 	{Name: "Windows Server 2022", OSType: "hvm", Arch: "x86_64", DiskBus: "sata", NicModel: "e1000e"},

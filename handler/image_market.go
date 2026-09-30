@@ -27,12 +27,23 @@ type marketItem struct {
 	Desc     string `json:"description"`
 }
 
-// marketCatalog 内置官方云镜像清单（URL 均已 HEAD 实测 200）。
+// marketCatalog 内置官方云镜像清单（URL 均已 HEAD 实测 200，2026-09-29 批次扩容复测）。
 // os_name 与 virt.OSList 的对齐说明：
-//   - AlmaLinux 9：OSList 暂无该条目，先如实标注（自动识别落空由用户手选，待 OSList 补条目闭环）；
+//   - AlmaLinux 9/10、openSUSE Leap 16、Arch Linux：OSList 已同步补条目（本批次闭环）；
 //   - Fedora：OSList 只有 "Fedora 40" 一个 Fedora 项（virtio 设备模型跨版本一致），
-//     镜像给最新稳定版（44），os_name 标到最近可选项。
+//     镜像给最新稳定版（44），os_name 标到最近可选项；
+//   - 银河麒麟/openKylin：官方云镜像直链需注册或网络不可达（HEAD 实测），暂不入市场；
+//     可经 ISO 安装镜像方式安装（OSList 已有 Kylin V10 条目）。
 var marketCatalog = []marketItem{
+	{
+		Key:      "ubuntu-26.04",
+		Name:     "Ubuntu 26.04 LTS",
+		OSName:   "Ubuntu 26.04 LTS",
+		URL:      "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img",
+		SizeHint: 625256960,
+		Official: "https://cloud-images.ubuntu.com/releases/26.04/release/",
+		Desc:     "Ubuntu Server 26.04 LTS 官方云镜像（qcow2，预装 cloud-init）",
+	},
 	{
 		Key:      "ubuntu-24.04",
 		Name:     "Ubuntu 24.04 LTS",
@@ -52,13 +63,13 @@ var marketCatalog = []marketItem{
 		Desc:     "Ubuntu Server 22.04 LTS 官方云镜像（qcow2，预装 cloud-init）",
 	},
 	{
-		Key:      "rocky-9",
-		Name:     "Rocky Linux 9",
-		OSName:   "Rocky Linux 9",
-		URL:      "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2",
-		SizeHint: 645988352,
-		Official: "https://wiki.rockylinux.org/",
-		Desc:     "Rocky Linux 9 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
+		Key:      "debian-13",
+		Name:     "Debian 13",
+		OSName:   "Debian 13",
+		URL:      "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
+		SizeHint: 449314816,
+		Official: "https://cloud.debian.org/images/cloud/trixie/",
+		Desc:     "Debian 13 (trixie) generic 官方云镜像（qcow2，预装 cloud-init）",
 	},
 	{
 		Key:      "debian-12",
@@ -68,6 +79,33 @@ var marketCatalog = []marketItem{
 		SizeHint: 449314816,
 		Official: "https://cloud.debian.org/images/cloud/bookworm/",
 		Desc:     "Debian 12 (bookworm) generic 官方云镜像（qcow2，预装 cloud-init）",
+	},
+	{
+		Key:      "rocky-10",
+		Name:     "Rocky Linux 10",
+		OSName:   "Rocky Linux 10",
+		URL:      "https://download.rockylinux.org/pub/rocky/10/images/x86_64/Rocky-10-GenericCloud-Base.latest.x86_64.qcow2",
+		SizeHint: 645988352,
+		Official: "https://wiki.rockylinux.org/",
+		Desc:     "Rocky Linux 10 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
+	},
+	{
+		Key:      "rocky-9",
+		Name:     "Rocky Linux 9",
+		OSName:   "Rocky Linux 9",
+		URL:      "https://download.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2",
+		SizeHint: 645988352,
+		Official: "https://wiki.rockylinux.org/",
+		Desc:     "Rocky Linux 9 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
+	},
+	{
+		Key:      "almalinux-10",
+		Name:     "AlmaLinux 10",
+		OSName:   "AlmaLinux 10",
+		URL:      "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
+		SizeHint: 589299712,
+		Official: "https://wiki.almalinux.org/cloud/",
+		Desc:     "AlmaLinux 10 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
 	},
 	{
 		Key:      "almalinux-9",
@@ -87,6 +125,24 @@ var marketCatalog = []marketItem{
 		Official: "https://alt.fedoraproject.org/cloud/",
 		Desc:     "Fedora Cloud Base 44 官方云镜像（qcow2，预装 cloud-init）",
 	},
+	{
+		Key:      "opensuse-leap-16",
+		Name:     "openSUSE Leap 16",
+		OSName:   "openSUSE Leap 16",
+		URL:      "https://download.opensuse.org/distribution/leap/16.0/appliances/Leap-16.0-Minimal-VM.x86_64-Cloud.qcow2",
+		SizeHint: 337845760,
+		Official: "https://download.opensuse.org/distribution/leap/16.0/appliances/",
+		Desc:     "openSUSE Leap 16 Minimal-VM 官方云镜像（qcow2，最小化系统）",
+	},
+	{
+		Key:      "archlinux",
+		Name:     "Arch Linux",
+		OSName:   "Arch Linux",
+		URL:      "https://mirrors.tuna.tsinghua.edu.cn/archlinux/images/latest/Arch-Linux-x86_64-cloudimg.qcow2",
+		SizeHint: 314572800,
+		Official: "https://geo.mirror.rackspace.com/archlinux/images/latest/",
+		Desc:     "Arch Linux 官方云镜像（qcow2，预装 cloud-init，清华镜像源滚动更新）",
+	},
 }
 
 // ImageMarketHandler 云镜像市场处理器。
@@ -101,7 +157,7 @@ func NewImageMarketHandler(db *gorm.DB, taskMgr *tasks.Manager) *ImageMarketHand
 	return &ImageMarketHandler{DB: db, Virt: virt.New(), Tasks: taskMgr}
 }
 
-// marketItemByKey 按 key 查清单（6 项线性扫即可，无需索引）。
+// marketItemByKey 按 key 查清单（14 项线性扫即可，无需索引）。
 func marketItemByKey(key string) (marketItem, bool) {
 	for _, it := range marketCatalog {
 		if it.Key == key {
