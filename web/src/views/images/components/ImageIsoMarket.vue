@@ -1,9 +1,8 @@
 <template>
   <div>
     <PageHead
-      v-if="!embedded"
-      title="官方 ISO 市场"
-      subtitle="一键下载官方安装镜像到存储池；下载为分钟级后台任务，进度可在任务中心跟踪"
+      title="安装 ISO"
+      subtitle="传统光盘安装介质——走创建向导「本地安装介质 (ISO)」流程，适合演示装机过程"
     >
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </PageHead>
@@ -193,4 +192,9 @@ onUnmounted(() => { disposed.value = true })
   margin-left: auto;
   font-size: 12px;
 }
+/* 统称市场内分节头（与 ImageMarket 同款式） */
+.section-head { margin: 4px 0 12px; }
+.section-title { font-size: 1.02rem; font-weight: 600; margin: 0 0 2px; }
+.section-tag { font-size: 0.75rem; font-weight: 500; color: var(--color-muted-foreground); background: var(--color-muted); padding: 2px 8px; border-radius: 999px; margin-left: 6px; }
+.section-desc { margin: 0; font-size: 0.85rem; color: var(--color-muted-foreground); }
 </style>

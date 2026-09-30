@@ -120,13 +120,9 @@
           </el-table>
         </el-card>
       </el-tab-pane>
-      <!-- Tab 3 镜像市场：官方云镜像一键下载（下载完成自动登记进上方镜像库） -->
+      <!-- Tab 3 镜像市场：入口落地页（云镜像 / 安装 ISO 两个二级入口，1Panel 式） -->
       <el-tab-pane label="镜像市场" name="market" lazy>
-        <ImageMarket embedded />
-      </el-tab-pane>
-      <!-- Tab 4 ISO 市场：官方安装 ISO 一键下载（下载完成入池，出现在上方 ISO 安装镜像 tab） -->
-      <el-tab-pane label="ISO 市场" name="iso-market" lazy>
-        <ImageIsoMarket embedded />
+        <ImageMarketHome embedded />
       </el-tab-pane>
     </el-tabs>
 
@@ -221,6 +217,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu, Search } from '@element-plus/icons-vue'
+import ImageMarketHome from './images/components/ImageMarketHome.vue'
 import ImageMarket from './images/components/ImageMarket.vue'
 import ImageIsoMarket from './images/components/ImageIsoMarket.vue'
 import PageHead from '../components/PageHead.vue'

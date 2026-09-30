@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHead v-if="!embedded" title="云镜像市场" subtitle="一键下载官方云镜像到存储池并自动登记进镜像库；下载为分钟级后台任务，可离开页面，进度可在任务中心继续跟踪" />
+    <PageHead title="云镜像" subtitle="qcow2 磁盘镜像，预装 cloud-init——创建虚拟机免安装流程，分钟级出机" />
 
     <el-card shadow="never">
       <div class="toolbar">
@@ -326,6 +326,29 @@ async function download(item) {
 }
 .mk-source-label {
   font-size: 12px;
+  color: var(--color-muted-foreground);
+}
+/* 统称市场内的分节头（云镜像 / 安装 ISO 两段） */
+.section-head {
+  margin: 4px 0 12px;
+}
+.section-title {
+  font-size: 1.02rem;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+.section-tag {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-muted-foreground);
+  background: var(--color-muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: 6px;
+}
+.section-desc {
+  margin: 0;
+  font-size: 0.85rem;
   color: var(--color-muted-foreground);
 }
 </style>
