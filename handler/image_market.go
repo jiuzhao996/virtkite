@@ -38,8 +38,8 @@ type marketItem struct {
 //   - openSUSE：download.opensuse.org 对国内 IP 有 Cerberus 反爬挑战——HEAD 200 但 GET
 //     落盘的是 5KB HTML 假镜像（真实下载实证），不能只信 HEAD，暂不入市场。
 // marketCatalog 内置官方云镜像清单（只留最新稳定版；下载时可选国内源/官方源双源）。
-// 国内源（默认）：南京大学 mirror.nju.edu.cn（Ubuntu/Debian/Rocky/Alma 全系 200 实测，
-// 国内下载分钟级）；官方源为备选（国际链路小时级）。URL 均 HEAD 实测 200（2026-09-29）。
+// 统一国内源：南京大学 mirror.nju.edu.cn（全 6 项 HEAD 200 实测 2026-09-29，国内下载分钟级）；
+// Arch 用清华源（唯一国内 Arch 云镜像）。官方源保留在 CNURL 作备选字段（UI 不再展示选择器）
 // os_name 与 virt.OSList 对齐：Alma 9/10、openSUSE 16 已补条目；Fedora 标最近可选项；
 // 银河麒麟/openKylin 云镜像直链需注册（HEAD 不可达）不入市场，走 ISO 安装（OSList 已有）。
 var marketCatalog = []marketItem{
@@ -69,11 +69,11 @@ var marketCatalog = []marketItem{
 	},
 	{
 		Key: "fedora-cloud", Name: "Fedora Cloud 44", OSName: "Fedora 40",
-		URL:      "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2",
+		URL:      "https://mirror.nju.edu.cn/fedora/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2",
 		SizeHint: 583729152,
 		Official: "https://alt.fedoraproject.org/cloud/",
 		CNURL:    "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2",
-		Desc:     "Fedora Cloud Base 44 官方云镜像（qcow2，预装 cloud-init；无国内镜像源）",
+		Desc:     "Fedora Cloud Base 44 官方云镜像（qcow2，预装 cloud-init；南大源）",
 	},
 	{
 		Key: "archlinux", Name: "Arch Linux", OSName: "Arch Linux",

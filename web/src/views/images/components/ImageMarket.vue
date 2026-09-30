@@ -34,19 +34,6 @@
             </div>
             <div class="mk-file mono">{{ it.file_name || it.url }}</div>
 
-            <!-- 下载源选择：国内镜像源（默认，分钟级）/ 官方源（互为备份） -->
-            <div class="mk-source">
-              <span class="mk-source-label">下载源：</span>
-              <el-radio-group
-                v-model="sourceMap[it.key]"
-                size="small"
-                @click.stop
-              >
-                <el-radio-button value="cn">国内源</el-radio-button>
-                <el-radio-button value="official">官方源</el-radio-button>
-              </el-radio-group>
-            </div>
-
             <!-- 下载区：空闲出按钮、下载中出进度条（分钟级大文件，进度要醒目）、完成出结果标签 -->
             <div v-if="stateOf(it.key).phase === 'idle'" class="mk-actions">
               <el-button
@@ -116,12 +103,6 @@ const dlStates = reactive({})
 function stateOf(key) {
   if (!dlStates[key]) dlStates[key] = { phase: 'idle', submitting: false, percent: 0, phaseText: '' }
   return dlStates[key]
-}
-
-// 每镜像的下载源选择（cn=国内镜像源默认 / official=官方源），下载时透传后端双源
-const sourceMap = reactive({})
-function sourceOf(key) {
-  return sourceMap[key] === 'official' ? 'official' : 'cn'
 }
 
 function resetItem(key) {
@@ -227,7 +208,7 @@ async function download(item) {
   st.submitting = true
   try {
     // source: cn=国内镜像源（默认，分钟级）| official=官方源（国际链路，互为备份）
-    const res = await http.post('/images/market/download', { key: item.key, pool: item.pool || '', source: sourceOf(item.key) })
+    const res = await http.post('/images/market/download', { key: item.key, pool: item.pool || '' })
     const taskId = extractTaskId(res.data)
     st.phase = 'downloading'
     st.phaseText = '等待任务调度'
@@ -316,17 +297,6 @@ async function download(item) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-/* 下载源选择行 */
-.mk-source {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 8px 0;
-}
-.mk-source-label {
-  font-size: 12px;
-  color: var(--color-muted-foreground);
 }
 /* 统称市场内的分节头（云镜像 / 安装 ISO 两段） */
 .section-head {
