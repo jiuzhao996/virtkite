@@ -18,7 +18,7 @@ import (
 const defaultLokiURL = "http://127.0.0.1:3100"
 
 // lokiUnreachableMsg Loki 不可达时给前端的统一文案（完整错误进服务端日志）
-const lokiUnreachableMsg = "Loki 未部署或不可达（参考 deploy/README-loki.md 部署）"
+const lokiUnreachableMsg = "Loki 未部署或不可达（需自行部署 Loki 并配置 LOKI_URL 环境变量）"
 
 // defaultSince since 非法/缺省时的回退查询跨度
 const defaultSince = time.Hour
@@ -33,7 +33,7 @@ const lokiQueryBodyLimit = 16 << 20
 
 // LokiHandler 日志查询代理：前端（监控中心）的 LogQL 查询经后端转发给 Loki，
 // 规避跨域，也避免暴露 Loki 地址与端口。Loki 未部署时返回 502 与部署指引，
-// 不影响平台其余功能（日志栈是可选增量，见 deploy/README-loki.md）。
+// 不影响平台其余功能（日志栈是可选增量）。
 type LokiHandler struct {
 	HTTP    *http.Client
 	BaseURL string
@@ -100,7 +100,7 @@ func (h *LokiHandler) getLoki(c *gin.Context, pathAndQuery string, bodyLimit int
 
 	resp, err := h.HTTP.Do(req)
 	if err != nil {
-		// 典型场景：日志栈未部署（docker compose -f deploy/docker-compose.loki.yml 未启动）
+		// 典型场景：日志栈未部署（未安装 Loki，或 LOKI_URL 指向的地址未启动）
 		ErrorWithMessage(c, http.StatusBadGateway, lokiUnreachableMsg,
 			fmt.Errorf("Loki 不可达(%s): %w", h.BaseURL, err))
 		return nil, err

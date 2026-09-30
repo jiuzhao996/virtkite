@@ -3,7 +3,9 @@
 基于 KVM 虚拟化的轻量级私有云管理平台 —— 毕设文档总目录。
 
 > 本文档体系按**毕设/论文叙事**组织，每篇对应论文章节，是论文写作与开题的材料库。
-> 当前阶段：刚定题 / 准备开题（2026-09）。核心平台功能已完成，文档随开发与论文进度滚动更新。
+> 当前阶段：论文撰写 / 答辩准备（2026-09）。核心平台功能已完成。
+> 历史批次流水（devlog）、早期契约与规划存档（archive）、前端侦察笔记与文档站已于 2026-09-30 清理；
+> 仍在生效的工程规范见根目录 `AGENTS.md`，考古请查 git 历史。
 
 ## 文档清单
 
@@ -20,8 +22,7 @@
 | 08 | [08-总结与展望.md](08-总结与展望.md) | 第七章 总结与展望 | 工作总结（含三轮加固与方法论结论）、已落地批次一览、后续工作（跨宿主机/监控增强/混合云等） |
 | 09 | [09-答辩演示脚本.md](09-答辩演示脚本.md) | 答辩辅助 | 演示流程脚本、功能清单、FAQ |
 | 10 | [10-参考项目研究.md](10-参考项目研究.md) | 调研/相关工作 | virt-manager / Cockpit / vmdashboard / KvmDash 调研笔记 |
-| — | [api-contract.md](api-contract.md) | 实现依据（非论文章节） | REST 与 virt 层契约事实源：统一响应与错误文案、路径参数错误码、RBAC 与控制台、输入校验、XML 生成、克隆与 backing、状态常量、已知未处理项 |
-| — | [task-contract.md](task-contract.md) | 实现依据（非论文章节） | 异步任务契约事实源：Task 模型、Manager API、有界入队、panic 兜底、Result 字段（含 `kept_volumes`）、删卷三重守卫、任务 REST |
+| — | `任务书-*.docx` / `任务书-*.md` | 毕设任务书 | 两种格式成对（.docx 交学院、.md 供引用检索） |
 
 ## 阅读路线
 
@@ -37,21 +38,6 @@
 - 统一响应格式：`{"code":200,"message":"success","data":{...}}`。业务失败由 `handler.Fail` 产出 `{code, message}`，中间件拦截由 `middleware.abortJSON` 产出 `{code, message, data:null}`。唯一例外是 websockify 回调 `GET /api/vnc/token/:token`（外部契约，返回 `{"host","port"}` / `{"error"}`）。
 - 除登录、`/metrics`、`/api/health` 与上述 websockify 回调外，所有接口需 `Authorization: Bearer <token>`；浏览器 WebSocket 无法带 Header，改用 `?token=<JWT>`。
 - 前端构建产物 `web/dist` 由后端直接托管（四候选目录探测，缺失时降级为「仅 API」）。
-- 契约优先：`api-contract.md` / `task-contract.md` 是接口与任务系统的事实源，正文（03/05/06）与之冲突时以契约为准，并回改正文。
-- **代码优先于契约**：契约文档本身也可能与实现脱节（曾出现契约与代码同时把「增量克隆」写成 `StorageVolCreateXMLFrom`，而该接口实际不产生 backing file）。因此涉及虚拟化语义的描述，须以 `qemu-img` / `virsh` 的实际输出为最终判据，验收命令写进正文（见 05 §6.7.1、06 §8）。
-- 已知未处理项一律如实保留，禁止在任何文档里表述为已解决；三处清单需保持一致：README「已知未处理项」、`api-contract.md` 同名章节、`06` §9.3。
-- 文档以「大纲 + 要点 + 素材出处」起步，正文按 00 → 02 顺序逐步填充。
-
-## 历史与辅助文档（2026-09-26 索引重建时补录）
-
-| 文档 | 说明 |
-|---|---|
-| `archive/ROADMAP-v2/v3/v3.1/v3.3.md` | 历史批次规划（已全部实施完毕），正文引用为纯文本路径 |
-| `archive/architecture.md` | 早期部署图（内容已并入 03/07 与 deploy/README） |
-| `archive/design-system-MASTER.md` | 早期设计系统模板（已被 frontend-design.md 取代） |
-| `devlog-批次记录.md` | 全部历史批次记录（AGENTS.md 规范的唯一批次流水出处） |
-| `frontend-design.md` | 前端总体规划 v1.0（设计规范/信息架构/路线图，前端单一事实源） |
-| `ui-reference-jumpserver.md` | JumpServer v4 布局侦察笔记（GPL 只看行为，配 img/jms-*.png） |
-| `superpowers/plans/` | 施工计划书存档（ssh-jump / 4a-teaching / frontend-refactor） |
-| `任务书-*.docx/.md` | 毕设任务书（两种格式成对） |
-| `../docs-site/` | 官方文档站（VitePress，小白向从 0 到 1；`npm run docs:dev` 预览） |
+- 早期契约文档已清理：现行接口事实源是 `handler/routes.go`，任务系统事实源是 `service/tasks/`。
+- **实测优先**：涉及虚拟化语义的描述，以 `qemu-img` / `virsh` 的实际输出为最终判据（曾出现文档与代码同时把「增量克隆」写成 `StorageVolCreateXMLFrom`，而该接口实际不产生 backing file），验收命令写进正文（见 05 §6.7.1、06 §8）。
+- 已知未处理项一律如实保留，禁止在任何文档里表述为已解决；两处清单需保持一致：README「已知未处理项」、`06` §9.3。

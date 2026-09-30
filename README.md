@@ -65,7 +65,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **SSH 凭据托管（v3）（AES-256-GCM 加密落库：主密钥运行时注入不落库 + 每条记录随机盐，数据库泄露后凭据不可直接可读；文件管理 / VM 应用安装「使用已保存凭据」后端自行解密消费，明文不出服务端）
 - [x] **VM 文件管理（v3：双通道）**（在线通道：SSH/SFTP 浏览/上传/下载/删除/建目录，管开机机；离线通道：guestmount 只读挂载关机机系统盘，不依赖 VM 内 SSH；运行中 VM 一律拒绝离线挂载防磁盘锁，挂载只读——宁可浏览受限不可损坏磁盘）
 - [x] **计划任务（v3）**（自研五字段 cron 解析（百行纯函数可单测，不引第三方）+ 整分 tick 调度器：定时快照 / mysqldump 数据库备份；启停 / 立即运行 / 执行记录（成功失败与耗时））
-- [x] **Loki 日志栈（v3，可选增量）**（默认裁剪不随栈部署，compose 模板存档 deploy/docker-compose.loki.yml；监控中心提供 LogQL 查询与标签接口——指标 + 日志 + 告警完整可观测性）
+- [x] **Loki 日志栈（v3，可选增量）**（不随主栈部署，需自行部署 Loki 并配置 LOKI_URL；监控中心提供 LogQL 查询与标签接口——指标 + 日志 + 告警完整可观测性）
 - [x] **云镜像市场（v3）**（内置 14 个官方云镜像清单一键提交下载任务（异步、流式落盘、完成自动登记镜像库），镜像管理页第三 tab）
 - [x] **VM 导出/导入（v3）**（tar.gz 全量包 = 域 XML + 系统盘卷；导出 gzip/tar 两级 writer 管道直写响应体，不落临时盘不整载内存；导入失败按副作用逆序清理）
 - [x] **回收站（v3）**（删除是软删——回收站页可视化软删 VM：恢复 / 彻底清除（admin），删错机器的后悔药）
@@ -338,7 +338,7 @@ vmops/
 ├── config/              # 环境变量配置（含 SEED_DIR）
 ├── database/            # GORM 连接与自动迁移（16 张表）
 ├── handler/             # HTTP 处理器，routes.go 按域收口注册
-│                        #   vm/存储/网络/镜像/任务/会话/设置/监控/历史 + v3：docker*/appstore/apps/
+│                        #   vm/存储/网络/镜像/任务/会话/设置/监控/历史 + v3：docker*/apps/
 │                        #   ai/crons/vm_files*/vm_credentials/image_market/vm_export/vm_recycle/
 │                        #   toolbox/cloud_init_templates/announcement/container_terminal/loki
 │                        #   param.go：paramID/parseID，路径参数主键统一解析（禁止直传 GORM）
@@ -353,7 +353,6 @@ vmops/
 │   ├── console/         # 会话注册表（WS 持有/强制断开/VNC 映射/过期清扫）
 │   │                    #   conn.go：写锁串行化的 WS 包装（VM 终端与容器终端共用）
 │   ├── dockerx/         # Docker CLI / Engine API 封装（容器/镜像/网络/卷/compose/统计，数组参数 + 统一超时）
-│   ├── appstore/        # 声明式 compose 应用包（conf/appstore 20 应用 → data/apps，参考 1Panel 设计模式）
 │   ├── apps/            # VM 内 SSH 脚本应用目录（10 个内置，幂等安装）
 │   ├── vmssh/           # SSH 短连接封装（文件管理/VM 应用安装，命令经 ShellQuote）
 │   ├── secretbox/       # AES-256-GCM 凭据加解密（标准库实现，主密钥运行时注入）
@@ -362,15 +361,13 @@ vmops/
 │   ├── metrics/         # Prometheus 内建采集
 │   ├── setting/         # 系统设置 KV（白名单校验 + 内存缓存）
 │   └── vnc/             # VNC token 存储
-├── conf/appstore/       # 应用商店内置应用包（data.yml 表单定义 + docker-compose.yml，磁盘可增改无需重编译）
-├── scripts/             # init-db.sql / smoke.sh（E2E 回归）/ start-novnc.sh
+├── scripts/             # init-db.sql（手工建库）/ smoke.sh（E2E 回归）/ credential-rekey、purge-task-secrets（密钥运维，独立 main 包）
 ├── deploy/              # prometheus.yml / alerts.yml / alertmanager.yml / grafana 看板与 provisioning / docker-compose
 ├── web/                 # Vue3 + Vite 前端（26 个视图：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
 │                        #   Host/Image(三 tab 含镜像市场)/Storage/Network/Task/Audit+SessionList/Settings/UserList/Profile/Login）
 │   ├── src/utils/format.js  # 状态文案/时间/尺寸/错误提取统一实现（收敛 10 余处重复）
 │   └── dist/            # 构建产物，由后端托管（路由懒加载 + manualChunks：首屏 −50%）
-├── docs-site/             # 官方文档站（VitePress，小白向从 0 到 1）
-└── docs/                # 设计 / 开发文档（含 api-contract / task-contract / ROADMAP v2/v3）
+└── docs/                # 毕设文档（00–10 章节 / 任务书 / 答辩演示与排练纪要）
 ```
 
 ## 文档
@@ -388,7 +385,6 @@ vmops/
 - [08-总结与展望.md](docs/08-总结与展望.md) — 工作总结、Alertmanager/混合云等后续工作
 - [09-答辩演示脚本.md](docs/09-答辩演示脚本.md) — 演示流程、功能清单、FAQ
 - [10-参考项目研究.md](docs/10-参考项目研究.md) — virt-manager / Cockpit / vmdashboard / KvmDash / JumpServer 调研笔记
-- [api-contract.md](docs/api-contract.md) / [task-contract.md](docs/task-contract.md) — 后端契约（事实源）
 
 ## 已知未处理项（如实记录，勿视为已解决）
 

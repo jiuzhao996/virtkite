@@ -108,7 +108,7 @@ export function taskStatusTag(status) {
   return 'info'
 }
 
-/** 任务类型 → 中文（后端 tasks.type，见 docs/task-contract.md）。 */
+/** 任务类型 → 中文（后端 tasks.type，契约见 service/tasks/vm_tasks.go）。 */
 const TASK_TYPE_TEXT = {
   create_vm: '创建虚拟机',
   delete_vm: '删除虚拟机',

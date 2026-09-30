@@ -153,7 +153,7 @@ func TestTasksContainsCJK(t *testing.T) {
 // TestTaskContractConstants 把对外契约里的字面量钉死。
 //
 // 风险点：这些常量不是内部实现细节 —— tasks.status 的四个取值同时被前端任务列表的
-// 状态色映射、docs/task-contract.md 与 main.go 的启动收敛逻辑（把残留 pending/running
+// 状态色映射、任务契约（vm_tasks.go 的 executor 注册表）与 main.go 的启动收敛逻辑（把残留 pending/running
 // 置 failed）依赖；错误列长度 500 与 DB 列定义 size:500 必须对齐。
 // 手滑改一个字母不会有编译错误，只会让前端静默显示未知状态，所以用测试兜住。
 func TestTaskContractConstants(t *testing.T) {
@@ -435,7 +435,7 @@ func TestMarkFailedRecoversFromNilDB(t *testing.T) {
 //
 // 风险点：run() 里按 task.Type 查表，查不到就把任务置 failed（「未知任务类型」）。
 // 少注册一个类型 = 对应功能整条链路静默失效（前端提交成功但任务永远失败），
-// 因此把 docs/task-contract.md 约定的 5 个类型钉在测试里。
+// 因此把任务契约约定的 6 个类型钉在测试里。
 func TestRegisterVMTasks(t *testing.T) {
 	m := &Manager{queue: make(chan uint, 1), executors: map[string]Executor{}}
 	RegisterVMTasks(m)
@@ -459,7 +459,7 @@ func TestRegisterVMTasks(t *testing.T) {
 	total := len(m.executors)
 	m.mu.RUnlock()
 	if total != len(want) {
-		t.Errorf("注册数量与契约不符：期望 %d 个（%v），实际 %d 个（若新增了任务类型请同步本用例与 docs/task-contract.md）",
+		t.Errorf("注册数量与契约不符：期望 %d 个（%v），实际 %d 个（若新增了任务类型请同步本用例）",
 			len(want), want, total)
 	}
 

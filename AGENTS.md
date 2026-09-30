@@ -112,6 +112,6 @@
 
 已核实**解决**（勿再列为待办）：网络 XML 直定义两路由（2026-09-26 砍除）、登录限流（`handler/auth.go` loginLimiter）、CORS release 禁 `*`（main.go 启动校验）、SSH 主机密钥 TOFU（全仓库 InsecureIgnoreHostKey 归零）、孤儿卷清理闭环、golangci-lint 已装、ImportVMs errors 数组前端已消费。
 
-## 历史批次记录（已外迁）
+## 历史批次记录（已清理）
 
-P0 稳定性 → P1 安全 → P2 正确性 → P3/P4 → UX → 监控栈 → 多宿主机砍除 → 冗余清理 → RBAC → 资产授权 → Skills 审计 → 批 B/C → v3.3 → v3.4 → v3.5 → 胰腺癌级审计 → IA 精简，全部批次记录见 **`docs/devlog-批次记录.md`**。排障/考古时按需查阅；本文件只保留现行规范，勿再往这里追加批次流水。
+P0 稳定性 → P1 安全 → P2 正确性 → P3/P4 → UX → 监控栈 → 多宿主机砍除 → 冗余清理 → RBAC → 资产授权 → Skills 审计 → 批 B/C → v3.3 → v3.4 → v3.5 → 胰腺癌级审计 → IA 精简。批次流水与踩坑记录（devlog、archive 规划与契约存档、docs-site 文档站）已于 2026-09-30 按用户拍板清理；仍在生效的教训均已固化为本文件的「后端开发标准」「前端开发标准」，考古请查 git 历史。

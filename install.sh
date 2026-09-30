@@ -106,6 +106,5 @@ echo "  初始口令   : ${ADMIN_PASS}（首次登录后请立即修改）"
 echo "  SSH 跳板   : ssh admin@${HOST_IP:-127.0.0.1} -p 2222"
 echo
 echo "  下一步     : 浏览器登录 → 右上角头像改密 → 创建第一台虚拟机"
-echo "  文档       : docs-site/（npm run docs:dev 本地预览）"
 echo "  排障       : tail -f vmops.log ｜ docker logs vmops-mysql"
 echo -e "${GREEN}════════════════════════════════════════════════${OFF}"

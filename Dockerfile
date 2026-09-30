@@ -36,9 +36,9 @@ ENV TZ=Asia/Shanghai
 
 # 仅复制编译产物与静态资源。WORKDIR 与目录布局须对齐 main.go 的 locateWebRoot 探测顺序
 # （<exeDir>/web/dist → <exeDir>/static → <cwd>/web/dist → <cwd>/static）：
-# 二进制在 /app，故 /app/web/dist 命中第一候选，/app/static 是第二候选兜底。
+# 二进制在 /app，故 /app/web/dist 命中第一候选。static/ 候选目录已在结构重规划时删除，
+# 此处不再 COPY static（旧 `COPY static ./static` 会因构建上下文缺该目录而整个构建失败）。
 COPY --from=builder /build/vmops ./
-COPY static ./static
 # 前端构建产物（需先在宿主机执行 `cd web && npm run build`）；
 # 未构建时这里是空目录，main.go 会退到 static 或降级为「仅 API」模式，不会退出进程
 COPY --from=builder /build/web/dist ./web/dist

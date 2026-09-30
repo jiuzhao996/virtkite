@@ -66,7 +66,7 @@ func menuPage(items []menuVM, page int) ([]menuVM, int) {
 	return items[lo:hi], pages
 }
 
-// renderMenu 渲染资产列表（koko 形态对标，见 docs/koko-menu-reference.md）：
+// renderMenu 渲染资产列表（koko 形态对标）：
 // 一行提示 + 表格（ID/名称/地址）+ 页脚信息条；搜索词高亮过滤在 loadMenuAssets 之外由
 // server 传入 keyword 后走 filterByKeyword。终端对齐三要素（排练教训）：
 //  1. 列宽固定（显示列口径，CJK=2），行内容补齐/截断；
