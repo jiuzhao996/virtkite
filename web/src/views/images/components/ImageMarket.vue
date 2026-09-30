@@ -86,10 +86,10 @@ const props = defineProps({ embedded: { type: Boolean, default: false } })
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download, CircleCheck } from '@element-plus/icons-vue'
-import http, { api } from '../api'
-import PageHead from '../components/PageHead.vue'
-import { errMsg, clampPct } from '../utils/format'
-import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
+import http, { api } from '../../../api'
+import PageHead from '../../../components/PageHead.vue'
+import { errMsg, clampPct } from '../../../utils/format'
+import { pollTask, extractTaskId, taskErrorMessage } from '../../../utils/task.js'
 
 const items = ref([])
 const defaultPool = ref('')

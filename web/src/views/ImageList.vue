@@ -217,7 +217,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu, Search } from '@element-plus/icons-vue'
-import ImageMarket from './ImageMarket.vue'
+import ImageMarket from './images/components/ImageMarket.vue'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 import { api } from '../api'

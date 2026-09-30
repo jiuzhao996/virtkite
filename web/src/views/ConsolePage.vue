@@ -931,7 +931,7 @@ onUnmounted(() => {
   margin-left: auto;
   font-size: 0.68rem;
   color: #7c4a03;
-  background: #f0b90b;
+  background: var(--color-serial-gold);
   padding: 1px 6px;
   border-radius: var(--radius-md);
   font-weight: 600;
@@ -1010,15 +1010,15 @@ onUnmounted(() => {
 .card-badge.ok { color: #166534; background: #dcfce7; }
 .card-badge.warn { color: #92400e; background: #fef3c7; }
 .card.serial {
-  border: 1.5px solid #f0b90b;
+  border: 1.5px solid var(--color-serial-gold);
   background: linear-gradient(180deg, #fffdf5, #ffffff);
 }
 .card.serial:hover {
-  border-color: #f0b90b;
+  border-color: var(--color-serial-gold);
   box-shadow: 0 10px 24px rgba(240, 185, 11, 0.22);
 }
 /* 串口卡沿用金色主题，图标跟着卡片走 */
-.card.serial .card-icon { color: #f0b90b; }
+.card.serial .card-icon { color: var(--color-serial-gold); }
 .card-badge.gold { color: #7c4a03; background: #fde68a; }
 
 /* ---------- VNC 视图（浅色，无背景图） ---------- */
@@ -1213,7 +1213,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #f0b90b;
+  color: var(--color-serial-gold);
   border: 2px solid rgba(240, 185, 11, 0.5);
   border-radius: 50%;
   background: rgba(8, 14, 24, 0.6);
@@ -1243,7 +1243,7 @@ onUnmounted(() => {
   padding: 0 4px;
   border-radius: var(--radius-sm);
   background: rgba(240, 185, 11, 0.12);
-  color: #f0b90b;
+  color: var(--color-serial-gold);
   font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
   font-size: 0.75rem;
 }
