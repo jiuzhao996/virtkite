@@ -34,7 +34,9 @@ type marketItem struct {
 //   - Fedora：OSList 只有 "Fedora 40" 一个 Fedora 项（virtio 设备模型跨版本一致），
 //     镜像给最新稳定版（44），os_name 标到最近可选项；
 //   - 银河麒麟/openKylin：官方云镜像直链需注册或网络不可达（HEAD 实测），暂不入市场；
-//     可经 ISO 安装镜像方式安装（OSList 已有 Kylin V10 条目）。
+//     可经 ISO 安装镜像方式安装（OSList 已有 Kylin V10 条目）；
+//   - openSUSE：download.opensuse.org 对国内 IP 有 Cerberus 反爬挑战——HEAD 200 但 GET
+//     落盘的是 5KB HTML 假镜像（真实下载实证），不能只信 HEAD，暂不入市场。
 // marketCatalog 内置官方云镜像清单（只留最新稳定版；下载时可选国内源/官方源双源）。
 // 国内源（默认）：南京大学 mirror.nju.edu.cn（Ubuntu/Debian/Rocky/Alma 全系 200 实测，
 // 国内下载分钟级）；官方源为备选（国际链路小时级）。URL 均 HEAD 实测 200（2026-09-29）。
@@ -82,14 +84,6 @@ var marketCatalog = []marketItem{
 		Desc:     "Fedora Cloud Base 44 官方云镜像（qcow2，预装 cloud-init；无国内镜像源）",
 	},
 	{
-		Key: "opensuse-leap-16", Name: "openSUSE Leap 16", OSName: "openSUSE Leap 16",
-		URL:      "https://download.opensuse.org/distribution/leap/16.0/appliances/Leap-16.0-Minimal-VM.x86_64-Cloud.qcow2",
-		SizeHint: 337845760,
-		Official: "https://download.opensuse.org/distribution/leap/16.0/appliances/",
-		CNURL:    "https://download.opensuse.org/distribution/leap/16.0/appliances/Leap-16.0-Minimal-VM.x86_64-Cloud.qcow2",
-		Desc:     "openSUSE Leap 16 Minimal-VM 官方云镜像（qcow2，最小化系统；官方源国内可达）",
-	},
-	{
 		Key: "archlinux", Name: "Arch Linux", OSName: "Arch Linux",
 		URL:      "https://mirrors.tuna.tsinghua.edu.cn/archlinux/images/latest/Arch-Linux-x86_64-cloudimg.qcow2",
 		SizeHint: 314572800,
@@ -111,7 +105,7 @@ func NewImageMarketHandler(db *gorm.DB, taskMgr *tasks.Manager) *ImageMarketHand
 	return &ImageMarketHandler{DB: db, Virt: virt.New(), Tasks: taskMgr}
 }
 
-// marketItemByKey 按 key 查清单（14 项线性扫即可，无需索引）。
+// marketItemByKey 按 key 查清单（6 项线性扫即可，无需索引）。
 func marketItemByKey(key string) (marketItem, bool) {
 	for _, it := range marketCatalog {
 		if it.Key == key {
