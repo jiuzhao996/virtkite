@@ -68,14 +68,6 @@ var marketCatalog = []marketItem{
 		Desc:     "Rocky Linux 10 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
 	},
 	{
-		Key: "almalinux-10", Name: "AlmaLinux 10", OSName: "AlmaLinux 10",
-		URL:      "https://mirror.nju.edu.cn/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
-		SizeHint: 589299712,
-		Official: "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
-		CNURL:    "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-latest.x86_64.qcow2",
-		Desc:     "AlmaLinux 10 GenericCloud 官方云镜像（qcow2，预装 cloud-init）",
-	},
-	{
 		Key: "fedora-cloud", Name: "Fedora Cloud 44", OSName: "Fedora 40",
 		URL:      "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2",
 		SizeHint: 583729152,

@@ -97,7 +97,7 @@
             :closable="false"
             show-icon
             style="margin-bottom: 12px"
-            title="ISO 用于创建 VM 的「本地安装介质 (ISO)」方式：安装系统时从激活存储池选择 ISO 挂载光驱。"
+            title="ISO 用于创建 VM 的「本地安装介质 (ISO)」方式：安装系统时从激活存储池选择 ISO 挂载光驱。可到「ISO 市场」tab 一键下载官方安装镜像。"
           />
           <el-table v-loading="isoLoading" :data="isoItems" stripe border style="width: 100%">
             <template #empty><el-empty description="激活存储池中未发现 .iso 卷" :image-size="72" /></template>
@@ -123,6 +123,10 @@
       <!-- Tab 3 镜像市场：官方云镜像一键下载（下载完成自动登记进上方镜像库） -->
       <el-tab-pane label="镜像市场" name="market" lazy>
         <ImageMarket embedded />
+      </el-tab-pane>
+      <!-- Tab 4 ISO 市场：官方安装 ISO 一键下载（下载完成入池，出现在上方 ISO 安装镜像 tab） -->
+      <el-tab-pane label="ISO 市场" name="iso-market" lazy>
+        <ImageIsoMarket embedded />
       </el-tab-pane>
     </el-tabs>
 
@@ -218,6 +222,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu, Search } from '@element-plus/icons-vue'
 import ImageMarket from './images/components/ImageMarket.vue'
+import ImageIsoMarket from './images/components/ImageIsoMarket.vue'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 import { api } from '../api'

@@ -294,6 +294,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		// 云镜像市场（v3 批次 H：下载仅管理员，handler 内 roleIsAdmin 收口）
 		images.GET("/market", imageMarketHandler.ListMarket)
 		images.POST("/market/download", imageMarketHandler.Download)
+		images.GET("/market/iso", imageMarketHandler.ListMarketISO)
+		images.POST("/market/iso/download", imageMarketHandler.DownloadISO)
 		images.POST("/:id/clone", imageHandler.CloneVM)
 		images.PUT("/:id/template", imageHandler.SetImageTemplate)
 		images.DELETE("/:id", imageHandler.DeleteImage)
