@@ -13,14 +13,16 @@
 **项目级（`vmops/.opencode/skills/`）**
 - `vmops-libvirt`：**操作 libvirt 相关代码必读必循**。固化 `service/virt` 封装约定（连接获取/错误包装/状态映射/flag 常量），含 go-libvirt API 速查与陷阱。
 
-**全局 Go 技能（`~/.agents/skills/golang-*`，共 46 个，samber/cc-skills-golang）**
+**全局 Go 技能（`~/.agents/skills/golang-*`，现 21 个，samber/cc-skills-golang）**
 - 写/改任何 Go 代码时自动触发：`golang-code-style`、`golang-error-handling`、`golang-concurrency`、`golang-context`、`golang-performance`、`golang-observability`、`golang-testing` 等。涉及对应领域时应主动加载并遵循。
+- 2026-10-01 按用户拍板删减 25 个与本项目无关的（grpc/graphql/swagger/wire/dig/fx/samber 工具族/cobra/viper/cli/gopls/benchmark/how-to 等，原 46 → 21）。
 
 **前端 Vue 技能（`~/.agents/skills/vue-best-practices`、`vue-router-best-practices`、`vite`，antfu 出品）**
 - 写任何 Vue 组件/页面/路由时加载 `vue-best-practices`：Composition API + script setup、组件拆分、props/emits 数据流、composable 抽取。本项目默认 Vue3 组合式 API。
 
-**Element Plus 组件技能（`~/.agents/skills/element-plus-*`，74 个组件）**
+**Element Plus 组件技能（`~/.agents/skills/element-plus-*`，现 47 个组件）**
 - 用到 el-button/el-table/el-form 等组件时，加载对应 `element-plus-<组件名>` 技能查准确 API（props/events/slots）。禁止凭记忆瞎写组件属性。
+- 2026-10-01 删减 27 个全仓库零使用的组件技能（cascader/tree/transfer/carousel/tour/watermark/slider/rate/color-picker 等，原 74 → 47）；timeline/skeleton/avatar/space/image/backtop/autocomplete 因告警中心与视觉改版可能用到而保留。
 
 **前端规范（`~/.agents/skills/ui-ux-pro-max`）**
 - 美化/新增前端页面时使用：B 端设计规范（8px 栅格、统一配色、去 AI 味），适配 Vue3 + Element Plus。
@@ -89,7 +91,7 @@
 
 ## Skills 适配清单（先读这里再加载 skill，豁免条款具有项目级效力）
 
-**用法**：写代码前按本清单加载对应 skill；标记「豁免」的条款以本清单为准，不视为违规。本清单是项目级决策记录，skills 本体（全局共享）不修改不删除——保留反方条款作为选型论证的依据。
+**用法**：写代码前按本清单加载对应 skill；标记「豁免」的条款以本清单为准，不视为违规。本清单是项目级决策记录。原「skills 本体不修改不删除」条款已于 2026-10-01 按用户拍板作废：52 个无关 skill 已从 `~/.agents/skills/` 物理删除（Golang 不适用 25 个 + element-plus 零使用组件 27 个），目录从 131 收敛到 79；「不适用」清单随之消失，选型论证见 git 历史。
 
 **豁免条款（已论证的项目决策，覆盖 skill 原文）**：
 1. `golang-database` 的「用 sqlx/pgx、禁用 ORM」→ **vmops 钉死 GORM**。理由：管理平台 80% 数据操作是标准 CRUD，GORM 开发效率是主要矛盾；其"SQL 不可见"短板用 paramID 参数化收口 + 代码审查补偿。换库=全量重写零收益。
@@ -97,8 +99,6 @@
 3. `golang-database` 的「禁用软删除类的魔法」→ **资产表（vms/hosts/images/users）保留 gorm.DeletedAt 软删**，过程表（tasks/audit_logs/console_sessions）不软删——边界已按"资产可恢复、过程只增不改"划清。
 
 **适用（写/审对应领域代码前加载）**：golang-code-style、golang-error-handling、golang-naming、golang-concurrency（worker/WS goroutine）、golang-context、golang-security（注入面）、golang-safety、golang-observability、golang-testing、golang-refactoring、golang-structs-interfaces、golang-design-patterns、golang-performance、golang-database（除上述 3 条豁免，索引/NULL/注入/事务条款照用）、vue-best-practices、vue-router-best-practices、vite、element-plus-<组件名>（用到即查，禁凭记忆）、ui-ux-pro-max（UI 批次后审计）。
-
-**不适用（本场景用不上，勿加载）**：golang-grpc/grpcio/graphql/swagger（无此类接口）、golang-google-wire/uber-dig/uber-fx/samber-do（依赖注入框架——项目手动构造注入）、golang-spf13-cobra/viper（CLI/配置框架——项目 gin + env）、golang-samber-lo/mo/ro/hot（工具库——项目未引入）、golang-samber-oops（项目错误约定是 fmt.Errorf+%w+中文文案，非结构化错误库）、golang-continuous-integration（无 CI）、golang-cli/gopls/pkg-go-dev/stay-updated（工具/资讯类，非代码规范）、golang-benchmark（性能优化批次才用）、golang-how-to/popular-libraries（入门/选型资讯）、golang-troubleshooting（排障时按需）、golang-modernize（大版本升级时用）、golang-documentation（docs/ 体系已自成约定）。
 
 
 ## 当前有效遗留清单（2026-09-26 逐项核实代码后收敛；勿在文档中宣称已解决）

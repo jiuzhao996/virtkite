@@ -1,0 +1,25 @@
+# Alertmanager 配置模板：真实配置由 deploy/gen-monitor-conf.sh 从 .env 注入令牌生成
+# （deploy/alertmanager.yml 已 gitignore，杜绝 token 入库）。手工改配置请改本模板再重新生成。
+# 告警经 default receiver 推回平台告警网关（POST /api/monitor/webhook，去重入库告警历史，
+# 监控中心可查）。生产如需钉钉/飞书/企业微信机器人，在 default receiver 下再并一个 webhook_config。
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ["alertname"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: default
+
+receivers:
+  - name: default
+    webhook_configs:
+      # 平台告警网关：推送回 vmops 入库（监控中心可查告警历史）。
+      # host.docker.internal 由 compose 的 extra_hosts(host-gateway) 解析到宿主机；
+      # ?token= 由 gen 脚本从 .env 的 ALERT_WEBHOOK_TOKEN 注入，与平台侧校验保持一致。
+      - url: "http://host.docker.internal:8080/api/monitor/webhook?token=${ALERT_WEBHOOK_TOKEN}"
+        send_resolved: true
+    # 生产示例（钉钉群机器人，取消注释并填 key）：
+    # - url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_KEY"
+    #   send_resolved: true

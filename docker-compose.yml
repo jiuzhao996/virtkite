@@ -65,12 +65,11 @@ services:
       # Prometheus file_sd 目标文件（服务发现闭环）：与 prometheus 服务的挂载指向同一宿主机目录，
       # 平台每分钟把 running 且有 IP 的 VM 写入该文件（宿主机原生直跑时改在 .env 配置 FILE_SD_PATH）
       FILE_SD_PATH: /app/deploy/file_sd/targets.json
-      # 告警网关令牌（可选）：设置后需同步在 deploy/alertmanager.yml 的 webhook url 追加 ?token=<值>
+      # 告警网关令牌：真实 alertmanager.yml 由 deploy/gen-monitor-conf.sh 从本令牌生成（勿手写 deploy/*.yml，令牌不入库）
       # ALERT_WEBHOOK_TOKEN: change-me
     ports:
       - "8080:8080"
     volumes:
-      - ./static:/app/static
       # file_sd 目标文件：与 prometheus 服务挂载同一宿主机目录（见 prometheus.volumes）
       - ./deploy/file_sd:/app/deploy/file_sd
       # 直通宿主机 libvirtd（监控与纳管需真实 KVM；无 KVM 的机器请注释掉，指标将为空但服务可启动）

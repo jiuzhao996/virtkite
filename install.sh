@@ -62,6 +62,8 @@ EOF
 fi
 
 # ── 3. 基础设施容器（compose 按 .env 注入口令；已存在则 start 免重建）──────
+# 监控真实配置从 .env 令牌生成（prometheus.yml/alertmanager.yml 已 gitignore，令牌永不入库）
+./deploy/gen-monitor-conf.sh || fatal "监控配置生成失败（.env 缺 METRICS_TOKEN / ALERT_WEBHOOK_TOKEN？）"
 info "拉起基础设施容器（MySQL / Prometheus / Grafana / Alertmanager）…"
 for c in vmops-mysql vmops-prometheus vmops-grafana vmops-alertmanager; do
   if docker ps -a --format '{{.Names}}' | grep -qx "$c"; then

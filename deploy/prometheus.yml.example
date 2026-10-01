@@ -1,4 +1,5 @@
-# Prometheus 抓取配置：vmops 内建 exporter（GET /metrics，15s 间隔）。
+# Prometheus 抓取配置模板：真实配置由 deploy/gen-monitor-conf.sh 从 .env 注入令牌生成
+# （deploy/prometheus.yml 已 gitignore，杜绝 token 入库）。手工改配置请改本模板再重新生成。
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -14,18 +15,15 @@ alerting:
 
 scrape_configs:
   - job_name: vmops
+    # /metrics 抓取令牌：与 .env 的 METRICS_TOKEN 一致（gen 脚本注入；令牌不设置则脚本拒绝生成）
     authorization:
-      credentials: ba39ded15a584d4ac578cabf08143a6c
+      credentials: ${METRICS_TOKEN}
     static_configs:
       # host.docker.internal 经 compose 的 extra_hosts(host-gateway) 解析到宿主机网关，
       # 兼容两种形态：app 原生直跑（当前推荐形态）与 app 容器（端口已映射宿主机 8080）。
       # 若要切回纯容器形态的直连，可改回 targets: ["app:8080"]。
       - targets: ["host.docker.internal:8080"]
     metrics_path: /metrics
-    # 平台侧设置 METRICS_TOKEN 环境变量后，/metrics 要求 Bearer 认证：
-    # 取消下行注释并保持两侧取值一致即可；未设置 METRICS_TOKEN 时必须保持注释状态。
-    # authorization:
-    #   credentials: <METRICS_TOKEN 的值>
     # file_sd 动态抓取目标（服务发现闭环）：平台侧 FILE_SD_PATH 指向本文件时由平台自动生成，
     # VM 内 node_exporter（:9100）与平台自身 exporter 都从该文件下发，无需改本配置。
     file_sd_configs:

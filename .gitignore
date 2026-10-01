@@ -45,6 +45,10 @@ web/dist/
 # TLS 私钥与证书（kpyun.fun）——绝不入库
 deploy/tls/
 
+# 监控真实配置（含 .env 注入的令牌，由 deploy/gen-monitor-conf.sh 从 .example 模板生成）
+deploy/prometheus.yml
+deploy/alertmanager.yml
+
 gui-test-screenshots/
 .~*.docx
 

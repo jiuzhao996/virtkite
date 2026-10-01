@@ -74,9 +74,10 @@ docker compose up -d   # 6 个容器：mysql + app + websockify + prometheus + a
 
 | 文件 | 用途 |
 |---|---|
-| prometheus.yml | 抓取配置 + 告警规则引用 + alerting 对接 |
-| alerts.yml | 5 条告警规则（VMRunningDrop/HostCpuHigh/PoolSpaceLow/TaskBacklog/VMCpuHot，全中文 summary） |
-| alertmanager.yml | 告警分组/路由（占位 webhook + 平台告警网关 vmops-webhook，见下「告警网关」） |
+| prometheus.yml.example | 抓取配置模板（真实 prometheus.yml 由 gen 脚本注入令牌生成，不入库） |
+| gen-monitor-conf.sh | 从 .env 提取令牌生成 prometheus.yml / alertmanager.yml（产物已 gitignore） |
+| alerts.yml | 9 条告警规则（VMRunningDrop/HostCpuHigh/PoolSpaceLow/TaskBacklog/VMCpuHot/VmopsDown/HostMemHigh/VMMemHigh/VMDiskIOHigh，全中文 summary） |
+| alertmanager.yml.example | 告警分组/路由模板（default receiver 推平台告警网关 vmops-webhook，见下「告警网关」） |
 | grafana-datasource.yml | 预置 Prometheus 数据源 |
 | grafana-dashboard-provider.yml | 看板文件 provider |
 | grafana-dashboard.json | 平台概览看板（uid: vmops-overview，9 面板） |
@@ -109,7 +110,7 @@ docker compose up -d   # 6 个容器：mysql + app + websockify + prometheus + a
 
 - host.docker.internal 由 compose alertmanager 服务的 `extra_hosts: host-gateway` 解析。
 - 平台设置 `ALERT_WEBHOOK_TOKEN` 后要求 `?token=<值>` 或 `Authorization: Bearer <值>`，
-  需同步在 alertmanager.yml 的 webhook url 后追加 `?token=<值>`；默认空=公开接收。
+  令牌经 deploy/gen-monitor-conf.sh 从 .env 的 ALERT_WEBHOOK_TOKEN 注入（两侧自动一致，改值后重跑脚本并重启容器）。
 - 除鉴权失败/请求体非法外网关恒返回 200（Alertmanager 对非 2xx 会按策略重试轰炸），
   处理失败只记服务端日志。
 
