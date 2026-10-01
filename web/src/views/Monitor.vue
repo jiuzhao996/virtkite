@@ -5,57 +5,65 @@
     <PageHead v-if="!embedded" title="监控中心">
       <template #subtitle>
         <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
-        <p class="page-desc">Alertmanager 实时告警 + Grafana 可视化看板（Prometheus 指标 30s 刷新）</p>
+        <p class="page-desc">Prometheus 原生看板 + Alertmanager 实时告警（指标 15s 采集）</p>
       </template>
       <el-button :icon="Refresh" :loading="alertsLoading" @click="loadAlerts">刷新告警</el-button>
     </PageHead>
 
-    <!-- Grafana 看板（kiosk 模式嵌入；地址跟随当前访问主机，兼容宿主机直跑与 docker compose 两种形态）。
-         看板是本页视觉主体放首屏，告警作为状态摘要放下方（有告警时卡片标红提示）。 -->
-    <el-card shadow="never" class="grafana-card">
+    <!-- 原生看板（Grafana 退役批次 2026-10）：ECharts 直连平台代理的 Prometheus 历史，
+         与详情页/仪表盘同一套图表语言，不再有 iframe 高度硬编码与 3MB 前端重载 -->
+    <el-card shadow="never" class="alert-card">
       <template #header>
         <div class="alert-head">
           <el-radio-group v-model="board">
             <el-radio-button value="overview">宿主机</el-radio-button>
             <el-radio-button value="vms">虚拟机</el-radio-button>
           </el-radio-group>
-          <el-link type="primary" :href="grafanaFull" target="_blank">在新窗口打开 Grafana</el-link>
+          <div class="alert-head-actions">
+            <el-select v-model="minutes" style="width: 120px" @change="reloadBoard">
+              <el-option label="最近 30 分钟" :value="30" />
+              <el-option label="最近 1 小时" :value="60" />
+              <el-option label="最近 3 小时" :value="180" />
+              <el-option label="最近 6 小时" :value="360" />
+            </el-select>
+            <el-button :icon="Refresh" :loading="boardLoading" @click="reloadBoard">刷新</el-button>
+          </div>
         </div>
       </template>
-      <div v-if="grafanaError" class="grafana-fallback">
-        <el-empty description="Grafana 看板加载失败（需在 docker compose 中启动 grafana 服务并映射 3000 端口）" :image-size="72" />
+
+      <!-- 概览：宿主机 CPU/内存 + 存储池使用率 -->
+      <div v-show="board === 'overview'" class="chart-grid">
+        <div class="chart-cell">
+          <div class="chart-title">宿主机资源（CPU / 内存占用 %）</div>
+          <div v-show="hostSource === 'unavailable'" class="chart-empty">
+            <el-empty description="Prometheus 历史不可用（监控栈未启动或暂无采样）" :image-size="56" />
+          </div>
+          <div v-show="hostSource !== 'unavailable'" ref="hostChartRef" class="chart-box" />
+        </div>
+        <div class="chart-cell">
+          <div class="chart-title">存储池使用率（%）</div>
+          <div v-if="poolSource === 'unavailable' || !poolNames.length" class="chart-empty">
+            <el-empty :description="poolSource === 'unavailable' ? 'Prometheus 历史不可用' : '暂无存储池采样数据'" :image-size="56" />
+          </div>
+          <div v-show="poolSource !== 'unavailable' && poolNames.length" ref="poolChartRef" class="chart-box" />
+        </div>
       </div>
-      <div v-else class="grafana-wrap">
-        <!-- iframe 首次加载要拉完整 Grafana 前端（公网 gzip 后约 3MB，走云 nginx → frp 隧道），给个占位避免白/黑屏无反馈 -->
-        <div v-if="frameStuck[board]" class="grafana-loading">
-          <el-icon><WarningFilled /></el-icon>
-          <span>Grafana 未连接：请确认监控栈已启动（docker compose up -d），或稍后点「重试」</span>
-          <el-button type="primary" :icon="Refresh" @click="retryFrame">重试</el-button>
+
+      <!-- 虚拟机：六指标小图（与原 vmops-vms 看板对齐：CPU/内存/磁盘读写/网络收发） -->
+      <div v-show="board === 'vms'">
+        <div class="vm-picker">
+          <el-select v-model="selectedVM" filterable placeholder="选择虚拟机" style="width: 260px">
+            <el-option v-for="name in vmNames" :key="name" :label="name" :value="name" />
+          </el-select>
+          <span v-if="vmSource === 'unavailable'" class="chart-hint">Prometheus 历史不可用（监控栈未启动或暂无采样）</span>
+          <span v-else-if="!vmNames.length" class="chart-hint">暂无虚拟机采样数据（关机 VM 不产生指标）</span>
         </div>
-        <div v-else-if="!frameReady[board]" class="grafana-loading">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          <span>看板加载中（首次约 5-10 秒）…</span>
+        <div v-if="selectedVM && vmSource !== 'unavailable'" class="chart-grid six">
+          <div v-for="m in VM_METRICS" :key="m.key" class="chart-cell">
+            <div class="chart-title">{{ m.label }}</div>
+            <div :ref="(el) => (metricChartRefs[m.key] = el)" class="chart-box small" />
+          </div>
         </div>
-        <!-- 窗口过窄时 Grafana 网格重排、内容变高，静态 iframe 高度会重新出现底部截断，提示改用新窗口 -->
-        <div v-if="narrowWindow" class="grafana-loading narrow-hint">
-          <el-icon><InfoFilled /></el-icon>
-          <span>当前窗口过窄，看板可能显示不全——建议点击右上角「在新窗口打开 Grafana」查看完整看板</span>
-        </div>
-        <!-- 两个看板 iframe 常驻：首次激活时才挂载（v-if 过 mountedBoards），之后只 v-show 切换显隐、绝不销毁。
-             原实现 :key="board" 每次切换都重建 iframe → 每次都重拉一遍约 3MB 的 Grafana 前端 JS；
-             常驻后每个看板只承受一次首载成本，切换瞬时完成。两个 uid 已含文件名哈希的静态资源有 1 年强缓存，
-             重复加载纯属浪费带宽。 -->
-        <template v-for="b in ['overview', 'vms']" :key="b">
-          <iframe
-            v-if="mountedBoards.has(b)"
-            v-show="board === b"
-            :src="boardEmbed(b)"
-            class="grafana-frame"
-            :style="{ height: boardHeight(b) + 'px' }"
-            frameborder="0"
-            @load="onFrameLoad(b)"
-          ></iframe>
-        </template>
       </div>
     </el-card>
 
@@ -79,7 +87,7 @@
         :closable="false"
         show-icon
         title="监控栈未连接"
-        description="无法访问 Alertmanager（典型原因：docker compose 未启动监控栈）。执行 docker compose up -d 启动 Prometheus / Alertmanager / Grafana 后刷新本页。"
+        description="无法访问 Alertmanager（典型原因：docker compose 未启动监控栈）。执行 docker compose up -d 启动 Prometheus / Alertmanager 后刷新本页。"
       />
 
       <el-table v-else-if="firingCount" :data="alerts" v-loading="alertsLoading" stripe>
@@ -155,9 +163,9 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="实例" width="150">
+        <el-table-column label="虚拟机" width="140">
           <template #default="{ row }">
-            <span class="mono">{{ (row.labels && row.labels.instance) || '—' }}</span>
+            <span class="mono">{{ (row.labels && row.labels.vm) || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="开始时间" width="170">
@@ -258,17 +266,18 @@
       </p>
     </el-card>
 
-    <!-- 日志查询（Loki）：后端 /api/monitor/loki/query 代理 Loki query_range 并原样透传响应
-         （信封 data = { status, data: { resultType, result: [{ stream, values: [[纳秒时间戳, 行]] }] } }）。
-         日志栈是可选增量：失败置卡内错误态（alert + 重试），不弹全局 toast，也不影响页面其它区块。 -->
-    <el-card shadow="never" class="alert-card">
-      <template #header>
-        <div class="alert-head">
+    <!-- 日志查询（Loki，可选外接）：折叠态默认收起——部署配置已裁剪，默认形态不让
+         一个大概率报错的卡片占首屏；需要时展开查询（后端代理保留，LOKI_URL 指向即用）。 -->
+    <el-collapse class="loki-collapse">
+      <el-collapse-item name="loki">
+        <template #title>
           <div class="loki-head">
-            <span><el-icon class="head-icon"><Memo /></el-icon>日志查询（Loki）</span>
-            <span class="loki-head-note">宿主机日志经 Promtail 采集（job=varlogs）；容器日志接入列后续</span>
+            <span><el-icon class="head-icon"><Memo /></el-icon>日志查询（Loki · 可选外接）</span>
+            <span class="loki-head-note">宿主机日志经 Promtail 采集（job=varlogs）；需自行部署 Loki 并配置 LOKI_URL</span>
           </div>
-          <div class="alert-head-actions">
+        </template>
+        <div class="loki-body">
+          <div class="alert-head-actions loki-actions">
             <el-input
               v-model="lokiQuery"
               placeholder='LogQL，如 {job="varlogs"}'
@@ -281,31 +290,31 @@
             </el-select>
             <el-button type="primary" :icon="Search" :loading="lokiLoading" @click="queryLoki">查询</el-button>
           </div>
+
+          <el-alert v-if="lokiError" type="warning" :closable="false" show-icon title="日志栈（Loki）未启用（需自行部署 Loki 并配置 LOKI_URL 环境变量）">
+            <template #default>
+              <div class="loki-retry">
+                <span>典型原因：Loki / Promtail 未启动，或 LogQL 语法有误。</span>
+                <el-button size="small" type="primary" plain :icon="Refresh" :loading="lokiLoading" @click="queryLoki">重试</el-button>
+              </div>
+            </template>
+          </el-alert>
+
+          <el-empty v-else-if="!lokiQueried" description="输入 LogQL 后点击「查询」拉取日志" :image-size="60" />
+          <el-empty v-else-if="!lokiRows.length" description="无匹配日志" :image-size="60" />
+
+          <template v-else>
+            <p class="sd-note loki-meta">共 {{ lokiRows.length }} 条 · 最近 1 小时 · 新日志在前</p>
+            <div class="loki-logs">
+              <div v-for="(r, i) in lokiRows" :key="i" class="loki-line">
+                <span class="mono loki-ts">{{ r.ts }}</span>
+                <span class="loki-text mono">{{ r.line }}</span>
+              </div>
+            </div>
+          </template>
         </div>
-      </template>
-
-      <el-alert v-if="lokiError" type="warning" :closable="false" show-icon title="日志栈（Loki）未启用（v3.6 起默认裁剪，可经应用商店 compose 包一键重装）">
-        <template #default>
-          <div class="loki-retry">
-            <span>典型原因：日志栈（Loki / Promtail）未启动，或 LogQL 语法有误。</span>
-            <el-button size="small" type="primary" plain :icon="Refresh" :loading="lokiLoading" @click="queryLoki">重试</el-button>
-          </div>
-        </template>
-      </el-alert>
-
-      <el-empty v-else-if="!lokiQueried" description="输入 LogQL 后点击「查询」拉取日志" :image-size="60" />
-      <el-empty v-else-if="!lokiRows.length" description="无匹配日志" :image-size="60" />
-
-      <template v-else>
-        <p class="sd-note loki-meta">共 {{ lokiRows.length }} 条 · 最近 1 小时 · 新日志在前</p>
-        <div class="loki-logs">
-          <div v-for="(r, i) in lokiRows" :key="i" class="loki-line">
-            <span class="mono loki-ts">{{ r.ts }}</span>
-            <span class="loki-text mono">{{ r.line }}</span>
-          </div>
-        </div>
-      </template>
-    </el-card>
+      </el-collapse-item>
+    </el-collapse>
   </div>
 </template>
 
@@ -313,102 +322,225 @@
 // embedded：被仪表盘 tab 嵌入时隐藏独立页头
 defineProps({ embedded: { type: Boolean, default: false } })
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { Aim, AlarmClock, InfoFilled, Memo, Refresh, Search, Loading, WarningFilled } from '@element-plus/icons-vue'
+import { Aim, AlarmClock, Memo, Refresh, Search, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { fmtDateTime } from '../utils/format'
+import { cssVar, fmtDateTime, fmtRateBytes } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
+import echarts from '../utils/echarts'
+
+// ── 原生看板（Grafana 退役批次）：ECharts 直连平台代理的 Prometheus 历史 ──
+// echarts 不解析 var()，取令牌真实色值（与 HostResourceCard 同一套取色惯例）
+const primaryColor = cssVar('--el-color-primary', '#2a9da5')
+const successColor = cssVar('--color-success', '#16a34a')
+const chartMutedColor = cssVar('--color-muted-foreground', '#64748b')
+const chartAxisColor = cssVar('--color-border', '#e2e8f0')
+const chartSplitColor = cssVar('--color-muted', '#eef2f6')
+
+const board = ref('overview')
+const minutes = ref(60)
+const boardLoading = ref(false)
+
+// 虚拟机六指标面板定义（与后端 vmMetricSeries 字段一一对应）
+const VM_METRICS = [
+  { key: 'cpu', label: 'CPU 占用（%）', percent: true },
+  { key: 'mem', label: '内存占用（%）', percent: true },
+  { key: 'disk_read', label: '磁盘读取', rate: true },
+  { key: 'disk_write', label: '磁盘写入', rate: true },
+  { key: 'net_rx', label: '网络接收', rate: true },
+  { key: 'net_tx', label: '网络发送', rate: true },
+]
+
+const hostChartRef = ref(null)
+const poolChartRef = ref(null)
+const metricChartRefs = reactive({})
+let hostChart = null
+let poolChart = null
+const metricCharts = reactive({})
+
+const hostSource = ref('prometheus')
+const poolSource = ref('prometheus')
+const poolNames = ref([])
+const vmSource = ref('prometheus')
+const vmData = ref({})
+const vmNames = computed(() => Object.keys(vmData.value).sort())
+const selectedVM = ref('')
+
+// ResizeObserver：v-show 切换/侧栏折叠等容器尺寸变化时自动 resize
+// （echarts 在 display:none 容器上初始化会得到 0 尺寸，恢复显示后必须补一刀）。
+// 单实例统一重排本组件全部图表——若按元素各绑闭包，首个闭包会吞掉其它图表的 resize。
+const ro = new ResizeObserver(() => {
+  for (const c of [hostChart, poolChart, ...Object.values(metricCharts)]) {
+    if (c) c.resize()
+  }
+})
+
+function watchSize(el) {
+  ro.observe(el)
+}
+
+function baseOption() {
+  return {
+    grid: { left: 8, right: 12, top: 28, bottom: 4, containLabel: true },
+    tooltip: { trigger: 'axis' },
+    legend: { top: 0, textStyle: { color: chartMutedColor }, itemWidth: 14, itemHeight: 2 },
+    xAxis: {
+      type: 'category',
+      data: [],
+      axisLine: { lineStyle: { color: chartAxisColor } },
+      axisLabel: { color: chartMutedColor },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: chartMutedColor },
+      splitLine: { lineStyle: { color: chartSplitColor } },
+    },
+  }
+}
+
+function lineSeries(name, points, color, { area = true, percent = false, rate = false } = {}) {
+  return {
+    name,
+    type: 'line',
+    data: points.map((p) => p.val),
+    symbol: 'none',
+    lineStyle: { width: 1.5, color },
+    itemStyle: { color },
+    areaStyle: area ? { opacity: 0.08 } : undefined,
+    ...(percent ? { min: 0 } : {}),
+    ...(rate
+      ? {
+          tooltip: { valueFormatter: (v) => fmtRateBytes(v) },
+          yAxis: undefined,
+        }
+      : {}),
+  }
+}
+
+function renderHostChart(points) {
+  if (!hostChartRef.value) return
+  if (!hostChart) {
+    hostChart = echarts.init(hostChartRef.value)
+    watchSize(hostChartRef.value)
+  }
+  const opt = baseOption()
+  opt.xAxis.data = points.map((p) => p.t)
+  opt.series = [
+    lineSeries('CPU %', points.map((p) => ({ t: p.t, val: p.cpu })), primaryColor),
+    lineSeries('内存 %', points.map((p) => ({ t: p.t, val: p.mem })), successColor),
+  ]
+  hostChart.setOption(opt, true)
+}
+
+function renderPoolChart(pools) {
+  if (!poolChartRef.value) return
+  if (!poolChart) {
+    poolChart = echarts.init(poolChartRef.value)
+    watchSize(poolChartRef.value)
+  }
+  const names = Object.keys(pools).sort()
+  const first = pools[names[0]] || []
+  const opt = baseOption()
+  opt.legend.data = names
+  opt.xAxis.data = first.map((p) => p.t)
+  opt.yAxis.max = 100
+  opt.series = names.map((n) => lineSeries(n, pools[n]))
+  poolChart.setOption(opt, true)
+}
+
+function renderMetricChart(key, def, points) {
+  const el = metricChartRefs[key]
+  if (!el) return
+  let chart = metricCharts[key]
+  if (!chart) {
+    chart = echarts.init(el)
+    watchSize(el)
+    metricCharts[key] = chart
+  }
+  const opt = baseOption()
+  opt.legend.show = false
+  opt.tooltip.formatter = def.rate
+    ? (params) => `${params[0].name}<br/>${fmtRateBytes(params[0].value)}`
+    : undefined
+  opt.yAxis.axisLabel = def.rate
+    ? { color: chartMutedColor, formatter: (v) => fmtRateBytes(v) }
+    : { color: chartMutedColor }
+  opt.xAxis.data = points.map((p) => p.t)
+  opt.series = [lineSeries(def.label, points, primaryColor, { area: true, percent: def.percent, rate: def.rate })]
+  if (def.rate) delete opt.series[0].tooltip
+  chart.setOption(opt, true)
+}
+
+async function loadBoard() {
+  if (boardLoading.value) return
+  boardLoading.value = true
+  try {
+    if (board.value === 'overview') {
+      // 宿主机曲线复用仪表盘聚合端点；池使用率走新的原生看板端点
+      const [hostRes, poolRes] = await Promise.allSettled([api.hostHistory(minutes.value), api.poolHistory(minutes.value)])
+      if (hostRes.status === 'fulfilled') {
+        const d = hostRes.value.data || {}
+        hostSource.value = d.source || 'prometheus'
+        renderHostChart(Array.isArray(d.points) ? d.points : [])
+      } else {
+        hostSource.value = 'unavailable'
+      }
+      if (poolRes.status === 'fulfilled') {
+        const d = poolRes.value.data || {}
+        poolSource.value = d.source || 'prometheus'
+        const pools = d.pools || {}
+        poolNames.value = Object.keys(pools)
+        if (poolNames.value.length) renderPoolChart(pools)
+      } else {
+        poolSource.value = 'unavailable'
+        poolNames.value = []
+      }
+    } else {
+      const res = await api.vmMetricsHistory(minutes.value)
+      const d = res.data || {}
+      vmSource.value = d.source || 'prometheus'
+      vmData.value = d.vms || {}
+      // 上次选中的 VM 已无采样（关机/删除）时回落到第一台
+      if (!selectedVM.value || !vmData.value[selectedVM.value]) {
+        selectedVM.value = vmNames.value[0] || ''
+      }
+      await nextTick()
+      if (selectedVM.value) {
+        const row = vmData.value[selectedVM.value]
+        for (const m of VM_METRICS) renderMetricChart(m.key, m, row[m.key] || [])
+      }
+    }
+  } finally {
+    boardLoading.value = false
+  }
+}
+
+function reloadBoard() {
+  loadBoard()
+}
+
+// 切换看板：懒初始化对应图表（嵌入 Dashboard tab 的 v-show 场景由 ResizeObserver 兜底）
+watch(board, () => {
+  nextTick(loadBoard)
+})
+// 切换选中 VM：重画六张小图
+watch(selectedVM, () => {
+  const row = vmData.value[selectedVM.value]
+  if (!row) return
+  nextTick(() => {
+    for (const m of VM_METRICS) renderMetricChart(m.key, m, row[m.key] || [])
+  })
+})
 
 const alerts = ref([])
 const alertsLoading = ref(false)
 const alertsError = ref(false)
-const grafanaError = ref(false)
 
 // 只统计需要处理的告警（active = 触发中）
 const firingCount = computed(
   () => alerts.value.filter((a) => a.status && a.status.state === 'active').length
 )
-
-// Grafana 看板 uid 与 deploy/grafana-dashboard.json 一致；kiosk 模式隐藏侧栏只留面板
-// HTTPS（公网 kpyun.fun）走云端 nginx 同源反代 /grafana/（https 页面嵌 http iframe 会被混合内容拦截）；
-// 本地 http 保持直连 3000
-const isHttps = window.location.protocol === 'https:'
-const grafanaBase = isHttps ? `${window.location.origin}/grafana` : `http://${window.location.hostname}:3000`
-// 看板 uid 对应 deploy/ 下两个 provisioned 看板
-const board = ref('overview')
-// 各看板 iframe 首载完成标记（key = 看板名），加载占位按当前激活看板判断
-const frameReady = reactive({ overview: false, vms: false })
-// Grafana 未连接判定：后端探活 /monitor/grafana-status（主判定，进入页面即查）+
-// iframe 挂载 15s 未 load 兜底（防挂起）。跨端口读不到 iframe 内部，onerror 不触发，
-// 且容器未启动时浏览器错误页同样触发 load——纯前端手段判不了白屏，必须后端代探。
-const frameStuck = reactive({ overview: false, vms: false })
-const frameTimers = {}
-function armStuckTimer(b) {
-  clearTimeout(frameTimers[b])
-  frameStuck[b] = false
-  frameTimers[b] = setTimeout(() => {
-    if (!frameReady[b]) frameStuck[b] = true
-  }, 15000)
-}
-// 进入页面即探活：Grafana 没起时立刻亮「未连接」提示层，不等 15s 超时。
-// 探活失败置位所有看板（未连接与看板无关）；探活成功则清除，交给超时兜底慢加载场景。
-async function probeGrafana() {
-  try {
-    const res = await api.monitorGrafanaStatus()
-    const ok = res.data && res.data.ok === true
-    frameStuck.overview = frameStuck.vms = !ok
-    if (ok) {
-      clearTimeout(frameTimers.overview)
-      clearTimeout(frameTimers.vms)
-    }
-  } catch (e) {
-    frameStuck.overview = frameStuck.vms = true
-  }
-}
-function onFrameLoad(b) {
-  frameReady[b] = true
-  frameStuck[b] = false
-  clearTimeout(frameTimers[b])
-}
-// Grafana 未启动时的重试：清掉就绪/卡住标记并重新挂载当前看板的 iframe
-function retryFrame() {
-  const b = board.value
-  frameReady[b] = false
-  frameStuck[b] = false
-  mountedBoards.delete(b)
-  nextTick(() => {
-    mountedBoards.add(b)
-    armStuckTimer(b)
-  })
-}
-// 窗口过窄时 Grafana 网格会重排、内容变高，静态 iframe 高度会重新出现底部截断——
-// 提示改用新窗口打开（缩放/改高都治标），布局恢复后再给出正常展示
-const narrowWindow = ref(window.innerWidth < 1100)
-function onResize() {
-  narrowWindow.value = window.innerWidth < 1100
-}
-// 已挂载过的看板集合：首次激活才创建 iframe（避免进页面就并发拉两份 Grafana 前端抢带宽），
-// 挂载后常驻，切换只走 v-show 显隐
-const mountedBoards = reactive(new Set(['overview']))
-watch(board, (b) => { mountedBoards.add(b); armStuckTimer(b) })
-function boardUid(b) {
-  return b === 'vms' ? 'vmops-vms' : 'vmops-overview'
-}
-// 看板路径：HTTPS 的 grafanaBase 已含 /grafana（nginx 同源反代），本地直连 3000 必须补 /grafana 前缀——
-// compose 设了 GF_SERVER_ROOT_URL=https://kpyun.fun/grafana/，不带前缀的请求会被 301 到公网域名，
-// 本地访问会绕公网一圈（serve_from_sub_path 开启时带前缀的路径原地 200）。⚠️ 两分支只取其一，重复拼接 = 404。
-function boardPath(b) {
-  return `${grafanaBase}${isHttps ? '' : '/grafana'}/d/${boardUid(b)}/`
-}
-function boardEmbed(b) {
-  return `${boardPath(b)}?kiosk=1&refresh=30s`
-}
-// 看板高度：按 1310px 宽 + kiosk=1 下实测内容底边定（宿主机看板 ≈730px、虚拟机看板 6 图三行 ≈855px）。
-// 看板已按「宿主机/虚拟机」分组去重、图占整行分行排，高度可控；改 JSON 布局后须重新实测并同步此处。
-function boardHeight(b) {
-  return b === 'vms' ? 875 : 750
-}
-const grafanaFull = computed(() => boardPath(board.value))
 
 async function loadAlerts() {
   if (alertsLoading.value) return
@@ -483,9 +615,8 @@ async function loadFileSD() {
   }
 }
 
-// ── 日志查询（Loki）：走 raw http（后端原样透传 Loki query_range 响应），不在 api/index.js 加封装
-// —— Loki 侧字段演进零维护，前端只认 resultType=streams 一种形态。日志栈未部署属常态（502），
-// 失败置卡内错误态，不弹全局 toast（axios 拦截器只处理 401，无全局报错）。
+// ── 日志查询（Loki）：后端代理原样透传 Loki query_range 响应。日志栈未部署属常态（502），
+// 失败置卡内错误态，不弹全局 toast。
 const lokiQuery = ref('{job="varlogs"}')
 const lokiLimit = ref(100)
 const lokiLoading = ref(false)
@@ -521,23 +652,26 @@ async function queryLoki() {
   }
 }
 
-// 实时告警轮询：无用户开关，周期取系统设置的 dashboard 偏好；卸载自动停表（useAutoRefresh 托管）。
-// start() 只起表不触发 fn——首拉仍由 onMounted 里的显式 loadAlerts() 负责，与原行为一致。
-const { start: startAlertsPolling } = useAutoRefresh(loadAlerts, { intervalKey: 'dashboard' })
+// 看板与实时告警轮询：周期取系统设置的 dashboard 偏好；卸载自动停表（useAutoRefresh 托管）。
+// start() 只起表不触发 fn——首拉仍由 onMounted 里的显式 load 负责，与原行为一致。
+const { start: startPolling } = useAutoRefresh(() => {
+  loadAlerts()
+  loadBoard()
+}, { intervalKey: 'dashboard' })
 
 onMounted(() => {
   loadAlerts()
   loadHistory()
   loadFileSD()
-  probeGrafana()
-  armStuckTimer('overview')
-  window.addEventListener('resize', onResize)
-  startAlertsPolling()
+  loadBoard()
+  startPolling()
 })
 onUnmounted(() => {
   // 告警轮询定时器清理由 useAutoRefresh 自带
-  window.removeEventListener('resize', onResize)
-  Object.values(frameTimers).forEach(clearTimeout)
+  if (ro) ro.disconnect()
+  hostChart && hostChart.dispose()
+  poolChart && poolChart.dispose()
+  Object.values(metricCharts).forEach((c) => c.dispose())
 })
 </script>
 
@@ -583,8 +717,75 @@ onUnmounted(() => {
   color: var(--el-text-color-secondary);
   line-height: 1.6;
 }
-/* 日志查询卡：头部双行（标题 + 采集说明小字）；日志行 mono 等宽、不换行，
-   超宽靠容器横向滚动，max-height 限高防长结果撑爆页面 */
+
+/* ── 原生看板：双列图表网格（窄屏回落单列）；图表固定高，容器宽度自适应 ── */
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.chart-grid.six {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 1100px) {
+  .chart-grid,
+  .chart-grid.six {
+    grid-template-columns: 1fr;
+  }
+}
+.chart-cell {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+.chart-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+  margin-bottom: 8px;
+}
+.chart-box {
+  height: 260px;
+}
+.chart-box.small {
+  height: 180px;
+}
+.chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 260px;
+}
+.vm-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.chart-hint {
+  font-size: 0.85rem;
+  color: var(--el-text-color-secondary);
+}
+
+/* ── Loki 折叠卡：整体是一张可展开的卡片（标题行即折叠头） ── */
+.loki-collapse {
+  margin-bottom: 16px;
+  border-radius: var(--radius-md);
+  --el-collapse-border-color: var(--color-border);
+}
+.loki-collapse :deep(.el-collapse-item__header) {
+  padding: 0 16px;
+  background: var(--color-card);
+  border-radius: var(--radius-md);
+}
+.loki-collapse :deep(.el-collapse-item__wrap) {
+  background: var(--color-card);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+.loki-collapse :deep(.el-collapse-item__content) {
+  padding: 12px 16px 16px;
+}
 .loki-head {
   display: flex;
   flex-direction: column;
@@ -595,6 +796,14 @@ onUnmounted(() => {
   font-weight: normal;
   font-size: 0.8rem;
   color: var(--el-text-color-secondary);
+}
+.loki-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.loki-actions {
+  justify-content: flex-start;
 }
 .loki-retry {
   display: flex;
@@ -621,42 +830,5 @@ onUnmounted(() => {
 }
 .loki-text {
   white-space: pre;
-}
-.grafana-wrap {
-  position: relative;
-  min-height: 750px;
-}
-.grafana-frame {
-  width: 100%;
-  border: none;
-  border-radius: var(--radius-md);
-  background: var(--color-card, #fff);
-}
-.grafana-loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: center;
-  color: var(--el-text-color-secondary);
-  font-size: 0.9rem;
-  background: var(--el-fill-color-lighter);
-  border-radius: var(--radius-md);
-}
-.grafana-fallback {
-  padding: 24px 0;
-}
-/* 窄窗口提示层：贴顶部悬浮，不遮数据主体 */
-.narrow-hint {
-  top: 0;
-  bottom: auto;
-  height: auto;
-  padding: 8px 16px;
-  justify-content: flex-start;
-  background: var(--el-color-warning-light-9);
-  color: var(--el-color-warning-dark-2);
-  font-size: 0.85rem;
-  z-index: 2;
 }
 </style>

@@ -398,10 +398,21 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		monitor.GET("/alerts/history", monitorHandler.AlertHistory)
 		// file_sd 抓取目标预览（与后台落盘文件同源，调试/前端展示用）
 		monitor.GET("/file-sd", monitorHandler.PreviewFileSD)
-		monitor.GET("/grafana-status", monitorHandler.GrafanaStatus)
+		// 原生看板历史曲线（Grafana 退役批次 2026-10：池使用率 + VM 六指标）
+		monitor.GET("/pool-history", historyHandler.PoolHistory)
+		monitor.GET("/vm-metrics-history", historyHandler.VMDetailedHistory)
 		// Loki 日志查询（v3 批次 G：指标+日志+告警完整可观测性）
 		monitor.GET("/loki/query", lokiHandler.Query)
 		monitor.GET("/loki/labels", lokiHandler.Labels)
+	}
+
+	// 站内通知（告警到人）：所有登录角色可见自己的通知（viewer 也收告警——被授权资产的故障他们必须知道）
+	notificationHandler := NewNotificationHandler(deps.DB)
+	notifications := api.Group("/notifications")
+	{
+		notifications.GET("", notificationHandler.List)
+		notifications.PUT("/read-all", notificationHandler.MarkAllRead)
+		notifications.PUT("/:id/read", notificationHandler.MarkRead)
 	}
 
 	// 仪表盘（仅管理员）

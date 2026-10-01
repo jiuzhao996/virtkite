@@ -238,8 +238,10 @@ func startAuditRetention(db *gorm.DB) {
 
 // startAlertRetention 告警历史保留期清理：webhook 按 fingerprint upsert 本身有去重，
 // 但指纹空间无上限（公开端点被刷或长期运行都会涨），照审计同款策略删 30 天前的记录。
+// 站内通知（notifications）与告警同生命周期，一并清理（告警中心批次 2026-10）。
 func startAlertRetention(db *gorm.DB) {
 	startRetentionLoop(db, "alerts", "[alerts]")
+	startRetentionLoop(db, "notifications", "[notifications]")
 }
 
 // startRetentionLoop 保留期清理公共循环：30 天前分批删除，24h 一轮，启动即先跑一轮。

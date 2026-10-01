@@ -23,7 +23,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 | 虚拟化 | libvirt / KVM（`digitalocean/go-libvirt` 纯 Go RPC 直连，无 CGO） |
 | 容器 | Docker CLI / Docker Engine API（`service/dockerx` 封装：结构化输出 + exec TTY 容器终端）+ docker compose |
 | 前端 | Vue 3 + Vite + Element Plus + vue-router + ECharts |
-| 监控 | 内建 Prometheus exporter + Prometheus + Grafana + Alertmanager |
+| 监控 | 内建 Prometheus exporter + Prometheus + Alertmanager（看板由平台 ECharts 原生渲染） |
 | 日志 | Loki + Promtail（可选增量，compose 模板存档于 deploy/；LogQL 经后端代理查询） |
 | AI | OpenAI 兼容 API 代理（SSE 流式 + 平台上下文注入，Key 只存服务端） |
 | 部署 | 二进制直跑 / Docker / docker-compose |
@@ -53,7 +53,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] 仪表盘（概览/监控双 tab：总览计数、状态分布、宿主机实时大盘、资源容量/超分卡、历史性能曲线（Prometheus query_range 回放，刷新不清零）；监控 tab 复用监控中心）
 - [x] VM 列表实时化（卡片 + CPU/内存迷你折线 + 搜索筛选 + 批量电源（状态不一致时禁用）与删除）
 - [x] 任务中心（任务详情抽屉解析 `kept_volumes`）/ 审计中心（操作日志 + 会话双 tab）/ 系统设置（可写运行参数，保存即生效；只读快照移至仪表盘「平台信息」卡）/ 个人中心 / 用户管理
-- [x] **Prometheus 监控**（内建 `/metrics`：VM/宿主机/存储池/任务指标 + 9 告警规则 + Grafana 双看板（宿主机 5 面板 / 虚拟机 6 面板）；监控中心含实时告警、webhook 告警历史、file_sd 抓取目标预览、Grafana 探活兜底）
+- [x] **Prometheus 监控**（内建 `/metrics`：VM/宿主机/存储池/任务指标 + 9 告警规则；监控中心为**原生 ECharts 看板**（宿主机/存储池曲线 + 虚拟机六指标，Grafana 已退役）、实时告警、webhook 告警历史、file_sd 抓取目标预览）
 - [x] 存量 VM 导入 / 纳管
 - [x] **监控闭环**（Prometheus file_sd 服务发现自动下发 running 且已知 IP 的 VM 目标；Alertmanager webhook 告警网关按 fingerprint 去重入库 + 分页历史；**告警出站通知**（v3.4：设置页配置飞书/钉钉机器人地址，仅新增 firing 或 resolved→firing 推送、同 fingerprint 重复去重，best-effort 不影响 webhook 响应）；`vms.ip` DHCP 租约 + QGA 双通道回填）
 - [x] **容器管理（v3：KVM 域 + Docker 容器「双运行时」统一面板）**（容器 / 镜像 / 网络 / 卷 / 编排（compose 项目级启停）五 tab + **容器创建**（v3.4：名称/镜像/端口映射/挂载卷/环境变量/重启策略/启动命令 → `docker run` 参数映射，纯函数校验，本地缺镜像自动拉取）+ 容器终端（WebSocket ↔ Docker Engine API exec TTY，支持运行中调窗）+ 日志查看（跟随/下载/tail 行数）+ 资源占用实时统计 + 批量启停删与悬空镜像/容器清理；viewer 403，容器终端与 SSH 终端共用 `console.Conn` 写锁 + recover 纪律与会话强断）
@@ -86,7 +86,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - MySQL 8.0+（或 Docker）
 - libvirt + KVM（运行虚拟机的宿主机）
 - Docker（可选：容器管理页需要，未安装时相关页面显示不可用提示）
-- Prometheus / Grafana / Loki（可选，Docker compose 一键栈，见监控章节）
+- Prometheus / Alertmanager（Docker compose 一键栈，见监控章节）；Loki 可选外接
 
 ## 快速开始
 
@@ -166,9 +166,10 @@ npm run dev          # 访问 http://localhost:5173
 
 ```bash
 # docker-compose 一键栈（唯一方式；原生 ~/monitor 目录已废弃删除）
-docker compose up -d prometheus grafana alertmanager
+# Grafana 已退役（看板原生化）：监控栈只剩 prometheus + alertmanager
+docker compose up -d prometheus alertmanager
 # 看板：http://127.0.0.1:3000/d/vmops-overview（admin/admin）
-# Prometheus :9090，Grafana :3000，Alertmanager :9093
+# Prometheus :9090，Alertmanager :9093
 ```
 
 ### 5. 测试账号
@@ -228,7 +229,7 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 | 401 | `未提供认证信息` / `认证格式错误` / `Token 无效或已过期` / `用户不存在` | 鉴权失败；签名算法非 HS256 也归入「Token 无效或已过期」 |
 | 403 | `账号已被禁用` / `需要管理员权限` | 账号停用；viewer/operator 发起越权变更或访问 admin 组 |
 | 403 | `只读角色不能使用 SSH 终端与串口控制台，请使用图形控制台查看` | viewer 访问 `/terminal` 或 `/serial` |
-| 403 | `监控数据仅操作员与管理员可见` | viewer 访问监控中心四端点（alerts / alerts/history / file-sd / grafana-status） |
+| 403 | `监控数据仅操作员与管理员可见` | viewer 访问监控中心端点（alerts / alerts/history / file-sd / pool-history / vm-metrics-history） |
 | 404 | `虚拟机不存在` | **非 admin 访问未授权的 VM**（资产授权：授权决定可见性，未授权与不存在同响应） |
 
 
@@ -306,7 +307,8 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 - `GET  /api/monitor/alerts` — 实时告警（代理 Alertmanager，AM 不可达 502；**viewer 403**，下同）
 - `GET  /api/monitor/alerts/history` — 告警历史（webhook 入库，status/fingerprint 过滤 + 分页；viewer 403）
 - `GET  /api/monitor/file-sd` — file_sd 抓取目标预览（`{enabled, items}`；viewer 403）
-- `GET  /api/monitor/grafana-status` — Grafana 探活（前端据此亮「未连接」兜底层；viewer 403）
+- `GET  /api/monitor/pool-history` — 存储池使用率历史（原生看板；viewer 403）
+- `GET  /api/monitor/vm-metrics-history` — 全部虚拟机六指标历史（原生看板；viewer 403）
 - `POST /api/monitor/webhook` — Alertmanager 告警网关（公开路由，env `ALERT_WEBHOOK_TOKEN` 可选鉴权；按 fingerprint 去重入库）
 - `GET /metrics` — Prometheus exposition（env `METRICS_TOKEN` 非空时要求 Bearer/`?token=`，未设置保持公开）
 - `GET /api/health` — 健康检查
@@ -362,7 +364,7 @@ vmops/
 │   ├── setting/         # 系统设置 KV（白名单校验 + 内存缓存）
 │   └── vnc/             # VNC token 存储
 ├── scripts/             # init-db.sql（手工建库）/ smoke.sh（E2E 回归）/ credential-rekey、purge-task-secrets（密钥运维，独立 main 包）
-├── deploy/              # prometheus.yml / alerts.yml / alertmanager.yml / grafana 看板与 provisioning / docker-compose
+├── deploy/              # prometheus.yml(.example) / alerts.yml / alertmanager.yml(.example) / gen-monitor-conf.sh / docker-compose
 ├── web/                 # Vue3 + Vite 前端（26 个视图：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
 │                        #   Host/Image(三 tab 含镜像市场)/Storage/Network/Task/Audit+SessionList/Settings/UserList/Profile/Login）
 │   ├── src/utils/format.js  # 状态文案/时间/尺寸/错误提取统一实现（收敛 10 余处重复）
@@ -397,7 +399,7 @@ vmops/
 | 静态检查 | `go build` / `go vet` / `gofmt` 全过，`.golangci.yml` 配置就绪 | 深度 lint 覆盖以 vet 为主 |
 | 状态字面量 | 全仓库仍有 7 处状态字面量未换成常量 | 一致性隐患，行为正确 |
 | deploy 明文密钥 | `deploy/prometheus.yml`（remote_write BasicAuth）与 `deploy/alertmanager.yml` 含明文凭据入库 | 仓库可见，需轮换并改环境变量注入 |
-| Grafana iframe | 匿名只读 + allow_embedding 下，viewer 在监控 tab 仍能看到看板画面（告警/file-sd 四端点已对 viewer 收权 403，看板画面属部署层收权） | viewer 可见监控看板 |
+| 原生监控看板 | 看板曲线数据走 `/api/monitor/pool-history` 等端点，与告警/file-sd 同为 viewer 403（数据面统一收权，无部署层旁路） | viewer 监控中心整页 403 |
 | 批 B/C 审计修复 | 已完成（详见 AGENTS.md 同名批次）：null→[]、WS 帧固定文案、回写/守卫检查、路径边界、RegisterImage 限池内、启动清扫、日志降噪、N+1、webhook token 轮换、前端清理。残留小项见 AGENTS.md | 大部分闭环 |
 | 导入失败原因 | `POST /api/vms/import` 响应的 `errors` 数组前端 `VmList.vue` 未消费（只读 `imported`/`skipped`/`failed`） | 单台导入失败时用户看不到具体原因 |
 | 多宿主机 | 多宿主机纳管空壳已砍除（`hosts.libvirt_uri` 字段已删），宿主机模块定位为「登记与状态采集」，虚拟化连接固定本机 `qemu:///system` | 跨宿主机虚拟化操作（`qemu+ssh://` 等）列为后续工作 |

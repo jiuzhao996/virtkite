@@ -148,8 +148,8 @@ func mustJSON(m map[string]string) string {
 
 // upsert 按 fingerprint 去重入库：存在则更新 status/annotations/endsAt（firing → resolved
 // 的终态流转全靠这里），不存在则新建。任何失败只记日志——调用方保证整体仍返回 200。
-// 入库成功且构成「告警触发」（新建即 firing，或从非 firing 转回 firing）时，异步推送
-// 出站通知（best-effort，见 pushAlertNotify）。
+// 入库成功且构成「告警触发」（新建即 firing，或从非 firing 转回 firing）时：
+// 异步推送出站机器人通知（pushAlertNotify）+ 站内告警到人（fanOutNotifications）。
 func (h *AlertWebhookHandler) upsert(a *model.Alert) {
 	var existing model.Alert
 	err := h.DB.Where("fingerprint = ?", a.Fingerprint).First(&existing).Error
@@ -161,6 +161,7 @@ func (h *AlertWebhookHandler) upsert(a *model.Alert) {
 			}
 			if alertTransitionedToFiring(nil, a) {
 				h.pushAlertNotify(a)
+				h.fanOutNotifications(a)
 			}
 			return
 		}
@@ -181,6 +182,7 @@ func (h *AlertWebhookHandler) upsert(a *model.Alert) {
 	// existing 是更新前读出的行：其 status 与本次 a.status 的对比即「是否转 firing」
 	if alertTransitionedToFiring(&existing, a) {
 		h.pushAlertNotify(a)
+		h.fanOutNotifications(a)
 	}
 }
 
@@ -226,8 +228,90 @@ func alertNotifyText(labelsJSON, annotationsJSON string) string {
 	return "[鸢航 VirtKite] 告警触发: " + name + " " + summary
 }
 
-// pushAlertNotify 异步推送告警触发通知（goroutine + defer recover——gin Recovery
-// 不覆盖自起 goroutine，AGENTS 后端铁律第 10 条）。best-effort：失败只记日志，
+// notifyContentLimit 通知正文的截断上限（与 Notification.Content 列 size:500 对齐，按 rune 截）。
+const notifyContentLimit = 500
+
+// fanOutNotifications 告警到人（站内通知，告警中心批次 2026-10）：把转 firing 的告警
+// 写入 notifications 表。收件人 = admin 全体 ∪（告警带 vm 标签且能匹配库内 VM 时）
+// 该 VM 的有效授权用户（vm_grant 未过期）——「这台 VM 的人要知道这台 VM 的事」；
+// 平台/宿主机级告警（无 vm 标签）只发 admin。批量一次插入，失败只记日志不影响 webhook 200。
+func (h *AlertWebhookHandler) fanOutNotifications(a *model.Alert) {
+	labels := map[string]string{}
+	_ = json.Unmarshal([]byte(a.Labels), &labels)
+	annotations := map[string]string{}
+	_ = json.Unmarshal([]byte(a.Annotations), &annotations)
+
+	name := labels["alertname"]
+	if name == "" {
+		name = "未知告警"
+	}
+	content := annotations["summary"]
+	if content == "" {
+		content = annotations["description"]
+	}
+	if utf8.RuneCountInString(content) > notifyContentLimit {
+		content = string([]rune(content)[:notifyContentLimit-1]) + "…"
+	}
+	level := model.NotifyLevelInfo
+	switch labels["severity"] {
+	case "critical":
+		level = model.NotifyLevelCritical
+	case "warning":
+		level = model.NotifyLevelWarning
+	}
+
+	// 收件人去重集合：admin 全体打底
+	uids := map[uint]bool{}
+	var admins []model.User
+	if err := h.DB.Select("id").Where("role = ?", "admin").Find(&admins).Error; err != nil {
+		log.Printf("[alert-webhook] 查询管理员失败，告警到人跳过: %v", err)
+		return
+	}
+	for _, u := range admins {
+		uids[u.ID] = true
+	}
+
+	// vm 标签 → 库内 VM → 有效授权人（软删 VM 默认排除；ExpiresAt null=长期有效）
+	var vmID *uint
+	if vmName := labels["vm"]; vmName != "" {
+		var vm model.VM
+		if err := h.DB.Select("id").Where("name = ?", vmName).Take(&vm).Error; err == nil {
+			id := vm.ID
+			vmID = &id
+			var grants []model.VMGrant
+			if err := h.DB.Where("vm_id = ?", vm.ID).Find(&grants).Error; err == nil {
+				now := time.Now()
+				for _, g := range grants {
+					if g.ExpiresAt == nil || g.ExpiresAt.After(now) {
+						uids[g.UserID] = true
+					}
+				}
+			}
+		}
+	}
+
+	rows := make([]model.Notification, 0, len(uids))
+	for uid := range uids {
+		rows = append(rows, model.Notification{
+			UserID:           uid,
+			Title:            "[告警] " + name,
+			Content:          content,
+			Level:            level,
+			VMID:             vmID,
+			AlertFingerprint: a.Fingerprint,
+		})
+	}
+	if len(rows) == 0 {
+		return
+	}
+	if err := h.DB.Create(&rows).Error; err != nil {
+		log.Printf("[alert-webhook] 站内通知写入失败 fingerprint=%s: %v", a.Fingerprint, err)
+		return
+	}
+	log.Printf("[alert-webhook] 告警已到人 fingerprint=%s 收件人=%d", a.Fingerprint, len(rows))
+}
+
+// pushAlertNotify 异步推送告警触发通知（goroutine + defer recover——gin Recovery// 不覆盖自起 goroutine，AGENTS 后端铁律第 10 条）。best-effort：失败只记日志，
 // 绝不影响 webhook 的 200 响应（AM 对非 2xx 会按重试策略轰炸）。
 // 日志不打印通知 URL（可能内嵌机器人 token 等凭据）。
 func (h *AlertWebhookHandler) pushAlertNotify(a *model.Alert) {

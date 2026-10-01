@@ -121,7 +121,9 @@ export const core = {
   monitorAlertHistory: (params) => unwrap(http.get('/monitor/alerts/history', { params })),
   // file_sd 抓取目标预览（与后台落盘文件同源）
   monitorFileSD: () => unwrap(http.get('/monitor/file-sd')),
-  monitorGrafanaStatus: () => unwrap(http.get('/monitor/grafana-status')),
+  // 原生看板历史曲线（Grafana 退役批次 2026-10）
+  poolHistory: (minutes) => unwrap(http.get('/monitor/pool-history', { params: { minutes } })),
+  vmMetricsHistory: (minutes) => unwrap(http.get('/monitor/vm-metrics-history', { params: { minutes } })),
 
   // 池平台侧元数据（角色覆盖 + 描述；role 传空串 = 自动推断，description ≤500 字符）
   updatePoolMeta: (name, payload) => unwrap(http.put('/storage/pools/' + name + '/meta', payload)),
@@ -156,6 +158,11 @@ export const core = {
   // 控制台会话（谁连了哪台 VM、可强制断开 SSH/串口）
   listSessions: (params) => unwrap(http.get('/sessions', { params })),
   disconnectSession: (id) => unwrap(http.post('/sessions/' + id + '/disconnect')),
+
+  // 站内通知（告警到人）：铃铛列表/已读流转，unread 字段驱动红点
+  listNotifications: (params) => unwrap(http.get('/notifications', { params })),
+  markNotificationRead: (id) => unwrap(http.put(`/notifications/${id}/read`)),
+  markAllNotificationsRead: () => unwrap(http.put('/notifications/read-all')),
 
   // SSH 主机密钥（TOFU：首次连接记录指纹，指纹变化拒绝连接防中间人；管理端点，admin）
   listSSHHostKeys: () => unwrap(http.get('/ssh-host-keys')),

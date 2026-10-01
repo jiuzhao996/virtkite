@@ -23,8 +23,8 @@
     />
 
     <!-- 概览 / 监控 两个 tab：概览是状态摘要（含即时时序快照），监控收敛全部深度分析
-         （Grafana 双看板 + 实时告警 + 告警历史 + file_sd 服务发现）。监控 tab 用 lazy：
-         首次激活才挂载（Grafana iframe 首载约 3MB），挂载后常驻不销毁。
+         （原生 ECharts 看板 + 实时告警 + 告警历史 + file_sd 服务发现）。监控 tab 用 lazy：
+         首次激活才挂载，挂载后常驻不销毁（图表实例随组件生命周期）。
          概览 tab 已拆为 dashboard/components/ 下的卡片子组件：本壳只做
          数据拉取（loadAll / pollHost / pollVms / loadAlerts / ...）与 props 下发。 -->
     <el-tabs v-model="activeTab" class="dash-tabs" @tab-change="onTabChange">

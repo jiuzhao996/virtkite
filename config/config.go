@@ -36,9 +36,6 @@ type Config struct {
 	// cloud-init seed 镜像目录（需当前用户可写、qemu 进程可读；不依赖存储池目录权限）
 	SeedDir string
 
-	// Grafana 地址（监控中心看板 iframe 与探活用；compose 内为 http://grafana:3000）
-	GrafanaURL string
-
 	// Alertmanager 地址（监控中心代理查询告警用；docker compose 内为 http://alertmanager:9093）
 	AlertmanagerURL string
 
@@ -100,9 +97,6 @@ func Init() {
 
 		// cloud-init seed 镜像目录
 		SeedDir: getEnv("SEED_DIR", "data/seed"),
-
-		// Grafana 地址
-		GrafanaURL: getEnv("GRAFANA_URL", "http://127.0.0.1:3000"),
 
 		// Alertmanager 地址
 		AlertmanagerURL: getEnv("ALERTMANAGER_URL", "http://127.0.0.1:9093"),

@@ -5,7 +5,7 @@
 # 做什么:
 #   1) 预检（Docker / libvirtd / 端口占用）
 #   2) 生成 .env（强随机口令；已存在则复用，绝不覆盖）
-#   3) docker compose 拉起基础设施（MySQL / Prometheus / Grafana / Alertmanager）
+#   3) docker compose 拉起基础设施（MySQL / Prometheus / Alertmanager）
 #   4) 编译并启动 vmops 后端（原生直跑，含 SSH 跳板 :2222）
 #   5) 打印访问地址与首次登录口令
 # ============================================================================
@@ -49,7 +49,6 @@ DB_PASSWORD=$(openssl rand -hex 24)
 MYSQL_ROOT_PASSWORD=$(openssl rand -hex 24)
 JWT_SECRET_KEY=$(openssl rand -hex 32)
 CREDENTIAL_MASTER_KEY=$(openssl rand -hex 32)
-GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 18)
 METRICS_TOKEN=$(openssl rand -hex 24)
 ADMIN_INITIAL_PASSWORD=$(openssl rand -base64 15 | tr -d '/+=' | cut -c1-14)
 VIEWER_INITIAL_PASSWORD=$(openssl rand -base64 15 | tr -d '/+=' | cut -c1-14)
@@ -64,14 +63,14 @@ fi
 # ── 3. 基础设施容器（compose 按 .env 注入口令；已存在则 start 免重建）──────
 # 监控真实配置从 .env 令牌生成（prometheus.yml/alertmanager.yml 已 gitignore，令牌永不入库）
 ./deploy/gen-monitor-conf.sh || fatal "监控配置生成失败（.env 缺 METRICS_TOKEN / ALERT_WEBHOOK_TOKEN？）"
-info "拉起基础设施容器（MySQL / Prometheus / Grafana / Alertmanager）…"
-for c in vmops-mysql vmops-prometheus vmops-grafana vmops-alertmanager; do
+info "拉起基础设施容器（MySQL / Prometheus / Alertmanager）…"
+for c in vmops-mysql vmops-prometheus vmops-alertmanager; do
   if docker ps -a --format '{{.Names}}' | grep -qx "$c"; then
     docker start "$c" >/dev/null
   fi
 done
 if ! docker ps --format '{{.Names}}' | grep -q '^vmops-mysql$'; then
-  docker compose up -d mysql prometheus alertmanager grafana
+  docker compose up -d mysql prometheus alertmanager
 fi
 ok "容器已就绪"
 

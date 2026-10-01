@@ -81,39 +81,6 @@ func (h *MonitorHandler) PreviewFileSD(c *gin.Context) {
 	})
 }
 
-// grafanaHealthTimeout Grafana 探活超时：容器没起时连接快速失败，挂起时 3s 放弃。
-const grafanaHealthTimeout = 3 * time.Second
-
-// GrafanaStatus GET /api/monitor/grafana-status → 探活 Grafana（GET /api/health）。
-// iframe 指向跨端口地址读不到内部状态，且容器未启动时浏览器错误页同样触发 iframe 的 load 事件，
-// 前端无法自行判断白屏，只能由后端代探。root_url 带 /grafana 子路径时 /api/health 会被 301，
-// 故先试子路径前缀再试根路径；禁止跟随重定向（301 指向公网域名，跟随会绕隧道且结果失真）。
-func (h *MonitorHandler) GrafanaStatus(c *gin.Context) {
-	base := strings.TrimRight(config.GlobalConfig.GrafanaURL, "/")
-	client := &http.Client{
-		Timeout: grafanaHealthTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	for _, path := range []string{"/grafana/api/health", "/api/health"} {
-		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, base+path, nil)
-		if err != nil {
-			continue
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			continue // 连接失败（容器未启动等），试下一个路径
-		}
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			Success(c, gin.H{"ok": true})
-			return
-		}
-	}
-	Success(c, gin.H{"ok": false})
-}
-
 // AlertHistory GET /api/monitor/alerts/history → 告警历史分页查询（webhook 入库数据）。
 // 支持 status（firing/resolved）与 fingerprint 精确过滤，page/page_size 真分页（total 为真实总数），
 // 按 UpdatedAt 倒序（最近一次状态流转优先）。labels/annotations 反序列化为对象返回。

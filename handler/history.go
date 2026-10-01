@@ -174,7 +174,7 @@ func (h *HistoryHandler) HostHistory(c *gin.Context) {
 }
 
 // VMStatsHistory 虚拟机历史曲线 GET /api/vms/:id/stats-history?minutes=30。
-// 内存占比优先 host 视角（balloon），与 Grafana 看板一致。
+// 内存占比优先 host 视角（balloon），与监控看板一致。
 func (h *HistoryHandler) VMStatsHistory(c *gin.Context) {
 	id, ok := paramID(c, "id")
 	if !ok {
@@ -264,6 +264,93 @@ func (h *HistoryHandler) VMsHistory(c *gin.Context) {
 		}
 	}
 	Success(c, gin.H{"vms": filtered, "source": "prometheus"})
+}
+
+// PoolHistory 存储池使用率历史 GET /api/monitor/pool-history?minutes=60。
+// 返回 {pools: {池名: [{t, val}]}}（val 为已用百分比）——监控中心原生化看板用
+// （Grafana 退役批次，替代原 vmops-overview 看板的池使用率面板）。
+func (h *HistoryHandler) PoolHistory(c *gin.Context) {
+	minutes := clampMinutes(c.Query("minutes"), 60)
+	const query = `100 * (vmops_pool_capacity_bytes - vmops_pool_available_bytes) / vmops_pool_capacity_bytes`
+	series, err := h.queryRangeMulti(c, query, minutes)
+	if err != nil {
+		LogError(c, fmt.Errorf("查询存储池使用率历史: %w", err))
+		Success(c, gin.H{"pools": map[string][]tsPoint{}, "source": "unavailable"})
+		return
+	}
+	pools := map[string][]tsPoint{}
+	for _, s := range series {
+		name := s.Labels["pool"]
+		if name == "" || len(s.Points) == 0 {
+			continue
+		}
+		pools[name] = s.Points
+	}
+	Success(c, gin.H{"pools": pools, "source": "prometheus"})
+}
+
+// vmMetricSeries 单 VM 的六指标序列（原生看板虚拟机页签对齐：CPU/内存/磁盘读写/网络收发）。
+type vmMetricSeries struct {
+	CPU       []tsPoint `json:"cpu"`
+	Mem       []tsPoint `json:"mem"`        // 内存占用百分比
+	DiskRead  []tsPoint `json:"disk_read"`  // 字节/秒
+	DiskWrite []tsPoint `json:"disk_write"` // 字节/秒
+	NetRx     []tsPoint `json:"net_rx"`     // 字节/秒
+	NetTx     []tsPoint `json:"net_tx"`     // 字节/秒
+}
+
+// VMDetailedHistory 全部 VM 六指标历史 GET /api/monitor/vm-metrics-history?minutes=30。
+// 返回 {vms: {vm名: {cpu,mem,disk_read,disk_write,net_rx,net_tx}}}——监控中心原生化
+// 的 VM 明细看板用；磁盘/网络速率与 /metrics 采集同口径（只采样首盘/首网卡）。
+func (h *HistoryHandler) VMDetailedHistory(c *gin.Context) {
+	minutes := clampMinutes(c.Query("minutes"), 30)
+	queries := []struct {
+		key  string
+		expr string
+	}{
+		{"cpu", "vmops_vm_cpu_percent"},
+		{"mem", "100 * vmops_vm_mem_used_kib / vmops_vm_mem_total_kib"},
+		{"disk_read", "vmops_vm_disk_read_bps"},
+		{"disk_write", "vmops_vm_disk_write_bps"},
+		{"net_rx", "vmops_vm_net_rx_bps"},
+		{"net_tx", "vmops_vm_net_tx_bps"},
+	}
+	vms := map[string]*vmMetricSeries{}
+	for _, m := range queries {
+		series, err := h.queryRangeMulti(c, m.expr, minutes)
+		if err != nil {
+			// Prometheus 不可达：整体降级为空（不 5xx），前端显示 unavailable 态
+			LogError(c, fmt.Errorf("查询 VM %s 历史: %w", m.key, err))
+			Success(c, gin.H{"vms": map[string]*vmMetricSeries{}, "source": "unavailable"})
+			return
+		}
+		for _, s := range series {
+			name := s.Labels["vm"]
+			if name == "" || len(s.Points) == 0 {
+				continue
+			}
+			row := vms[name]
+			if row == nil {
+				row = &vmMetricSeries{}
+				vms[name] = row
+			}
+			switch m.key {
+			case "cpu":
+				row.CPU = s.Points
+			case "mem":
+				row.Mem = s.Points
+			case "disk_read":
+				row.DiskRead = s.Points
+			case "disk_write":
+				row.DiskWrite = s.Points
+			case "net_rx":
+				row.NetRx = s.Points
+			case "net_tx":
+				row.NetTx = s.Points
+			}
+		}
+	}
+	Success(c, gin.H{"vms": vms, "source": "prometheus"})
 }
 
 // clampMinutes 解析 minutes 参数：5~360，非法回退默认值。

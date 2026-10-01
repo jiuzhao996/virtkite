@@ -72,6 +72,7 @@ func Init() {
 		&model.ScheduledTask{},
 		&model.CloudInitTemplate{},
 		&model.HostKey{},
+		&model.Notification{},
 	)
 	if err != nil {
 		log.Fatalf("数据库迁移失败: %v", err)

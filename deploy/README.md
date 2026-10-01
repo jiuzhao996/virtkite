@@ -6,18 +6,17 @@
 
 架构：浏览器 → 腾讯云 nginx（TLS 终止，证书 /etc/nginx/kpyun/，vhost conf.d/kpyun.conf，存档 kpyun.conf）
 → frp 隧道（云端 frps.service :7000，家里 virtkite-frpc.service，`proxyBindAddr=127.0.0.1` 保证回源端口不裸奔公网）
-→ 家里 vmops(:8080) / websockify(:6080) / grafana(:3000)。
+→ 家里 vmops(:8080) / websockify(:6080)。
 
 - **4321 端口的原因**：kpyun.fun 尚未 ICP 备案，腾讯云对境内服务器 80/443 做 SNI 拦截（jzops.fun 已备案不受影响）；
   备案完成后 443 vhost 自动可用，无需改配置。控制台 noVNC 走同源 `/vnc/` 前缀（nginx wss 升级）。
-- **Grafana 看板**：监控中心 iframe 走同源 `/grafana/` 前缀（nginx 反代 → frp 云端 13000 → 家里 3000）。
-  **坑（已修）**：Grafana 开了 `GF_SERVER_SERVE_FROM_SUB_PATH=true`，若 `proxy_pass` 带尾斜杠会剥掉
-  `/grafana/` 前缀，与子路径服务冲突表现为 301 重定向死循环——必须去掉尾斜杠透传完整路径
+- ~~Grafana 看板同源反代~~：Grafana 已退役（2026-10 原生化批次，看板由平台 ECharts 直连 Prometheus 重画），
+  nginx `/grafana/` 反代段可一并移除（保留不影响）。
   （`proxy_pass http://127.0.0.1:13000;`，存档 kpyun.conf 即正确写法）。
 - **公网暴露加固**（.env）：SERVER_MODE=release + 强随机 JWT_SECRET_KEY + CORS_ORIGINS=kpyun.fun。
 - **环境变量模板**：仓库根 `.env.example` 是唯一事实源（必填/可选变量清单 + 生成命令），
   新部署 `cp .env.example .env && chmod 600 .env` 后逐个填值。**必填**：`DB_PASSWORD`、
-  `MYSQL_ROOT_PASSWORD`、`GRAFANA_ADMIN_PASSWORD`、`JWT_SECRET_KEY`、`CREDENTIAL_MASTER_KEY`
+  `MYSQL_ROOT_PASSWORD`、`JWT_SECRET_KEY`、`CREDENTIAL_MASTER_KEY`
   （VM SSH 凭据加密主密钥，必须与 `JWT_SECRET_KEY` 完全不同，否则轮换 JWT 会连带废掉历史凭据）；
   缺失时 `docker compose config` 直接报错拒绝启动。
 - **隧道持久化**：两端 systemd（Restart=always，frp 心跳自动重连）；旧 SSH 反向隧道方案（virtkite-tunnel）已 disable 备用。
@@ -38,35 +37,34 @@
 
 ```
 宿主机原生：vmops(:8080) + websockify(:6080)
-Docker 容器：mysql + prometheus + alertmanager + grafana
+Docker 容器：mysql + prometheus + alertmanager（Grafana 已退役，看板原生化）
 ```
 
 启动方式：
 
 ```bash
-docker compose up -d mysql prometheus alertmanager grafana   # 容器侧
+docker compose up -d mysql prometheus alertmanager          # 容器侧
 ./start.sh                                                   # 宿主机侧（app + websockify）
 ```
 
 说明：
 - Prometheus 容器经 `host.docker.internal:8080`（compose `extra_hosts: host-gateway`）抓取宿主机上的 app。
-- Grafana 已通过 compose 环境变量开启匿名只读 + iframe 嵌入（`GF_SECURITY_ALLOW_EMBEDDING` 等）+ 亮色主题 +
-  子路径服务（`GF_SERVER_SERVE_FROM_SUB_PATH`，`ROOT_URL=https://kpyun.fun/grafana/`），产品「监控中心」页嵌入
-  kiosk 看板：https 访问走同源 `/grafana/`（https 页面嵌 http iframe 会被混合内容拦截），http 访问直连 `:3000`；
+- 监控看板已原生化（2026-10）：平台「监控中心」用 ECharts 直连 Prometheus 历史（`/api/monitor/pool-history`、
+  `/api/monitor/vm-metrics-history`），不再依赖 Grafana 进程；
   页内「平台概览 / 虚拟机明细」单选切换两个 provisioned 看板（uid 与 deploy/ 下 JSON 一致）。
 - 告警链路：prometheus.yml 的 `alerting:` 段 → alertmanager:9093（Prometheus 2.x 无 `--alertmanager.url` 参数，勿回退）。
 
 ## 形态二：一键全容器（发布形态）
 
 ```bash
-docker compose up -d   # 6 个容器：mysql + app + websockify + prometheus + alertmanager + grafana
+docker compose up -d   # 5 个容器：mysql + app + websockify + prometheus + alertmanager
 ```
 
 与形态一的差异与注意：
 - app 容器经挂载 `/var/run/libvirt/libvirt-sock` 直通宿主机 libvirtd（libvirt 本身无法容器化）。
 - websockify 容器由 `docker/websockify.Dockerfile` 构建（debian novnc + websockify 包），
   token-source 指向 compose 网络内的 app 服务。
-- **混合形态请勿启动 websockify 容器**（`docker compose up -d mysql prometheus alertmanager grafana`
+- **混合形态请勿启动 websockify 容器**（`docker compose up -d mysql prometheus alertmanager`
   按需选择即可）：它与宿主机 start.sh 起的 websockify 抢 6080 端口。
 - app 切进容器后，Prometheus 抓取目标可改回 `app:8080`（见 prometheus.yml 注释）。
 
@@ -78,10 +76,6 @@ docker compose up -d   # 6 个容器：mysql + app + websockify + prometheus + a
 | gen-monitor-conf.sh | 从 .env 提取令牌生成 prometheus.yml / alertmanager.yml（产物已 gitignore） |
 | alerts.yml | 9 条告警规则（VMRunningDrop/HostCpuHigh/PoolSpaceLow/TaskBacklog/VMCpuHot/VmopsDown/HostMemHigh/VMMemHigh/VMDiskIOHigh，全中文 summary） |
 | alertmanager.yml.example | 告警分组/路由模板（default receiver 推平台告警网关 vmops-webhook，见下「告警网关」） |
-| grafana-datasource.yml | 预置 Prometheus 数据源 |
-| grafana-dashboard-provider.yml | 看板文件 provider |
-| grafana-dashboard.json | 平台概览看板（uid: vmops-overview，9 面板） |
-| grafana-dashboard-vms.json | 虚拟机明细看板（uid: vmops-vms，6 面板，按 VM 维度；只对运行中 VM 出数据——vmops_vm_* 由 GetDomainStats 采集，关机 VM 无指标属正确行为） |
 | file_sd/ | Prometheus file_sd 目标目录（平台自动生成 targets.json，见下「监控服务发现闭环」） |
 
 ## 监控服务发现闭环（file_sd）
@@ -114,6 +108,6 @@ docker compose up -d   # 6 个容器：mysql + app + websockify + prometheus + a
 - 除鉴权失败/请求体非法外网关恒返回 200（Alertmanager 对非 2xx 会按策略重试轰炸），
   处理失败只记服务端日志。
 
-镜像版本：grafana 13.2.1 / prometheus v3.14.0 / alertmanager v0.34.0 / mysql 8.0.36（Docker Hub 直连超时时用 `docker.m.daocloud.io` 拉取后 tag 回官方名）。
+镜像版本：prometheus v3.14.0 / alertmanager v0.34.0 / mysql 8.0.36（Docker Hub 直连超时时用 `docker.m.daocloud.io` 拉取后 tag 回官方名）。
 
-> ⚠️ **Grafana 不要用 `-slim` 镜像**（如 13.2.1-slim）：slim 版不含内置数据源插件，Prometheus 数据源会报 `plugin not registered`，后台补装器虽会从 grafana.com 逐个下载（依赖外网且极慢，本机 18 个插件要十几分钟），不可靠。用完整版；升级后若插件状态异常，删 `grafana-data` 卷重建即可（provisioning 会自动重建数据源与看板）。
+> 历史排障记录：Grafana 曾在本栈服役（13.2.1 完整版，勿用 -slim——缺内置数据源插件），2026-10 已退役，`grafana-data` 卷可删。考古见 git 历史。

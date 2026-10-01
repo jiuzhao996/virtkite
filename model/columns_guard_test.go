@@ -27,7 +27,7 @@ import (
 var guardModels = []interface{}{
 	&User{}, &Host{}, &VM{}, &Image{}, &AuditLog{}, &Task{}, &ConsoleSession{},
 	&Setting{}, &Alert{}, &PoolMeta{}, &VMGrant{}, &CronRun{}, &VMCredential{},
-	&ScheduledTask{}, &CloudInitTemplate{}, &HostKey{},
+	&ScheduledTask{}, &CloudInitTemplate{}, &HostKey{}, &Notification{},
 	&UserGroup{}, &UserGroupMember{}, &VMGroupGrant{}, &GrantRequest{},
 }
 

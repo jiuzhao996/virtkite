@@ -136,6 +136,8 @@
               @click="aiOpen = true"
             />
           </el-tooltip>
+          <!-- 告警铃（告警中心批次 2026-10）：站内通知未读角标，点开看告警、带 vm 深链详情 -->
+          <AlertBell />
           <!-- 任务铃：有进行中的后台任务时亮角标，点开看进度、跳任务中心 -->
           <el-popover trigger="click" width="320">
             <template #reference>
@@ -214,6 +216,7 @@ import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { roleText, vmStatusText, vmStatusTag } from '../utils/format'
 import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
+import AlertBell from '../components/AlertBell.vue'
 
 // AI 助手抽屉：异步组件避免 marked/DOMPurify 进入口 chunk；el-drawer 首次打开才渲染内容，
 // 关闭仅隐藏不清空（会话常驻，进行中的流式回答不被打断）

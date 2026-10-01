@@ -158,7 +158,7 @@ func clampLimit(s string) int {
 	return n
 }
 
-// autoStep 按查询跨度自动定 step：目标约 240 个刻度（对齐 Grafana 默认密度），下限 1s。
+// autoStep 按查询跨度自动定 step：目标约 240 个刻度（对齐常见看板密度），下限 1s。
 // LogQL 日志查询忽略 step；指标查询（rate/sum 等）用它决定聚合粒度。
 func autoStep(d time.Duration) time.Duration {
 	step := d / 240
