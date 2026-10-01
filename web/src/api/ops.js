@@ -33,6 +33,8 @@ export const ops = {
   // AI 助手状态（模型/端点可用性）
   aiStatus: () => unwrap(http.get('/ai/status')),
 
+  // 通用只读 PromQL 查询（原生看板扩展层，panels.js 注册表消费）：minutes 缺省后端按 instant 单点查询
+  promQuery: (query, minutes) => unwrap(http.post('/monitor/prom-query', { query, minutes })),
   // Loki 日志查询（可选外接栈，未部署时后端回 502 + 部署指引文案）
   lokiQuery: (query, limit) => unwrap(http.get('/monitor/loki/query', { params: { query, limit } })),
 

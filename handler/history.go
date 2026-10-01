@@ -381,3 +381,160 @@ func escapePromLabel(s string) string {
 	}
 	return string(out)
 }
+
+
+// promQueryLimit 通用查询端点的防护钳制：PromQL 天然只读（无写语义），真正要防的是
+// 昂贵正则与超大响应——查询长度、时间跨度在入口钳制，序列数在出口截断。
+const (
+	promQueryMaxLen    = 512
+	promQueryMaxSeries = 50
+)
+
+// PromQuery 通用只读查询 POST /api/monitor/prom-query（原生看板扩展层，2026-10）。
+// body: { query, minutes }——minutes 缺省 = instant 即时查询（单点），带 minutes = range 区间序列。
+// 供前端 panels.js 注册表消费：加一张监控面板 = 注册表加一行，零后端改动。
+func (h *HistoryHandler) PromQuery(c *gin.Context) {
+	var req struct {
+		Query   string `json:"query"`
+		Minutes int    `json:"minutes"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Query == "" {
+		Fail(c, http.StatusBadRequest, "query 不能为空")
+		return
+	}
+	if len(req.Query) > promQueryMaxLen {
+		Fail(c, http.StatusBadRequest, "查询表达式过长（上限 512 字符）")
+		return
+	}
+
+	// instant：/api/v1/query 单点查询，统一包装成单点序列（前端渲染口径一致）
+	if req.Minutes <= 0 {
+		val, labels, err := h.instantQuery(c, req.Query)
+		if err != nil {
+			LogError(c, fmt.Errorf("Prometheus instant 查询: %w", err))
+			Success(c, gin.H{"series": []gin.H{}, "source": "unavailable"})
+			return
+		}
+		series := []gin.H{}
+		if val != nil {
+			series = append(series, gin.H{"labels": labels, "points": []tsPoint{*val}})
+		}
+		Success(c, gin.H{"series": series, "source": "prometheus"})
+		return
+	}
+
+	series, err := h.queryRangeMulti(c, req.Query, clampMinutes(strconv.Itoa(req.Minutes), 30))
+	if err != nil {
+		LogError(c, fmt.Errorf("Prometheus range 查询: %w", err))
+		Success(c, gin.H{"series": []gin.H{}, "source": "unavailable"})
+		return
+	}
+	out := make([]gin.H, 0, len(series))
+	for _, s := range series {
+		out = append(out, gin.H{"labels": s.Labels, "points": s.Points})
+	}
+	if len(out) > promQueryMaxSeries {
+		out = out[:promQueryMaxSeries]
+	}
+	Success(c, gin.H{"series": out, "source": "prometheus"})
+}
+
+// instantQuery 调 Prometheus /api/v1/query，返回首个序列的最新值与标签（无序列返回 nil,nil,nil）。
+func (h *HistoryHandler) instantQuery(c *gin.Context, query string) (*tsPoint, map[string]string, error) {
+	q := url.Values{}
+	q.Set("query", query)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet,
+		h.PrometheusURL+"/api/v1/query?"+q.Encode(), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err := h.Client.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Prometheus 不可达: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("Prometheus 响应异常: %s", resp.Status)
+	}
+	var body struct {
+		Status string `json:"status"`
+		Data   struct {
+			Result []struct {
+				Metric map[string]string `json:"metric"`
+				Value  []interface{}     `json:"value"` // [unix秒, "数值字符串"]
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, nil, err
+	}
+	if body.Status != "success" || len(body.Data.Result) == 0 {
+		return nil, nil, nil
+	}
+	r := body.Data.Result[0]
+	valStr, _ := r.Value[1].(string)
+	val, err := strconv.ParseFloat(valStr, 64)
+	if err != nil || math.IsNaN(val) || math.IsInf(val, 0) {
+		return nil, nil, nil
+	}
+	ts, _ := r.Value[0].(float64)
+	point := tsPoint{
+		T:   time.Unix(int64(ts), 0).Format("15:04:05"),
+		Val: round1(val),
+	}
+	return &point, r.Metric, nil
+}
+
+// GuestMetrics VM 内部指标 GET /api/vms/:id/guest-metrics?minutes=30。
+// 消费 file_sd 抓取的 node_exporter 指标（file_sd 目标带 vm_name/vm_id 标签，会附着到
+// 该目标抓回的全部序列）：根分区使用率 / guest 内存占用 / load1 三条曲线。
+// VM 未装 node_exporter 时 available=false（前端显示安装引导），Prometheus 不可达同样降级。
+func (h *HistoryHandler) GuestMetrics(c *gin.Context) {
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
+	var vm struct {
+		Name string `gorm:"column:name"`
+		IP   string `gorm:"column:ip"`
+	}
+	if err := h.DB.Table("vms").Select("name, ip").Where("id = ?", id).Take(&vm).Error; err != nil {
+		Fail(c, http.StatusNotFound, "虚拟机不存在")
+		return
+	}
+	if !vmVisible(c, h.DB, id) {
+		Fail(c, http.StatusNotFound, "虚拟机不存在")
+		return
+	}
+
+	// file_sd 的目标标签 vm_name 会附着到该目标抓回的全部 node_exporter 序列，按它过滤；
+	// 指标自带的选择器（如 mountpoint）必须并进同一个 {}——PromQL 不允许相邻两个选择器
+	selector := fmt.Sprintf(`job="vm-node",vm_name=%q`, escapePromLabel(vm.Name))
+	queries := []struct {
+		key  string
+		expr string
+	}{
+		{"fs", fmt.Sprintf(`100 - 100 * (node_filesystem_avail_bytes{%s,mountpoint="/"} / node_filesystem_size_bytes{%s,mountpoint="/"})`, selector, selector)},
+		{"mem", fmt.Sprintf(`100 * (1 - node_memory_MemAvailable_bytes{%s} / node_memory_MemTotal_bytes{%s})`, selector, selector)},
+		{"load1", fmt.Sprintf(`node_load1{%s}`, selector)},
+	}
+
+	minutes := clampMinutes(c.Query("minutes"), 30)
+	out := gin.H{"available": false, "vm": vm.Name, "source": "prometheus"}
+	hasData := false
+	for _, q := range queries {
+		points, err := h.queryRange(c, q.expr, minutes)
+		if err != nil {
+			LogError(c, fmt.Errorf("查询 guest %s 指标: %w", q.key, err))
+			out[q.key] = []tsPoint{}
+			out["source"] = "unavailable"
+			continue
+		}
+		if len(points) > 0 {
+			hasData = true
+		}
+		out[q.key] = points
+	}
+	out["available"] = hasData
+	Success(c, out)
+}

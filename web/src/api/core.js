@@ -146,6 +146,8 @@ export const core = {
   hostHistory: (minutes) => unwrap(http.get('/dashboard/host-history', { params: { minutes } })),
   vmHistory: (minutes) => unwrap(http.get('/dashboard/vm-history', { params: { minutes } })),
   vmStatsHistory: (id, minutes) => unwrap(http.get('/vms/' + id + '/stats-history', { params: { minutes } })),
+  // VM 内部指标（file_sd 抓取的 node_exporter：根分区/内存/负载；未装 exporter 时 available=false）
+  guestMetrics: (id, minutes) => unwrap(http.get(`/vms/${id}/guest-metrics`, { params: { minutes } })),
 
   // 审计
   listAudit: (params) => unwrap(http.get('/audit', { params })),

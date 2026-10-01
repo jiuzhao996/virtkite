@@ -67,6 +67,22 @@
       </div>
     </el-card>
 
+    <!-- 扩展面板（panels.js 注册表驱动）：加一张监控面板 = 注册表加一行，零后端改动——
+         这是 Grafana 模板位的自研答案（通用 prom-query 端点 + 声明式注册表） -->
+    <div class="panel-grid">
+      <el-card v-for="p in PANELS" :key="p.id" shadow="never" class="alert-card panel-card">
+        <template #header>
+          <div class="alert-head">
+            <span>{{ p.title }}</span>
+          </div>
+        </template>
+        <div :ref="(el) => (panelChartRefs[p.id] = el)" class="chart-box panel-box" />
+        <div v-if="panelEmpty(p)" class="chart-empty panel-empty-hint">
+          <span>{{ p.empty }}</span>
+        </div>
+      </el-card>
+    </div>
+
     <!-- 告警列表 -->
     <el-card shadow="never" class="alert-card" :class="{ 'alert-firing': firingCount }">
       <template #header>
@@ -328,6 +344,78 @@ import { cssVar, fmtDateTime, fmtRateBytes } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
 import echarts from '../utils/echarts'
+import { PANELS } from './monitor/panels'
+
+// ── 扩展面板（panels.js 注册表）：通用 prom-query 端点 + 声明式渲染 ──
+const panelChartRefs = reactive({})
+const panelCharts = reactive({})
+const panelData = reactive({}) // panelId → [{name, points}]
+
+function panelUnitFormatter(unit) {
+  if (unit === 'bytes') return (v) => fmtRateBytes(v)
+  return undefined
+}
+
+function panelEmpty(p) {
+  const rows = panelData[p.id]
+  return !rows || rows.every((s) => !s.points || !s.points.length)
+}
+
+async function loadPanels() {
+  for (const p of PANELS) {
+    // 面板内多序列并行，面板间串行（3 张面板各 1-2 序列，量小无所谓；串行便于复用 refs）
+    const results = await Promise.allSettled(
+      p.series.map((s) => api.promQuery(s.expr, minutes.value))
+    )
+    const rows = []
+    results.forEach((r, i) => {
+      if (r.status !== 'fulfilled') return
+      const series = (r.value.data && r.value.data.series) || []
+      // 单序列面板直接用；多序列按注册顺序对位（prom-query 每次只回该 expr 的序列）
+      const points = series.length ? series[0].points : []
+      rows.push({ name: p.series[i].name, points })
+    })
+    panelData[p.id] = rows
+    await nextTick()
+    renderPanel(p)
+  }
+}
+
+function renderPanel(p) {
+  const el = panelChartRefs[p.id]
+  if (!el) return
+  let chart = panelCharts[p.id]
+  if (!chart) {
+    chart = echarts.init(el)
+    watchSize(el)
+    panelCharts[p.id] = chart
+  }
+  const rows = panelData[p.id] || []
+  const colors = [primaryColor, successColor, '#d97706']
+  const first = rows.find((r) => r.points && r.points.length)
+  const opt = baseOption()
+  opt.legend.data = rows.map((r) => r.name)
+  opt.xAxis.data = first ? first.points.map((pt) => pt.t) : []
+  opt.yAxis.axisLabel = { color: chartMutedColor, formatter: panelUnitFormatter(p.unit) }
+  if (p.unit === 'percent') opt.yAxis.max = 100
+  if (p.unit === 'bool') {
+    opt.yAxis.max = 1.2
+    opt.yAxis.min = -0.2
+    opt.yAxis.interval = 1
+  }
+  opt.tooltip.valueFormatter = panelUnitFormatter(p.unit)
+  opt.series = rows.map((r, i) => ({
+    name: r.name,
+    type: 'line',
+    data: (r.points || []).map((pt) => pt.val),
+    symbol: 'none',
+    lineStyle: { width: 1.5, color: colors[i % colors.length] },
+    itemStyle: { color: colors[i % colors.length] },
+    areaStyle: { opacity: 0.08 },
+    step: p.unit === 'bool' || p.unit === 'count' ? 'end' : undefined
+  }))
+  chart.setOption(opt, true)
+}
 
 // ── 原生看板（Grafana 退役批次）：ECharts 直连平台代理的 Prometheus 历史 ──
 // echarts 不解析 var()，取令牌真实色值（与 HostResourceCard 同一套取色惯例）
@@ -518,6 +606,7 @@ async function loadBoard() {
 
 function reloadBoard() {
   loadBoard()
+  loadPanels() // 面板与看板共用时间跨度；不进 3s 轮询（每次 3+ 个查询，手动/换档刷新足够）
 }
 
 // 切换看板：懒初始化对应图表（嵌入 Dashboard tab 的 v-show 场景由 ResizeObserver 兜底）
@@ -664,6 +753,7 @@ onMounted(() => {
   loadHistory()
   loadFileSD()
   loadBoard()
+  loadPanels()
   startPolling()
 })
 onUnmounted(() => {
@@ -672,6 +762,7 @@ onUnmounted(() => {
   hostChart && hostChart.dispose()
   poolChart && poolChart.dispose()
   Object.values(metricCharts).forEach((c) => c.dispose())
+  Object.values(panelCharts).forEach((c) => c.dispose())
 })
 </script>
 
@@ -766,6 +857,26 @@ onUnmounted(() => {
 .chart-hint {
   font-size: 0.85rem;
   color: var(--el-text-color-secondary);
+}
+
+/* ── 扩展面板网格（panels.js 注册表驱动）：自适应列数，窄屏单列 ── */
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.panel-card {
+  margin-bottom: 0;
+}
+.panel-box {
+  height: 190px;
+}
+.panel-empty-hint {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
 }
 
 /* ── Loki 折叠卡：整体是一张可展开的卡片（标题行即折叠头） ── */

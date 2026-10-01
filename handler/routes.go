@@ -201,6 +201,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.GET("/:id/stats", vmHandler.GetVMStats)
 		// 虚拟机历史曲线（Prometheus query_range，进详情页即画满）
 		vms.GET("/:id/stats-history", historyHandler.VMStatsHistory)
+		// VM 内部指标（file_sd 抓取的 node_exporter：根分区/内存/负载；未装 exporter 降级 available=false）
+		vms.GET("/:id/guest-metrics", historyHandler.GuestMetrics)
 		vms.PUT("/:id/cpu", vmHandler.SetVcpu)
 		vms.PUT("/:id/memory", vmHandler.SetMemory)
 		vms.PUT("/:id/autostart", vmHandler.SetAutostart)
@@ -403,6 +405,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		// 原生看板历史曲线（Grafana 退役批次 2026-10：池使用率 + VM 六指标）
 		monitor.GET("/pool-history", historyHandler.PoolHistory)
 		monitor.GET("/vm-metrics-history", historyHandler.VMDetailedHistory)
+		// 通用只读 PromQL 查询（原生看板扩展层：panels.js 注册表驱动，加面板零后端改动）
+		monitor.POST("/prom-query", historyHandler.PromQuery)
 		// Loki 日志查询（v3 批次 G：指标+日志+告警完整可观测性）
 		monitor.GET("/loki/query", lokiHandler.Query)
 		monitor.GET("/loki/labels", lokiHandler.Labels)

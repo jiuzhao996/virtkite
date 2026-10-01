@@ -130,6 +130,9 @@
           :interval-ms="statsIntervalMs"
         />
 
+        <!-- Guest 内部指标（node_exporter，file_sd 自动纳管；未装显示安装引导，懒加载） -->
+        <GuestMetricsCard :vm-id="id" :active="activeView === 'perf'" :is-running="isRunning" />
+
         <!-- 处理器 / 内存 / 磁盘 / 网卡 四分区（含添加/移除磁盘、添加网卡对话框，内聚在 VmHardwareDialogs） -->
         <VmHardwarePanels
           :vm-id="id"
@@ -201,6 +204,7 @@ import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
 import { vmStatusText, vmStatusTag, isCancel } from '../utils/format'
 import VmPerfCard from './vm-detail/components/VmPerfCard.vue'
+import GuestMetricsCard from './vm-detail/components/GuestMetricsCard.vue'
 import VmHardwarePanels from './vm-detail/components/VmHardwarePanels.vue'
 import VmSnapshotCard from './vm-detail/components/VmSnapshotCard.vue'
 import VmGrantCard from './vm-detail/components/VmGrantCard.vue'
