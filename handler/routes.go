@@ -267,6 +267,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		storage.DELETE("/pools/:name", storageHandler.DeletePool)
 		storage.POST("/pools/:name/volumes", storageHandler.CreateVolume)
 		storage.GET("/pools/:name/volume-refs", storageHandler.GetVolumeRefs)
+		// 全库克隆家谱（跨池血缘图谱 + 回收候选聚合；克隆链天然跨池，数据与删卷守卫同源）
+		storage.GET("/volume-graph", storageHandler.GetVolumeGraph)
 		storage.POST("/pools/:name/orphan-cleanup", storageHandler.CleanupOrphans)
 		storage.DELETE("/pools/:name/volumes/:vol", storageHandler.DeleteVolume)
 	}

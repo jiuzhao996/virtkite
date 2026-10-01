@@ -131,6 +131,8 @@ export const core = {
   registerImage: (payload) => unwrap(http.post('/images/register', payload)),
   // 存储卷在用引用（卷管理弹窗的"在用"徽标与删卷确认）
   volumeRefs: (pool) => unwrap(http.get('/storage/pools/' + pool + '/volume-refs')),
+  // 全库克隆家谱（跨池血缘图谱节点/边 + 回收候选聚合；数据与删卷守卫同源）
+  volumeGraph: () => unwrap(http.get('/storage/volume-graph')),
   // 孤儿卷清理（转后台任务，202 返回 task_id）
   cleanupOrphans: (pool) => unwrap(http.post('/storage/pools/' + pool + '/orphan-cleanup')),
 
