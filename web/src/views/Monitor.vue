@@ -314,8 +314,8 @@
 defineProps({ embedded: { type: Boolean, default: false } })
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { Aim, AlarmClock, InfoFilled, Memo, Refresh, Search, Loading, WarningFilled } from '@element-plus/icons-vue'
-import http, { api } from '../api'
-import { fmtDateTime, fmtDateTimeLocale } from '../utils/format'
+import { api } from '../api'
+import { fmtDateTime } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
 
@@ -499,14 +499,14 @@ async function queryLoki() {
   if (!q) return // 清空后点查询：静默返回，不打扰
   lokiLoading.value = true
   try {
-    const res = await http.get('/monitor/loki/query', { params: { query: q, limit: lokiLimit.value } })
+    const res = await api.lokiQuery(q, lokiLimit.value)
     // 信封 {code,message,data} 的 data 即 Loki 原始 JSON；日志流在 data.result[].values（[纳秒时间戳串, 行]）
-    const streams = (res.data && res.data.data && Array.isArray(res.data.data.result)) ? res.data.data.result : []
+    const streams = (res && res.data && Array.isArray(res.data.result)) ? res.data.result : []
     const rows = []
     for (const s of streams) {
       for (const v of s.values || []) {
         const ms = Number(v[0]) / 1e6 // 纳秒 → 毫秒
-        rows.push({ tsMs: ms, ts: fmtDateTimeLocale(ms), line: String(v[1] || '') })
+        rows.push({ tsMs: ms, ts: fmtDateTime(ms), line: String(v[1] || '') })
       }
     }
     rows.sort((a, b) => b.tsMs - a.tsMs) // 新日志在前，便于看最新动态

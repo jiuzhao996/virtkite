@@ -183,7 +183,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
-import http from '../api'
+import { api } from '../api'
 import { errMsg, isCancel, fmtDateTime, vmStatusText } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
 import PageHead from '../components/PageHead.vue'
@@ -264,8 +264,8 @@ function paramsText(row) {
 async function load() {
   loading.value = true
   try {
-    const res = await http.get('/crons')
-    items.value = (res.data.data && res.data.data.items) || []
+    const res = await api.cronList()
+    items.value = (res.data && res.data.items) || []
     // 列表刷新后同步刷新已打开的历史抽屉（保留当前页码）
     if (drawerVisible.value && drawerTask.value) loadRuns()
   } catch (e) {
@@ -286,8 +286,8 @@ function vmName(vm) {
 async function loadVMs() {
   vmsLoading.value = true
   try {
-    const res = await http.get('/vms')
-    vms.value = (res.data.data && res.data.data.items) || []
+    const res = await api.listVMs()
+    vms.value = (res.data && res.data.items) || []
   } catch (e) {
     ElMessage.error(errMsg(e, '获取虚拟机列表失败'))
   } finally {
@@ -344,9 +344,9 @@ watch(dialog, (open) => {
 async function fetchPreview(expr) {
   const seq = ++previewSeq
   try {
-    const res = await http.get('/crons/preview', { params: { expr } })
+    const res = await api.cronPreview(expr)
     if (seq !== previewSeq) return
-    const next = (res.data && res.data.data && res.data.data.next) || []
+    const next = (res && res.data && res.data.next) || []
     cronPreview.value = { state: 'ok', times: Array.isArray(next) ? next.slice(0, 3) : [] }
   } catch (e) {
     if (seq !== previewSeq) return
@@ -418,10 +418,10 @@ async function save() {
   try {
     if (editingId.value) {
       // 表达式解析错误等校验失败，后端返回 400 + 中文 message，errMsg 直接透出
-      await http.put('/crons/' + editingId.value, payload)
+      await api.cronUpdate(editingId.value, payload)
       ElMessage.success('已保存')
     } else {
-      await http.post('/crons', payload)
+      await api.cronCreate(payload)
       ElMessage.success('已创建')
     }
     dialog.value = false
@@ -439,7 +439,7 @@ const togglingId = ref(null)
 async function toggleRow(row) {
   togglingId.value = row.id
   try {
-    await http.post('/crons/' + row.id + '/toggle')
+    await api.cronToggle(row.id)
     row.enabled = !row.enabled
     ElMessage.success(row.enabled ? '已启用' : '已停用')
     await load()
@@ -456,7 +456,7 @@ const runningId = ref(null)
 async function runNow(row) {
   runningId.value = row.id
   try {
-    await http.post('/crons/' + row.id + '/run')
+    await api.cronRun(row.id)
     ElMessage.success(`已触发「${row.name}」执行`)
     await load()
   } catch (e) {
@@ -494,16 +494,14 @@ function openHistory(row) {
   resetRunsPage()
 }
 
-// 单页历史获取：解包留在页面内（本页走裸 http，解包路径 res.data.data 与 api.* 不同）；
-// 异常自行捕获提示（fetcher 契约），返回 total 由 composable 同步
+// 单页历史获取：api.* 返回统一信封（data 即 {total,items}）；异常自行捕获提示（fetcher 契约），
+// 返回 total 由 composable 同步
 async function fetchRuns({ page, pageSize }) {
   if (!drawerTask.value) return
   try {
     // 返回 {total, page, page_size, items:[{id,task_name,started_at,finished_at,status,output}]}
-    const res = await http.get(`/crons/${drawerTask.value.id}/runs`, {
-      params: { page, page_size: pageSize }
-    })
-    const d = (res.data && res.data.data) || {}
+    const res = await api.cronRuns(drawerTask.value.id, { page, page_size: pageSize })
+    const d = (res && res.data) || {}
     runs.value = d.items || []
     return Number(d.total) || 0
   } catch (e) {
@@ -524,7 +522,7 @@ async function remove(row) {
     return
   }
   try {
-    await http.delete('/crons/' + row.id)
+    await api.cronDelete(row.id)
     ElMessage.success('已删除')
     await load()
   } catch (e) {

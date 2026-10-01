@@ -3,13 +3,13 @@
     <PageHead title="云镜像" subtitle="qcow2 磁盘镜像，预装 cloud-init——创建虚拟机免安装流程，分钟级出机" />
 
     <el-card shadow="never">
-      <div class="toolbar">
-        <div class="toolbar-left">
+      <Toolbar>
+        <template #left>
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-tag v-if="defaultPool" type="primary" effect="plain">默认下载池：{{ defaultPool }}</el-tag>
-        </div>
+        </template>
         <span class="count">共 {{ items.length }} 个官方镜像</span>
-      </div>
+      </Toolbar>
 
       <el-alert
         v-if="loadError"
@@ -86,8 +86,9 @@ const props = defineProps({ embedded: { type: Boolean, default: false } })
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download, CircleCheck } from '@element-plus/icons-vue'
-import http, { api } from '../../../api'
+import { api } from '../../../api'
 import PageHead from '../../../components/PageHead.vue'
+import Toolbar from '../../../components/Toolbar.vue'
 import { errMsg, clampPct } from '../../../utils/format'
 import { pollTask, extractTaskId, taskErrorMessage } from '../../../utils/task.js'
 
@@ -124,8 +125,8 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await http.get('/images/market')
-    const data = res.data.data || {}
+    const res = await api.imageMarket()
+    const data = res.data || {}
     items.value = data.items || []
     defaultPool.value = data.pool || ''
   } catch (e) {
@@ -208,8 +209,8 @@ async function download(item) {
   st.submitting = true
   try {
     // source: cn=国内镜像源（默认，分钟级）| official=官方源（国际链路，互为备份）
-    const res = await http.post('/images/market/download', { key: item.key, pool: item.pool || '' })
-    const taskId = extractTaskId(res.data)
+    const res = await api.imageMarketDownload({ key: item.key, pool: item.pool || '' })
+    const taskId = extractTaskId(res)
     st.phase = 'downloading'
     st.phaseText = '等待任务调度'
     st.percent = 0

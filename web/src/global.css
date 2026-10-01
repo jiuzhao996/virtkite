@@ -32,6 +32,28 @@
   --status-error-bg: #fef2f2;
   --status-off-bg: #f1f5f9;
   --color-serial-gold: #f0b90b;      /* 串口卡主题金（ConsolePage 专属，免IP 徽标/边框/图标） */
+  --color-serial-gold-ink: #7c4a03;  /* 金底上的深色墨字（徽标/胶囊，两主题恒定） */
+
+  /* 终端视图专属（ConsolePage/TermView，GitHub Dark 同源）：刻意的深色太空主题，
+     亮暗两态保持一致不反转（设计决定）；与 utils/term-theme.js 的 xterm 调色板配套，
+     集中于此避免组件内散落 hex */
+  --term-page-bg: #0a111f;                    /* 控制台整页底 */
+  --term-panel-bg: #0e1626;                   /* 侧栏 */
+  --term-overlay: rgba(8, 14, 24, 0.55);      /* 信息栏/底栏毛玻璃底 */
+  --term-card-bg: rgba(8, 14, 24, 0.75);      /* SSH 表单卡底 */
+  --term-hairline: rgba(255, 255, 255, 0.08); /* 深底上的白色发丝分隔线 */
+  --term-line: rgba(88, 166, 255, 0.15);      /* 强调色描边（信息栏/底栏边界） */
+  --term-glow: rgba(88, 166, 255, 0.6);       /* 流星光晕 */
+  --term-text: #e6edf3;
+  --term-text-sub: #9db1c8;
+  --term-text-dim: #7f92ab;
+  --term-accent: #58a6ff;
+  --term-accent-soft: #8ab4ff;
+  --term-accent-bright: #79c0ff;
+  --term-ok: #3fb950;
+  --term-warn: #d29922;
+  --term-err: #f85149;
+  --term-off: #8b949e;
 
   --color-background: #f8fafc;      /* 页面底 */
   --color-foreground: #1e293b;      /* 主文字 */
@@ -40,6 +62,9 @@
   --color-card: #ffffff;
   --color-border: #e2e8f0;
   --color-border-strong: #cbd5e1;
+  /* 滚动条（内敛，暗色随 html.dark 反转） */
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-hover: #94a3b8;
 
   /* 间距（8px 栅格，高密度） */
   --space-xs: 2px;
@@ -111,6 +136,7 @@ html.dark {
   --status-error-bg: #3b0d0d;
   --status-off-bg: #1e293b;
   --color-serial-gold: #f0b90b;
+  --color-serial-gold-ink: #7c4a03;
 
   --color-background: #0b1220;
   --color-foreground: #e2e8f0;
@@ -119,6 +145,8 @@ html.dark {
   --color-card: #101a2e;
   --color-border: #24334d;
   --color-border-strong: #324464;
+  --scrollbar-thumb: #324464;
+  --scrollbar-thumb-hover: #43598a;
 
   --table-header-bg: #16213a;
   --card-shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.4);
@@ -222,17 +250,17 @@ h1, h2, h3, h4 {
   font-weight: 600;
 }
 
-/* 全局滚动条（浅色，尽量内敛） */
+/* 全局滚动条（令牌驱动，暗色随 html.dark 反转，尽量内敛） */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--scrollbar-thumb);
   border-radius: var(--radius-sm);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--scrollbar-thumb-hover);
 }
 ::-webkit-scrollbar-track {
   background: transparent;

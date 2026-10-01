@@ -40,7 +40,7 @@ import { ArrowLeft, CircleCheck, Files } from '@element-plus/icons-vue'
 import PageHead from '../../../components/PageHead.vue'
 import ImageMarket from './ImageMarket.vue'
 import ImageIsoMarket from './ImageIsoMarket.vue'
-import http from '../../../api'
+import { api } from '../../../api'
 
 const sub = ref('')
 const cloudCount = ref(0)
@@ -48,9 +48,9 @@ const isoCount = ref(0)
 
 async function loadCounts() {
   try {
-    const [c, i] = await Promise.all([http.get('/images/market'), http.get('/images/market/iso')])
-    const dc = c.data && (c.data.data || c.data)
-    const di = i.data && (i.data.data || i.data)
+    const [c, i] = await Promise.all([api.imageMarket(), api.imageMarketIso()])
+    const dc = c && (c.data || c)
+    const di = i && (i.data || i)
     cloudCount.value = dc.total || (dc.items || []).length
     isoCount.value = di.total || (di.items || []).length
   } catch {

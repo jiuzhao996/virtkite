@@ -70,7 +70,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="170">
-          <template #default="{ row }">{{ fmtDateTimeLocale(row.created_at) }}</template>
+          <template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
@@ -112,7 +112,7 @@
           <el-descriptions-item label="虚拟机">{{ detail.vm_name || '—' }}</el-descriptions-item>
           <el-descriptions-item label="执行人">{{ detail.username || '—' }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">
-            <span class="mono">{{ fmtDateTimeLocale(detail.created_at) }}</span>
+            <span class="mono">{{ fmtDateTime(detail.created_at) }}</span>
           </el-descriptions-item>
         </el-descriptions>
 
@@ -151,7 +151,7 @@ import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 import { useAuth } from '../store/auth'
-import { taskTypeText, taskStatusText, taskStatusTag, fmtDateTimeLocale, errMsg, isCancel } from '../utils/format'
+import { taskTypeText, taskStatusText, taskStatusTag, fmtDateTime, errMsg, isCancel } from '../utils/format'
 
 const router = useRouter()
 const { isAdmin } = useAuth()

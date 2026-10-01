@@ -209,7 +209,7 @@
 import { ref, computed, reactive, inject, onMounted, onActivated, onDeactivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Delete } from '@element-plus/icons-vue'
-import http, { api } from '../../../api'
+import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { containerName, stateTag, stateText, portsText, dockerTime } from '../../../utils/docker-format'
 import { useAutoRefresh } from '../../../composables/useAutoRefresh'
@@ -225,15 +225,15 @@ const statsMap = ref({})
 const loading = ref(false)
 
 async function fetchContainers() {
-  const res = await http.get('/docker/containers')
-  containers.value = (res.data.data || {}).items || []
+  const res = await api.listContainers()
+  containers.value = (res.data || {}).items || []
 }
 
 // 全容器实时 stats（docker stats --no-stream）：按容器名建索引，供 CPU%/内存% 列查询
 async function fetchStats() {
   try {
-    const res = await http.get('/docker/stats')
-    const items = (res.data.data || {}).items || []
+    const res = await api.dockerStats()
+    const items = (res.data || {}).items || []
     const m = {}
     for (const it of items) m[it.Name || it.Container || it.ID] = it
     statsMap.value = m
@@ -403,9 +403,9 @@ async function bulkAction(action) {
     const results = await Promise.allSettled(
       targets.map((r) => {
         if (action === 'delete') {
-          return http.delete('/docker/containers/' + r.ID, { params: r.State === 'running' ? { force: 'true' } : {} })
+          return api.dockerContainerDelete(r.ID, r.State === 'running')
         }
-        return http.post('/docker/containers/' + r.ID + '/' + action)
+        return api.dockerContainerAction(r.ID, action)
       })
     )
     const ok = results.filter((x) => x.status === 'fulfilled').length
@@ -427,7 +427,7 @@ async function containerAction(row, action) {
   const label = { start: '启动', stop: '停止', restart: '重启' }[action]
   actingKey.value = row.ID + ':' + action
   try {
-    await http.post('/docker/containers/' + row.ID + '/' + action)
+    await api.dockerContainerAction(row.ID, action)
     ElMessage.success(`已${label} ${containerName(row.Names)}`)
     await Promise.all([fetchContainers(), fetchStats()])
   } catch (e) {
@@ -454,7 +454,7 @@ async function removeContainer(row) {
   }
   try {
     // 运行中的容器必须带 force=true，否则 Docker API 拒绝删除
-    await http.delete('/docker/containers/' + row.ID, { params: running ? { force: 'true' } : {} })
+    await api.dockerContainerDelete(row.ID, running)
     ElMessage.success(`已删除 ${name}`)
     await Promise.all([fetchContainers(), fetchStats()])
   } catch (e) {
@@ -536,8 +536,8 @@ const imageOptions = ref([])
 
 async function fetchImageOptions() {
   try {
-    const res = await http.get('/docker/images')
-    const items = (res.data.data || {}).items || []
+    const res = await api.dockerImages()
+    const items = (res.data || {}).items || []
     imageOptions.value = items
       .filter((r) => r.Repository && r.Repository !== '<none>')
       .map((r) => `${r.Repository}:${r.Tag || 'latest'}`)

@@ -58,8 +58,8 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import PageHead from '../../../components/PageHead.vue'
-import http from '../../../api'
-import { taskErrorMessage } from '../../../utils/task'
+import { api } from '../../../api'
+import { extractTaskId, pollTask, taskErrorMessage } from '../../../utils/task'
 
 const props = defineProps({
   embedded: { type: Boolean, default: false }
@@ -82,8 +82,8 @@ function hintGB(bytes) {
 async function load() {
   loading.value = true
   try {
-    const res = await http.get('/images/market/iso')
-    const d = res.data && res.data.data ? res.data.data : res.data
+    const res = await api.imageMarketIso()
+    const d = res.data || {}
     items.value = d.items || []
     defaultPool.value = d.pool || ''
   } catch (e) {
@@ -98,8 +98,8 @@ async function download(item) {
   if (st.phase !== 'idle' || st.submitting) return
   st.submitting = true
   try {
-    const res = await http.post('/images/market/iso/download', { key: item.key, pool: item.pool || '' })
-    const taskId = extractTaskId(res.data)
+    const res = await api.imageMarketIsoDownload({ key: item.key, pool: item.pool || '' })
+    const taskId = extractTaskId(res)
     st.phase = 'downloading'
     st.phaseText = '等待任务调度'
     st.percent = 0
@@ -125,25 +125,6 @@ async function download(item) {
   }
 }
 
-function extractTaskId(data) {
-  if (typeof data === 'object' && data) {
-    if (data.task_id) return data.task_id
-    if (data.data && data.data.task_id) return data.data.task_id
-  }
-  throw new Error('响应缺少 task_id')
-}
-async function pollTask(taskId, { interval, timeout, onProgress }) {
-  const deadline = Date.now() + timeout
-  for (;;) {
-    if (Date.now() > deadline) throw new Error('下载超时')
-    await new Promise((r) => setTimeout(r, interval))
-    const res = await http.get('/tasks/' + taskId)
-    const d = res.data && res.data.data ? res.data.data : res.data
-    if (onProgress && d) onProgress(d)
-    if (d.status === 'success') return d
-    if (d.status === 'failed') throw new Error(d.error || '下载失败')
-  }
-}
 function clampPct(p) {
   const n = Number(p) || 0
   return Math.max(0, Math.min(100, Math.round(n)))

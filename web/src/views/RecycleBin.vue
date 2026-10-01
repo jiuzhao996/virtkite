@@ -85,7 +85,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, RefreshLeft, Delete, QuestionFilled } from '@element-plus/icons-vue'
-import http from '../api'
+import { api } from '../api'
 import { errMsg, isCancel, vmStatusText, vmStatusTag, fmtDateTime } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
@@ -97,8 +97,8 @@ const items = ref([])
 async function load() {
   loading.value = true
   try {
-    const res = await http.get('/vms-recycle')
-    const d = res.data.data
+    const res = await api.recycleList()
+    const d = res.data
     // 兼容 data 直接是数组或包一层 { items }（当前实现为后者）
     items.value = Array.isArray(d) ? d : (d && d.items) || []
   } catch (e) {
@@ -114,8 +114,8 @@ const actingId = ref(null)
 async function restore(row) {
   actingId.value = row.id
   try {
-    const res = await http.post(`/vms-recycle/${row.id}/restore`)
-    const d = res.data.data || {}
+    const res = await api.recycleRestore(row.id)
+    const d = res.data || {}
     // 域已 undefine 的记录只能恢复数据库行：诚实提示而非假装「干净恢复」
     if (d.domain_defined === false) {
       ElMessage.warning(d.message || '记录已恢复，但虚拟机定义已不存在，可在创建向导用同名卷重新定义')
@@ -143,8 +143,8 @@ async function purge(row) {
   }
   actingId.value = row.id
   try {
-    const res = await http.delete(`/vms-recycle/${row.id}/purge`, { params: { purge_volumes: 'true' } })
-    const d = res.data.data || {}
+    const res = await api.recyclePurge(row.id)
+    const d = res.data || {}
     const kept = Array.isArray(d.volumes_kept) ? d.volumes_kept : []
     if (kept.length > 0) {
       // 守卫保留的卷（镜像库登记 / 增量克隆父盘等）：提示原因，属预期行为非失败

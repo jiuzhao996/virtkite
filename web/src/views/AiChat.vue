@@ -141,7 +141,7 @@ import DOMPurify from 'dompurify'
 import PageHead from '../components/PageHead.vue'
 // GET /ai/status 走既有 axios 实例（baseURL=/api 已带 token 拦截器）；
 // POST /ai/chat 是 SSE 流式，axios 拿不到 ReadableStream，必须用原生 fetch（见 streamAnswer）。
-import http from '../api'
+import { api } from '../api'
 import { TOKEN_KEY } from '../store/auth'
 
 // embedded：抽屉形态（MainLayout 顶栏拉起）。true 时隐藏页头只留工具行，
@@ -179,9 +179,8 @@ async function loadStatus() {
   statusLoading.value = true
   statusError.value = false
   try {
-    // 统一结构 { code, message, data }，此处手动解包 data（未走 api/index 的 unwrap 助手）
-    const res = await http.get('/ai/status')
-    const data = (res.data && res.data.data) || {}
+    const res = await api.aiStatus()
+    const data = (res && res.data) || {}
     ai.configured = !!data.configured
     ai.model = data.model || ''
     ai.baseUrl = data.base_url || ''

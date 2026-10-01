@@ -32,7 +32,7 @@ import { ref, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download } from '@element-plus/icons-vue'
 import CopyButton from '../../../components/CopyButton.vue'
-import http from '../../../api'
+import { api } from '../../../api'
 import { errMsg } from '../../../utils/format'
 import { containerName } from '../../../utils/docker-format'
 import { useAutoRefresh } from '../../../composables/useAutoRefresh'
@@ -59,8 +59,8 @@ async function fetchLogs() {
   if (!logsId.value) return
   logsLoading.value = true
   try {
-    const res = await http.get('/docker/containers/' + logsId.value + '/logs', { params: { tail: logsTail.value } })
-    const data = res.data.data || {}
+    const res = await api.dockerContainerLogs(logsId.value, logsTail.value)
+    const data = res.data || {}
     logsText.value = data.logs || ''
   } catch (e) {
     ElMessage.error(errMsg(e, '获取日志失败'))
@@ -94,8 +94,8 @@ async function pullLogsFollow() {
   if (!logsDrawer.value || !logsId.value) return
   try {
     const near = logsNearBottom() // 更新内容前先记贴底状态，新日志到达后据此决定是否滚动
-    const res = await http.get('/docker/containers/' + logsId.value + '/logs', { params: { tail: logsTail.value } })
-    logsText.value = (res.data.data || {}).logs || ''
+    const res = await api.dockerContainerLogs(logsId.value, logsTail.value)
+    logsText.value = (res.data || {}).logs || ''
     if (near) nextTick(scrollLogsBottom)
   } catch (e) {
     // 跟随轮询失败静默（下拉手动刷新会给错误提示），不打扰阅读
@@ -117,8 +117,8 @@ watch(logsDrawer, (open) => {
 async function downloadLogs() {
   if (!logsId.value) return
   try {
-    const res = await http.get('/docker/containers/' + logsId.value + '/logs', { params: { tail: logsTail.value } })
-    const text = (res.data.data || {}).logs || ''
+    const res = await api.dockerContainerLogs(logsId.value, logsTail.value)
+    const text = (res.data || {}).logs || ''
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

@@ -20,7 +20,7 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import CopyButton from '../../../components/CopyButton.vue'
-import http from '../../../api'
+import { api } from '../../../api'
 import { errMsg } from '../../../utils/format'
 import { containerName } from '../../../utils/docker-format'
 
@@ -42,8 +42,8 @@ async function fetchInspect() {
   if (!inspectId.value) return
   inspectLoading.value = true
   try {
-    const res = await http.get('/docker/containers/' + inspectId.value + '/inspect')
-    inspectText.value = JSON.stringify(res.data.data ?? {}, null, 2)
+    const res = await api.dockerContainerInspect(inspectId.value)
+    inspectText.value = JSON.stringify(res.data ?? {}, null, 2)
   } catch (e) {
     ElMessage.error(errMsg(e, '获取容器详情失败'))
   } finally {

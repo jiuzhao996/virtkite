@@ -239,7 +239,7 @@ defineExpose({ pushSample, prefill, render })
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
+  background: var(--color-card);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 32px 0;

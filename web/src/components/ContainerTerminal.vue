@@ -18,6 +18,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { TOKEN_KEY } from '../api'
+import { buildTermTheme, DOCKER_TERM_SURFACE } from '../utils/term-theme'
 
 // 容器终端（xterm.js + WebSocket ↔ docker exec TTY 桥）。
 // 协议（handler/container_terminal.go）：
@@ -185,17 +186,8 @@ onMounted(async () => {
     cursorStyle: 'bar',
     fontSize: 14,
     fontFamily: "'Cascadia Code', 'Fira Code', Consolas, 'Liberation Mono', Menlo, monospace",
-    theme: {
-      background: '#0d1b2a',
-      foreground: '#cfe8ff',
-      cursor: '#58a6ff',
-      selectionBackground: 'rgba(31, 58, 95, 0.7)',
-      black: '#1b2838', red: '#f85149', green: '#3fb950', yellow: '#d2991d',
-      blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#b1bac4',
-      brightBlack: '#30363d', brightRed: '#ff6e6a', brightGreen: '#56d364',
-      brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#d2a8ff',
-      brightCyan: '#56d4dd', brightWhite: '#f0f6fc'
-    }
+    // 终端调色板单一事实源（与 VM 控制台 TermView 共用，仅表面不同：容器终端实底）
+    theme: buildTermTheme(DOCKER_TERM_SURFACE)
   })
   fitAddon = new FitAddon()
   term.loadAddon(fitAddon)

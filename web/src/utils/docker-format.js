@@ -1,6 +1,6 @@
 // Docker 展示格式化纯函数（原 DockerList.vue 内迁出，ConsolePage 等页面可复用）。
 // 只做形态兼容与中文化，不发请求、不持状态。
-import { fmtDateTime, fmtDateTimeLocale, fmtSizeBytes } from './format'
+import { fmtDateTime, fmtSizeBytes } from './format'
 
 // containerName 容器名数组/字符串归一
 export function containerName(names) {
@@ -82,11 +82,11 @@ export function relativeTimeZh(v) {
 // 「3 days ago」相对时间串映射中文（docker images 的 CreatedSince 形态）
 export function imageTime(v) {
   if (v === null || v === undefined || v === '') return '—'
-  if (typeof v === 'number') return fmtDateTimeLocale(new Date(v > 1e12 ? v : v * 1000))
+  if (typeof v === 'number') return fmtDateTime(new Date(v > 1e12 ? v : v * 1000))
   const rel = relativeTimeZh(v)
   if (rel) return rel
   const d = new Date(v)
-  if (!isNaN(d.getTime()) && /\d{4}/.test(String(v))) return fmtDateTimeLocale(d)
+  if (!isNaN(d.getTime()) && /\d{4}/.test(String(v))) return fmtDateTime(d)
   return String(v)
 }
 

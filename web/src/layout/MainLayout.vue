@@ -524,7 +524,7 @@ function onUserCommand(cmd) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fff;
+  background: var(--color-card);
   color: var(--color-foreground);
   border-bottom: 1px solid var(--color-border);
 }

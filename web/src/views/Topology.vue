@@ -40,7 +40,7 @@ import Toolbar from '../components/Toolbar.vue'
 import { GraphChart } from 'echarts/charts'
 echarts.use([GraphChart])
 
-import http from '../api'
+import { api } from '../api'
 import { errMsg, cssVar, vmStatusText, vmStatusHex, fmtSizeBytes, nowClock } from '../utils/format'
 
 // embedded：嵌入仪表盘 tab 形态（隐藏独立页头）。
@@ -296,11 +296,11 @@ async function load() {
   try {
     // 三个数据源互不依赖，并行拉取；单边失败不拖垮另两边（各自降级为空数组）
     const [vmsRes, poolsRes, netsRes] = await Promise.allSettled([
-      http.get('/vms'),
-      http.get('/storage/pools'),
-      http.get('/networks')
+      api.listVMs(),
+      api.listStoragePools(),
+      api.listNetworks()
     ])
-    const itemsOf = (r) => (r.status === 'fulfilled' && r.value.data.data && r.value.data.data.items) || []
+    const itemsOf = (r) => (r.status === 'fulfilled' && r.value.data && r.value.data.items) || []
     vms.value = itemsOf(vmsRes)
     pools.value = itemsOf(poolsRes)
     networks.value = itemsOf(netsRes)

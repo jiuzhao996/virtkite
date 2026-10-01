@@ -53,7 +53,7 @@
 
       <!-- 主区域 -->
       <main class="main">
-        <!-- 白底选择页 -->
+        <!-- 选择页（表面走平台令牌，暗色模式跟随全站） -->
         <div v-if="!view" class="pick-panel">
           <h2 class="pick-title">选择连接方式</h2>
           <p class="pick-sub">选择一种方式进入「{{ vm ? vm.name : '虚拟机' }}」的控制台</p>
@@ -88,154 +88,37 @@
           </p>
         </div>
 
-        <!-- VNC 图形控制台：浅色干净背景，无背景图 -->
-        <div v-else-if="view === 'vnc'" ref="vncViewEl" class="vnc-view">
-          <div v-if="!vm || vm.status !== 'running'" class="vnc-placeholder">
-            <el-alert type="warning" :closable="false" show-icon
-              :title="vm && vm.status === 'paused'
-                ? 'VM 已暂停，无法连接图形控制台（VNC 需运行中）。可在此直接恢复，恢复后自动连接。'
-                : 'VM 未运行，无法连接图形控制台（VNC 需运行中）。可在此直接开机，开机后自动连接。'" />
-            <div class="vnc-placeholder-btns">
-              <el-button type="primary" size="large" :loading="powerLoading" @click="powerOnAndConnect">
-                {{ vm && vm.status === 'paused' ? '恢复并连接' : '一键开机并连接' }}
-              </el-button>
-              <el-button @click="$router.push('/vms')">去虚拟机列表</el-button>
-            </div>
-          </div>
-          <div v-else-if="!vncUrl" class="vnc-placeholder">
-            <el-button type="primary" size="large" :loading="vncLoading" @click="connectVNC">连接图形控制台</el-button>
-            <p class="hint">noVNC 直连虚拟机虚拟显示，无需知道 IP。</p>
-          </div>
-          <div v-else class="vnc-frame">
-            <div v-if="vncFrameLoading" class="vnc-loading" v-loading="true" element-loading-text="图形桌面加载中…" />
-            <iframe :src="vncUrl" class="vnc" allow="fullscreen" title="noVNC 图形控制台" @load="onVncLoad" />
-            <div class="vnc-bar">
-              <span><el-icon><Monitor /></el-icon>图形控制台已连接</span>
-              <el-tag v-if="vncViewOnly" type="warning" size="small" effect="dark">只读观看（键鼠已禁用）</el-tag>
-              <div class="vnc-bar-btns">
-                <el-button size="small" text @click="openVncNewWindow">新窗口打开</el-button>
-                <el-button size="small" text @click="reconnectVNC">重新连接</el-button>
-                <el-button size="small" text :title="isVncFull ? '退出全屏' : '图形控制台全屏'" @click="toggleVncFullscreen">
-                  <el-icon><FullScreen /></el-icon><span>{{ isVncFull ? '退出全屏' : '全屏' }}</span>
-                </el-button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <!-- VNC 图形控制台（浅色干净背景，无背景图） -->
+        <VncView
+          v-else-if="view === 'vnc'"
+          :vm="vm" :vm-id="id"
+          @vm-updated="vm = $event"
+          @request-reload="load"
+        />
 
         <!-- SSH / 串口 共用终端视图：深色 + console-bg.jpg 背景 -->
-        <div v-else ref="termViewEl" class="term-view" :style="{ backgroundImage: 'url(' + consoleBg + ')' }">
-          <!-- 星星划过背景：坐标来自一次性生成的 STARS 常量（内联 Math.random 会随每秒时钟重渲染而瞬移） -->
-          <div class="stars-bg">
-            <div v-for="(s, i) in STARS" :key="i" class="star" :style="{
-              left: s.left + '%',
-              top: s.top + '%',
-              animationDelay: s.delay + 's',
-              animationDuration: s.duration + 's',
-            }" />
-          </div>
-
-          <!-- JumpServer 风格顶部信息栏 -->
-          <div class="term-header">
-            <div class="term-header-left">
-              <span v-if="connected" class="term-status online">● 已连接</span>
-              <span v-else-if="connecting" class="term-status connecting">● 连接中</span>
-              <span v-else class="term-status offline">○ 未连接</span>
-            </div>
-            <div class="term-header-center">
-              <span class="term-user"><el-icon><User /></el-icon>当前用户：{{ currentUser }}</span>
-              <span class="term-divider">|</span>
-              <span class="term-host"><el-icon><Monitor /></el-icon>{{ hostLabel }}</span>
-            </div>
-            <div class="term-header-right">
-              <span class="term-clock"><el-icon><Clock /></el-icon>{{ clock || '--' }}</span>
-            </div>
-          </div>
-
-          <div v-if="termError" class="term-error">
-            <el-icon><WarningFilled /></el-icon>{{ termError }}
-            <el-button size="small" type="warning" plain class="term-error-retry" @click="reconnect">一键重连</el-button>
-          </div>
-
-          <!-- SSH 连接表单 -->
-          <div v-if="view === 'ssh' && !connected" class="ssh-form-wrap">
-            <div class="ssh-form">
-              <h3 class="form-title"><el-icon><Platform /></el-icon>SSH 连接</h3>
-              <el-form label-width="70px">
-                <el-form-item label="主机">
-                  <el-input v-model="sshForm.host" placeholder="VM IP 或域名，默认取虚拟机 IP" />
-                </el-form-item>
-                <el-form-item label="端口">
-                  <el-input-number v-model="sshForm.port" :min="1" :max="65535" controls-position="right" style="width: 100%" />
-                </el-form-item>
-                <el-form-item label="用户名">
-                  <el-input v-model="sshForm.user" placeholder="如 root" />
-                </el-form-item>
-                <el-form-item label="密码">
-                  <el-input v-model="sshForm.password" type="password" show-password @keyup.enter="connectSSH" />
-                </el-form-item>
-              </el-form>
-              <el-button type="primary" class="form-btn" :loading="connecting" @click="connectSSH">连接终端</el-button>
-            </div>
-          </div>
-
-          <!-- 串口连接面板：无表单，醒目入口 -->
-          <div v-else-if="view === 'serial' && !connected" class="serial-panel">
-            <div class="serial-big-icon"><el-icon><Connection /></el-icon></div>
-            <div class="serial-title">串口 Console · 免 IP 直连</div>
-            <div class="serial-desc">等价 virsh console，直接读写 guest 串口 ttyS0。无需 IP / 账号，无网卡也能进系统，建议优先尝试。</div>
-            <el-button type="primary" size="large" class="serial-btn" :loading="connecting" @click="connectSerial">
-              <el-icon v-if="!connecting"><CaretRight /></el-icon>
-              <span>{{ connecting ? '连接中…' : '连接串口 Console' }}</span>
-            </el-button>
-            <div class="serial-hint">
-              <el-icon><InfoFilled /></el-icon>
-              <span>连上却无输出、敲键无回显？通常是客户机没在 ttyS0 起终端：请在客户机内执行 <code>systemctl enable --now serial-getty@ttyS0</code>，并把 <code>console=ttyS0</code> 追加到内核 cmdline（写入 <code>/etc/default/grub</code> 后执行 <code>grub2-mkconfig -o /boot/grub2/grub.cfg</code> 并重启生效）。</span>
-            </div>
-          </div>
-
-          <!-- 终端主体（SSH / 串口共用） -->
-          <div v-else-if="connected" class="term-body">
-            <div ref="termEl" class="terminal-container" />
-          </div>
-
-          <!-- 底部操作栏 -->
-          <div class="term-footer">
-            <div class="term-footer-left">
-              <template v-if="connected">
-                <el-button size="small" class="ft-btn" :loading="connecting" @click="reconnect">
-                  <el-icon v-if="!connecting"><Refresh /></el-icon><span>重新连接</span>
-                </el-button>
-                <el-button size="small" class="ft-btn" @click="disconnectFromTerminal">断开</el-button>
-              </template>
-              <template v-else>
-                <el-button size="small" class="ft-btn" @click="goBackToPick">
-                  <el-icon><ArrowLeft /></el-icon><span>返回选择</span>
-                </el-button>
-              </template>
-            </div>
-            <div class="term-footer-right">
-              <template v-if="connected">
-                <span class="term-shortcut" title="xterm 内置快捷键"><el-icon><InfoFilled /></el-icon>复制 Ctrl+Shift+C ｜ 粘贴 Ctrl+Shift+V / Ctrl+V</span>
-                <el-button size="small" class="ft-btn" title="粘贴剪贴板内容到终端（需浏览器授权剪贴板）" @click="pasteFromClipboard">
-                  <el-icon><CopyDocument /></el-icon><span>粘贴</span>
-                </el-button>
-                <el-button size="small" class="ft-btn" title="缩小字号（11 ~ 24）" @click="changeTermFont(-1)">A-</el-button>
-                <el-button size="small" class="ft-btn" title="放大字号（11 ~ 24）" @click="changeTermFont(1)">A+</el-button>
-                <el-button size="small" class="ft-btn" :title="isTermFull ? '退出全屏' : '终端全屏'" @click="toggleTermFullscreen">
-                  <el-icon><FullScreen /></el-icon><span>{{ isTermFull ? '退出全屏' : '全屏' }}</span>
-                </el-button>
-              </template>
-            </div>
-          </div>
-        </div>
+        <TermView
+          v-else
+          ref="termView"
+          :mode="view" :vm-id="id"
+          :vm-name="vm ? vm.name : ''"
+          :current-user="currentUser"
+          :initial-host="vm && vm.ip ? vm.ip : ''"
+          :probe="serialProbing"
+          @back="view = null"
+          @probe-failed="onProbeFailed"
+          @serial-ok="onSerialOk"
+        />
       </main>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+// 控制台页壳：布局（顶栏/可折叠侧栏/选择页）+ VM 状态加载 + 视图切换决策
+// （含「智能默认：运行中先探串口」）。三个视图的实现拆至 console/components/
+// （VncView / TermView，2026-10 前端收敛批次），WS/探测/全屏等协议逻辑在子组件内原样保留。
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 // 图标一律用组件（禁止 emoji 当图标）。main.js 已全量全局注册，这里仍显式 import：
@@ -243,130 +126,44 @@ import { ElMessage } from 'element-plus'
 import {
   ArrowLeft,
   ArrowRight,
-  CaretRight,
-  Clock,
   Connection,
-  CopyDocument,
-  FullScreen,
-  InfoFilled,
   Monitor,
   Platform,
-  Refresh,
   StarFilled,
-  User,
-  WarningFilled,
 } from '@element-plus/icons-vue'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import '@xterm/xterm/css/xterm.css'
-import { api, TOKEN_KEY } from '../api'
+import { api } from '../api'
 import { errMsg, vmStatusTag, vmStatusText } from '../utils/format'
 import { useAuth } from '../store/auth'
-import consoleBg from '../assets/console-bg.jpg'
+import VncView from './console/components/VncView.vue'
+import TermView from './console/components/TermView.vue'
 
 const route = useRoute()
 const id = route.params.id
 const auth = useAuth()
 const { canOperate } = auth
 
-// 星星背景坐标：一次性生成的模块级常量。此前在模板里内联 Math.random()，
-// 时钟 ref 每秒更新触发重渲染 → 40 颗星每秒重新随机、肉眼可见地“瞬移”；
-// 改为常量数组后 v-for 只读渲染，位置/节奏在页面生命周期内恒定。
-const STARS = Array.from({ length: 40 }, () => ({
-  left: +(Math.random() * 100).toFixed(2),
-  top: +(Math.random() * 100).toFixed(2),
-  delay: +(Math.random() * 6).toFixed(2),
-  duration: +(2 + Math.random() * 4).toFixed(2),
-}))
-
-// 终端字号偏好：A-/A+ 调节，localStorage 持久化（11~24，越界截断）
-const TERM_FONT_KEY = 'vmops-term-font'
-const TERM_FONT_MIN = 11
-const TERM_FONT_MAX = 24
-function loadTermFontSize() {
-  const saved = parseInt(localStorage.getItem(TERM_FONT_KEY) || '', 10)
-  if (!Number.isFinite(saved)) return 15
-  return Math.min(TERM_FONT_MAX, Math.max(TERM_FONT_MIN, saved))
-}
-
 const vm = ref(null)
 const loading = ref(true)
 const collapsed = ref(false)   // 侧边栏折叠
 const view = ref(null)         // 'vnc' | 'ssh' | 'serial' | null(选择页)
+const termView = ref(null)
 
-// VNC
-const vncLoading = ref(false)
-const vncUrl = ref('')
-const vncFrameLoading = ref(false)
-// 只读角色以 noVNC view_only 模式打开：能看画面，键鼠输入禁用（后端 vnc-token 返回该标记）
-const vncViewOnly = ref(false)
-// 页内开机（VNC 未运行时闭环，不跳走）
-const powerLoading = ref(false)
-
-// SSH 表单
-const sshForm = ref({ host: '', port: 22, user: 'root', password: '' })
-
-// 终端共用状态
-const connected = ref(false)
-const connecting = ref(false)
-const termError = ref('')
-const termEl = ref(null)
-const clock = ref('')
+// 串口探测与可用性（选择页徽标展示）
+const serialProbing = ref(false)
 const serialUnavailable = ref(false)
 const serialReason = ref('')
-// 全屏（Fullscreen API）：终端区与 VNC 区各自挂 ref，fullscreenchange 同步图标文案
-const termViewEl = ref(null)
-const vncViewEl = ref(null)
-const isTermFull = ref(false)
-const isVncFull = ref(false)
-
-let term = null
-let fitAddon = null
-let ws = null
-let timeTimer = null
-let resizeHandler = null
-let probeMode = false
-let probeTimer = null
-let vncTimer = null
-let powerCancelled = false
 
 const currentUser = computed(() => auth.state.user?.username || '—')
-const hostLabel = computed(() => {
-  if (view.value === 'ssh') {
-    if (!sshForm.value.host) return '-'
-    return `${sshForm.value.user}@${sshForm.value.host}:${sshForm.value.port}`
-  }
-  if (view.value === 'serial') return vm.value ? vm.value.name : '-'
-  return '-'
-})
-
-function updateTime() {
-  clock.value = new Date().toLocaleString('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  })
-}
-function startClock() {
-  if (timeTimer) clearInterval(timeTimer)
-  updateTime()
-  timeTimer = setInterval(updateTime, 1000)
-}
-function stopClock() {
-  if (timeTimer) { clearInterval(timeTimer); timeTimer = null }
-}
 
 async function load() {
   loading.value = true
   try {
     const res = await api.getVM(id)
     vm.value = res.data || null
-    if (vm.value && vm.value.ip) sshForm.value.host = vm.value.ip
-    // 恢复上次成功的 SSH 参数（只记 host/port/user，不记密码）
-    restoreSshForm()
     // 智能默认：VM 运行中先自动尝试串口 Console（免 IP 最轻），失败再回到选择页。
     // 只读角色没有串口权限（后端 403），直接留在选择页只展示图形控制台。
-    if (vm.value && vm.value.status === 'running' && canOperate.value) autoEnterSerial()
-    else if (vm.value) {
+    if (!view.value && vm.value && vm.value.status === 'running' && canOperate.value) autoEnterSerial()
+    else if (vm.value && !view.value) {
       serialUnavailable.value = true
       serialReason.value = canOperate.value ? 'VM 未运行' : '只读角色不可用串口'
     }
@@ -377,79 +174,23 @@ async function load() {
   }
 }
 
-function sshMemoryKey() {
-  return `vmops-ssh-${id}`
-}
-function restoreSshForm() {
-  try {
-    const raw = localStorage.getItem(sshMemoryKey())
-    if (!raw) return
-    const saved = JSON.parse(raw)
-    if (saved.host) sshForm.value.host = saved.host
-    if (saved.port) sshForm.value.port = saved.port
-    if (saved.user) sshForm.value.user = saved.user
-  } catch (e) {
-    // 忽略损坏的缓存
-  }
-}
-// 连接成功后记忆参数（密码永不落盘）
-function rememberSshForm() {
-  try {
-    localStorage.setItem(sshMemoryKey(), JSON.stringify({
-      host: sshForm.value.host,
-      port: sshForm.value.port,
-      user: sshForm.value.user
-    }))
-  } catch (e) {
-    // 配额不足等忽略
-  }
-}
-
-function clearProbe() {
-  probeMode = false
-  if (probeTimer) { clearTimeout(probeTimer); probeTimer = null }
-}
-
-function failProbe(reason) {
-  clearProbe()
-  serialUnavailable.value = true
-  serialReason.value = reason
-  cleanupConnection()
-  view.value = null
-  ElMessage.warning('串口不可用：' + reason + '，已回到选择页')
-}
-
 function autoEnterSerial() {
   if (view.value) return
-  view.value = 'serial'
-  probeMode = true
-  startClock()
-  connectSerial()
-  // 兜底：若 2.5s 内既无 error 也无 connected，视为已连上
-  probeTimer = setTimeout(() => { clearProbe() }, 2500)
+  serialProbing.value = true
+  view.value = 'serial' // TermView 挂载即连（probe 模式：失败上抛 probe-failed）
 }
 
-// 切换连接类型/返回选择页时，先彻底清理上一个连接
-function cleanupConnection() {
-  stopClock()
-  clearProbe()
-  powerCancelled = true
-  if (vncTimer) { clearTimeout(vncTimer); vncTimer = null }
-  if (ws) {
-    ws.onopen = null; ws.onmessage = null; ws.onerror = null; ws.onclose = null
-    try { ws.close() } catch (e) {}
-    ws = null
-  }
-  if (term) {
-    if (resizeHandler) window.removeEventListener('resize', resizeHandler)
-    resizeHandler = null
-    try { term.dispose() } catch (e) {}
-    term = null
-    fitAddon = null
-  }
-  connected.value = false
-  connecting.value = false
-  if (!(arguments[0] && arguments[0].keepError)) termError.value = ''
+function onProbeFailed(reason) {
+  serialProbing.value = false
+  serialUnavailable.value = true
+  serialReason.value = reason
+  view.value = null
+}
+
+function onSerialOk() {
+  serialProbing.value = false
+  serialUnavailable.value = false
+  serialReason.value = ''
 }
 
 function select(v) {
@@ -459,363 +200,21 @@ function select(v) {
     ElMessage.warning('只读角色不能使用 SSH 终端与串口控制台，请使用图形控制台查看')
     return
   }
-  cleanupConnection()
-  probeMode = false
+  serialProbing.value = false
   view.value = v
-  if (v === 'ssh' || v === 'serial') startClock()
-  if (v === 'serial') connectSerial()
-}
-
-function goBackToPick() {
-  cleanupConnection()
-  view.value = null
-}
-
-function disconnectFromTerminal() {
-  cleanupConnection()
-  ElMessage.info('已断开连接')
-}
-
-function onVncLoad() {
-  if (vncTimer) { clearTimeout(vncTimer); vncTimer = null }
-  vncFrameLoading.value = false
-}
-
-async function connectVNC() {
-  vncLoading.value = true
-  try {
-    const res = await api.vncToken(id)
-    const token = (res.data && res.data.token) || ''
-    if (!token) throw new Error('token 为空')
-    const host = window.location.hostname
-    vncFrameLoading.value = true
-    // 只读角色由后端返回 view_only=true：noVNC 侧禁用键鼠输入，
-    // 使「只读运维」名副其实（VNC 协议本身没有只读模式，必须在客户端关掉输入）
-    vncViewOnly.value = !!(res.data && res.data.view_only)
-    const viewOnlyParam = vncViewOnly.value ? '&view_only=1' : ''
-    // HTTPS 部署（如 https://kpyun.fun）下 http://host:6080 会被浏览器当混合内容拦截：
-    // 改走同源 /vnc/ 前缀（云端 nginx 反代 websockify 并做 wss 升级），本地 http 直连 6080 行为不变
-    const isHttps = window.location.protocol === 'https:'
-    const vncBase = isHttps ? `${window.location.origin}/vnc` : `http://${host}:6080`
-    const wsPath = isHttps ? 'vnc/websockify' : 'websockify'
-    vncUrl.value = `${vncBase}/vnc.html?autoconnect=1&resize=scale${viewOnlyParam}&path=${wsPath}?token=${token}`
-    // 兜底：iframe onload 失败时 15s 后关闭 loading，避免无限转圈（onVncLoad 会清掉）
-    if (vncTimer) clearTimeout(vncTimer)
-    vncTimer = setTimeout(() => { vncFrameLoading.value = false; vncTimer = null }, 15000)
-  } catch (e) {
-    ElMessage.error(errMsg(e, '获取控制台失败'))
-  } finally {
-    vncLoading.value = false
-  }
-}
-
-function openVncNewWindow() {
-  if (vncUrl.value) window.open(vncUrl.value, '_blank')
-}
-
-// 重新连接 VNC：不再只是清空 URL 停在占位页，直接重取 token 重建连接
-async function reconnectVNC() {
-  vncUrl.value = ''
-  vncFrameLoading.value = false
-  if (vncTimer) { clearTimeout(vncTimer); vncTimer = null }
-  await connectVNC()
-}
-
-// ---------- 全屏（Fullscreen API） ----------
-function exitFullscreenIfAny() {
-  if (document.fullscreenElement) {
-    document.exitFullscreen().catch(() => { /* 用户已退出等场景忽略 */ })
-    return true
-  }
-  return false
-}
-function requestFullscreen(el) {
-  if (!el || !el.requestFullscreen) {
-    ElMessage.warning('当前浏览器不支持全屏')
-    return
-  }
-  el.requestFullscreen().catch(() => ElMessage.warning('进入全屏失败'))
-}
-function toggleTermFullscreen() {
-  if (!exitFullscreenIfAny()) requestFullscreen(termViewEl.value)
-}
-function toggleVncFullscreen() {
-  if (!exitFullscreenIfAny()) requestFullscreen(vncViewEl.value)
-}
-// 进入/退出全屏后容器尺寸突变：终端重新 fit（SSH 同时同步 PTY 尺寸）
-function onFullscreenChange() {
-  const fs = document.fullscreenElement
-  isTermFull.value = !!fs && fs === termViewEl.value
-  isVncFull.value = !!fs && fs === vncViewEl.value
-  nextTick(() => onResize())
-}
-
-// ---------- 剪贴板 ----------
-async function pasteFromClipboard() {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return
-  try {
-    const text = await navigator.clipboard.readText()
-    if (!text) return
-    if (view.value === 'ssh') ws.send(JSON.stringify({ type: 'input', data: text }))
-    else ws.send(text) // 串口：直接发原始字节
-  } catch (e) {
-    ElMessage.warning('浏览器未授权剪贴板')
-  }
-}
-// xterm 自定义按键：Ctrl+Shift+C 复制选区 / Ctrl+V、Ctrl+Shift+V 粘贴，其余按键原样放行
-function termClipboardKeyHandler(ev) {
-  if (ev.type !== 'keydown') return true
-  if (ev.ctrlKey && ev.shiftKey && (ev.key === 'C' || ev.key === 'c')) {
-    if (term && term.hasSelection()) {
-      navigator.clipboard.writeText(term.getSelection()).catch(() => { /* 剪贴板不可用静默 */ })
-      return false
-    }
-    return true // 无选区不拦截
-  }
-  if (ev.ctrlKey && (ev.key === 'v' || ev.key === 'V')) {
-    pasteFromClipboard()
-    return false
-  }
-  return true
-}
-
-// ---------- 终端字号 ----------
-function changeTermFont(delta) {
-  if (!term) return
-  const cur = term.options.fontSize || 15
-  const next = Math.min(TERM_FONT_MAX, Math.max(TERM_FONT_MIN, cur + delta))
-  if (next === cur) return
-  term.options.fontSize = next
-  try { localStorage.setItem(TERM_FONT_KEY, String(next)) } catch (e) { /* 配额不足忽略 */ }
-  onResize() // 字号变化行列数随之变化：fit + 同步 SSH PTY 尺寸
-}
-
-// 页内一键开机/恢复并自动连接 VNC：指令 → 轮询状态至 running（最长 ~60s）→ 自动 connectVNC
-async function powerOnAndConnect() {
-  const paused = !!(vm.value && vm.value.status === 'paused')
-  powerLoading.value = true
-  powerCancelled = false
-  try {
-    await (paused ? api.resumeVM(id) : api.startVM(id))
-    ElMessage.success(paused ? '恢复指令已发送，等待虚拟机启动…' : '开机指令已发送，等待虚拟机启动…')
-    const deadline = Date.now() + 60000
-    while (Date.now() < deadline) {
-      if (powerCancelled) return // 中途切走/卸载：停止轮询
-      await new Promise((r) => setTimeout(r, 2000))
-      if (powerCancelled) return
-      try {
-        const res = await api.getVM(id)
-        vm.value = res.data || vm.value
-        if (vm.value && vm.value.status === 'running') {
-          ElMessage.success('虚拟机已启动，正在连接图形控制台…')
-          await connectVNC()
-          return
-        }
-      } catch (e) {
-        // 轮询失败继续
-      }
-    }
-    if (powerCancelled) return
-    ElMessage.warning('等待超时，请确认虚拟机状态后手动连接')
-    await load()
-  } catch (e) {
-    ElMessage.error(errMsg(e, '开机失败'))
-  } finally {
-    powerLoading.value = false
-  }
-}
-
-function openWs(path) {
-  const token = localStorage.getItem(TOKEN_KEY) || ''
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return new WebSocket(`${proto}//${location.host}/api/vms/${id}/${path}?token=${encodeURIComponent(token)}`)
-}
-
-// 建连超时兜底：代理/网络黑洞导致 WS open 挂起时，避免“连接中…”无限转圈
-function openWsWithTimeout(path, ms = 10000) {
-  return new Promise((resolve, reject) => {
-    const socket = openWs(path)
-    socket.binaryType = 'arraybuffer'
-    const timer = setTimeout(() => {
-      try { socket.close() } catch (e) {}
-      reject(new Error('WebSocket 连接超时'))
-    }, ms)
-    socket.onopen = () => { clearTimeout(timer); resolve(socket) }
-    socket.onerror = () => { clearTimeout(timer); reject(new Error('WebSocket 连接失败')) }
-  })
-}
-
-async function connectSSH() {
-  if (!sshForm.value.host || !sshForm.value.user || !sshForm.value.password) {
-    ElMessage.warning('请填写主机、用户名和密码')
-    return
-  }
-  cleanupConnection()
-  connecting.value = true
-  startClock()
-  try {
-    ws = await openWsWithTimeout('terminal')
-    connected.value = true
-    await nextTick()
-    initTerminal()
-    ws.onmessage = handleMsg
-    ws.onclose = onWsClose
-    ws.onerror = () => { if (ws) termError.value = 'WebSocket 错误' }
-    ws.send(JSON.stringify({
-      type: 'auth',
-      host: sshForm.value.host,
-      port: sshForm.value.port,
-      user: sshForm.value.user,
-      password: sshForm.value.password,
-    }))
-  } catch (e) {
-    termError.value = e.message || '连接失败'
-    connected.value = false
-    if (ws) { ws.close(); ws = null }
-  } finally {
-    connecting.value = false
-  }
-}
-
-async function connectSerial() {
-  cleanupConnection()
-  connecting.value = true
-  startClock()
-  try {
-    ws = await openWsWithTimeout('serial')
-    connected.value = true
-    await nextTick()
-    initTerminal()
-    ws.onmessage = handleMsg
-    ws.onclose = onWsClose
-    ws.onerror = () => { if (ws) termError.value = 'WebSocket 错误' }
-  } catch (e) {
-    termError.value = e.message || '连接失败'
-    connected.value = false
-    if (ws) { ws.close(); ws = null }
-    if (probeMode) failProbe(e.message || 'WebSocket 连接失败')
-  } finally {
-    connecting.value = false
-  }
-}
-
-function reconnect() {
-  if (view.value === 'ssh') connectSSH()
-  else if (view.value === 'serial') connectSerial()
-}
-
-function onWsClose() {
-  const wasConnecting = connecting.value
-  connected.value = false
-  connecting.value = false
-  // 探测期静默断开也算失败：回到选择页并标注原因（勿回退智能默认约定）
-  if (probeMode) {
-    failProbe('连接已断开')
-    return
-  }
-  // 建连中途断开（非主动清理）：给出提示，避免静默停留在未连接态
-  if (wasConnecting && view.value) termError.value = '连接已断开，请重试'
-}
-
-async function initTerminal() {
-  await nextTick()
-  if (!termEl.value) return
-  term = new Terminal({
-    cursorBlink: true,
-    cursorStyle: 'bar',
-    fontSize: loadTermFontSize(), // A-/A+ 可调（11~24），localStorage 持久化
-    fontFamily: "'Cascadia Code', 'Fira Code', Consolas, monospace",
-    theme: {
-      background: 'rgba(10, 22, 40, 0.18)',
-      foreground: '#e6edf3',
-      cursor: '#58a6ff',
-      selectionBackground: 'rgba(31, 58, 95, 0.7)',
-      black: '#1b2838', red: '#f85149', green: '#3fb950', yellow: '#d2991d',
-      blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#b1bac4',
-      brightBlack: '#30363d', brightRed: '#ff6e6a', brightGreen: '#56d364',
-      brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#d2a8ff',
-      brightCyan: '#56d4dd', brightWhite: '#f0f6fc',
-    },
-  })
-  fitAddon = new FitAddon()
-  term.loadAddon(fitAddon)
-  term.attachCustomKeyEventHandler(termClipboardKeyHandler) // Ctrl+Shift+C 复制 / Ctrl+V 粘贴
-  term.open(termEl.value)
-  fitAddon.fit()
-
-  term.onData((data) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    if (view.value === 'ssh') ws.send(JSON.stringify({ type: 'input', data }))
-    else ws.send(data) // 串口：直接发原始字节
-  })
-
-  resizeHandler = () => onResize()
-  window.addEventListener('resize', resizeHandler)
-  termEl.value.addEventListener('click', () => term && term.focus())
-  term.focus()
-}
-
-function onResize() {
-  if (fitAddon) fitAddon.fit()
-  if (view.value === 'ssh' && ws && ws.readyState === WebSocket.OPEN && term) {
-    ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-  }
-}
-
-function handleMsg(ev) {
-  if (!term) return
-  if (ev.data instanceof ArrayBuffer) {
-    clearProbe()
-    term.write(new Uint8Array(ev.data))
-    return
-  }
-  if (ev.data instanceof Blob) {
-    clearProbe()
-    ev.data.arrayBuffer().then((buf) => { if (term) term.write(new Uint8Array(buf)) })
-    return
-  }
-  try {
-    const msg = JSON.parse(ev.data)
-    if (msg.type === 'error') {
-      if (probeMode) {
-        failProbe(msg.msg || '不可用')
-        return
-      }
-      ElMessage.error(msg.msg || '连接失败')
-      termError.value = msg.msg || '连接失败'
-      // ⚠️ 不能走 disconnectFromTerminal——其 cleanupConnection 会清空 termError，
-      // 错误条瞬间消失（用户实测「点了连接啥也没发生」）。此处静默清理连接、保留错误显示
-      cleanupConnection({ keepError: true })
-    } else if (msg.type === 'connected') {
-      clearProbe()
-      serialUnavailable.value = false
-      serialReason.value = ''
-      // SSH 连通成功后记忆参数（下次自动填，密码不记）
-      if (view.value === 'ssh') rememberSshForm()
-      onResize()
-    }
-  } catch {
-    clearProbe()
-    term.write(ev.data)
-  }
 }
 
 // 折叠/展开侧栏后终端容器宽度变化：nextTick 先补一刀，宽度 transition（0.2s）结束后再校准一次，
-// 两处都走 onResize（fit + SSH 同步 PTY 尺寸），避免折叠后终端留白或横向滚动
+// 两处都走 TermView.refit（fit + SSH 同步 PTY 尺寸），避免折叠后终端留白或横向滚动
 watch(collapsed, () => {
-  nextTick(() => onResize())
-  setTimeout(() => onResize(), 260)
+  nextTick(() => termView.value && termView.value.refit())
+  setTimeout(() => termView.value && termView.value.refit(), 260)
 })
 
 onMounted(() => {
   // 窄屏默认收起侧边栏，给终端/表单让出宽度
   if (window.innerWidth < 720) collapsed.value = true
-  document.addEventListener('fullscreenchange', onFullscreenChange)
   load()
-})
-onUnmounted(() => {
-  document.removeEventListener('fullscreenchange', onFullscreenChange)
-  cleanupConnection()
 })
 </script>
 
@@ -825,7 +224,7 @@ onUnmounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #0a111f;
+  background: var(--term-page-bg);
   overflow: hidden;
 }
 
@@ -833,16 +232,8 @@ onUnmounted(() => {
    图标一律用 @element-plus/icons-vue 组件（禁止 emoji）。el-icon 是 inline-flex，
    默认按基线对齐 → 1em 的图标盒整体压在基线上，与中文混排时目测偏高；
    统一下压 0.15em 并补 4px 右间距（原来 emoji 后面跟的那个空格已删）。
-   注意：不覆盖 el-button 内的图标，按钮的图标/文字间距由 Element Plus 自己管。
-   （修复记录：此组选择器原先以尾逗号悬空结束、直接焊上了后面的 .topbar 规则——CSS 注释
-   不打断选择器组，导致 .topbar 的深色背景/padding 作用到白底页面的行内图标上。） */
+   注意：不覆盖 el-button 内的图标，按钮的图标/文字间距由 Element Plus 自己管。 */
 .topbar-tip .el-icon,
-.vnc-bar > span .el-icon,
-.term-user .el-icon,
-.term-host .el-icon,
-.term-clock .el-icon,
-.term-error .el-icon,
-.form-title .el-icon,
 .card-badge .el-icon {
   vertical-align: -0.15em;
   margin-right: 4px;
@@ -856,13 +247,13 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
-  background: rgba(10, 17, 31, 0.95);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--term-overlay);
+  border-bottom: 1px solid var(--term-hairline);
 }
-.back { color: #8ab4ff; }
+.back { color: var(--term-accent-soft); }
 .vm-info { display: flex; align-items: center; gap: 10px; }
-.vm-name { color: #e6edf3; font-size: 1.05rem; font-weight: 600; }
-.topbar-tip { margin-left: auto; color: #7f92ab; font-size: 0.85rem; }
+.vm-name { color: var(--term-text); font-size: 1.05rem; font-weight: 600; }
+.topbar-tip { margin-left: auto; color: var(--term-text-dim); font-size: 0.85rem; }
 
 /* ========== 主体（侧边栏 + 主区域） ========== */
 .body { flex: 1; display: flex; min-height: 0; }
@@ -874,8 +265,8 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 4px;
   padding: 10px 8px;
-  background: #0e1626;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--term-panel-bg);
+  border-right: 1px solid var(--term-hairline);
   overflow: hidden;
   transition: width 0.2s ease;
 }
@@ -891,7 +282,7 @@ onUnmounted(() => {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: #8ab4ff;
+  color: var(--term-accent-soft);
   cursor: pointer;
   font-size: 0.9rem;
 }
@@ -906,14 +297,14 @@ onUnmounted(() => {
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
-  color: #9db1c8;
+  color: var(--term-text-sub);
   cursor: pointer;
   text-align: left;
   font-size: 0.92rem;
   white-space: nowrap;
 }
-.nav-item:hover { background: rgba(88, 166, 255, 0.08); color: #e6edf3; }
-.nav-item.active { background: rgba(88, 166, 255, 0.15); color: #58a6ff; }
+.nav-item:hover { background: rgba(88, 166, 255, 0.08); color: var(--term-text); }
+.nav-item.active { background: rgba(88, 166, 255, 0.15); color: var(--term-accent); }
 .sidebar.collapsed .nav-item { justify-content: center; padding: 12px 0; }
 /* 侧栏图标：固定 24px 槽位并自身居中，折叠态槽位收成 auto 由 .nav-item 居中；
    1.15rem 是与原 emoji 目测等大的字号（el-icon 的 svg 恒为 1em） */
@@ -930,7 +321,7 @@ onUnmounted(() => {
 .nav-item .rec {
   margin-left: auto;
   font-size: 0.68rem;
-  color: #7c4a03;
+  color: var(--color-serial-gold-ink);
   background: var(--color-serial-gold);
   padding: 1px 6px;
   border-radius: var(--radius-md);
@@ -940,7 +331,7 @@ onUnmounted(() => {
 /* ---------- 主区域 ---------- */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
-/* ---------- 白底选择页 ---------- */
+/* ---------- 选择页（表面走平台令牌：暗色模式跟随全站） ---------- */
 .pick-panel {
   flex: 1;
   display: flex;
@@ -948,7 +339,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: #ffffff;
+  background: var(--color-background);
 }
 .pick-title { margin: 0; color: var(--color-foreground); font-size: 1.5rem; }
 .pick-sub { margin: 8px 0 28px; color: var(--color-muted-foreground); font-size: 0.92rem; }
@@ -956,10 +347,10 @@ onUnmounted(() => {
   max-width: 720px;
   margin: 24px auto 0;
   padding: 12px 16px;
-  border: 1px solid #fde68a;
+  border: 1px dashed var(--color-warning);
   border-radius: var(--radius-sm);
-  background: #fffbeb;
-  color: #92400e;
+  background: var(--status-paused-bg);
+  color: var(--color-foreground);
   font-size: 0.85rem;
   line-height: 1.7;
   text-align: left;
@@ -972,7 +363,7 @@ onUnmounted(() => {
   max-width: 980px;
 }
 .card {
-  background: #fff;
+  background: var(--color-card);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: 26px 22px;
@@ -983,7 +374,7 @@ onUnmounted(() => {
 }
 .card:hover {
   transform: translateY(-3px);
-  border-color: #58a6ff;
+  border-color: var(--term-accent);
   box-shadow: 0 10px 24px rgba(88, 166, 255, 0.18);
 }
 /* 卡片装饰大图标：原 emoji 为 2.2rem 且自带颜色；换成单色 svg 后
@@ -995,7 +386,7 @@ onUnmounted(() => {
   height: 2.6rem;
   font-size: 2.4rem;
   line-height: 1;
-  color: #58a6ff;
+  color: var(--term-accent);
 }
 .card .card-title { margin: 10px 0 6px; color: var(--color-foreground); font-size: 1.02rem; font-weight: 600; }
 .card .card-desc { min-height: 46px; color: var(--color-muted-foreground); font-size: 0.82rem; line-height: 1.55; }
@@ -1007,11 +398,10 @@ onUnmounted(() => {
   font-size: 0.75rem;
   font-weight: 600;
 }
-.card-badge.ok { color: #166534; background: #dcfce7; }
-.card-badge.warn { color: #92400e; background: #fef3c7; }
+.card-badge.ok { color: var(--color-success); background: var(--status-running-bg); }
+.card-badge.warn { color: var(--color-warning); background: var(--status-paused-bg); }
 .card.serial {
   border: 1.5px solid var(--color-serial-gold);
-  background: linear-gradient(180deg, #fffdf5, #ffffff);
 }
 .card.serial:hover {
   border-color: var(--color-serial-gold);
@@ -1019,310 +409,14 @@ onUnmounted(() => {
 }
 /* 串口卡沿用金色主题，图标跟着卡片走 */
 .card.serial .card-icon { color: var(--color-serial-gold); }
-.card-badge.gold { color: #7c4a03; background: #fde68a; }
+.card-badge.gold { color: var(--color-serial-gold-ink); background: var(--color-serial-gold); }
 
-/* ---------- VNC 视图（浅色，无背景图） ---------- */
-.vnc-view {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: var(--color-background);
-  min-height: 0;
-}
-.vnc-placeholder { text-align: center; color: var(--color-foreground); }
-.vnc-placeholder-btns {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-top: 16px;
-}
-.vnc-placeholder .hint { margin-top: 14px; font-size: 0.85rem; color: #7f92ab; }
-.vnc-frame { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; }
-.vnc-loading {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  border-radius: var(--radius-md);
-  background: var(--color-background);
-}
-.vnc {
-  flex: 1;
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: #000;
-}
-.vnc-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 4px 0;
-  color: var(--color-foreground);
-  font-size: 0.85rem;
-}
-.vnc-bar-btns {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-/* ---------- 终端视图（深色 + 背景图） ---------- */
-.term-view {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background-size: cover;
-  background-position: center;
-  overflow: hidden;
-}
-
-.stars-bg { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 0; }
-.star {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  background: #fff;
-  border-radius: 50%;
-  opacity: 0;
-  animation: shootingStar linear infinite;
-  box-shadow: 0 0 4px 1px rgba(88, 166, 255, 0.6);
-}
-@keyframes shootingStar {
-  0% { opacity: 0; transform: translateX(0) translateY(0); }
-  5% { opacity: 1; }
-  20% { opacity: 0; transform: translateX(-120px) translateY(80px); }
-  100% { opacity: 0; transform: translateX(-120px) translateY(80px); }
-}
-
-/* ---------- JumpServer 风格顶部信息栏 ---------- */
-.term-header {
-  position: relative;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  background: rgba(8, 14, 24, 0.55);
-  backdrop-filter: blur(4px);
-  border-bottom: 1px solid rgba(88, 166, 255, 0.15);
-  color: #8faac7;
-  font-size: 0.95rem;
-}
-.term-header-left, .term-header-center, .term-header-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-}
-.term-header-center { justify-content: center; }
-.term-header-right { justify-content: flex-end; flex-shrink: 0; }
-.term-status { white-space: nowrap; }
-.term-divider { color: rgba(88, 166, 255, 0.2); }
-.term-status.online { color: #3fb950; font-weight: 600; }
-.term-status.connecting { color: #d29922; font-weight: 600; animation: term-breathe 1.2s ease-in-out infinite; }
-.term-status.offline { color: #8b949e; }
-@keyframes term-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-.term-error-retry { margin-left: 12px; }
-.term-shortcut { display: inline-flex; align-items: center; gap: 4px; color: #8b949e; font-size: 12px; margin-right: 8px; }
-.term-user { color: #c9d1d9; }
-.term-host { color: #8faac7; }
-.term-user, .term-host {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.term-clock {
-  font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
-  color: #79c0ff;
-  font-weight: 500;
-}
-
-.term-error {
-  position: relative;
-  z-index: 3;
-  margin: 8px 16px 0;
-  padding: 8px 14px;
-  border-radius: var(--radius-sm);
-  background: rgba(248, 81, 73, 0.1);
-  border: 1px solid rgba(248, 81, 73, 0.2);
-  color: #f85149;
-  font-size: 0.85rem;
-}
-
-/* ---------- SSH 连接表单 ---------- */
-.ssh-form-wrap {
-  position: relative;
-  z-index: 2;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  min-height: 0;
-}
-.ssh-form {
-  width: 440px;
-  max-width: 100%;
-  padding: 26px 30px;
-  border-radius: var(--radius-lg);
-  background: rgba(8, 14, 24, 0.75);
-  border: 1px solid rgba(88, 166, 255, 0.2);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
-}
-.form-title { margin: 0 0 18px; color: #e6edf3; font-size: 1.1rem; }
-.ssh-form :deep(.el-form-item__label) { color: #c6d4e4; }
-.ssh-form :deep(.el-input__wrapper),
-.ssh-form :deep(.el-input-number .el-input__wrapper) {
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15) inset;
-}
-.ssh-form :deep(.el-input__inner) { color: #e6edf3; }
-.ssh-form :deep(.el-input-number__decrease),
-.ssh-form :deep(.el-input-number__increase) {
-  color: #c6d4e4;
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.12) !important;
-  box-shadow: none !important;
-}
-.form-btn { width: 100%; margin-top: 4px; }
-
-/* ---------- 串口连接面板 ---------- */
-.serial-panel {
-  position: relative;
-  z-index: 2;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  text-align: center;
-  padding: 24px;
-}
-.serial-big-icon {
-  width: 84px;
-  height: 84px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-serial-gold);
-  border: 2px solid rgba(240, 185, 11, 0.5);
-  border-radius: 50%;
-  background: rgba(8, 14, 24, 0.6);
-}
-/* 圆盘内的大图标：svg 不吃 text-shadow，原来的金色发光改用 drop-shadow 保留 */
-.serial-big-icon .el-icon {
-  font-size: 2.8rem;
-  filter: drop-shadow(0 0 12px rgba(240, 185, 11, 0.55));
-}
-.serial-title { color: #e6edf3; font-size: 1.25rem; font-weight: 600; }
-.serial-desc { max-width: 460px; color: #9db1c8; font-size: 0.88rem; line-height: 1.6; }
-.serial-btn { margin-top: 8px; }
-/* 客户机侧排障提示：串口连上但无输出/无回显多半是 guest 没起 getty（见诊断结论），一句话提示即可 */
-.serial-hint {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  max-width: 500px;
-  margin-top: 10px;
-  color: #6e7f95;
-  font-size: 0.78rem;
-  line-height: 1.7;
-  text-align: left;
-}
-.serial-hint .el-icon { margin-top: 0.3em; flex: none; }
-.serial-hint code {
-  padding: 0 4px;
-  border-radius: var(--radius-sm);
-  background: rgba(240, 185, 11, 0.12);
-  color: var(--color-serial-gold);
-  font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
-  font-size: 0.75rem;
-}
-
-/* ---------- 终端主体（含水印） ---------- */
-.term-body {
-  position: relative;
-  z-index: 1;
-  flex: 1;
-  min-height: 0;
-  margin: 6px 12px 0;
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  background: transparent;
-}
-.terminal-container { width: 100%; height: 100%; position: relative; z-index: 1; }
-.terminal-container :deep(.xterm) {
-  height: 100% !important;
-  padding: 8px 12px;
-  background: transparent !important;
-}
-.terminal-container :deep(.xterm-viewport) {
-  overflow-y: auto !important;
-  background: transparent !important;
-}
-
-
-/* ---------- 底部操作栏 ---------- */
-.term-footer {
-  position: relative;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: rgba(8, 14, 24, 0.55);
-  backdrop-filter: blur(4px);
-  border-top: 1px solid rgba(88, 166, 255, 0.15);
-  font-size: 0.85rem;
-  color: #9db1c8;
-}
-.term-footer-left { display: flex; gap: 8px; }
-.term-footer-right { display: flex; align-items: center; gap: 14px; }
-.ft-btn {
-  color: #79c0ff;
-  border-color: rgba(88, 166, 255, 0.3);
-}
-.ft-btn:hover {
-  color: #a0d8ff;
-  border-color: rgba(88, 166, 255, 0.5);
-  background: rgba(88, 166, 255, 0.08);
-}
-
-/* ---------- 窄屏适配（≤640px）：header 三段换行、footer 换行保操作区 ---------- */
+/* ---------- 窄屏适配（≤640px） ---------- */
 @media (max-width: 640px) {
-  .term-header {
-    flex-wrap: wrap;
-    row-gap: 4px;
-    font-size: 0.8rem;
-    padding: 8px 12px;
-  }
-  .term-header-left { flex: 1 1 auto; }
-  .term-header-right { flex: 0 0 auto; }
-  .term-header-center {
-    order: 3;
-    flex: 1 1 100%;
-    justify-content: flex-start;
-  }
-  .term-footer {
-    flex-wrap: wrap;
-    row-gap: 6px;
-    padding: 8px 12px;
-  }
-  .term-footer-right { flex-wrap: wrap; row-gap: 4px; }
   .pick-panel { padding: 16px; }
   /* 窄屏卡片单列：minmax(230px,290px) 在 390px 下会横向溢出 */
   .cards { grid-template-columns: 1fr; max-width: 340px; width: 100%; }
   .card .card-desc { min-height: 0; }
-  .ssh-form { padding: 20px 18px; }
   .topbar-tip { display: none; }
 }
 </style>

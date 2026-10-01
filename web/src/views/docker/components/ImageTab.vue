@@ -76,7 +76,7 @@
 import { ref, computed, inject, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import http from '../../../api'
+import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { shortId, dockerSize, imageTime } from '../../../utils/docker-format'
 
@@ -89,8 +89,8 @@ const loading = ref(false)
 async function refresh() {
   loading.value = true
   try {
-    const res = await http.get('/docker/images')
-    images.value = (res.data.data || {}).items || []
+    const res = await api.dockerImages()
+    images.value = (res.data || {}).items || []
     clearLoadError()
   } catch (e) {
     reportLoadError(e, '获取镜像列表失败')
@@ -131,9 +131,9 @@ async function confirmPull() {
   }
   pullLoading.value = true
   try {
-    // 拉取耗时不可控（后端上限 10 分钟），本请求单独放开 axios 15s 全局超时
-    const res = await http.post('/docker/images/pull', { name }, { timeout: 0 })
-    ElMessage.success((res.data.data && res.data.data.message) || '镜像拉取完成')
+    // 拉取耗时不可控（后端上限 10 分钟），api.dockerPullImage 已单独放开 15s 全局超时
+    const res = await api.dockerPullImage(name)
+    ElMessage.success((res.data && res.data.message) || '镜像拉取完成')
     pullDialog.value = false
     await refresh()
   } catch (e) {
@@ -158,8 +158,8 @@ async function pruneImages() {
   }
   pruneLoading.value = true
   try {
-    const res = await http.post('/docker/prune', { type: 'images' })
-    showPruneResult(res.data.data || {})
+    const res = await api.dockerPrune('images')
+    showPruneResult(res.data || {})
     await refresh()
   } catch (e) {
     ElMessage.error(errMsg(e, '清理失败'))
@@ -195,8 +195,8 @@ async function removeImage(row) {
     return
   }
   try {
-    // 镜像 ID 可能含特殊字符（sha256: 前缀），必须 encodeURIComponent
-    await http.delete('/docker/images/' + encodeURIComponent(row.ID))
+    // 镜像 ID 可能含特殊字符（sha256: 前缀），api 层已 encodeURIComponent
+    await api.dockerDeleteImage(row.ID)
     ElMessage.success(`已删除镜像 ${full}`)
     await refresh()
   } catch (e) {

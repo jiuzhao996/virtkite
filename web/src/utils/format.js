@@ -206,18 +206,6 @@ export function fmtDateTime(v) {
 }
 
 /**
- * 时间戳 → 本地化 24 小时制（zh-CN，形如 `2026/9/6 12:03:04`）。
- * 与 fmtDateTime 的**输出格式不同**（斜杠、月日不补零），刻意保留两份：
- * 任务中心 / 会话管理沿用本格式，镜像 / 审计沿用 fmtDateTime，避免视觉回归。
- * @param {string|number|Date} v 后端时间字段
- * @returns {string} 空值返回 '—'
- */
-export function fmtDateTimeLocale(v) {
-  if (!v) return '—'
-  return new Date(v).toLocaleString('zh-CN', { hour12: false })
-}
-
-/**
  * 当前时刻 → `HH:MM:SS`（24 小时制）。
  * 注意：这是「取现在的时间」，不是格式化某个入参，用于实时采样的时间轴标签。
  */

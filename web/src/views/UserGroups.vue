@@ -7,18 +7,18 @@
       </template>
     </PageHead>
     <el-card shadow="never">
-    <div class="toolbar">
-      <div class="toolbar-left">
+    <Toolbar>
+      <template #left>
         <el-select v-model="memberFilter" clearable placeholder="按成员筛组" style="width: 160px">
           <el-option v-for="u in users" :key="u.id" :label="u.username" :value="u.id" />
         </el-select>
-      </div>
-      <div class="toolbar-right">
+      </template>
+      <template #right>
         <span class="count">共 {{ filteredGroups.length }} 个组</span>
         <el-button :icon="Refresh" :loading="loading" @click="loadAll">刷新</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建用户组</el-button>
-      </div>
-    </div>
+      </template>
+    </Toolbar>
 
     <el-table :data="filteredGroups" v-loading="loading" stripe>
       <el-table-column prop="name" label="组名" min-width="140" />
@@ -86,6 +86,7 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, fmtDateTime } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
+import Toolbar from '../components/Toolbar.vue'
 
 const groups = ref([])
 const users = ref([])

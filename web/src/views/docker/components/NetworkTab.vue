@@ -60,7 +60,7 @@
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast），操作成功后本地 refresh 重拉。
 import { ref, reactive, nextTick, inject, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import http from '../../../api'
+import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { dockerTime } from '../../../utils/docker-format'
 
@@ -74,8 +74,8 @@ const loading = ref(false)
 async function refresh() {
   loading.value = true
   try {
-    const res = await http.get('/docker/networks')
-    networks.value = (res.data.data || {}).items || []
+    const res = await api.dockerNetworks()
+    networks.value = (res.data || {}).items || []
     clearLoadError()
   } catch (e) {
     reportLoadError(e, '获取网络列表失败')
@@ -109,7 +109,7 @@ async function removeNetwork(row) {
     return
   }
   try {
-    await http.delete('/docker/networks/' + encodeURIComponent(row.Name))
+    await api.dockerDeleteNetwork(row.Name)
     ElMessage.success(`已删除网络 ${row.Name}`)
     await refresh()
   } catch (e) {
@@ -155,8 +155,8 @@ async function submitNetwork() {
     const payload = { name: networkForm.name.trim(), driver: networkForm.driver }
     if (networkForm.subnet.trim()) payload.subnet = networkForm.subnet.trim()
     if (networkForm.gateway.trim()) payload.gateway = networkForm.gateway.trim()
-    const res = await http.post('/docker/networks', payload)
-    ElMessage.success((res.data.data && res.data.data.message) || '网络已创建')
+    const res = await api.dockerCreateNetwork(payload)
+    ElMessage.success((res.data && res.data.message) || '网络已创建')
     networkDialog.value = false
     await refresh()
   } catch (e) {

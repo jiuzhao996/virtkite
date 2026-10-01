@@ -53,12 +53,12 @@
         <el-table-column prop="username" label="用户" width="120" />
         <el-table-column prop="client_ip" label="来源 IP" width="140" />
         <el-table-column label="开始时间" width="170">
-          <template #default="{ row }">{{ fmtDateTimeLocale(row.started_at) }}</template>
+          <template #default="{ row }">{{ fmtDateTime(row.started_at) }}</template>
         </el-table-column>
         <el-table-column label="最近活跃" width="170">
           <template #default="{ row }">
             <!-- last_seen：VNC 会话是否已僵死的唯一依据（超时未刷新将被清扫器收敛） -->
-            <span class="mono">{{ row.last_seen ? fmtDateTimeLocale(row.last_seen) : '—' }}</span>
+            <span class="mono">{{ row.last_seen ? fmtDateTime(row.last_seen) : '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="时长" width="110">
@@ -99,7 +99,7 @@ import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 import Toolbar from '../components/Toolbar.vue'
-import { sessionTypeText, sessionTypeTag, fmtDateTimeLocale, errMsg, isCancel } from '../utils/format'
+import { sessionTypeText, sessionTypeTag, fmtDateTime, errMsg, isCancel } from '../utils/format'
 
 const { isAdmin } = useAuth()
 

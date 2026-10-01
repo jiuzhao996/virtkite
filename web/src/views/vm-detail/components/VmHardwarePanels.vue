@@ -319,7 +319,7 @@ function openNicDialog() {
   border-radius: var(--radius-md);
   padding: 12px 16px;
   margin-bottom: 12px;
-  background: #fff;
+  background: var(--color-card);
   cursor: pointer;
   transition: all 0.2s ease;
 }

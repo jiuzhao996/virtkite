@@ -109,7 +109,7 @@
           </template>
         </el-table-column>
         <el-table-column label="记录时间" width="180">
-          <template #default="{ row }">{{ fmtDateTimeLocale(row.created_at) }}</template>
+          <template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
@@ -170,7 +170,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, QuestionFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { errMsg, fmtDateTimeLocale } from '../utils/format'
+import { errMsg, fmtDateTime } from '../utils/format'
 import CloudInitTemplates from './CloudInitTemplates.vue'
 import PageHead from '../components/PageHead.vue'
 

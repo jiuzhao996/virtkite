@@ -25,7 +25,7 @@
           <div class="hc-rows">
             <div class="hc-row"><span class="hc-label">SSH 连接</span><span class="mono">{{ row.ssh_user }}@{{ row.ssh_ip }}:{{ row.ssh_port || 22 }}</span></div>
             <div class="hc-row"><span class="hc-label">描述</span><span>{{ row.description || '—' }}</span></div>
-            <div class="hc-row"><span class="hc-label">登记时间</span><span>{{ fmtDateTimeLocale(row.created_at) }}</span></div>
+            <div class="hc-row"><span class="hc-label">登记时间</span><span>{{ fmtDateTime(row.created_at) }}</span></div>
           </div>
           <div class="hc-actions">
             <el-button size="small" :icon="Connection" :loading="testBusy.has(row.id)" @click="test(row)">测试连通</el-button>
@@ -82,7 +82,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Connection, DataLine, Edit, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
-import { hostStatusText, hostStatusTag, errMsg, isCancel, fmtDateTimeLocale } from '../utils/format'
+import { hostStatusText, hostStatusTag, errMsg, isCancel, fmtDateTime } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 
 const { isAdmin } = useAuth()

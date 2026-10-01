@@ -55,7 +55,7 @@
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast），操作成功后本地 refresh 重拉。
 import { ref, inject, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import http from '../../../api'
+import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { composeTag } from '../../../utils/docker-format'
 
@@ -69,8 +69,8 @@ const loading = ref(false)
 async function refresh() {
   loading.value = true
   try {
-    const res = await http.get('/docker/compose')
-    composeProjects.value = (res.data.data || {}).items || []
+    const res = await api.dockerComposeList()
+    composeProjects.value = (res.data || {}).items || []
     clearLoadError()
   } catch (e) {
     reportLoadError(e, '获取编排项目失败')
@@ -102,9 +102,9 @@ async function composeAction(row, action) {
   }
   composeKey.value = row.Name + ':' + action
   try {
-    // 项目级操作可能重建多个容器（后端上限 2 分钟），放宽前端 15s 默认超时
-    const res = await http.post('/docker/compose/' + encodeURIComponent(row.Name) + '/' + action, null, { timeout: 150000 })
-    ElMessage.success((res.data.data && res.data.data.message) || '操作完成')
+    // 项目级操作可能重建多个容器（后端上限 2 分钟），api.dockerComposeAction 已放宽超时
+    const res = await api.dockerComposeAction(row.Name, action)
+    ElMessage.success((res.data && res.data.message) || '操作完成')
     await refresh()
   } catch (e) {
     ElMessage.error(errMsg(e, '编排操作失败'))

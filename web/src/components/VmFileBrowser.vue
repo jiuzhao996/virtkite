@@ -81,7 +81,7 @@
 import { reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, FolderAdd, Upload, Folder, Document, Download, Delete } from '@element-plus/icons-vue'
-import http from '../api'
+import { api } from '../api'
 import { errMsg } from '../utils/format'
 
 const props = defineProps({
@@ -120,7 +120,7 @@ async function connect() {
   }
   connecting.value = true
   try {
-    await http.post(`/vms/${props.id}/files/list`, { ...creds(), path: '/root' })
+    await api.vmFilesList(props.id, { ...creds(), path: '/root' })
     connected.value = true
     path.value = '/root'
     await load()
@@ -135,9 +135,9 @@ async function load() {
   loading.value = true
   try {
     const res = offline.value
-      ? await http.post(`/vms/${props.id}/files/offline/list`, { path: path.value })
-      : await http.post(`/vms/${props.id}/files/list`, { ...creds(), path: path.value })
-    items.value = (res.data && res.data.data && res.data.data.items) || []
+      ? await api.vmFilesOfflineList(props.id, path.value)
+      : await api.vmFilesList(props.id, { ...creds(), path: path.value })
+    items.value = (res.data && res.data.items) || []
   } catch (e) {
     ElMessage.error(errMsg(e, '读取目录失败'))
   } finally {
@@ -149,7 +149,7 @@ async function load() {
 async function mountOffline() {
   mounting.value = true
   try {
-    await http.post(`/vms/${props.id}/files/offline/mount`)
+    await api.vmFilesOfflineMount(props.id)
     offline.value = true
     connected.value = true
     path.value = '/'
@@ -164,7 +164,7 @@ async function mountOffline() {
 
 async function unmount() {
   try {
-    await http.post(`/vms/${props.id}/files/offline/unmount`)
+    await api.vmFilesOfflineUnmount(props.id)
     offline.value = false
     connected.value = false
     items.value = []
@@ -193,10 +193,10 @@ function openRow(row) {
 async function download(row) {
   try {
     const res = offline.value
-      ? await http.get(`/vms/${props.id}/files/offline/download`, { params: { path: join(row.name) } })
-      : await http.post(`/vms/${props.id}/files/download`, { ...creds(), path: join(row.name) })
-    // 该接口直接返回文件内容（octet-stream）；适合文本/配置文件
-    const blob = new Blob([res.data], { type: 'application/octet-stream' })
+      ? await api.vmFilesOfflineDownload(props.id, join(row.name))
+      : await api.vmFilesDownload(props.id, { ...creds(), path: join(row.name) })
+    // 该接口直接返回文件内容（octet-stream，unwrap 后即内容本体）；适合文本/配置文件
+    const blob = new Blob([res], { type: 'application/octet-stream' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = row.name
@@ -222,7 +222,7 @@ async function doUpload(ev) {
   reader.onload = async () => {
     try {
       const base64 = String(reader.result).split(',')[1] || ''
-      await http.post(`/vms/${props.id}/files/upload`, { ...creds(), path: join(file.name), content: base64 })
+      await api.vmFilesUpload(props.id, { ...creds(), path: join(file.name), content: base64 })
       ElMessage.success('已上传：' + file.name)
       await load()
     } catch (e) {
@@ -238,7 +238,7 @@ async function remove(row) {
     await ElMessageBox.confirm(`确定删除「${row.name}」？目录将递归删除，不可恢复。`, '删除', { type: 'warning' })
   } catch { return }
   try {
-    await http.post(`/vms/${props.id}/files/delete`, { ...creds(), paths: [join(row.name)] })
+    await api.vmFilesDelete(props.id, { ...creds(), paths: [join(row.name)] })
     ElMessage.success('已删除')
     await load()
   } catch (e) {
@@ -253,7 +253,7 @@ async function mkdir() {
     name = (r.value || '').trim()
   } catch { return }
   try {
-    await http.post(`/vms/${props.id}/files/mkdir`, { ...creds(), path: join(name) })
+    await api.vmFilesMkdir(props.id, { ...creds(), path: join(name) })
     ElMessage.success('已创建')
     await load()
   } catch (e) {

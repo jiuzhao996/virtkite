@@ -112,7 +112,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import http from '../api'
+import { api } from '../api'
 import { errMsg, clampPct } from '../utils/format'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import PageHead from '../components/PageHead.vue'
@@ -163,8 +163,8 @@ const filteredApps = computed(() =>
 )
 
 async function loadApps() {
-  const res = await http.get('/apps')
-  apps.value = Array.isArray(res.data.data) ? res.data.data : []
+  const res = await api.listApps()
+  apps.value = Array.isArray(res.data) ? res.data : []
 }
 
 // ===== 目标虚拟机 =====
@@ -172,8 +172,8 @@ const vms = ref([])
 const runningVMs = computed(() => vms.value.filter((v) => v.status === 'running'))
 
 async function loadVMs() {
-  const res = await http.get('/vms')
-  vms.value = (res.data.data && res.data.data.items) || []
+  const res = await api.listVMs()
+  vms.value = (res.data && res.data.items) || []
 }
 
 async function load() {
@@ -226,7 +226,7 @@ async function submitInstall() {
   installDone.value = false
   installOutput.value = ''
   try {
-    const res = await http.post('/vms/apps/install', {
+    const res = await api.installApp({
       vm_id: form.value.vm_id,
       app_id: currentApp.value.id,
       host: form.value.host.trim(),
@@ -234,8 +234,8 @@ async function submitInstall() {
       user: form.value.user || 'root',
       password: form.value.password
     })
-    // 返回 202 {task_id}；extractTaskId 吃统一响应封套（res.data 即 {code,message,data:{task_id}}）
-    const task = await pollTask(extractTaskId(res.data), {
+    // 返回 202 {task_id}；extractTaskId 吃统一响应封套（api.* 返回值即 {code,message,data}）
+    const task = await pollTask(extractTaskId(res), {
       interval: 2000,
       timeout: 600000,
       onProgress: (t) => {
@@ -285,8 +285,8 @@ async function openScript(app) {
   scriptDrawer.value = true
   scriptLoading.value = true
   try {
-    const res = await http.get('/apps/' + app.id)
-    const d = res.data.data || {}
+    const res = await api.appDetail(app.id)
+    const d = res.data || {}
     scriptData.value = { detect: d.detect || '', install: d.install || '' }
   } catch (e) {
     ElMessage.error(errMsg(e, '获取脚本失败'))
