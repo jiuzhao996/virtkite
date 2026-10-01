@@ -1,7 +1,7 @@
 <template>
   <!-- 告警铃铛（告警中心批次 2026-10）：未读站内通知角标 + popover 列表。
        与任务铃（Bell）并排：任务=平台在做什么，告警=环境出了什么事。 -->
-  <el-popover trigger="click" width="360" @show="onOpen">
+  <el-popover trigger="click" width="320" @show="onOpen">
     <template #reference>
       <el-badge
         :value="unread"

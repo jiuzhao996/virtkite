@@ -866,6 +866,11 @@ onUnmounted(() => {
   gap: 16px;
   margin-bottom: 16px;
 }
+@media (max-width: 768px) {
+  .panel-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .panel-card {
   margin-bottom: 0;
 }

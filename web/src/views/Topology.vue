@@ -84,6 +84,8 @@ const COLOR_POOL = () => cssVar('--color-kite', '#7cc6cb')
 const COLOR_NET = () => cssVar('--color-violet', '#7c3aed')
 const COLOR_GOLD = () => cssVar('--color-gold', '#ffd268')
 const COLOR_MUTED = () => cssVar('--color-muted-foreground', '#475569')
+// 窄屏（手机）口径：布局参数与图例形态随视口切换（加载时取值，转屏刷新页面生效）
+const isNarrow = window.matchMedia('(max-width: 768px)').matches
 
 // 分类顺序即图例顺序（legend 点选即过滤）；告警中独立成类——红色在图上直接可过滤
 const CATEGORIES = [
@@ -176,6 +178,8 @@ function buildGraphData() {
     category: 0,
     symbolSize: 76,
     itemStyle: { color: COLOR_HOST() },
+    draggable: true,
+    cursor: 'grab',
     meta: { kind: 'host' }
   })
 
@@ -191,6 +195,8 @@ function buildGraphData() {
       category: 1,
       symbolSize: poolSize(p.capacity),
       itemStyle: { color: COLOR_POOL() },
+      draggable: true,
+      cursor: 'grab',
       meta: { kind: 'pool', pool: p }
     })
     addLink('host', id)
@@ -216,6 +222,8 @@ function buildGraphData() {
       category: 2,
       symbolSize: 34 + attachedNets.get(n.name) * 6,
       itemStyle: { color: COLOR_NET() },
+      draggable: true,
+      cursor: 'grab',
       meta: { kind: 'network', network: n, attached: attachedNets.get(n.name) }
     })
     addLink('host', id)
@@ -233,6 +241,8 @@ function buildGraphData() {
       category: vmCategory(v.status, v.name),
       symbolSize: vmSize(v.memory_mb),
       itemStyle: { color: vmStatusHex(v.status) },
+      draggable: true, // 数据项级拖拽开关（echarts 源码只读 itemModel 的 draggable）
+      cursor: 'grab', // 悬停变抓取光标：告诉用户这里可以拖
       meta: { kind: 'vm', vm: v }
     }
     if (v.status === 'running' && perf) {
@@ -256,6 +266,8 @@ function buildGraphData() {
           category: 1,
           symbolSize: 40,
           itemStyle: { color: COLOR_POOL(), opacity: 0.55 },
+          draggable: true,
+          cursor: 'grab',
           meta: { kind: 'pool', pool: { name: v.storage_pool, unregistered: true } }
         })
         addLink('host', pid)
@@ -361,6 +373,8 @@ function renderChart() {
       legend: {
         top: 6,
         right: 12,
+        // 窄屏 8 类图例一行放不下：scroll 型折叠为翻页箭头
+        type: isNarrow ? 'scroll' : 'plain',
         itemWidth: 14,
         itemHeight: 10,
         data: CATEGORIES.map((c) => c.name),
@@ -383,7 +397,13 @@ function renderChart() {
             cssVar('--color-danger', '#dc2626'),
             cssVar('--color-danger', '#dc2626')
           ],
-          force: { repulsion: 320, edgeLength: [80, 210], gravity: 0.08 },
+          // layoutAnimation: false 是拖动手感的关键——力模拟只在初始一次性算完，
+          // 之后节点位置固定：拖到哪停哪。默认 true 时模拟持续施力，拖住节点会被
+          // 斥力「拽回去」、其他节点跟着漂（实测拖动像拔河，用户反馈难拖）。
+          // 窄屏（手机）整体缩排：斥力/边长按 0.5 档收缩，图才装得进 375 视口。
+          force: isNarrow
+            ? { repulsion: 150, edgeLength: [50, 120], gravity: 0.12, layoutAnimation: false }
+            : { repulsion: 320, edgeLength: [80, 210], gravity: 0.08, layoutAnimation: false },
           roam: true,
           draggable: true,
           categories: CATEGORIES,
@@ -517,6 +537,11 @@ onBeforeUnmount(() => {
 .topo-chart {
   width: 100%;
   height: 560px;
+}
+@media (max-width: 768px) {
+  .topo-chart {
+    height: 400px;
+  }
 }
 .topo-empty {
   padding: 48px 0;

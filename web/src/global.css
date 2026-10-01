@@ -367,6 +367,10 @@ button,
     max-width: calc(100vw - 24px);
     margin: 5vh auto !important;
   }
+  /* 抽屉窄屏全宽化（卷管理/克隆家谱等 size 72%~76% 在 375 视口只剩 270px，表格挤死） */
+  .el-drawer {
+    width: 100% !important;
+  }
   /* 顶栏搜索在小屏收窄（全局搜索框占位过大） */
   .global-search {
     min-width: 0;

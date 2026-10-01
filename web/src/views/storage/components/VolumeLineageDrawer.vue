@@ -2,7 +2,7 @@
   <el-drawer
     :model-value="modelValue"
     title="全库克隆家谱与回收工作台"
-    size="76%"
+    :size="isMobile ? '100%' : '76%'"
     @update:model-value="(v) => emit('update:modelValue', v)"
     @open="load"
   >
@@ -109,6 +109,11 @@
 // （/api/storage/volume-graph = 域磁盘挂载 + 镜像库登记 + 跨池 backing 依赖图，节点以路径为 id）。
 // 「宁留垃圾文件、不损在用磁盘」的守卫立场不变——回收候选删除仍过 DeleteVolume 守卫。
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+// 移动端抽屉全屏（≤768px），桌面 76%；转屏实时跟随（MainLayout.checkMobile 同款模式）
+const isMobile = ref(window.matchMedia('(max-width: 768px)').matches)
+const onViewportChange = () => { isMobile.value = window.matchMedia('(max-width: 768px)').matches }
+window.addEventListener('resize', onViewportChange)
+onUnmounted(() => window.removeEventListener('resize', onViewportChange))
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../../api'
 import echarts from '../../../utils/echarts'
