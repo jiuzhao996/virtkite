@@ -474,6 +474,8 @@ function renderChart() {
     }, 60)
   }
 
+  bindEdgeFollow()
+
   // 节点点击直达：VM→详情、池→存储页、网络→网络页（告警/克隆动线的最后一跳）
   chart.off('click')
   chart.on('click', (p) => {
@@ -483,6 +485,38 @@ function renderChart() {
     else if (meta.kind === 'pool' && !meta.pool.unregistered) router.push('/storage')
     else if (meta.kind === 'network') router.push('/networks')
   })
+}
+
+// 边跟随（自管，不依赖 echarts 内部绑定）：none 布局下节点拖动时，echarts 内部的
+// 「边随节点更新」在 6.1 实测不可靠（节点跟手、连线留在原地——用户真机复现）。
+// 这里给每个节点图元再绑一层自己的 drag 监听：把节点新位置写回布局、重算邻接边端点，
+// 再调用 GraphView 同款 updateLayout 刷新线段。坐标同时写回缓存，刷新后排布保持。
+function bindEdgeFollow() {
+  try {
+    const seriesModel = chart.getModel().getSeriesByIndex(0)
+    const graph = seriesModel.getGraph()
+    const view = (chart._chartsViews || []).find((v) => v.__model === seriesModel)
+    graph.eachNode((n) => {
+      const el = n.getGraphicEl()
+      if (!el || el.__edgeFollow) return
+      el.__edgeFollow = true
+      el.on('drag', () => {
+        n.setLayout([el.x, el.y])
+        savedPositions[n.id] = [el.x, el.y]
+        graph.eachEdge((e) => {
+          if (e.node1 !== n && e.node2 !== n) return
+          const p = (node) => {
+            const gel = node.getGraphicEl()
+            return [gel ? gel.x : 0, gel ? gel.y : 0]
+          }
+          e.setLayout([p(e.node1), p(e.node2)])
+        })
+        if (view && view.updateLayout) view.updateLayout(seriesModel)
+      })
+    })
+  } catch (e) {
+    /* 结构读取失败静默降级：只影响边跟随，不影响出图与节点拖拽 */
+  }
 }
 
 // 重置布局：清坐标缓存回到 force 重新排（用户把节点拖乱了的自救出口）
