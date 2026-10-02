@@ -118,7 +118,6 @@
   --stat-num-fs: 24px;
   --stat-label-fs: 14px;
   --help-fs: 12px;
-  --card-shadow-soft: 0 1px 4px rgba(31, 35, 41, 0.08);
 }
 
 
@@ -175,7 +174,6 @@ html.dark {
   --elev-pop: 0 12px 32px rgba(0, 0, 0, 0.55), 0 4px 8px rgba(0, 0, 0, 0.35);
 
   --table-header-bg: #16213a;
-  --card-shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.4);
 
   /* EP 暗色变量对齐（未开 EP dark html 类时兜底核心几项） */
   --el-bg-color: #101a2e;
@@ -397,9 +395,12 @@ button,
 .el-dialog {
   border-radius: var(--dialog-radius);
 }
+/* 视觉抛光批①收口：此段（1Panel 对标）原用 --card-shadow-soft 覆盖了同文件更早的
+   elev-card 规则——层级阴影统一走 elev 三档，此处的 border:none 保留（无边框卡
+   更依赖阴影定层），card-shadow-soft 令牌本身退役 */
 .el-card {
   border: none;
-  box-shadow: var(--card-shadow-soft);
+  box-shadow: var(--elev-card);
 }
 .input-help {
   font-size: var(--help-fs);
