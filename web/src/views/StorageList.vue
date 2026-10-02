@@ -706,10 +706,12 @@ onMounted(load)
 .pool-card {
   cursor: pointer;
   height: 100%;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: transform var(--dur-base) var(--ease-standard), border-color var(--dur-base) var(--ease-standard), box-shadow var(--dur-base) var(--ease-standard);
 }
 .pool-card:hover {
   border-color: var(--el-color-primary);
+  transform: translateY(-2px);
+  box-shadow: var(--elev-hover);
 }
 .pool-head {
   display: flex;

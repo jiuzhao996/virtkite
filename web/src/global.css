@@ -74,6 +74,12 @@
   --elev-hover: 0 6px 16px rgba(30, 41, 59, 0.12), 0 2px 4px rgba(30, 41, 59, 0.06);
   --elev-pop: 0 12px 32px rgba(30, 41, 59, 0.16), 0 4px 8px rgba(30, 41, 59, 0.08);
 
+  /* 动效令牌（视觉抛光批③，主题无关）：克制到「感觉不到动效但操作跟手」，
+     全站任何过渡不得手写时长/曲线，一律引用这两组令牌 */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+
   /* 间距（8px 栅格，高密度） */
   --space-xs: 2px;
   --space-sm: 4px;
@@ -244,6 +250,16 @@ h1, h2, h3, h4 {
   font-family: var(--font-mono);
 }
 
+/* 页面进入淡入（批③）：作用于 el-main 直接子级（路由组件根），路由切换重建即重放；
+   动效令牌驱动，prefers-reduced-motion 由文末全局降级兜底 */
+.el-main > * {
+  animation: page-in var(--dur-fast) var(--ease-standard);
+}
+@keyframes page-in {
+  from { opacity: 0.4; }
+  to { opacity: 1; }
+}
+
 /* Element Plus 全局质感微调 */
 .el-card {
   border-radius: var(--radius-md);
@@ -257,7 +273,7 @@ h1, h2, h3, h4 {
 }
 .el-button {
   border-radius: var(--radius-sm);
-  transition: all 0.2s ease;
+  transition: all var(--dur-base) var(--ease-standard);
 }
 .el-input__wrapper,
 .el-select__wrapper {

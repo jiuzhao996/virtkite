@@ -369,7 +369,7 @@ onMounted(() => {
   padding: 26px 22px;
   text-align: center;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: transform var(--dur-base) var(--ease-standard), border-color var(--dur-base) var(--ease-standard), box-shadow var(--dur-base) var(--ease-standard);
   box-shadow: var(--elev-card);
 }
 .card:hover {

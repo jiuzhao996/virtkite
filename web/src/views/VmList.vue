@@ -717,7 +717,11 @@ onUnmounted(() => {
 .vm-card {
   display: flex;
   flex-direction: column;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: transform var(--dur-base) var(--ease-standard), border-color var(--dur-base) var(--ease-standard), box-shadow var(--dur-base) var(--ease-standard);
+}
+/* 批③：悬停轻浮起（-2px，与 Console 选择卡同档）；选中态描边优先于浮起观感 */
+.vm-card:not(.selected):hover {
+  transform: translateY(-2px);
 }
 /* el-card body 撑满卡片，让 actions margin-top:auto 生效（按钮行贴底对齐） */
 .vm-card :deep(.el-card__body) {
