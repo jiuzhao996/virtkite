@@ -1,5 +1,5 @@
 <template>
-  <div v-loading="loading">
+  <div v-loading="loading && !firstLoading">
     <div class="page-head">
       <div class="head-left">
         <h2 class="page-title">仪表盘</h2>
@@ -29,6 +29,20 @@
          数据拉取（loadAll / pollHost / pollVms / loadAlerts / ...）与 props 下发。 -->
     <el-tabs v-model="activeTab" class="dash-tabs" @tab-change="onTabChange">
       <el-tab-pane label="概览" name="overview">
+        <!-- 首载骨架（批④）：形状对齐统计卡行 + 双图表卡；刷新走 v-loading 不闪骨架 -->
+        <template v-if="firstLoading">
+          <div class="dash-skel-cards">
+            <el-card v-for="i in 5" :key="i" shadow="never" class="dash-skel-card">
+              <div class="skeleton-text" style="width: 40%"></div>
+              <div class="skeleton-text" style="width: 62%; height: 22px; margin-top: 10px"></div>
+            </el-card>
+          </div>
+          <el-row :gutter="16" class="mt">
+            <el-col :md="14"><el-card shadow="never"><div class="skeleton-block" style="height: 260px"></div></el-card></el-col>
+            <el-col :md="10"><el-card shadow="never"><div class="skeleton-block" style="height: 260px"></div></el-card></el-col>
+          </el-row>
+        </template>
+        <template v-else>
         <!-- Row 1: 统计卡片（adminOnly「用户」卡过滤、跳转在子组件内） -->
         <StatOverviewRow :overview="overview" />
 
@@ -67,6 +81,7 @@
           :user-text="userText"
           @go-monitor="activeTab = 'monitor'"
         />
+        </template>
       </el-tab-pane>
       <el-tab-pane label="监控" name="monitor" lazy>
         <!-- ⚠️ 必须用 MonitorView：Monitor 已被 @element-plus/icons-vue 的显示器图标占用 -->
@@ -103,6 +118,8 @@ import {
 const { state, isAdmin, canOperate } = useAuth()
 const pollSeconds = computed(() => getPollInterval('dashboard', POLL_DEFAULTS.dashboard) / 1000)
 const loading = ref(false)
+// 首载标记（批④骨架屏）：首次 loadAll 后永久 false，之后刷新走 v-loading
+const firstLoading = ref(true)
 const overview = ref(null)
 const vmStatus = ref([])
 const auditActions = ref([])
@@ -243,6 +260,7 @@ async function loadAll() {
     }
   }
   loading.value = false
+  firstLoading.value = false
   await Promise.all([pollHost(), pollVms()])
 }
 
@@ -328,6 +346,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 首载骨架（批④）：统计卡行五等分，与 StatOverviewRow 栅格一致 */
+.dash-skel-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+}
 /* 系统公告条：页头与 tabs 之间留 8px 栅格间距 */
 .dash-announcement {
   margin-bottom: 16px;

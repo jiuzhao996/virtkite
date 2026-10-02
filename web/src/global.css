@@ -74,6 +74,10 @@
   --elev-hover: 0 6px 16px rgba(30, 41, 59, 0.12), 0 2px 4px rgba(30, 41, 59, 0.06);
   --elev-pop: 0 12px 32px rgba(30, 41, 59, 0.16), 0 4px 8px rgba(30, 41, 59, 0.08);
 
+  /* 骨架屏（视觉抛光批④）：占位底色 + 微光高光；暗色随主题反转 */
+  --skeleton-base: #eef2f6;
+  --skeleton-shine: rgba(255, 255, 255, 0.75);
+
   /* 动效令牌（视觉抛光批③，主题无关）：克制到「感觉不到动效但操作跟手」，
      全站任何过渡不得手写时长/曲线，一律引用这两组令牌 */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
@@ -151,6 +155,8 @@ html.dark {
   --status-error-bg: #551414;
   --status-off-bg: #293548;
   --row-hover-bg: #16213a;
+  --skeleton-base: #1c2a44;
+  --skeleton-shine: rgba(255, 255, 255, 0.06);
   --color-serial-gold: #f0b90b;
   --color-serial-gold-ink: #7c4a03;
 
@@ -248,6 +254,43 @@ h1, h2, h3, h4 {
 }
 .mono {
   font-family: var(--font-mono);
+}
+
+/* ============ 骨架屏通用类（批④）：形状与真实内容匹配的占位 ============ */
+.skeleton-block,
+.skeleton-text {
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton-base);
+  border-radius: var(--radius-sm);
+}
+.skeleton-block {
+  width: 100%;
+  height: 96px;
+}
+.skeleton-text {
+  height: 14px;
+  margin: 6px 0;
+}
+/* 微光扫过：斜向高光带从左到右，周期 1.4s（reduced-motion 由全局降级静止为灰块） */
+.skeleton-block::after,
+.skeleton-text::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, var(--skeleton-shine) 50%, transparent 70%);
+  animation: skeleton-shine 1.4s var(--ease-standard) infinite;
+  transform: translateX(-100%);
+}
+@keyframes skeleton-shine {
+  to { transform: translateX(100%); }
+}
+/* 骨架行组合：表格首载三行占位 */
+.skeleton-rows {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 /* 页面进入淡入（批③）：作用于 el-main 直接子级（路由组件根），路由切换重建即重放；

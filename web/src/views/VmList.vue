@@ -1,5 +1,5 @@
 <template>
-  <div v-loading="loading">
+  <div v-loading="loading && !firstLoading">
       <PageHead title="虚拟机管理" />
       <el-card shadow="never">
         <!-- 原左分组为 gap 8px + flex-wrap，经 wrap 传入保持不变；计数为 .toolbar 直接子元素走默认插槽 -->
@@ -56,7 +56,16 @@
         <el-empty v-if="!filteredItems.length && !loading" :description="isFiltered ? '无匹配虚拟机' : '暂无虚拟机'" :image-size="80">
           <el-button v-if="isFiltered" :icon="Refresh" @click="clearFilters">清除筛选</el-button>
         </el-empty>
-        <div v-else class="vm-grid">
+        <!-- 首载骨架（批④）：8 张形状匹配的占位卡；刷新仍走根级 v-loading 不闪骨架 -->
+        <div v-if="firstLoading" class="vm-grid" aria-label="虚拟机列表加载中">
+          <el-card v-for="i in 8" :key="i" shadow="never" class="vm-card skel-vm-card">
+            <div class="skeleton-text" style="width: 45%"></div>
+            <div class="skeleton-text" style="width: 28%; margin-bottom: 12px"></div>
+            <div class="skeleton-block" style="height: 56px; margin-bottom: 12px"></div>
+            <div class="skeleton-text" style="width: 60%"></div>
+          </el-card>
+        </div>
+        <div v-else-if="filteredItems.length" class="vm-grid">
           <el-card
             v-for="vm in filteredItems"
             :key="vm.id"
@@ -243,6 +252,8 @@ const CHART_BASELINE_COLOR = cssVar('--color-border-strong', '#cbd5e1')
 const items = ref([])
 const total = ref(0)
 const loading = ref(false)
+// 首载标记（批④骨架屏）：只在首次 load 期间为 true，之后刷新走 v-loading 不再闪骨架
+const firstLoading = ref(true)
 const busy = ref(new Set())
 const checked = ref([])
 const bulkBusy = ref(false)
@@ -325,6 +336,7 @@ async function load() {
     ElMessage.error('获取虚拟机列表失败')
   } finally {
     loading.value = false
+    firstLoading.value = false
   }
 }
 
@@ -722,6 +734,10 @@ onUnmounted(() => {
 /* 批③：悬停轻浮起（-2px，与 Console 选择卡同档）；选中态描边优先于浮起观感 */
 .vm-card:not(.selected):hover {
   transform: translateY(-2px);
+}
+/* 骨架占位卡（批④）：不吃 hover 浮起 */
+.skel-vm-card:hover {
+  transform: none;
 }
 /* el-card body 撑满卡片，让 actions margin-top:auto 生效（按钮行贴底对齐） */
 .vm-card :deep(.el-card__body) {
