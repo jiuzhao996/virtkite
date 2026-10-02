@@ -19,25 +19,21 @@ const routes = [
       { path: 'dashboard', name: 'dashboard', component: () => import('../views/Dashboard.vue') },
       { path: 'vms', name: 'vms', component: () => import('../views/VmList.vue') },
       { path: 'vms/new', name: 'vm-create', component: () => import('../views/CreateVmWizard.vue'), meta: { requiresOperate: true } },
-      // Docker 管理：1Panel 式子路由页面组（布局壳 index.vue + 五个子页），'' 重定向到容器页
-      {
-        path: 'docker',
-        component: () => import('../views/DockerPage.vue'),
-        meta: { requiresOperate: true },
-        children: [
-          { path: '', redirect: { name: 'docker-containers' } },
-          { path: 'containers', name: 'docker-containers', component: () => import('../views/docker/components/ContainerTab.vue'), meta: { requiresOperate: true } },
-          { path: 'images', name: 'docker-images', component: () => import('../views/docker/components/ImageTab.vue'), meta: { requiresOperate: true } },
-          { path: 'networks', name: 'docker-networks', component: () => import('../views/docker/components/NetworkTab.vue'), meta: { requiresOperate: true } },
-          { path: 'volumes', name: 'docker-volumes', component: () => import('../views/docker/components/VolumeTab.vue'), meta: { requiresOperate: true } },
-          { path: 'compose', name: 'docker-compose', component: () => import('../views/docker/components/ComposeTab.vue'), meta: { requiresOperate: true } }
-        ]
-      },
+      // 容器管理（Docker 资源拆分批次 2026-10）：容器 + 编排一页；
+      // 镜像/网络/卷已按语义分散（镜像管理第 4 tab / 网络 / 存储池页），旧 /docker/* 重定向防书签断链
+      { path: 'containers', name: 'containers', component: () => import('../views/ContainerPage.vue'), meta: { requiresOperate: true } },
       { path: 'apps', name: 'apps', component: () => import('../views/AppStore.vue'), meta: { requiresOperate: true } },
       { path: 'grant-requests', name: 'grant-requests', component: () => import('../views/GrantRequests.vue'), meta: { requiresOperate: true } },
       // IA 精简批次（2026-09）：拓扑图并入仪表盘 tab、AI 助手改顶栏抽屉、cloud-init 模板并入设置页。
       // 三个旧地址保留重定向，旧书签/文档链接不断链
       { path: 'topology', redirect: { path: '/dashboard', query: { tab: 'topology' } } },
+      // Docker 管理拆分后的旧地址重定向（书签/文档防断链）
+      { path: 'docker', redirect: '/containers' },
+      { path: 'docker/containers', redirect: '/containers' },
+      { path: 'docker/compose', redirect: '/containers' },
+      { path: 'docker/images', redirect: '/images' },
+      { path: 'docker/networks', redirect: '/networks' },
+      { path: 'docker/volumes', redirect: '/storage' },
       { path: 'ai', redirect: '/dashboard' },
       { path: 'cloud-init-templates', redirect: '/settings' },
       { path: 'recycle-bin', name: 'recycle-bin', component: () => import('../views/RecycleBin.vue'), meta: { requiresAdmin: true } },

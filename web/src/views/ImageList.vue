@@ -124,6 +124,13 @@
       <el-tab-pane label="镜像市场" name="market" lazy>
         <ImageMarketHome embedded />
       </el-tab-pane>
+      <!-- Tab 4 容器镜像（Docker 资源拆分批次）：operator+ 可见（viewer 不出 tab）；
+           lazy 首次激活才挂载（避免未激活时打 docker 接口）；门控重试接 ImageTab.refresh -->
+      <el-tab-pane v-if="canOperate" label="容器镜像" name="docker" lazy>
+        <DockerGate @retry="dockerTabRef?.refresh?.()">
+          <ImageTab ref="dockerTabRef" />
+        </DockerGate>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 上传镜像 -->
@@ -220,6 +227,9 @@ import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu, Search } 
 import ImageMarketHome from './images/components/ImageMarketHome.vue'
 import ImageMarket from './images/components/ImageMarket.vue'
 import ImageIsoMarket from './images/components/ImageIsoMarket.vue'
+import DockerGate from '../components/DockerGate.vue'
+import ImageTab from './docker/components/ImageTab.vue'
+const dockerTabRef = ref(null)
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 import { api } from '../api'
@@ -227,7 +237,7 @@ import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
 import { fmtSizeGB, fmtSizeBytes, fmtDateTime, errMsg, isCancel } from '../utils/format'
 
-const { isAdmin } = useAuth()
+const { isAdmin, canOperate } = useAuth()
 
 const activeTab = ref('images')
 // 镜像市场 tab 懒加载：组件 onMounted 自拉数据，无需额外处理

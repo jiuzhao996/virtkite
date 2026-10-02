@@ -5,6 +5,9 @@
       <span class="page-desc">管理 libvirt 虚拟网络：NAT、桥接、隔离网络</span>
     </PageHead>
 
+    <!-- Docker 资源拆分批次：虚拟网络（libvirt）+ Docker 网络双 tab，语义归并统一网络入口 -->
+    <el-tabs v-model="activeTab" class="net-tabs">
+      <el-tab-pane label="虚拟网络" name="libvirt">
     <el-card shadow="never">
       <!-- 原左右分组 gap 为 var(--space-lg)（12px），经 gap/right-gap 传入保持不变 -->
       <Toolbar gap="var(--space-lg)" right-gap="var(--space-lg)">
@@ -62,6 +65,14 @@
         </el-col>
       </el-row>
     </el-card>
+      </el-tab-pane>
+      <!-- Docker 网络（Docker 资源拆分批次）：operator+ 可见，lazy 首次激活才挂载 -->
+      <el-tab-pane v-if="canOperate" label="Docker 网络" name="docker" lazy>
+        <DockerGate @retry="dockerNetRef?.refresh?.()">
+          <NetworkTab ref="dockerNetRef" />
+        </DockerGate>
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- 新建 NAT 网络 -->
     <el-dialog :close-on-click-modal="false" v-model="createDialog" title="新建 NAT 网络" width="460px">
@@ -92,8 +103,12 @@ import { useAuth } from '../store/auth'
 import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
+import DockerGate from '../components/DockerGate.vue'
+import NetworkTab from './docker/components/NetworkTab.vue'
 
-const { isAdmin } = useAuth()
+const { isAdmin, canOperate } = useAuth()
+const activeTab = ref('libvirt')
+const dockerNetRef = ref(null)
 
 const networks = ref([])
 const loading = ref(false)

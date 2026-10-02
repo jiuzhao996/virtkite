@@ -366,7 +366,7 @@ vmops/
 ├── scripts/             # init-db.sql（手工建库）/ smoke.sh（E2E 回归）/ credential-rekey、purge-task-secrets（密钥运维，独立 main 包）
 ├── deploy/              # prometheus.yml(.example) / alerts.yml / alertmanager.yml(.example) / gen-monitor-conf.sh / docker-compose
 ├── web/                 # Vue3 + Vite 前端（26 个视图：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
-│                        #   Host/Image(三 tab 含镜像市场)/Storage/Network/Task/Audit+SessionList/Settings/UserList/Profile/Login）
+│                        #   Host/Image(四 tab 含镜像市场与容器镜像)/Storage(含 Docker 卷)/Network(含 Docker 网络)/Containers(容器+编排)/Task/Audit/Settings/UserList/Profile/Login）
 │   ├── src/utils/format.js  # 状态文案/时间/尺寸/错误提取统一实现（收敛 10 余处重复）
 │   └── dist/            # 构建产物，由后端托管（路由懒加载 + manualChunks：首屏 −50%）
 └── docs/                # 毕设文档（00–10 章节 / 任务书 / 答辩演示与排练纪要）

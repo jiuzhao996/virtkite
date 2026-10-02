@@ -9,6 +9,10 @@
       </div>
     </PageHead>
 
+    <!-- Docker 资源拆分批次：平台存储（qcow2 池）+ Docker 卷双 tab，统一存储入口 -->
+    <el-tabs v-model="activeTab" class="storage-tabs">
+      <el-tab-pane label="存储池" name="pools">
+
     <!-- 汇总条：物理容量 / cloud-init 种子目录 / 默认存储池 -->
     <!-- dir 池容量是文件系统级的，同盘多池口径相同，取 items 里最大 capacity 及其 available，不再每行重复 -->
     <el-card shadow="never" class="summary-card">
@@ -87,6 +91,14 @@
         </el-card>
       </el-col>
     </el-row>
+      </el-tab-pane>
+      <!-- Docker 卷（Docker 资源拆分批次）：operator+ 可见，lazy 首次激活才挂载 -->
+      <el-tab-pane v-if="canOperate" label="Docker 卷" name="docker" lazy>
+        <DockerGate @retry="dockerVolRef?.refresh?.()">
+          <VolumeTab ref="dockerVolRef" />
+        </DockerGate>
+      </el-tab-pane>
+    </el-tabs>
 
     <!-- 池信息编辑（角色 + 描述） -->
     <el-dialog :close-on-click-modal="false" v-model="metaDialog" :title="'编辑池信息 - ' + metaForm.name" width="480px">
@@ -263,11 +275,15 @@ import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId } from '../utils/task.js'
 import PageHead from '../components/PageHead.vue'
 import VolumeLineageDrawer from './storage/components/VolumeLineageDrawer.vue'
+import DockerGate from '../components/DockerGate.vue'
+import VolumeTab from './docker/components/VolumeTab.vue'
 // 容量格式化 / 错误文案 / 取消判定统一走 utils/format.js（原本地三份实现已删）
 // 本页的 .page-head / .page-title / .toolbar / .count 与其他列表页逐字相同，已收进 global.css
 import { fmtSizeBytes, errMsg, isCancel, usageColor, clampPct } from '../utils/format'
 
-const { isAdmin } = useAuth()
+const { isAdmin, canOperate } = useAuth()
+const activeTab = ref('pools')
+const dockerVolRef = ref(null)
 
 const pools = ref([])
 const volumes = ref([])
