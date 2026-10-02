@@ -21,6 +21,7 @@
           <div class="iso-name">{{ it.name }}</div>
           <div class="iso-desc">{{ it.description }}</div>
           <div class="iso-meta">
+            <el-tag size="small" :type="it.source_label === '清华源' ? 'primary' : 'warning'" effect="light">{{ it.source_label || '清华源' }}</el-tag>
             <el-tag size="small" effect="plain">≈ {{ hintGB(it.size_hint) }}</el-tag>
             <el-tag size="small" type="primary" effect="plain">
               下载到 {{ it.pool || defaultPool || '默认池' }}
@@ -36,7 +37,7 @@
               :loading="stateOf(it.key).submitting"
               @click="download(it)"
             >下载</el-button>
-            <el-link v-if="it.official" :href="it.official" target="_blank" underline="never" class="iso-official">官方来源</el-link>
+            <el-link v-if="it.mirror_page" :href="it.mirror_page" target="_blank" underline="never" class="iso-official">访问源页面</el-link>
           </div>
           <div v-else-if="stateOf(it.key).phase === 'downloading'" class="iso-actions">
             <el-progress :percentage="stateOf(it.key).percent" style="flex: 1" />
