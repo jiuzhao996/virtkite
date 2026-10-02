@@ -493,7 +493,7 @@ function onUserCommand(cmd) {
   background: #fff;
   color: var(--color-primary);
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--elev-hover);
 }
 /* 分组之间留呼吸感（首个分组不额外加） */
 .menu :deep(.el-menu-item-group) {
@@ -521,7 +521,7 @@ function onUserCommand(cmd) {
   color: var(--color-primary); /* 青绿加粗文字 */
   font-weight: 600;
   border-radius: 10px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); /* 轻微阴影 */
+  box-shadow: var(--elev-hover); /* 轻微阴影 */
 }
 .header {
   display: flex;

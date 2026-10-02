@@ -90,7 +90,7 @@ onUnmounted(() => {})
   border-color: color-mix(in srgb, var(--color-serial-gold) 50%, var(--color-border));
 }
 .card.serial:hover {
-  box-shadow: 0 10px 24px rgba(240, 185, 11, 0.22);
+  box-shadow: var(--elev-hover);
 }
 .card-icon {
   font-size: 2rem;

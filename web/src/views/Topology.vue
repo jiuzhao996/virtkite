@@ -368,7 +368,7 @@ function renderChart() {
         backgroundColor: cssVar('--color-card', '#ffffff'),
         borderColor: cssVar('--color-border', '#e2e8f0'),
         textStyle: { color: cssVar('--color-foreground', '#1e293b'), fontSize: 12 },
-        extraCssText: 'box-shadow: 0 4px 16px rgba(13,36,68,.12); line-height: 1.8;'
+        extraCssText: 'box-shadow: var(--elev-hover); line-height: 1.8;'
       },
       legend: {
         top: 6,

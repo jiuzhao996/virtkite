@@ -370,12 +370,12 @@ onMounted(() => {
   text-align: center;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--elev-card);
 }
 .card:hover {
   transform: translateY(-3px);
   border-color: var(--term-accent);
-  box-shadow: 0 10px 24px rgba(88, 166, 255, 0.18);
+  box-shadow: var(--elev-hover);
 }
 /* 卡片装饰大图标：原 emoji 为 2.2rem 且自带颜色；换成单色 svg 后
    字号上调到 2.4rem 补足视觉体量，并固定 2.6rem 行高保持卡片总高不变、显式给色 */
@@ -405,7 +405,7 @@ onMounted(() => {
 }
 .card.serial:hover {
   border-color: var(--color-serial-gold);
-  box-shadow: 0 10px 24px rgba(240, 185, 11, 0.22);
+  box-shadow: var(--elev-hover);
 }
 /* 串口卡沿用金色主题，图标跟着卡片走 */
 .card.serial .card-icon { color: var(--color-serial-gold); }

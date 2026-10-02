@@ -642,7 +642,7 @@ onUnmounted(() => {
   border-radius: var(--radius-lg);
   background: var(--term-card-bg);
   border: 1px solid rgba(88, 166, 255, 0.2);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--elev-pop);
 }
 .form-title { margin: 0 0 18px; color: var(--term-text); font-size: 1.1rem; }
 .ssh-form :deep(.el-form-item__label) { color: var(--term-text-sub); }
