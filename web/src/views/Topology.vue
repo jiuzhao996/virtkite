@@ -8,7 +8,8 @@
       <Toolbar>
         <template #left>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <span class="tp-hint">虚拟机 → 存储池/网络 → 宿主机</span>
+          <el-button :icon="RefreshLeft" @click="resetLayout">重置布局</el-button>
+          <span class="tp-hint">虚拟机 → 存储池/网络 → 宿主机（拖动节点可整理，拖到哪停哪）</span>
         </template>
         <span class="count">
           虚拟机 {{ vms.length }} 台 · 存储池 {{ pools.length }} 个 · 网络 {{ networks.length }} 个<template
@@ -33,7 +34,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, RefreshLeft } from '@element-plus/icons-vue'
 import echarts from '../utils/echarts'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
@@ -355,10 +356,28 @@ function escapeHtml(s) {
 }
 
 /* ---------- 渲染（initDom → setOption → resize 监听 → dispose，同 Dashboard 模式） ---------- */
+
+// 节点坐标缓存（本会话内有效）：首次以 force 同步算完布局后，把坐标固化进数据并切换
+// layout:'none'——此后拖拽走 simpleLayout 分支（拖到哪停哪、其他节点不动、边自动跟随），
+// 不再受力模拟干扰。force 模式下拖动起点会触发同步全量重排，把刚拖的位置立即覆盖
+// （用户实测「拖不动、焊死」的根因），所以 force 只用来出初始布局。
+// 已有缓存时直接以 none 渲染：刷新/重开 tab 后排布保持，不重新计算。
+const savedPositions = {}
+
 function renderChart() {
   if (!chartRef.value) return
   if (!chart) chart = echarts.init(chartRef.value)
   const { nodes, links } = buildGraphData()
+
+  // 已有缓存坐标 → none 布局直接渲染；否则 force 算初始布局（见渲染后的固化步骤）
+  const positioned = nodes.length > 0 && nodes.every((n) => savedPositions[n.id])
+  if (positioned) {
+    for (const n of nodes) {
+      n.x = savedPositions[n.id][0]
+      n.y = savedPositions[n.id][1]
+    }
+  }
+
   chart.setOption(
     {
       animationDuration: 400,
@@ -384,7 +403,7 @@ function renderChart() {
         {
           type: 'graph',
           name: '拓扑',
-          layout: 'force',
+          layout: positioned ? 'none' : 'force',
           // 分类调色板：与 CATEGORIES 顺序一一对应。不设的话图例色块落 echarts 默认色，
           // 和节点实际配色（itemStyle）对不上，用户按图例过滤会被误导
           color: [
@@ -397,9 +416,8 @@ function renderChart() {
             cssVar('--color-danger', '#dc2626'),
             cssVar('--color-danger', '#dc2626')
           ],
-          // layoutAnimation: false 是拖动手感的关键——力模拟只在初始一次性算完，
-          // 之后节点位置固定：拖到哪停哪。默认 true 时模拟持续施力，拖住节点会被
-          // 斥力「拽回去」、其他节点跟着漂（实测拖动像拔河，用户反馈难拖）。
+          // force 仅出初始布局（layoutAnimation:false = setOption 内同步算完，无渐进动画）；
+          // 算完立即固化坐标切 none（见下方），拖拽全程不经过力模拟。
           // 窄屏（手机）整体缩排：斥力/边长按 0.5 档收缩，图才装得进 375 视口。
           force: isNarrow
             ? { repulsion: 150, edgeLength: [50, 120], gravity: 0.12, layoutAnimation: false }
@@ -434,6 +452,28 @@ function renderChart() {
     true
   )
 
+  // 首次 force 渲染后：读出全部节点的最终坐标存缓存，切 none 布局重渲一次。
+  // layoutAnimation:false 下布局在 setOption 内同步完成，此处读到的即最终位置；
+  // 读取失败（版本差异等）保持 force 模式静默降级，只影响拖拽手感不影响出图。
+  if (!positioned) {
+    setTimeout(() => {
+      try {
+        const graph = chart.getModel().getSeriesByIndex(0).getGraph()
+        let saved = 0
+        graph.eachNode((n) => {
+          const pos = n.getLayout()
+          if (Array.isArray(pos) && isFinite(pos[0]) && isFinite(pos[1])) {
+            savedPositions[n.id] = [pos[0], pos[1]]
+            saved++
+          }
+        })
+        if (saved) renderChart() // 以 none 布局重渲（走 positioned 分支）
+      } catch (e) {
+        /* 保持 force 模式 */
+      }
+    }, 60)
+  }
+
   // 节点点击直达：VM→详情、池→存储页、网络→网络页（告警/克隆动线的最后一跳）
   chart.off('click')
   chart.on('click', (p) => {
@@ -443,6 +483,12 @@ function renderChart() {
     else if (meta.kind === 'pool' && !meta.pool.unregistered) router.push('/storage')
     else if (meta.kind === 'network') router.push('/networks')
   })
+}
+
+// 重置布局：清坐标缓存回到 force 重新排（用户把节点拖乱了的自救出口）
+function resetLayout() {
+  for (const k of Object.keys(savedPositions)) delete savedPositions[k]
+  renderChart()
 }
 
 const onResize = () => chart && chart.resize()
