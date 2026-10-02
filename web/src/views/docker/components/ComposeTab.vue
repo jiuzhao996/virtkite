@@ -22,25 +22,25 @@
       <el-table-column label="操作" width="270" fixed="right">
         <template #default="{ row }">
           <el-button
-            size="small" type="success" plain
+            size="small" text type="success"
             :loading="composeKey === row.Name + ':start'"
             :disabled="composeKey !== ''"
             @click="composeAction(row, 'start')"
           >启动</el-button>
           <el-button
-            size="small" type="warning" plain
+            size="small" text type="warning"
             :loading="composeKey === row.Name + ':stop'"
             :disabled="(row.Status || '').indexOf('running') !== 0 || composeKey !== ''"
             @click="composeAction(row, 'stop')"
           >停止</el-button>
           <el-button
-            size="small" type="primary" plain
+            size="small" text type="primary"
             :loading="composeKey === row.Name + ':restart'"
             :disabled="(row.Status || '').indexOf('running') !== 0 || composeKey !== ''"
             @click="composeAction(row, 'restart')"
           >重启</el-button>
           <el-button
-            size="small" type="danger" plain
+            size="small" text type="danger"
             :loading="composeKey === row.Name + ':down'"
             :disabled="composeKey !== ''"
             @click="composeAction(row, 'down')"

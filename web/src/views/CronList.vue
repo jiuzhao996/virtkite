@@ -80,9 +80,9 @@
         <el-table-column label="操作" width="270" fixed="right">
           <template #default="{ row }">
             <el-button
+              text
               size="small"
               type="primary"
-              plain
               :loading="runningId === row.id"
               :disabled="!!runningId && runningId !== row.id"
               @click="runNow(row)"

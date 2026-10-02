@@ -72,7 +72,7 @@
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="danger" :icon="Delete" @click="revokeSubject(row)">收回</el-button>
+            <el-button text size="small" type="danger" :icon="Delete" @click="revokeSubject(row)">收回</el-button>
           </template>
         </el-table-column>
       </el-table>

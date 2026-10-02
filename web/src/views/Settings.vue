@@ -113,7 +113,7 @@
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="danger" plain @click="removeKey(row)">删除</el-button>
+            <el-button text size="small" type="danger" @click="removeKey(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

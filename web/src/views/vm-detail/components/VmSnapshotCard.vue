@@ -19,7 +19,7 @@
         </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="canOperate" size="small" :icon="RefreshLeft" @click="revertSnap(row)">回滚</el-button>
+            <el-button v-if="canOperate" text size="small" type="primary" :icon="RefreshLeft" @click="revertSnap(row)">回滚</el-button>
             <el-button v-if="canOperate" size="small" type="danger" :icon="Delete" @click="removeSnap(row)">删除</el-button>
           </template>
         </el-table-column>

@@ -68,10 +68,10 @@
             <el-table-column label="操作" min-width="270" fixed="right">
               <template #default="{ row }">
                 <div class="ops">
-                  <el-button v-if="isAdmin && row.is_template" size="small" type="primary" :icon="Cpu" @click="openClone(row)">基于此创建 VM</el-button>
-                  <el-button v-if="isAdmin && row.is_template" size="small" :icon="StarFilled" @click="toggleTemplate(row)">取消模板</el-button>
-                  <el-button v-if="isAdmin && !row.is_template" size="small" :icon="Star" @click="toggleTemplate(row)">标记为模板</el-button>
-                  <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+                  <el-button v-if="isAdmin && row.is_template" text size="small" type="primary" :icon="Cpu" @click="openClone(row)">基于此创建 VM</el-button>
+                  <el-button v-if="isAdmin && row.is_template" text size="small" type="primary" :icon="StarFilled" @click="toggleTemplate(row)">取消模板</el-button>
+                  <el-button v-if="isAdmin && !row.is_template" text size="small" type="primary" :icon="Star" @click="toggleTemplate(row)">标记为模板</el-button>
+                  <el-button v-if="isAdmin" text size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
                 </div>
               </template>
             </el-table-column>

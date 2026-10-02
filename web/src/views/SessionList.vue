@@ -68,6 +68,7 @@
           <template #default="{ row }">
             <el-button
               v-if="isAdmin"
+              text
               size="small"
               type="danger"
               :disabled="row.status !== 'active' || row.type === 'vnc'"

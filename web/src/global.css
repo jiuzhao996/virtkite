@@ -31,6 +31,8 @@
   --status-paused-bg: #fffbeb;
   --status-error-bg: #fef2f2;
   --status-off-bg: #f1f5f9;
+  /* 表格行 hover 高亮（视觉抛光批②：EP 默认灰黄换品牌青最浅档，全站表格一致） */
+  --row-hover-bg: #f0f9fa;
   --color-serial-gold: #f0b90b;      /* 串口卡主题金（ConsolePage 专属，免IP 徽标/边框/图标） */
   --color-serial-gold-ink: #7c4a03;  /* 金底上的深色墨字（徽标/胶囊，两主题恒定） */
 
@@ -137,10 +139,12 @@ html.dark {
   --brand-deep-1: #143436;
   --brand-deep-2: #0d2527;
 
-  --status-running-bg: #052e1b;
-  --status-paused-bg: #33230a;
-  --status-error-bg: #3b0d0d;
-  --status-off-bg: #1e293b;
+  /* 视觉抛光批②：徽标浅底暗色整体提亮一档（原值在 #0b1220 底上近乎隐形） */
+  --status-running-bg: #0a4527;
+  --status-paused-bg: #4a3408;
+  --status-error-bg: #551414;
+  --status-off-bg: #293548;
+  --row-hover-bg: #16213a;
   --color-serial-gold: #f0b90b;
   --color-serial-gold-ink: #7c4a03;
 
@@ -258,6 +262,10 @@ h1, h2, h3, h4 {
 .el-input__wrapper,
 .el-select__wrapper {
   border-radius: var(--radius-sm);
+}
+.el-table {
+  /* 行 hover 走令牌（批②）：EP 默认 --el-table-row-hover-bg-color 偏灰黄 */
+  --el-table-row-hover-bg-color: var(--row-hover-bg);
 }
 .el-table th.el-table__cell {
   background: #f8fafc;
