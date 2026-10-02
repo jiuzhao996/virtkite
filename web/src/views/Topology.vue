@@ -8,8 +8,7 @@
       <Toolbar>
         <template #left>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-button :icon="RefreshLeft" @click="resetLayout">重置布局</el-button>
-          <span class="tp-hint">虚拟机 → 存储池/网络 → 宿主机（拖动节点可整理，拖到哪停哪）</span>
+          <span class="tp-hint">虚拟机 → 存储池/网络 → 宿主机</span>
         </template>
         <span class="count">
           虚拟机 {{ vms.length }} 台 · 存储池 {{ pools.length }} 个 · 网络 {{ networks.length }} 个<template
@@ -34,7 +33,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { Refresh, RefreshLeft } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import echarts from '../utils/echarts'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
@@ -85,7 +84,7 @@ const COLOR_POOL = () => cssVar('--color-kite', '#7cc6cb')
 const COLOR_NET = () => cssVar('--color-violet', '#7c3aed')
 const COLOR_GOLD = () => cssVar('--color-gold', '#ffd268')
 const COLOR_MUTED = () => cssVar('--color-muted-foreground', '#475569')
-// 窄屏（手机）口径：布局参数与图例形态随视口切换（加载时取值，转屏刷新页面生效）
+// 窄屏（手机）口径：布局参数与图例形态随视口切换（加载时取值，转屏刷新生效）
 const isNarrow = window.matchMedia('(max-width: 768px)').matches
 
 // 分类顺序即图例顺序（legend 点选即过滤）；告警中独立成类——红色在图上直接可过滤
@@ -179,8 +178,6 @@ function buildGraphData() {
     category: 0,
     symbolSize: 76,
     itemStyle: { color: COLOR_HOST() },
-    draggable: true,
-    cursor: 'grab',
     meta: { kind: 'host' }
   })
 
@@ -196,8 +193,6 @@ function buildGraphData() {
       category: 1,
       symbolSize: poolSize(p.capacity),
       itemStyle: { color: COLOR_POOL() },
-      draggable: true,
-      cursor: 'grab',
       meta: { kind: 'pool', pool: p }
     })
     addLink('host', id)
@@ -223,8 +218,6 @@ function buildGraphData() {
       category: 2,
       symbolSize: 34 + attachedNets.get(n.name) * 6,
       itemStyle: { color: COLOR_NET() },
-      draggable: true,
-      cursor: 'grab',
       meta: { kind: 'network', network: n, attached: attachedNets.get(n.name) }
     })
     addLink('host', id)
@@ -242,8 +235,6 @@ function buildGraphData() {
       category: vmCategory(v.status, v.name),
       symbolSize: vmSize(v.memory_mb),
       itemStyle: { color: vmStatusHex(v.status) },
-      draggable: true, // 数据项级拖拽开关（echarts 源码只读 itemModel 的 draggable）
-      cursor: 'grab', // 悬停变抓取光标：告诉用户这里可以拖
       meta: { kind: 'vm', vm: v }
     }
     if (v.status === 'running' && perf) {
@@ -267,8 +258,6 @@ function buildGraphData() {
           category: 1,
           symbolSize: 40,
           itemStyle: { color: COLOR_POOL(), opacity: 0.55 },
-          draggable: true,
-          cursor: 'grab',
           meta: { kind: 'pool', pool: { name: v.storage_pool, unregistered: true } }
         })
         addLink('host', pid)
@@ -356,28 +345,10 @@ function escapeHtml(s) {
 }
 
 /* ---------- 渲染（initDom → setOption → resize 监听 → dispose，同 Dashboard 模式） ---------- */
-
-// 节点坐标缓存（本会话内有效）：首次以 force 同步算完布局后，把坐标固化进数据并切换
-// layout:'none'——此后拖拽走 simpleLayout 分支（拖到哪停哪、其他节点不动、边自动跟随），
-// 不再受力模拟干扰。force 模式下拖动起点会触发同步全量重排，把刚拖的位置立即覆盖
-// （用户实测「拖不动、焊死」的根因），所以 force 只用来出初始布局。
-// 已有缓存时直接以 none 渲染：刷新/重开 tab 后排布保持，不重新计算。
-const savedPositions = {}
-
 function renderChart() {
   if (!chartRef.value) return
   if (!chart) chart = echarts.init(chartRef.value)
   const { nodes, links } = buildGraphData()
-
-  // 已有缓存坐标 → none 布局直接渲染；否则 force 算初始布局（见渲染后的固化步骤）
-  const positioned = nodes.length > 0 && nodes.every((n) => savedPositions[n.id])
-  if (positioned) {
-    for (const n of nodes) {
-      n.x = savedPositions[n.id][0]
-      n.y = savedPositions[n.id][1]
-    }
-  }
-
   chart.setOption(
     {
       animationDuration: 400,
@@ -387,7 +358,7 @@ function renderChart() {
         backgroundColor: cssVar('--color-card', '#ffffff'),
         borderColor: cssVar('--color-border', '#e2e8f0'),
         textStyle: { color: cssVar('--color-foreground', '#1e293b'), fontSize: 12 },
-        extraCssText: 'box-shadow: var(--elev-hover); line-height: 1.8;'
+        extraCssText: 'box-shadow: 0 4px 16px rgba(13,36,68,.12); line-height: 1.8;'
       },
       legend: {
         top: 6,
@@ -403,7 +374,7 @@ function renderChart() {
         {
           type: 'graph',
           name: '拓扑',
-          layout: positioned ? 'none' : 'force',
+          layout: 'force',
           // 分类调色板：与 CATEGORIES 顺序一一对应。不设的话图例色块落 echarts 默认色，
           // 和节点实际配色（itemStyle）对不上，用户按图例过滤会被误导
           color: [
@@ -416,12 +387,12 @@ function renderChart() {
             cssVar('--color-danger', '#dc2626'),
             cssVar('--color-danger', '#dc2626')
           ],
-          // force 仅出初始布局（layoutAnimation:false = setOption 内同步算完，无渐进动画）；
-          // 算完立即固化坐标切 none（见下方），拖拽全程不经过力模拟。
           // 窄屏（手机）整体缩排：斥力/边长按 0.5 档收缩，图才装得进 375 视口。
+          // 布局动画保持 echarts 默认（与克隆家谱抽屉完全同款：拖拽节点时
+          // 力模拟 setFixed 钉住被拖节点、连线实时跟随，松手后模拟收敛稳定）。
           force: isNarrow
-            ? { repulsion: 150, edgeLength: [50, 120], gravity: 0.12, layoutAnimation: false }
-            : { repulsion: 320, edgeLength: [80, 210], gravity: 0.08, layoutAnimation: false },
+            ? { repulsion: 150, edgeLength: [50, 120], gravity: 0.12 }
+            : { repulsion: 320, edgeLength: [80, 210], gravity: 0.08 },
           roam: true,
           draggable: true,
           categories: CATEGORIES,
@@ -452,30 +423,6 @@ function renderChart() {
     true
   )
 
-  // 首次 force 渲染后：读出全部节点的最终坐标存缓存，切 none 布局重渲一次。
-  // layoutAnimation:false 下布局在 setOption 内同步完成，此处读到的即最终位置；
-  // 读取失败（版本差异等）保持 force 模式静默降级，只影响拖拽手感不影响出图。
-  if (!positioned) {
-    setTimeout(() => {
-      try {
-        const graph = chart.getModel().getSeriesByIndex(0).getGraph()
-        let saved = 0
-        graph.eachNode((n) => {
-          const pos = n.getLayout()
-          if (Array.isArray(pos) && isFinite(pos[0]) && isFinite(pos[1])) {
-            savedPositions[n.id] = [pos[0], pos[1]]
-            saved++
-          }
-        })
-        if (saved) renderChart() // 以 none 布局重渲（走 positioned 分支）
-      } catch (e) {
-        /* 保持 force 模式 */
-      }
-    }, 60)
-  }
-
-  bindEdgeFollow()
-
   // 节点点击直达：VM→详情、池→存储页、网络→网络页（告警/克隆动线的最后一跳）
   chart.off('click')
   chart.on('click', (p) => {
@@ -485,44 +432,6 @@ function renderChart() {
     else if (meta.kind === 'pool' && !meta.pool.unregistered) router.push('/storage')
     else if (meta.kind === 'network') router.push('/networks')
   })
-}
-
-// 边跟随（自管，不依赖 echarts 内部绑定）：none 布局下节点拖动时，echarts 内部的
-// 「边随节点更新」在 6.1 实测不可靠（节点跟手、连线留在原地——用户真机复现）。
-// 这里给每个节点图元再绑一层自己的 drag 监听：把节点新位置写回布局、重算邻接边端点，
-// 再调用 GraphView 同款 updateLayout 刷新线段。坐标同时写回缓存，刷新后排布保持。
-function bindEdgeFollow() {
-  try {
-    const seriesModel = chart.getModel().getSeriesByIndex(0)
-    const graph = seriesModel.getGraph()
-    const view = (chart._chartsViews || []).find((v) => v.__model === seriesModel)
-    graph.eachNode((n) => {
-      const el = n.getGraphicEl()
-      if (!el || el.__edgeFollow) return
-      el.__edgeFollow = true
-      el.on('drag', () => {
-        n.setLayout([el.x, el.y])
-        savedPositions[n.id] = [el.x, el.y]
-        graph.eachEdge((e) => {
-          if (e.node1 !== n && e.node2 !== n) return
-          const p = (node) => {
-            const gel = node.getGraphicEl()
-            return [gel ? gel.x : 0, gel ? gel.y : 0]
-          }
-          e.setLayout([p(e.node1), p(e.node2)])
-        })
-        if (view && view.updateLayout) view.updateLayout(seriesModel)
-      })
-    })
-  } catch (e) {
-    /* 结构读取失败静默降级：只影响边跟随，不影响出图与节点拖拽 */
-  }
-}
-
-// 重置布局：清坐标缓存回到 force 重新排（用户把节点拖乱了的自救出口）
-function resetLayout() {
-  for (const k of Object.keys(savedPositions)) delete savedPositions[k]
-  renderChart()
 }
 
 const onResize = () => chart && chart.resize()
