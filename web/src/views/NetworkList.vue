@@ -115,6 +115,8 @@ const loading = ref(false)
 const saving = ref(false)
 // 启停按行 busy（与自启开关 autostartBusy 同款）：请求中按钮 loading 禁用
 const rowBusy = ref(new Set())
+// 自启开关按行 busy：请求中开关 loading 禁用（tab 骨架改造时误删声明致渲染中断——S1 补回）
+const autostartBusy = ref(new Set())
 const createDialog = ref(false)
 
 const createForm = ref({ name: '', gateway: '' })
