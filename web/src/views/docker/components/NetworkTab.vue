@@ -3,32 +3,27 @@
       <el-button type="primary" @click="openNetworkDialog">创建网络</el-button>
       <span class="count ct-count">共 {{ networks.length }} 个网络</span>
     </div>
-    <el-table :data="networks" v-loading="loading" stripe size="small">
-      <template #empty><el-empty description="暂无网络" :image-size="80" /></template>
-      <el-table-column label="名称" min-width="180" show-overflow-tooltip>
-        <template #default="{ row }">
-          <span class="mono">{{ row.Name || '—' }}</span>
-          <el-tag v-if="isBuiltinNetwork(row.Name)" effect="plain" size="small" style="margin-left: 8px">内置</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="驱动" width="120">
-        <template #default="{ row }">{{ row.Driver || '—' }}</template>
-      </el-table-column>
-      <el-table-column label="Scope" width="120">
-        <template #default="{ row }">{{ row.Scope || '—' }}</template>
-      </el-table-column>
-      <el-table-column label="创建时间" min-width="180">
-        <template #default="{ row }">
-          <span class="mono">{{ dockerTime(row.CreatedAt) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="90" fixed="right">
-        <template #default="{ row }">
+    <!-- 卡片化（与「虚拟网络」tab 卡片同形态，同页统一视觉语言）：
+         内置网络禁删（bridge/host/none 是 docker 底座）；网段/网关由后端批量 inspect 补齐 -->
+    <div v-loading="loading" class="net-cards">
+      <el-empty v-if="!networks.length" description="暂无网络" :image-size="80" />
+      <el-card v-for="row in networks" :key="row.Name" shadow="hover" class="dn-card">
+        <div class="dn-head">
+          <span class="dn-name mono">{{ row.Name }}</span>
+          <el-tag v-if="isBuiltinNetwork(row.Name)" effect="plain" size="small">内置</el-tag>
+        </div>
+        <div class="dn-rows">
+          <div class="dn-row"><span class="dn-label">驱动</span><span class="mono">{{ row.Driver || '—' }}</span></div>
+          <div class="dn-row"><span class="dn-label">网段</span><span class="mono">{{ row.Subnet || '—' }}</span></div>
+          <div class="dn-row"><span class="dn-label">网关</span><span class="mono">{{ row.Gateway || '—' }}</span></div>
+          <div class="dn-row"><span class="dn-label">创建时间</span><span class="mono">{{ dockerTime(row.CreatedAt) }}</span></div>
+        </div>
+        <div class="dn-actions">
           <!-- bridge/host/none 等内置网络是 docker 底座，前后端双重禁删，按钮置灰 -->
           <el-button size="small" text type="danger" :disabled="isBuiltinNetwork(row.Name)" @click="removeNetwork(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+        </div>
+      </el-card>
+    </div>
 
     <!-- 创建网络对话框 -->
     <el-dialog v-model="networkDialog" title="创建网络" width="520px" :close-on-click-modal="false">
@@ -178,5 +173,50 @@ async function submitNetwork() {
 }
 .ct-count {
   margin-left: auto;
+}
+/* ── Docker 网络卡片（与虚拟网络 nc-* 同形态）── */
+.net-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-lg);
+}
+.dn-card:hover {
+  transform: translateY(-2px);
+}
+.dn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.dn-name {
+  font-weight: 600;
+  color: var(--color-foreground);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dn-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.dn-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+.dn-label {
+  color: var(--color-muted-foreground);
+}
+.dn-actions {
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

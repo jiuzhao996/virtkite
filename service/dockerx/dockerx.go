@@ -278,6 +278,47 @@ func (d *Dockerx) Networks() ([]Network, error) {
 	return list, nil
 }
 
+// NetworkDetail 单网络的增强信息（IPAM 网段/网关，列表页卡片展示用）。
+type NetworkDetail struct {
+	Subnet  string `json:"subnet"`
+	Gateway string `json:"gateway"`
+}
+
+// NetworkDetails 批量 inspect 多个网络（docker network inspect 支持多名称一次调用），
+// 返回 name → {subnet, gateway}。host/none 等无 IPAM 的网络天然缺失该键，调用方按缺省处理。
+// 供网络页卡片展示网段/网关（与 libvirt 虚拟网络卡片信息对齐）。
+func (d *Dockerx) NetworkDetails(names []string) (map[string]NetworkDetail, error) {
+	out := map[string]NetworkDetail{}
+	if len(names) == 0 {
+		return out, nil
+	}
+	raw, err := run(append([]string{"network", "inspect"}, names...)...)
+	if err != nil {
+		return nil, fmt.Errorf("检查网络详情失败: %w", err)
+	}
+	var arr []struct {
+		Name  string `json:"Name"`
+		IPAM  struct {
+			Config []struct {
+				Subnet  string `json:"Subnet"`
+				Gateway string `json:"Gateway"`
+			} `json:"Config"`
+		} `json:"IPAM"`
+	}
+	if err := jsonUnmarshal(raw, &arr); err != nil {
+		return nil, fmt.Errorf("解析网络详情失败: %w", err)
+	}
+	for _, n := range arr {
+		detail := NetworkDetail{}
+		if len(n.IPAM.Config) > 0 {
+			detail.Subnet = n.IPAM.Config[0].Subnet
+			detail.Gateway = n.IPAM.Config[0].Gateway
+		}
+		out[n.Name] = detail
+	}
+	return out, nil
+}
+
 // networkDrivers docker network create -d 的驱动白名单。
 var networkDrivers = map[string]bool{
 	"bridge":  true,

@@ -332,7 +332,25 @@ func (h *DockerHandler) ListNetworks(c *gin.Context) {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
-	Success(c, gin.H{"total": len(list), "items": list})
+	// 网段/网关批量补齐（一次 inspect 多网络）：卡片展示与 libvirt 虚拟网络对齐
+	names := make([]string, 0, len(list))
+	for _, n := range list {
+		names = append(names, n.Name)
+	}
+	details, _ := h.Docker.NetworkDetails(names) // 失败按空详情降级，列表照常出
+	items := make([]gin.H, 0, len(list))
+	for _, n := range list {
+		item := gin.H{
+			"Name": n.Name, "Driver": n.Driver, "Scope": n.Scope,
+			"IPv6": n.IPv6, "Internal": n.Internal, "CreatedAt": n.CreatedAt,
+		}
+		if d, ok := details[n.Name]; ok {
+			item["Subnet"] = d.Subnet
+			item["Gateway"] = d.Gateway
+		}
+		items = append(items, item)
+	}
+	Success(c, gin.H{"total": len(items), "items": items})
 }
 
 // CreateNetwork POST /api/docker/networks {"name","driver","subnet","gateway"}（subnet/gateway 可空）
