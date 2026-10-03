@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"encoding/csv"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,36 +24,8 @@ func NewAuditHandler(db *gorm.DB) *AuditHandler {
 
 // ListAuditLogs 查询审计日志（支持多条件筛选与分页）
 func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
-	query := h.DB.Model(&model.AuditLog{})
-
-	// 按操作类型筛选
-	if action := c.Query("action"); action != "" {
-		query = query.Where("action = ?", action)
-	}
-	// 按对象类型筛选
-	if objectType := c.Query("object_type"); objectType != "" {
-		query = query.Where("object_type = ?", objectType)
-	}
-	// 按用户名筛选
-	if username := c.Query("username"); username != "" {
-		query = query.Where("username LIKE ?", "%"+username+"%")
-	}
-	// 按操作状态筛选
-	if status := c.Query("status"); status != "" {
-		query = query.Where("status = ?", status)
-	}
-	// 按时间范围筛选
-	if start := c.Query("start"); start != "" {
-		if t, err := time.Parse("2006-01-02", start); err == nil {
-			query = query.Where("created_at >= ?", t)
-		}
-	}
-	if end := c.Query("end"); end != "" {
-		if t, err := time.Parse("2006-01-02", end); err == nil {
-			// 包含当天，加一天
-			query = query.Where("created_at < ?", t.Add(24*time.Hour))
-		}
-	}
+	// 筛选条件与 CSV 导出共用 applyAuditFilters（同一口径，防两处漂移）
+	query := h.applyAuditFilters(c)
 
 	// 总数统计
 	var total int64
@@ -83,6 +57,93 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 		"page_size": pageSize,
 		"items":     logs,
 	})
+}
+
+// applyAuditFilters 审计查询的共用筛选器（列表与 CSV 导出同一套口径，防两处漂移）。
+func (h *AuditHandler) applyAuditFilters(c *gin.Context) *gorm.DB {
+	query := h.DB.Model(&model.AuditLog{})
+	if action := c.Query("action"); action != "" {
+		query = query.Where("action = ?", action)
+	}
+	if objectType := c.Query("object_type"); objectType != "" {
+		query = query.Where("object_type = ?", objectType)
+	}
+	if username := c.Query("username"); username != "" {
+		query = query.Where("username LIKE ?", "%"+username+"%")
+	}
+	if status := c.Query("status"); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if start := c.Query("start"); start != "" {
+		if t, err := time.Parse("2006-01-02", start); err == nil {
+			query = query.Where("created_at >= ?", t)
+		}
+	}
+	if end := c.Query("end"); end != "" {
+		if t, err := time.Parse("2006-01-02", end); err == nil {
+			query = query.Where("created_at < ?", t.Add(24*time.Hour))
+		}
+	}
+	return query
+}
+
+// ExportAuditCSV GET /api/audit/export（admin）——按当前筛选流式导出 CSV。
+// 后端导出替代前端拼接（S1-3）：前端曾按 page_size=500 循环拉全量再拼 CSV，
+// 万条级审计会卡浏览器；此处 FindInBatches 每千条 flush 一次，内存占用恒定。
+// Excel 兼容：UTF-8 BOM 头；encoding/csv 自带引号转义（含逗号/换行的单元格安全）。
+func (h *AuditHandler) ExportAuditCSV(c *gin.Context) {
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename=audit-logs.csv")
+
+	_, _ = c.Writer.WriteString("\ufeff") // BOM：Excel 双击打开不乱码
+	w := csv.NewWriter(c.Writer)
+
+	_ = w.Write([]string{"ID", "时间", "用户", "操作", "操作文案", "对象类型", "对象ID", "来源IP", "状态", "详情"})
+
+	query := h.applyAuditFilters(c).Order("created_at desc")
+	const batch = 1000
+	var rows []model.AuditLog
+	err := query.FindInBatches(&rows, batch, func(_ *gorm.DB, _ int) error {
+		out := make([][]string, 0, len(rows))
+		for _, l := range rows {
+			objID := ""
+			if l.ObjectID != nil {
+				objID = strconv.FormatUint(uint64(*l.ObjectID), 10)
+			}
+			label, hasLabel := ActionLabels[l.Action]
+			if !hasLabel {
+				label = l.Action
+			}
+			out = append(out, []string{
+				strconv.FormatUint(uint64(l.ID), 10),
+				l.CreatedAt.Format("2006-01-02 15:04:05"),
+				l.Username,
+				l.Action,
+				label,
+				l.ObjectType,
+				objID,
+				l.SourceIP,
+				l.Status,
+				l.Detail,
+			})
+		}
+		if err := w.WriteAll(out); err != nil {
+			return err
+		}
+		w.Flush()
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return nil
+	}).Error
+	if err != nil {
+		// 头已发出无法改状态码：写一行错误说明收尾（CSV 前部数据仍有效）
+		_ = w.Write([]string{"导出中断", err.Error()})
+		w.Flush()
+		log.Printf("[audit] CSV 导出中断: %v", err)
+		return
+	}
+	w.Flush()
 }
 
 // ActionLabels 审计操作类型 → 中文文案映射（供审计页筛选/展示、仪表盘统计标签使用）。

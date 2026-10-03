@@ -442,6 +442,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	{
 		audit.GET("", auditHandler.ListAuditLogs)
 		audit.GET("/actions", auditHandler.ListAuditActions)
+		// 审计 CSV 流式导出（S1-3：替代前端拼接，万条级不卡浏览器）
+		audit.GET("/export", auditHandler.ExportAuditCSV)
 		audit.GET("/summary", auditHandler.AuditActionSummary)
 	}
 

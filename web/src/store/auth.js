@@ -42,6 +42,31 @@ const canOperate = computed(() => {
 })
 const isLoggedIn = computed(() => !!state.token)
 
+// 会话预取屏障（刷新竞态修复，S1-1）：整页刷新后 state.user 为 null，而路由守卫的
+// 初始导航先于 App.vue onMounted 的 api.me() 返回——admin 直连 /vms/new 等
+// requiresOperate 路由会被当成无角色弹回 dashboard。守卫改为先 await 本屏障：
+// 有 token 且 user 未加载时补一次 me()（并发调用共享同一 Promise）。
+// 401 由 axios 拦截器统一处理（清会话跳登录）；其它失败（网络抖动）静默返回，
+// 守卫按未加载判定，行为与修复前一致（弹 dashboard），不会打转。
+// 动态 import 断开 store → api 的静态依赖（token 键虽在本文件，api 仍 import 本文件，
+// 静态反向引用会成环）。
+let mePromise = null
+export function ensureUserLoaded() {
+  if (!state.token || state.user) return Promise.resolve()
+  if (!mePromise) {
+    mePromise = import('../api')
+      .then((m) => m.api.me())
+      .then((res) => {
+        setUser(res.data)
+      })
+      .catch(() => { /* 401 拦截器已处理；其余静默见上 */ })
+      .finally(() => {
+        mePromise = null
+      })
+  }
+  return mePromise
+}
+
 export function useAuth() {
   return {
     state,

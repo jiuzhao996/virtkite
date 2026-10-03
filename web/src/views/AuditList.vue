@@ -148,7 +148,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, RefreshLeft, Refresh, Download, View } from '@element-plus/icons-vue'
-import { api } from '../api'
+import { api, TOKEN_KEY } from '../api'
 import { useAuth } from '../store/auth'
 import { FALLBACK_ACTION_LABELS, fmtDateTime, errMsg } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
@@ -263,56 +263,31 @@ function filterParams() {
 }
 
 // ===== 导出 CSV（按当前筛选条件分页拉全量，上限 5000 条） =====
-const EXPORT_LIMIT = 5000
-const EXPORT_PAGE_SIZE = 500
 const exporting = ref(false)
 
-// CSV 字段转义：整体加引号，内部引号翻倍，防逗号/换行/引号破坏列结构
-function csvCell(v) {
-  return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'
-}
-
+// 导出改走后端流式（S1-3）：GET /api/audit/export 带当前筛选 + token，
+// 后端 FindInBatches 逐千条 flush——万条级审计不再卡浏览器，也没有 5000 条上限。
+// 下载仍走 blob（浏览器无法对 fetch 加 Authorization header，故取 blob 而非直链）。
 async function exportCsv() {
   exporting.value = true
   try {
-    const filters = filterParams()
-    const rows = []
-    let page = 1
-    let totalCount = 0
-    do {
-      const res = await api.listAudit({ ...filters, page, page_size: EXPORT_PAGE_SIZE })
-      const data = (res && res.data) || {}
-      const batch = Array.isArray(data.items) ? data.items : []
-      totalCount = Number(data.total) || 0
-      rows.push(...batch)
-      page++
-    } while (rows.length < totalCount && rows.length < EXPORT_LIMIT)
-
-    if (!rows.length) {
-      ElMessage.info('当前筛选条件下没有可导出的审计记录')
-      return
+    const params = new URLSearchParams()
+    const f = filterParams()
+    for (const [k, v] of Object.entries(f)) {
+      if (v !== undefined && v !== null && v !== '') params.set(k, v)
     }
-
-    // 列以页面现有列为准（时间/操作人/操作/对象/来源 IP/状态/详情）
-    const header = ['时间', '操作人', '操作', '对象', '来源 IP', '状态', '详情']
-    const lines = [header.map(csvCell).join(',')]
-    for (const r of rows) {
-      lines.push(
-        [
-          fmtDateTime(r.created_at),
-          r.username || '',
-          actionLabel(r.action),
-          r.object_type || '',
-          r.source_ip || '',
-          r.status === 'success' ? '成功' : '失败',
-          r.detail || ''
-        ]
-          .map(csvCell)
-          .join(',')
-      )
+    const resp = await fetch('/api/audit/export?' + params.toString(), {
+      headers: { Authorization: 'Bearer ' + localStorage.getItem(TOKEN_KEY) }
+    })
+    if (!resp.ok) {
+      let msg = '导出失败'
+      try {
+        const j = await resp.json()
+        if (j && j.message) msg = j.message
+      } catch { /* 非 JSON 响应用默认文案 */ }
+      throw new Error(msg)
     }
-    // \uFEFF BOM：Excel 打开才不会把 UTF-8 中文识别成乱码
-    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
+    const blob = await resp.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     const d = new Date()
@@ -321,10 +296,9 @@ async function exportCsv() {
     a.download = `audit-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.csv`
     a.click()
     URL.revokeObjectURL(url)
-    const truncated = rows.length >= EXPORT_LIMIT ? '（已达导出上限 5000 条）' : ''
-    ElMessage.success(`已导出 ${rows.length} 条记录${truncated}`)
+    ElMessage.success('已按当前筛选导出（后端流式生成）')
   } catch (e) {
-    ElMessage.error(errMsg(e, '导出失败'))
+    ElMessage.error(e instanceof Error && e.message ? e.message : errMsg(e, '导出失败'))
   } finally {
     exporting.value = false
   }

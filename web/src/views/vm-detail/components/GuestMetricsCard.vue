@@ -22,7 +22,7 @@
       <div class="guest-grid">
         <div v-for="m in GUEST_METRICS" :key="m.key" class="guest-cell">
           <div class="guest-title">{{ m.label }}</div>
-          <div :ref="(el) => (chartRefs[m.key] = el)" class="guest-chart" />
+          <div :ref="(el) => bindChartRef(m.key, el)" class="guest-chart" />
         </div>
       </div>
       <p class="guest-note">数据来自 VM 内 node_exporter，经平台 file_sd 自动下发抓取目标；最新值 {{ updatedAtText }}</p>
@@ -35,11 +35,11 @@
 // （file_sd 目标带 vm_name 标签，附着到该目标全部序列）。数据源 GET /api/vms/:id/guest-metrics
 // （后端聚合根分区/内存/负载三条 query_range）；未安装 exporter 时 available=false 显示安装引导。
 // 懒加载：仅性能 tab 激活时拉取（active 驱动），切走不轮询（guest 指标变化慢）。
-import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { Cpu } from '@element-plus/icons-vue'
 import { api } from '../../../api'
-import echarts from '../../../utils/echarts'
 import { cssVar, fmtDateTime } from '../../../utils/format'
+import { useChart } from '../../../composables/useChart'
 
 const props = defineProps({
   vmId: { type: [String, Number], required: true },
@@ -60,8 +60,17 @@ const available = ref(false)
 const loaded = ref(false)
 const loading = ref(false)
 const updatedAtText = ref('')
-const chartRefs = reactive({})
-const charts = reactive({})
+// useChart 每 key 一个实例：init 惰性（首渲才建）、ResizeObserver 自动 resize、
+// unmount 自动 dispose（S1-2 收敛，替代此前手写 init/dispose 生命周期）
+const chartHandles = {
+  fs: useChart(),
+  mem: useChart(),
+  load1: useChart()
+}
+// 模板 :ref 转发到对应 handle 的 chartRef（ensureInit 在首渲 setOption 时取）
+function bindChartRef(key, el) {
+  chartHandles[key].chartRef.value = el
+}
 
 const primaryColor = cssVar('--el-color-primary', '#2a9da5')
 const successColor = cssVar('--color-success', '#16a34a')
@@ -90,15 +99,9 @@ async function load() {
 }
 
 function renderChart(def, points, color) {
-  const el = chartRefs[def.key]
-  if (!el) return
-  let chart = charts[def.key]
-  if (!chart) {
-    chart = echarts.init(el)
-    charts[def.key] = chart
-  }
-  chart.setOption(
-    {
+  const handle = chartHandles[def.key]
+  if (!handle.chartRef.value) return
+  handle.setOption({
       grid: { left: 6, right: 8, top: 8, bottom: 2, containLabel: true },
       tooltip: { trigger: 'axis' },
       xAxis: {
@@ -124,9 +127,7 @@ function renderChart(def, points, color) {
           areaStyle: { opacity: 0.08 }
         }
       ]
-    },
-    true
-  )
+  })
 }
 
 watch(
@@ -137,9 +138,6 @@ watch(
   { immediate: true }
 )
 
-onUnmounted(() => {
-  Object.values(charts).forEach((c) => c.dispose())
-})
 </script>
 
 <style scoped>

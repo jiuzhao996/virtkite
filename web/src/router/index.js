@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { useAuth } from '../store/auth'
+import { useAuth, ensureUserLoaded } from '../store/auth'
 // 首屏必需：未登录必然落 Login，登录后必然落 MainLayout 外壳。
 // 这两个懒加载只会多一次网络往返（还会闪白），所以刻意保持静态 import 留在入口 chunk。
 import Login from '../views/Login.vue'
@@ -58,8 +58,15 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to) => {
+// 守卫 async 化（刷新竞态修复，S1-1）：整页刷新直连 requiresOperate/requiresAdmin
+// 路由时，先等 ensureUserLoaded 把 me() 的用户信息补进内存再判角色——否则
+// 初始导航先于 App.vue onMounted 的异步 me() 返回，admin 也会被弹回 dashboard。
+// 已登录会话下这是一次 await（毫秒级）；未登录（无 token）屏障直接 resolve，零开销。
+router.beforeEach(async (to) => {
   const { isLoggedIn, isAdmin, canOperate } = useAuth()
+  if (isLoggedIn.value) {
+    await ensureUserLoaded()
+  }
   if (!to.meta.public && !isLoggedIn.value) {
     return { name: 'login' }
   }
