@@ -183,6 +183,15 @@ export const core = {
   deployStack: (id) => unwrap(http.post(`/stacks/${id}/deploy`)),
   stackDocs: (id, path) => http.get(`/stacks/${id}/docs`, { params: { path } }).then((r) => r.data),
 
+  // 架构设计器（P2B）：模板/计划 CRUD/导出/应用（apply admin）
+  designerTemplates: () => unwrap(http.get('/designer/templates')),
+  listDesignerPlans: () => unwrap(http.get('/designer/plans')),
+  saveDesignerPlan: (plan) => unwrap(http.post('/designer/plans', plan)),
+  deleteDesignerPlan: (id) => unwrap(http.delete(`/designer/plans/${id}`)),
+  exportDesignerPlan: (id) => http.get(`/designer/plans/${id}/export`).then((r) => r.data),
+  applyDesignerPlan: (id) => unwrap(http.post(`/designer/plans/${id}/apply`)),
+  designerApplyStatus: (id) => unwrap(http.get(`/designer/plans/${id}/apply-status`)),
+
   // 系统公告（公开接口，无需认证——登录页也展示）；写入口走 updateSettings 的 announcement 键
   getAnnouncement: () => unwrap(http.get('/announcement'))
 }

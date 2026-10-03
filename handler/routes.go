@@ -425,6 +425,20 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		stacksGroup.POST("/:id/deploy", stackHandler.Deploy)
 	}
 
+	// 架构设计器（P2B：模板/计划 CRUD operator+；export 文本下载；apply admin）
+	designerHandler := NewDesignerHandler()
+	designer := api.Group("/designer")
+	designer.Use(middleware.OperatorMiddleware())
+	{
+		designer.GET("/templates", designerHandler.Templates)
+		designer.GET("/plans", designerHandler.ListPlans)
+		designer.POST("/plans", designerHandler.SavePlan)
+		designer.DELETE("/plans/:id", designerHandler.DeletePlan)
+		designer.GET("/plans/:id/export", designerHandler.ExportYAML)
+		designer.POST("/plans/:id/apply", designerHandler.Apply)
+		designer.GET("/plans/:id/apply-status", designerHandler.ApplyStatus)
+	}
+
 	// 站内通知（告警到人）：所有登录角色可见自己的通知（viewer 也收告警——被授权资产的故障他们必须知道）
 	notificationHandler := NewNotificationHandler(deps.DB)
 	notifications := api.Group("/notifications")

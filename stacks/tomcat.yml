@@ -20,7 +20,7 @@ services:
   tomcat:
     # 笔记版本组合: apache-tomcat-9.0.113.tar.gz + jdk-8u181-linux-x64.rpm
     # （docker tag 无 8u181 精确对应，取同大版本 temurin-8 变体）
-    image: tomcat:9.0.113-jdk8-temurin
+    image: tomcat:9.0-jdk8-temurin
     container_name: tomcat
     environment:
       - TZ=Asia/Shanghai
@@ -30,7 +30,7 @@ services:
       # 对应笔记 /soft/tomcat/logs（catalina.out 与 localhost_access_log）
       - tomcat-logs:/usr/local/tomcat/logs
     ports:
-      - "8080:8080"
+      - "8888:8080"
     restart: unless-stopped
 
 volumes:

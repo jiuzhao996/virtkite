@@ -23,6 +23,7 @@ const routes = [
       // 镜像/网络/卷已按语义分散（镜像管理第 4 tab / 网络 / 存储池页），旧 /docker/* 重定向防书签断链
       { path: 'containers', name: 'containers', component: () => import('../views/ContainerPage.vue'), meta: { requiresOperate: true } },
       { path: 'apps', name: 'apps', component: () => import('../views/AppStore.vue'), meta: { requiresOperate: true } },
+      { path: 'designer', name: 'designer', component: () => import('../views/DesignerPage.vue'), meta: { requiresOperate: true } },
       { path: 'grant-requests', name: 'grant-requests', component: () => import('../views/GrantRequests.vue'), meta: { requiresOperate: true } },
       // IA 精简批次（2026-09）：拓扑图并入仪表盘 tab、AI 助手改顶栏抽屉、cloud-init 模板并入设置页。
       // 三个旧地址保留重定向，旧书签/文档链接不断链
