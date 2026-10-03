@@ -135,28 +135,37 @@
         <div class="ct-card-actions">
           <el-button
             v-if="row.State !== 'running'"
-            text type="success" size="small"
+            size="small" :icon="VideoPlay"
             :loading="actingKey === row.ID + ':start'"
             :disabled="!!actingKey && actingKey !== row.ID + ':start'"
             @click="containerAction(row, 'start')"
           >启动</el-button>
           <el-button
             v-else
-            text type="warning" size="small"
+            size="small" :icon="VideoPause"
             :loading="actingKey === row.ID + ':stop'"
             :disabled="!!actingKey && actingKey !== row.ID + ':stop'"
             @click="containerAction(row, 'stop')"
           >停止</el-button>
-          <el-button
-            text type="primary" size="small"
-            :loading="actingKey === row.ID + ':restart'"
-            :disabled="!!actingKey && actingKey !== row.ID + ':restart'"
-            @click="containerAction(row, 'restart')"
-          >重启</el-button>
-          <el-button text type="primary" size="small" :disabled="row.State !== 'running'" @click="openTerminal(row)">终端</el-button>
-          <el-button text type="primary" size="small" @click="openLogs(row)">日志</el-button>
-          <el-button text type="primary" size="small" @click="openInspect(row)">详情</el-button>
-          <el-button text type="danger" size="small" :icon="Delete" class="ct-card-del" @click="removeContainer(row)" />
+          <el-button size="small" :icon="Monitor" :disabled="row.State !== 'running'" @click="openTerminal(row)">终端</el-button>
+          <!-- 日志/重启/详情收进「更多」下拉：主行 4 元素保单行（5 钮实测在 305px 卡宽差 13px 换行） -->
+          <el-dropdown trigger="click" @command="(cmd) => cardMore(row, cmd)">
+            <el-button size="small" class="ct-card-more" :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="logs">日志</el-dropdown-item>
+                <el-dropdown-item command="restart" :disabled="row.State !== 'running'">重启</el-dropdown-item>
+                <el-dropdown-item command="inspect">详情</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-tooltip :content="'删除 ' + containerName(row.Names)" placement="top">
+            <el-button
+              size="small" type="danger" plain :icon="Delete"
+              class="ct-card-del"
+              @click="removeContainer(row)"
+            />
+          </el-tooltip>
         </div>
       </el-card>
     </div>
@@ -264,7 +273,7 @@
 // KeepAlive 下 onUnmounted 不触发，故用 onActivated/onDeactivated 显式启停轮询（防切走后后台空转）。
 import { ref, computed, reactive, inject, watch, onMounted, onActivated, onDeactivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Plus, Delete } from '@element-plus/icons-vue'
+import {  Search, Plus, Delete, VideoPlay, VideoPause, Monitor, Document, MoreFilled } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { containerName, stateTag, stateText, portsText, dockerTime } from '../../../utils/docker-format'
@@ -439,6 +448,12 @@ function toggleCardSelect(row) {
   const idx = selection.value.findIndex((s) => s.ID === row.ID)
   if (idx > -1) selection.value.splice(idx, 1)
   else selection.value.push(row)
+}
+// 卡片「更多」下拉：日志 / 重启 / 详情（inspect 抽屉）
+function cardMore(row, cmd) {
+  if (cmd === 'logs') return openLogs(row)
+  if (cmd === 'restart') return containerAction(row, 'restart')
+  if (cmd === 'inspect') return openInspect(row)
 }
 const bulkLoading = ref(false)
 
@@ -809,14 +824,19 @@ defineExpose({ refresh })
 .ct-card-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
   flex-wrap: wrap;
-  margin-top: auto;
-  padding-top: 6px;
+  gap: 8px;
+  padding-top: 12px;
   border-top: 1px solid var(--color-border);
+  margin-top: auto;
 }
+/* 删除钮右对齐独立：危险动作与常规操作分离（与 vm-actions 同款约定） */
 .ct-card-del {
   margin-left: auto;
+}
+/* 「更多」钮轻量化：icon-only 幽灵钮 */
+.ct-card-more {
+  padding: 5px 7px;
 }
 </style>
 
