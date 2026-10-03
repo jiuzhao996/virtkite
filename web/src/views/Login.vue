@@ -42,7 +42,7 @@
           </el-button>
         </el-form>
 
-        <!-- 演示账号提示：构建时 VITE_SHOW_DEMO_TIP=false 可隐藏（公开演示/截图归档时不应暴露口令） -->
+        <!-- 演示账号提示：默认关（不应暴露口令）；答辩演示等场景构建时 VITE_SHOW_DEMO_TIP=true 显式开启 -->
         <div v-if="showDemoTip" class="demo-tip">
           <el-icon><InfoFilled /></el-icon>演示账号：<br />
           管理员 <code>admin</code> / <code>Password1</code><br />
@@ -74,8 +74,9 @@ const error = ref('')
 const submitting = ref(false)
 const bgOk = ref(false)
 const bgImg = ref(null)
-// 演示账号提示开关：默认显示（开发/答辩演示用），构建时 VITE_SHOW_DEMO_TIP=false 隐藏
-const showDemoTip = import.meta.env.VITE_SHOW_DEMO_TIP !== 'false'
+// 演示账号提示开关（2026-10-03 用户拍板默认关）：仅当构建时显式
+// VITE_SHOW_DEMO_TIP=true 才显示（答辩演示等场景临时开启；平时构建不暴露口令）
+const showDemoTip = import.meta.env.VITE_SHOW_DEMO_TIP === 'true'
 
 // 系统公告（v3 批次 P）：公开接口拉取，非空展示于登录卡片上方；拉取失败静默（不挡登录主流程）
 const announcement = ref('')
