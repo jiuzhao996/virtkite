@@ -18,6 +18,12 @@
         <el-switch v-model="autoRefresh" />
         <span class="ct-auto-label">自动刷新</span>
       </div>
+      <!-- 视图切换（用户拍板：容器做成虚拟机列表同款卡片）：卡片默认，表格可切回；
+           偏好记忆到 localStorage -->
+      <el-radio-group v-model="viewMode" size="small" class="ct-view">
+        <el-radio-button value="card">卡片</el-radio-button>
+        <el-radio-button value="table">表格</el-radio-button>
+      </el-radio-group>
       <template v-if="selection.length">
         <span class="ct-sel">已选 {{ selection.length }} 项</span>
         <el-button type="primary" plain :disabled="!bulkStartable" :loading="bulkLoading" @click="bulkAction('start')">批量启动</el-button>
@@ -29,6 +35,7 @@
 
     <!-- row-key + reserve-selection：10s 轮询整体替换数据后保留勾选（P0） -->
     <el-table
+      v-if="viewMode === 'table'"
       ref="containerTableRef"
       :data="filteredContainers"
       row-key="ID"
@@ -104,6 +111,55 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <!-- 卡片视图（用户拍板：虚拟机列表同款）：状态徽标 + 实时 CPU/内存 + 操作钮一张卡；
+         勾选与表格共用 selection 数组，批量操作两视图通用 -->
+    <div v-if="viewMode === 'card'" v-loading="loading" class="ct-grid">
+      <el-empty v-if="!filteredContainers.length" description="暂无容器" :image-size="80" />
+      <el-card v-for="row in filteredContainers" :key="row.ID" shadow="hover" class="ct-card">
+        <div class="ct-card-head">
+          <el-checkbox
+            :model-value="selection.some((s) => s.ID === row.ID)"
+            @change="toggleCardSelect(row)"
+          />
+          <span class="ct-card-name mono" :title="containerName(row.Names)">{{ containerName(row.Names) }}</span>
+          <el-tag :type="stateTag(row.State)" effect="light" size="small">{{ stateText(row.State) }}</el-tag>
+        </div>
+        <div class="ct-card-meta mono" :title="row.Image">{{ row.Image || '—' }}</div>
+        <div class="ct-card-meta" :title="row.Status || ''">{{ row.Status || '—' }}</div>
+        <div class="ct-card-metrics">
+          <span>CPU <b class="mono">{{ cpuText(row) }}</b></span>
+          <span>内存 <b class="mono" :title="memTitle(row)">{{ memText(row) }}</b></span>
+          <span v-if="portsText(row.Ports) !== '—'" class="mono ct-card-ports">{{ portsText(row.Ports) }}</span>
+        </div>
+        <div class="ct-card-actions">
+          <el-button
+            v-if="row.State !== 'running'"
+            text type="success" size="small"
+            :loading="actingKey === row.ID + ':start'"
+            :disabled="!!actingKey && actingKey !== row.ID + ':start'"
+            @click="containerAction(row, 'start')"
+          >启动</el-button>
+          <el-button
+            v-else
+            text type="warning" size="small"
+            :loading="actingKey === row.ID + ':stop'"
+            :disabled="!!actingKey && actingKey !== row.ID + ':stop'"
+            @click="containerAction(row, 'stop')"
+          >停止</el-button>
+          <el-button
+            text type="primary" size="small"
+            :loading="actingKey === row.ID + ':restart'"
+            :disabled="!!actingKey && actingKey !== row.ID + ':restart'"
+            @click="containerAction(row, 'restart')"
+          >重启</el-button>
+          <el-button text type="primary" size="small" :disabled="row.State !== 'running'" @click="openTerminal(row)">终端</el-button>
+          <el-button text type="primary" size="small" @click="openLogs(row)">日志</el-button>
+          <el-button text type="primary" size="small" @click="openInspect(row)">详情</el-button>
+          <el-button text type="danger" size="small" :icon="Delete" class="ct-card-del" @click="removeContainer(row)" />
+        </div>
+      </el-card>
+    </div>
 
     <!-- 容器终端抽屉：55% 深色（抽屉挂载于 body，深色样式在底部非 scoped 样式块） -->
     <el-drawer v-model="termDrawer" class="term-drawer" :title="'容器终端 — ' + termName" size="55%" :close-on-click-modal="false">
@@ -206,7 +262,7 @@
 // 容器页（原容器 tab，1Panel 式子路由化）：数据（containers / statsMap）与容器域全部交互自持。
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast）；10s 静默轮询随本页走，
 // KeepAlive 下 onUnmounted 不触发，故用 onActivated/onDeactivated 显式启停轮询（防切走后后台空转）。
-import { ref, computed, reactive, inject, onMounted, onActivated, onDeactivated } from 'vue'
+import { ref, computed, reactive, inject, watch, onMounted, onActivated, onDeactivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Delete } from '@element-plus/icons-vue'
 import { api } from '../../../api'
@@ -373,6 +429,17 @@ function memTitle(row) {
 
 const containerTableRef = ref(null)
 const selection = ref([])
+// 视图切换（卡片默认/表格）：localStorage 记忆（ct-view = card | table）
+const viewMode = ref(localStorage.getItem('ct-view') || 'card')
+watch(viewMode, (v) => {
+  try { localStorage.setItem('ct-view', v) } catch { /* 隐私模式忽略 */ }
+})
+// 卡片勾选：与表格 selection 共用同一数组（批量操作两视图通用）
+function toggleCardSelect(row) {
+  const idx = selection.value.findIndex((s) => s.ID === row.ID)
+  if (idx > -1) selection.value.splice(idx, 1)
+  else selection.value.push(row)
+}
 const bulkLoading = ref(false)
 
 function onSelectionChange(rows) {
@@ -674,6 +741,82 @@ defineExpose({ refresh })
   color: var(--color-danger, #f56c6c);
   font-size: 0.78rem;
   line-height: 1.4;
+}
+/* ── 卡片视图（用户拍板：虚拟机列表同款卡片）── */
+.ct-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: var(--space-lg);
+}
+.ct-card {
+  display: flex;
+  flex-direction: column;
+  transition: transform var(--dur-base) var(--ease-standard), box-shadow var(--dur-base) var(--ease-standard);
+}
+.ct-card:hover {
+  transform: translateY(-2px);
+}
+.ct-card :deep(.el-card__body) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 6px;
+}
+.ct-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ct-card-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--color-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.ct-card-head .el-tag {
+  flex: none;
+}
+.ct-card-meta {
+  font-size: 0.82rem;
+  color: var(--color-muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ct-card-metrics {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: var(--color-muted-foreground);
+}
+.ct-card-metrics b {
+  color: var(--color-foreground);
+  font-weight: 600;
+}
+.ct-card-ports {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ct-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+}
+.ct-card-del {
+  margin-left: auto;
 }
 </style>
 
