@@ -7,6 +7,9 @@
 
     <!-- Docker 资源拆分批次：虚拟网络（libvirt）+ Docker 网络双 tab，语义归并统一网络入口 -->
     <el-tabs v-model="activeTab" class="net-tabs">
+      <el-tab-pane label="通信流量" name="flow" lazy>
+        <FlowView />
+      </el-tab-pane>
       <el-tab-pane label="虚拟网络" name="libvirt">
     <el-card shadow="never">
       <!-- 原左右分组 gap 为 var(--space-lg)（12px），经 gap/right-gap 传入保持不变 -->
@@ -105,9 +108,10 @@ import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 import DockerGate from '../components/DockerGate.vue'
 import NetworkTab from './docker/components/NetworkTab.vue'
+import FlowView from './network/FlowView.vue'
 
 const { isAdmin, canOperate } = useAuth()
-const activeTab = ref('libvirt')
+const activeTab = ref('flow')
 const dockerNetRef = ref(null)
 
 const networks = ref([])

@@ -100,6 +100,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	dashboardHandler := NewDashboardHandler(deps.DB)
 	storageHandler := NewStorageHandler(deps.DB, deps.Tasks)
 	networkHandler := NewNetworkHandler()
+	networkFlowHandler := NewNetworkFlowHandler()
 	// 与 RegisterPublic 内解析 handler 共用 deps.VNCTokens（同一实例是 VNC 链路存活的前提）
 	vncHandler := NewVNCHandler(deps.DB, deps.Sessions, deps.VNCTokens)
 	terminalHandler := NewTerminalHandler(deps.DB, deps.Sessions)
@@ -280,6 +281,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	networks.Use(middleware.OperatorMiddleware())
 	{
 		networks.GET("", networkHandler.ListNetworks)
+		// 网络通信流量视图（P1：ss 归网连接边 + 接口速率，前端 3s 轮询）
+		networks.GET("/flows", networkFlowHandler.Flows)
 		networks.GET("/:name", networkHandler.GetNetwork)
 		networks.POST("", networkHandler.CreateNetwork)
 		networks.PUT("/:name/autostart", networkHandler.SetNetworkAutostart)
