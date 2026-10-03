@@ -8,7 +8,6 @@
         :hidden="!unread"
         :max="99"
         class="alert-bell"
-        title="告警通知"
         aria-label="告警通知"
       >
         <el-icon :size="18"><Warning /></el-icon>
@@ -124,6 +123,15 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 与任务铃同款盒模型（26×26 居中）：消除「一大一小」与基线错位 */
+.alert-bell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+}
 .alert-pop-head {
   display: flex;
   align-items: center;

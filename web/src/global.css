@@ -389,8 +389,13 @@ button,
   font-size: var(--table-header-fs);
   font-weight: 600;
 }
+/* 行距呼吸（用户反馈「挤着不难受」）：垂直内边距 8→12px，small 表 10px——
+   全站表格统一多出约 8px/行的留白 */
 .el-table .el-table__cell {
-  padding: 8px 0;
+  padding: 12px 0;
+}
+.el-table--small .el-table__cell {
+  padding: 10px 0;
 }
 .el-dialog {
   border-radius: var(--dialog-radius);

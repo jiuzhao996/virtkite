@@ -118,17 +118,19 @@
             />
           </el-tooltip>
           <!-- 告警铃（告警中心批次 2026-10）：站内通知未读角标，点开看告警、带 vm 深链详情 -->
-          <AlertBell />
+          <el-tooltip content="告警通知" placement="bottom">
+            <AlertBell />
+          </el-tooltip>
           <!-- 任务铃：有进行中的后台任务时亮角标，点开看进度、跳任务中心 -->
+          <el-tooltip content="任务通知" placement="bottom">
           <el-popover trigger="click" width="320">
             <template #reference>
-              <!-- icon-only 触发器：badge 无文字，必须带 title/aria-label（ui-ux-pro-max §1 aria-labels） -->
+              <!-- icon-only 触发器：aria-label 供读屏；悬停提示由外层 el-tooltip 承担 -->
               <el-badge
                 :value="activeTasks.length"
                 :hidden="!activeTasks.length"
                 :max="99"
                 class="task-bell"
-                title="任务通知"
                 aria-label="任务通知"
               >
                 <el-icon :size="18"><Bell /></el-icon>
@@ -147,6 +149,7 @@
             </div>
             <el-button text type="primary" class="task-pop-more" @click="router.push('/tasks')">前往任务中心</el-button>
           </el-popover>
+          </el-tooltip>
           <!-- 角色徽标：文案统一走 utils/format 的 roleText（与仪表盘平台信息同源，operator 正确显示「操作员」） -->
           <el-tag
             :type="isAdmin ? 'warning' : role === 'operator' ? 'primary' : 'info'"
@@ -516,7 +519,13 @@ function onUserCommand(cmd) {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
+}
+/* 两铃（告警/任务）之间的间隔略收紧于总 gap，视觉成组 */
+.alert-bell, .task-bell { margin-right: 0; }
+.header-right > .el-tooltip, .header-right > span.el-tooltip {
+  display: flex;
+  align-items: center;
 }
 /* 任务铃 */
 .task-bell {
