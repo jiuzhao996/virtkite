@@ -6,6 +6,15 @@
         <p class="page-desc">选择一台虚拟机，一键安装常用服务（在虚拟机内通过 SSH 执行）</p>
       </template>
     </PageHead>
+<PageHead title="应用商店">
+      <template #subtitle>
+        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
+        <p class="page-desc">选择一台虚拟机，一键安装常用服务（在虚拟机内通过 SSH 执行）</p>
+      </template>
+    </PageHead>
+    <!-- 双 tab（P2A）：VM 内脚本应用（原内容）+ 容器部署栈（声明式 YAML） -->
+    <el-tabs v-model="activeTab">
+      <el-tab-pane label="脚本应用" name="apps">
 
     <!-- 没有运行中的虚拟机时无法安装 -->
     <el-alert
@@ -105,7 +114,13 @@
         <pre class="script-pre">{{ scriptData.install || '（无）' }}</pre>
       </div>
     </el-drawer>
-  </div>
+  
+      </el-tab-pane>
+      <el-tab-pane label="部署栈" name="stacks" lazy>
+        <StackStore />
+      </el-tab-pane>
+    </el-tabs>
+</div>
 </template>
 
 <script setup>
@@ -116,8 +131,10 @@ import { api } from '../api'
 import { errMsg, clampPct } from '../utils/format'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import PageHead from '../components/PageHead.vue'
+import StackStore from './apps/StackStore.vue'
 
 // ===== 应用列表与分类 =====
+const activeTab = ref('apps')
 const loading = ref(false)
 const apps = ref([])
 const activeCategory = ref('all')

@@ -1,0 +1,85 @@
+# vmops-stack: id=zabbix | category=监控 | desc=Zabbix 监控栈：server + MySQL 8.0 + web 前端（:8088） | docs=Web/Zabbix/Zabbix01.md, Web/Zabbix/Zabbix02.md
+# ==============================================================================
+# 栈名称: zabbix
+# 来源笔记: Web/Zabbix/Zabbix01.md（MySQL 容器 docker run + Ubuntu 官方仓库装 Zabbix 7.0）
+# 说明: Zabbix 监控栈——zabbix-server-mysql + MySQL 8.0.36（笔记原样 docker run 迁移）+
+#       zabbix-web-nginx 前端（笔记前端端口 8088）。
+# 提取置信度: MySQL 服务为 compose 原文迁移（笔记 Zabbix01 有一条完整 docker run，环境
+#            变量/参数原样保留）；zabbix-server / zabbix-web 为手工组装——笔记用 apt 装
+#            zabbix-server-mysql / zabbix-frontend-php（7.0 Ubuntu 官方仓库），此处换用
+#            Zabbix 官方同版本系 docker 镜像（ubuntu-7.0-latest 滚动 tag），连接参数取自
+#            笔记 zabbix_server.conf（DBName=zabbix / DBUser=zabbix / DBPassword=passwd）。
+# 使用注意:
+#   1. MYSQL 允许空 root 密码与弱口令均为笔记原样（实验环境），生产请自行修改
+#   2. 官方镜像首次启动会自动导入表结构（等价笔记 zcat server.sql.gz | mysql 导入流程）
+#   3. 被监控端按笔记 Zabbix02 安装 zabbix-agent（6.0/rhel9 仓库），Server 指向本栈
+# ==============================================================================
+# docs: Web/Zabbix/Zabbix01.md, Web/Zabbix/Zabbix02.md
+
+version: "3.8"
+
+services:
+  mysql-server:
+    # 笔记原文: mysql:8.0.36 容器（Zabbix01「Ubuntu官方仓库安装zabbix」一节）
+    image: mysql:8.0.36
+    container_name: zabbix-mysql
+    # ---- 以下参数逐项来自笔记 docker run 原文 ----
+    environment:
+      - MYSQL_ALLOW_EMPTY_PASSWORD=yes
+      - MYSQL_DATABASE=zabbix
+      - MYSQL_USER=zabbix
+      - MYSQL_PASSWORD=passwd
+      - TZ=Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+      - --default-time-zone=+8:00
+    volumes:
+      # 笔记原文即具名卷 zabbix-mysql-data:/var/lib/mysql
+      - zabbix-mysql-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    restart: unless-stopped
+
+  zabbix-server:
+    # 笔记版本系: zabbix 7.0（Ubuntu 官方仓库 apt 安装 zabbix-server-mysql）
+    image: zabbix/zabbix-server-mysql:ubuntu-7.0-latest
+    container_name: zabbix-server
+    environment:
+      # 等价笔记 /etc/zabbix/zabbix_server.conf:
+      #   DBHost=127.0.0.1 → 容器网络内改为 mysql-server
+      #   DBName=zabbix / DBUser=zabbix / DBPassword=passwd / DBPort=3306
+      - DB_SERVER_HOST=mysql-server
+      - MYSQL_DATABASE=zabbix
+      - MYSQL_USER=zabbix
+      - MYSQL_PASSWORD=passwd
+    ports:
+      # zabbix-server trapper 端口（默认 10051）
+      - "10051:10051"
+    depends_on:
+      - mysql-server
+    restart: unless-stopped
+
+  zabbix-web:
+    # 笔记前端: zabbix-frontend-php + 自建 nginx（listen 8088, root /usr/share/zabbix）
+    image: zabbix/zabbix-web-nginx-mysql:ubuntu-7.0-latest
+    container_name: zabbix-web
+    environment:
+      - DB_SERVER_HOST=mysql-server
+      - MYSQL_DATABASE=zabbix
+      - MYSQL_USER=zabbix
+      - MYSQL_PASSWORD=passwd
+      - ZBX_SERVER_HOST=zabbix-server
+      # 笔记环境 TZ=Asia/Shanghai
+      - PHP_TZ=Asia/Shanghai
+    ports:
+      # 笔记 nginx 前端监听 8088（容器内 nginx 为 8080）
+      - "8088:8080"
+    depends_on:
+      - mysql-server
+      - zabbix-server
+    restart: unless-stopped
+
+volumes:
+  zabbix-mysql-data:

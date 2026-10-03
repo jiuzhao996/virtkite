@@ -1,0 +1,85 @@
+# vmops-stack: id=elk-single | category=中间件 | desc=ELK 单机：ES + Kibana + Logstash（beats:6666 采集入 ES） | docs=Services/Elk/Elk01.md, Services/Elk/Elk02.md
+# ==============================================================================
+# 栈名称: elk-single
+# 来源笔记: Services/Elk/Elk01.md（单点部署/Kibana）、Services/Elk/Elk02.md（Logstash ELFK）
+# 说明: ELK 单机栈——Elasticsearch 7.17.29 单节点（discovery.type=single-node）+ Kibana
+#       7.17.29 + Logstash 7.17.29（beats 输入 :6666 → ES，对应笔记 ELFK 三级管道）。
+# 提取置信度: 手工组装——笔记为 deb 装机流程，无现成 compose；单点 ES/Kibana 参数取自
+#            Elk01「单点部署」「Kibana 组件部署」，Logstash 管道取自 Elk02「03-beats-to-es.conf」
+#            （beats 端口 6666、索引 kpyun-logstash-apps-%{+YYYY.MM.dd}），命令行 -e 方式
+#            沿用笔记 logstash -e 的测试姿势。日志采集端 Filebeat 按笔记部署在业务机上，不进本栈。
+# 使用注意:
+#   1. 宿主机需先执行: sysctl -w vm.max_map_count=262144
+#   2. 笔记单点部署未启用 xpack 认证，本栈保持一致；如需认证参考 Elk03（es-cluster.yml 已含）
+#   3. Filebeat 侧 output.logstash.hosts 指向本机 6666 端口（笔记 apps-to-logstash.yaml）
+# ==============================================================================
+# docs: Services/Elk/Elk01.md, Services/Elk/Elk02.md
+
+version: "3.8"
+
+services:
+  es:
+    # 笔记版本: elasticsearch-7.17.29-amd64.deb
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
+    container_name: es
+    environment:
+      # 笔记单点配置: cluster.name=My-Elk / network.host=0.0.0.0 / discovery.type=single-node
+      - cluster.name=My-Elk
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      # 笔记: 每台 4G 内存，JVM 堆设 512m 即可，避免 OOM
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - es-single-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    restart: unless-stopped
+
+  kibana:
+    # 笔记版本: kibana-7.17.29-amd64.deb
+    image: docker.elastic.co/kibana/kibana:7.17.29
+    container_name: kibana
+    environment:
+      # 笔记 kibana.yml: server.host 0.0.0.0 / elasticsearch.hosts 指向 ES
+      - ELASTICSEARCH_HOSTS=["http://es:9200"]
+      # 笔记 kibana.yml: i18n.locale: "zh-CN"（中文界面）
+      - I18N_LOCALE=zh-CN
+    ports:
+      - "5601:5601"
+    volumes:
+      - kibana-single-data:/usr/share/kibana/data
+    depends_on:
+      - es
+    restart: unless-stopped
+    # 笔记: Kibana 启动较慢（30s+），需要等 ES 就绪后才能完全初始化
+
+  logstash:
+    # 笔记版本: logstash-7.17.29-amd64.deb（部署于 Elk03）
+    image: docker.elastic.co/logstash/logstash:7.17.29
+    container_name: logstash
+    environment:
+      # 笔记: 每台 JVM 堆 512m（Logstash 为重量级组件，沿用同一堆配置）
+      - LS_JAVA_OPTS=-Xms512m -Xmx512m
+    # 管道等价笔记 /etc/logstash/conf.d/03-beats-to-es.conf:
+    #   input  { beats { port => "6666" } }
+    #   output { elasticsearch { hosts => ["10.0.0.x:9200"] index => "kpyun-logstash-apps-%{+YYYY.MM.dd}" } }
+    command:
+      - logstash
+      - -e
+      - 'input { beats { port => 6666 } } output { elasticsearch { hosts => ["http://es:9200"] index => "kpyun-logstash-apps-%{+YYYY.MM.dd}" } }'
+    ports:
+      - "6666:6666"
+    volumes:
+      - logstash-single-data:/usr/share/logstash/data
+    depends_on:
+      - es
+    restart: unless-stopped
+
+volumes:
+  es-single-data:
+  kibana-single-data:
+  logstash-single-data:

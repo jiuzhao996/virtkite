@@ -415,6 +415,16 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		monitor.GET("/loki/labels", lokiHandler.Labels)
 	}
 
+	// 声明式部署栈（P2A：清单 operator+；deploy admin；docs 命中栈元数据清单才可读）
+	stackHandler := NewStackHandler()
+	stacksGroup := api.Group("/stacks")
+	stacksGroup.Use(middleware.OperatorMiddleware())
+	{
+		stacksGroup.GET("", stackHandler.List)
+		stacksGroup.GET("/:id/docs", stackHandler.Docs)
+		stacksGroup.POST("/:id/deploy", stackHandler.Deploy)
+	}
+
 	// 站内通知（告警到人）：所有登录角色可见自己的通知（viewer 也收告警——被授权资产的故障他们必须知道）
 	notificationHandler := NewNotificationHandler(deps.DB)
 	notifications := api.Group("/notifications")

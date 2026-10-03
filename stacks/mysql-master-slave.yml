@@ -1,0 +1,76 @@
+# vmops-stack: id=mysql-master-slave | category=中间件 | desc=MySQL 8.0 主从（server-id/binlog；复制接线 SQL 见注释） | docs=MySQL/MySQL12.md
+# ==============================================================================
+# 栈名称: mysql-master-slave
+# 来源笔记: MySQL/MySQL12.md（主从复制搭建：server-id/read-only/复制账号/CHANGE 命令）
+# 说明: MySQL 8.0.36 一主一从——master（server-id=1，可读可写，开 binlog）+
+#       slave（server-id=2，read-only=1），对应笔记 /etc/my.cnf 两段配置。
+# 提取置信度: 手工组装——笔记为裸机 /etc/my.cnf + systemctl 流程（笔记注明“需多机环境，
+#            未在单容器实测”），server-id/read-only/binlog 配置逐行取自笔记；
+#            版本 8.0.36 为笔记容器实测版本（MySQL12 文中校验记录）。
+# 使用注意:
+#   1. 容器起来后复制链路需手工接线（compose 无法表达，SQL 来自笔记原文，
+#      地址按容器服务名替换）——
+#      主库执行:
+#        CREATE USER 'itcast'@'%' IDENTIFIED WITH mysql_native_password BY 'passwd';
+#        GRANT REPLICATION SLAVE ON *.* TO 'itcast'@'%';
+#        SHOW MASTER STATUS;   -- 记下 binlog 文件与 position
+#      从库执行（8.0.23+ 语法，笔记原文）:
+#        CHANGE REPLICATION SOURCE TO
+#          SOURCE_HOST='mysql-master',
+#          SOURCE_USER='itcast',
+#          SOURCE_PASSWORD='passwd',
+#          SOURCE_LOG_FILE='binlog.000001',
+#          SOURCE_LOG_POS=<$POSITION>;
+#        START REPLICA;        -- 8.0.22 之前为 START SLAVE
+#        SHOW REPLICA STATUS\G -- 两个线程均为 Yes 即正常
+#   2. read-only=1 仅限制普通用户，禁超级管理员写需再加 super-read-only=1（笔记原文提示）
+#   3. 口令均为笔记实验口令，生产请替换
+# ==============================================================================
+# docs: MySQL/MySQL12.md
+
+version: "3.8"
+
+services:
+  mysql-master:
+    # 笔记实测版本: MySQL 8.0.36（MySQL12 单容器验证记录）
+    image: mysql:8.0.36
+    container_name: mysql-master
+    environment:
+      - MYSQL_ROOT_PASSWORD=passwd
+      - TZ=Asia/Shanghai
+    command:
+      # ---- 笔记主库 /etc/my.cnf 原文 ----
+      # mysql 服务ID, 保证整个集群环境中唯一（默认 1）
+      - --server-id=1
+      # 是否只读, 1 只读 / 0 读写 —— 主库可读可写
+      - --read-only=0
+      # MySQL 8.0 默认开启 binlog（笔记 show variables like '%log_bin%' 为 ON），显式声明
+      - --log-bin=binlog
+    volumes:
+      - mysql-master-data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+      - "33061:33060"
+    restart: unless-stopped
+
+  mysql-slave:
+    image: mysql:8.0.36
+    container_name: mysql-slave
+    environment:
+      - MYSQL_ROOT_PASSWORD=passwd
+      - TZ=Asia/Shanghai
+    command:
+      # ---- 笔记从库 /etc/my.cnf 原文 ----
+      # 服务ID 与主库不一样即可
+      - --server-id=2
+      # 从库只读（普通用户）
+      - --read-only=1
+    volumes:
+      - mysql-slave-data:/var/lib/mysql
+    ports:
+      - "3308:3306"
+    restart: unless-stopped
+
+volumes:
+  mysql-master-data:
+  mysql-slave-data:

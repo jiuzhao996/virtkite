@@ -1,0 +1,117 @@
+# vmops-stack: id=es-cluster | category=中间件 | desc=ES 7.17 三节点集群 + Kibana（xpack 认证，源自 ELK 笔记） | docs=Services/Elk/Elk01.md, Services/Elk/Elk03.md
+# ==============================================================================
+# 栈名称: es-cluster
+# 来源笔记: Services/Elk/Elk01.md（集群部署/Kibana 部署）、Services/Elk/Elk03.md（xpack 认证）
+# 说明: Elasticsearch 7.17.29 三节点集群（cluster.name=My-Elk，节点名 Elk01-03，JVM 堆
+#       512m）+ Kibana 7.17.29（中文界面），按笔记 Elk03 启用 xpack.security 认证。
+# 提取置信度: 手工组装——笔记为 deb 装机流程（dpkg + systemd），无现成 compose；
+#            参数（版本/集群名/节点名/seed_hosts/initial_master_nodes/JVM 512m/i18n
+#            zh-CN/xpack.security.enabled）均取自笔记原文，IP 型 seed_hosts 改为容器名。
+# 使用注意:
+#   1. 宿主机需先执行: sysctl -w vm.max_map_count=262144（ES 官方容器硬性要求）
+#   2. ELASTIC_PASSWORD 为占位口令，部署前请修改
+#   3. 笔记 Elk03 在 7.17 启用安全后传输层 TLS 为可选项（笔记用证书认证，compose 单文件
+#      无法携带证书，此处省略 transport ssl；如需补齐见 Elk03「生成证书文件」一节）
+# ==============================================================================
+# docs: Services/Elk/Elk01.md, Services/Elk/Elk03.md
+
+version: "3.8"
+
+services:
+  es01:
+    # 笔记版本: elasticsearch-7.17.29-amd64.deb
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
+    container_name: es01
+    environment:
+      - cluster.name=My-Elk
+      - node.name=Elk01
+      - discovery.seed_hosts=es01,es02,es03
+      # 笔记原文 cluster.initial_master_nodes 为三节点列表（容器内与 node.name 对应）
+      - cluster.initial_master_nodes=Elk01,Elk02,Elk03
+      - bootstrap.memory_lock=true
+      # 笔记: 每台 4G 内存，JVM 堆设 512m 即可，避免 OOM（jvm.options.d/heap.options）
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      # 笔记 Elk03「ES 集群认证」: xpack.security.enabled: true
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=changeme_elastic
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata01:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    restart: unless-stopped
+
+  es02:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
+    container_name: es02
+    environment:
+      - cluster.name=My-Elk
+      - node.name=Elk02
+      - discovery.seed_hosts=es01,es02,es03
+      - cluster.initial_master_nodes=Elk01,Elk02,Elk03
+      - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=changeme_elastic
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata02:/usr/share/elasticsearch/data
+    ports:
+      - "9201:9200"
+    restart: unless-stopped
+
+  es03:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.29
+    container_name: es03
+    environment:
+      - cluster.name=My-Elk
+      - node.name=Elk03
+      - discovery.seed_hosts=es01,es02,es03
+      - cluster.initial_master_nodes=Elk01,Elk02,Elk03
+      - bootstrap.memory_lock=true
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=changeme_elastic
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - esdata03:/usr/share/elasticsearch/data
+    ports:
+      - "9202:9200"
+    restart: unless-stopped
+
+  kibana:
+    # 笔记版本: kibana-7.17.29-amd64.deb
+    image: docker.elastic.co/kibana/kibana:7.17.29
+    container_name: kibana
+    environment:
+      # 笔记 kibana.yml: elasticsearch.hosts 为三节点列表（任意节点都能接收请求）
+      - ELASTICSEARCH_HOSTS=["http://es01:9200","http://es02:9200","http://es03:9200"]
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=changeme_elastic
+      # 笔记 kibana.yml: i18n.locale: "zh-CN"（中文界面）
+      - I18N_LOCALE=zh-CN
+    ports:
+      - "5601:5601"
+    volumes:
+      - kibana-data:/usr/share/kibana/data
+    depends_on:
+      - es01
+      - es02
+      - es03
+    restart: unless-stopped
+    # 笔记: Kibana 启动较慢（30s+），需要等 ES 集群就绪后才能完全初始化
+
+volumes:
+  esdata01:
+  esdata02:
+  esdata03:
+  kibana-data:

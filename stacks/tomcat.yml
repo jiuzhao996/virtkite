@@ -1,0 +1,38 @@
+# vmops-stack: id=tomcat | category=中间件 | desc=Tomcat 9.0.113 + JDK8（temurin 镜像） | docs=Web/Tomcat/Tomcat01.md, Web/Tomcat/Tomcat02.md
+# ==============================================================================
+# 栈名称: tomcat
+# 来源笔记: Web/Tomcat/Tomcat01.md（JDK + Tomcat 部署）、Tomcat02.md（动静分离/Session）
+# 说明: Tomcat 9 应用服务器单实例（tar 包部署形态的容器化），JDK 8、端口 8080，
+#       webapps 与日志目录持久化（对应笔记 /soft/tomcat/webapps 与 logs）。
+# 提取置信度: 手工组装——笔记为 rpm 装 jdk-8u181 + tar 解压 apache-tomcat-9.0.113 的
+#            裸机流程，无 compose；镜像按笔记版本组合选 tomcat:9.0.113-jdk8-temurin。
+# 使用注意:
+#   1. 应用部署方式沿用笔记: WAR 包放入 webapps（volume 内）后重启容器
+#      （等价笔记「WAR包部署」与 zrlog 案例）
+#   2. 笔记集群形态（Nginx 反代 172.16.1.7:8080/172.16.1.8:8080 两台 Tomcat）见 nginx-lb 栈
+#   3. 需要区分两台后端时，把本文件复制为第二个服务并改 container_name/webapps 卷即可
+# ==============================================================================
+# docs: Web/Tomcat/Tomcat01.md, Web/Tomcat/Tomcat02.md
+
+version: "3.8"
+
+services:
+  tomcat:
+    # 笔记版本组合: apache-tomcat-9.0.113.tar.gz + jdk-8u181-linux-x64.rpm
+    # （docker tag 无 8u181 精确对应，取同大版本 temurin-8 变体）
+    image: tomcat:9.0.113-jdk8-temurin
+    container_name: tomcat
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      # 对应笔记 /soft/tomcat/webapps（应用与首页内容）
+      - tomcat-webapps:/usr/local/tomcat/webapps
+      # 对应笔记 /soft/tomcat/logs（catalina.out 与 localhost_access_log）
+      - tomcat-logs:/usr/local/tomcat/logs
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  tomcat-webapps:
+  tomcat-logs:

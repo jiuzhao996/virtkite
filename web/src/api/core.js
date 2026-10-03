@@ -178,6 +178,11 @@ export const core = {
   getSettings: () => unwrap(http.get('/settings')),
   updateSettings: (payload) => unwrap(http.put('/settings', payload)),
 
+  // 声明式部署栈（P2A）：清单含部署状态；deploy admin；docs 返回 markdown 原文
+  listStacks: () => unwrap(http.get('/stacks')),
+  deployStack: (id) => unwrap(http.post(`/stacks/${id}/deploy`)),
+  stackDocs: (id, path) => http.get(`/stacks/${id}/docs`, { params: { path } }).then((r) => r.data),
+
   // 系统公告（公开接口，无需认证——登录页也展示）；写入口走 updateSettings 的 announcement 键
   getAnnouncement: () => unwrap(http.get('/announcement'))
 }

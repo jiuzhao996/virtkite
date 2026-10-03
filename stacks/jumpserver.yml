@@ -1,0 +1,44 @@
+# vmops-stack: id=jumpserver | category=安全 | desc=JumpServer 堡垒机（需替换 SECRET_KEY/BOOTSTRAP_TOKEN 后部署） | docs=Web/Other/Jumpserver.md
+# ==============================================================================
+# 栈名称: jumpserver
+# 来源笔记: Web/Other/Jumpserver.md（堡垒机部署与运维实战）
+# 说明: JumpServer 堡垒机单容器栈（jms_all 一体化镜像），Web 端口 80、SSH 端口 2222。
+# 提取置信度: 推断——笔记部署方式为离线安装包 jumpserver-ce-v4.9.0-x86_64.tar.gz +
+#            ./jmsctl.sh install（其底层同样是 docker compose 拉起全家桶，但笔记未给出
+#            compose 文件或镜像名）；本栈按笔记版本号 v4.9.0 推断使用官方 jms_all 单容器
+#            形态（任务允许的两种形态之一）。数据落 /opt/jumpserver 具名卷。
+# 使用注意:
+#   1. SECRET_KEY（≥50 位随机串）与 BOOTSTRAP_TOKEN（24 位随机串）为必填占位，
+#      部署前必须替换，命令示例:
+#        SECRET_KEY=$(cat /dev/urandom | tr -dc A-Za-z0-9 | head -c 50)
+#        BOOTSTRAP_TOKEN=$(cat /dev/urandom | tr -dc A-Za-z0-9 | head -c 24)
+#   2. 笔记另有更新版本 v4.10.16（Automation/Ansible/Ansible05.md 部署段），如需对齐可
+#      将镜像 tag 换为 v4.10.16
+#   3. 默认管理员 admin / admin（笔记运维段），首登后按笔记立即改密并启用 MFA
+# ==============================================================================
+# docs: Web/Other/Jumpserver.md
+
+version: "3.8"
+
+services:
+  jumpserver:
+    # 版本取自笔记安装包名 jumpserver-ce-v4.9.0-x86_64.tar.gz
+    # （镜像名非笔记原文，为推断，见顶部置信度说明）
+    image: jumpserver/jms_all:v4.9.0
+    container_name: jumpserver
+    environment:
+      # 占位密钥，部署前必须替换（见顶部使用注意）
+      - SECRET_KEY=please_replace_with_50_char_random_secret_key_0000000000
+      - BOOTSTRAP_TOKEN=please_replace_with_24chr
+      - TZ=Asia/Shanghai
+    volumes:
+      - jumpserver-data:/opt/jumpserver
+    ports:
+      # Web UI（笔记: http://10.0.0.40:80）
+      - "80:80"
+      # SSH 跳板端口（jms koko）
+      - "2222:2222"
+    restart: unless-stopped
+
+volumes:
+  jumpserver-data:

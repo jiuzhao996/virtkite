@@ -1,0 +1,121 @@
+# vmops-stack: id=prom-stack | category=监控 | desc=Prometheus + Grafana + Alertmanager + node-exporter 监控栈 | docs=Services/Prom/Prom01.md, Services/Prom/Prom05.md
+# ==============================================================================
+# 栈名称: prom-stack
+# 来源笔记: Services/Prom/Prom01.md（Prometheus 3.13.2 + node_exporter 1.12.1 +
+#           Grafana Enterprise 13.1.3 + scrape 配置）、Prom05.md（alertmanager 0.34.0）
+# 说明: Prometheus 监控栈——prometheus + grafana-enterprise + alertmanager +
+#       node-exporter；抓取配置沿用笔记 prometheus.yml 结构（job kpyun-node-exporter、
+#       热加载 --web.enable-lifecycle、alerting 指向 alertmanager:9093）。
+# 提取置信度: 手工组装——笔记全部为 tar/deb 二进制 + systemd 裸机部署（Prom01/Prom02/Prom05），
+#            无 compose；四个组件版本号均取自笔记下载链接，配置项取自笔记
+#            /etc/prometheus/prometheus.yml 与 node-exporter.service、alertmanager 部署段。
+#            因单文件栈无法携带 prometheus.yml/alertmanager.yml，prometheus 配置由容器
+#            启动时内联生成；alertmanager 使用镜像自带默认配置（笔记的 SMTP 告警通道结构
+#            见下方注释）。
+# 使用注意:
+#   1. node-exporter 容器监控的是宿主机指标（挂载 / /proc /sys 只读 + --path.rootfs=/host），
+#      等价笔记在三台节点上 systemd 方式跑 node_exporter
+#   2. 热加载: curl -X POST http://<宿主机IP>:9090/-/reload（笔记用法）
+#   3. 笔记 alertmanager.yml 邮件通道结构（占位，替换后写入容器或挂载）:
+#      global: { resolve_timeout: 5m, smtp_from: 'xxx@163.com',
+#                smtp_smarthost: 'smtp.163.com:465', smtp_require_tls: false }
+#      route:  { group_by: ['alertname'], group_wait: 5s, group_interval: 10s, repeat_interval: 5m }
+#   4. Grafana 数据源按笔记接 http://prometheus:9090（容器网络内）
+#   5. 笔记另有 mysqld_exporter 0.19.0 / mongodb_exporter 0.52.0（Prom02），业务侧按需另起
+# ==============================================================================
+# docs: Services/Prom/Prom01.md, Services/Prom/Prom05.md
+
+version: "3.8"
+
+services:
+  prometheus:
+    # 笔记版本: prometheus-3.13.2.linux-amd64.tar.gz（Prom01 下载链接）
+    image: prom/prometheus:v3.13.2
+    container_name: prometheus
+    # 镜像默认 ENTRYPOINT 为 /bin/prometheus，这里覆盖为 sh 以便启动时内联生成配置
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |
+        cat > /etc/prometheus/prometheus.yml <<'EOF'
+        # 结构取自笔记 Prom05 /etc/prometheus/prometheus.yml:
+        global:
+          scrape_interval: 15s
+          evaluation_interval: 5s
+        alerting:
+          alertmanagers:
+            - static_configs:
+                - targets:
+                    # 笔记原文目标 10.0.0.12:9093，容器网络内为 alertmanager:9093
+                    - alertmanager:9093
+        scrape_configs:
+          - job_name: "prometheus"
+            metrics_path: "/metrics"
+            scheme: "http"
+            static_configs:
+              - targets: ["localhost:9090"]
+          # job 名称与路径为笔记 Prom01 原文（targets 由节点 IP 改为容器服务名）
+          - job_name: "kpyun-node-exporter"
+            metrics_path: "/metrics"
+            scheme: "http"
+            static_configs:
+              - targets: ["node-exporter:9100"]
+        EOF
+        # 笔记 systemd 单元: --web.telemetry-path / --storage.tsdb.path / --web.enable-lifecycle（热加载）
+        exec prometheus --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus --web.enable-lifecycle
+    volumes:
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  node-exporter:
+    # 笔记版本: node_exporter 1.12.1（Prom01 下载链接 + version 输出）
+    image: prom/node-exporter:v1.12.1
+    container_name: node-exporter
+    command:
+      # 笔记 node-exporter.service: --web.telemetry-path=/metrics --web.listen-address=0.0.0.0:9100
+      # 容器内额外用 --path.rootfs=/host 前缀挂载宿主机文件系统（官方推荐姿势）
+      - --path.rootfs=/host
+      - --web.telemetry-path=/metrics
+      - --web.listen-address=0.0.0.0:9100
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    restart: unless-stopped
+
+  alertmanager:
+    # 笔记版本: alertmanager 0.34.0（Prom05 下载链接 + version 输出）
+    image: prom/alertmanager:v0.34.0
+    container_name: alertmanager
+    # 笔记 systemd 单元: --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/var/lib/alertmanager
+    # 镜像自带默认 alertmanager.yml（邮件通道见顶部使用注意第 3 条）
+    volumes:
+      - alertmanager-data:/alertmanager
+    ports:
+      - "9093:9093"
+    restart: unless-stopped
+
+  grafana:
+    # 笔记版本: grafana-enterprise 13.1.3 deb（Prom01 下载链接）
+    image: grafana/grafana-enterprise:13.1.3
+    container_name: grafana
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      # 对应笔记 /var/lib/grafana/grafana.db（默认 SQLite，MySQL 后端方案见 Prom04）
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:

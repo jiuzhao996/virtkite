@@ -6,6 +6,8 @@
 package dockerx
 
 import (
+	"os"
+	"path/filepath"
 	"context"
 	"encoding/json"
 	"errors"
@@ -512,6 +514,26 @@ func (d *Dockerx) ComposeAction(project, action string) error {
 	}
 	return nil
 }
+
+// ComposeUpFromFile 在指定项目目录执行 docker compose up -d（compose 文件固定为
+// 目录内 docker-compose.yml；项目名默认=目录名，与 ComposeAction(-p) 的管理闭环对齐：
+// 栈部署后即可在容器页「编排」tab 停止/下线）。镜像拉取耗时不可控，超时单独放宽到 10 分钟。
+func (d *Dockerx) ComposeUpFromFile(projectDir string) error {
+	if !safeDockerName(filepath.Base(projectDir)) {
+		return errors.New("项目目录名非法（仅允许字母数字与 -_.）")
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
+		return fmt.Errorf("compose 文件不存在: %w", err)
+	}
+	args := []string{"compose", "--project-directory", projectDir, "up", "-d"}
+	if _, err := runTimeout(10*time.Minute, args...); err != nil {
+		return fmt.Errorf("栈部署失败（compose up）: %w", err)
+	}
+	return nil
+}
+
+// SafeStackID 栈 ID 白名单校验（handler 侧防路径穿越用，规则同 safeDockerName）。
+func SafeStackID(s string) bool { return safeDockerName(s) }
 
 // ─────────────── 内部校验 / 解析助手 ───────────────
 
