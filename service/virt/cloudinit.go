@@ -42,6 +42,18 @@ func GenerateSeedISO(cfg *CloudInitSpec) ([]byte, error) {
 	if cfg.User != "" && cfg.Password != "" {
 		fmt.Fprintf(&ub, "user: %s\npassword: %s\nchpasswd: {expire: false}\nssh_pwauth: true\n",
 			cfg.User, cfg.Password)
+		// root 口令登录：Rocky/RHEL 系 sshd 默认 PermitRootLogin prohibit-password——
+		// ssh_pwauth 只开全局口令认证，root 仍被拒。实验平台需 root 口令直登
+		// （app_install / 设计器应用安装均以 root SSH），显式放开。
+		if cfg.User == "root" {
+			ub.WriteString("write_files:\n" +
+				"  - path: /etc/ssh/sshd_config.d/40-enable-root-login.conf\n" +
+				"    content: |\n" +
+				"      PermitRootLogin yes\n")
+			ub.WriteString("runcmd:\n" +
+				"  - [ sed, -i, 's/^#\\?PermitRootLogin.*/PermitRootLogin yes/', /etc/ssh/sshd_config ]\n" +
+				"  - [ systemctl, restart, sshd ]\n")
+		}
 	}
 	if cfg.SSHKey != "" {
 		ub.WriteString("ssh_authorized_keys:\n  - ")

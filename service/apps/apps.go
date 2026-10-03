@@ -29,11 +29,18 @@ var catalog = []App{
 		Desc:     "高性能 Web 服务器与反向代理，安装后自启并监听 80 端口",
 		Category: "web",
 		Detect:   `command -v nginx >/dev/null 2>&1`,
-		Install: `# 安装 Nginx（Ubuntu/Debian apt 源），装后自启
+		Install: `# 安装 Nginx（apt/dnf 双系自动适配），装后自启
 set -e
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y nginx
+if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+  dnf install -y nginx || yum install -y nginx
+elif command -v apt-get >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y nginx
+else
+  echo "不支持的包管理器" >&2
+  exit 1
+fi
 systemctl enable --now nginx
 nginx -v
 `,

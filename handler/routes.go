@@ -430,7 +430,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	docker.GET("/version-check", versionCheckHandler.Check)
 
 	// 架构设计器（P2B：模板/计划 CRUD operator+；export 文本下载；apply admin）
-	designerHandler := NewDesignerHandler()
+	designerHandler := NewDesignerHandler(deps.DB, deps.Tasks, vmCredHandler)
 	designer := api.Group("/designer")
 	designer.Use(middleware.OperatorMiddleware())
 	{
