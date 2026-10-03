@@ -2,9 +2,9 @@
 // 预置模板 + 部署计划导出/一键应用。v2：VM 节点真落地（create_vm 建机 + 等 IP +
 // app_install 逐个装应用，口令边界就地加密），容器栈继续 compose up。
 //
-// 计划存 data/designer/*.json（id/名称/节点/连线）；应用 = 顺序部署计划内的容器栈
-// （goroutine + recover + 内存进度，GET status 轮询）。VM 节点导出到 YAML 的
-// provision 段（v2 执行器目标），apply 时跳过并在进度中说明。
+// 计划存 data/designer/*.json（id/名称/节点/连线，**不含 SSH 口令**——写盘前强制
+// 剥离，口令只随 Apply 请求体一次性携带）；应用 = 顺序落地计划内的容器栈与 VM 节点
+// （goroutine + recover + 内存进度，GET status 轮询）。
 package handler
 
 import (
@@ -18,14 +18,17 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/dockerx"
+	"github.com/jiuzhao/vmops/service/dbx"
 	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/tasks"
+	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
 )
 
@@ -39,11 +42,12 @@ type DesignerHandler struct {
 	// VMCred 凭据托管：app_install 的 use_saved 通道需要；MasterSecret 供设计器
 	// 就地加密 VM 节点的 SSH 口令（与 AppsHandler 同口径，明文不落库）
 	VMCred *VMCredentialHandler
+	Virt   *virt.Virt // VM 开机与 DHCP 租约查询（provisionVM 自动开机 + 等 IP 自给自足）
 }
 
 // NewDesignerHandler 创建设计器处理器。
 func NewDesignerHandler(db *gorm.DB, taskMgr *tasks.Manager, vmCred *VMCredentialHandler) *DesignerHandler {
-	return &DesignerHandler{Docker: dockerx.New(), Tasks: taskMgr, DB: db, VMCred: vmCred}
+	return &DesignerHandler{Docker: dockerx.New(), Tasks: taskMgr, DB: db, VMCred: vmCred, Virt: virt.New()}
 }
 
 // dsgNode 计划节点：container=容器栈（引用 stacks/<id>）、vm=虚拟机角色（v1 标注）、
@@ -97,9 +101,9 @@ func (h *DesignerHandler) Templates(c *gin.Context) {
 		{
 			"id": "elk", "name": "日志分析平台", "desc": "ELK 单机 + 应用机采集",
 			"nodes": []dsgNode{
-				{ID: "n1", Kind: "container", Ref: "elk-single", Name: "ELK", X: 300, Y: 200},
-				{ID: "n2", Kind: "vm", Ref: "ubuntu-26.04", Name: "应用机×N（装 filebeat）", X: 300, Y: 400, Note: "v1 标注性：VM 创建与应用安装列 v2 执行器"},
-			},
+			{ID: "n1", Kind: "container", Ref: "elk-single", Name: "ELK", X: 300, Y: 200},
+			{ID: "n2", Kind: "vm", Ref: "", Name: "应用机×N（装 filebeat）", X: 300, Y: 400, Note: "落地前在右侧选云镜像、规格与 SSH 口令；filebeat 属应用目录时可直接挂应用"},
+		},
 			"links": []dsgLink{{From: "n2", To: "n1"}},
 		},
 		{
@@ -157,6 +161,12 @@ func (h *DesignerHandler) SavePlan(c *gin.Context) {
 	if p.Name == "" {
 		p.Name = p.ID
 	}
+	// 写盘前强制剥离 VM 节点口令：计划文件长期留存，明文口令只允许随 Apply
+	// 请求体一次性携带（与「任务 payload 只存密文」同一口径）。前端表单里的
+	// 口令框本就不进保存载荷，这里是服务端兜底——即使调用方带了也不落盘。
+	for i := range p.Nodes {
+		p.Nodes[i].SSHSecret = ""
+	}
 	p.UpdatedAt = time.Now()
 	raw, _ := json.MarshalIndent(p, "", "  ")
 	_ = os.MkdirAll(designerDir(), 0o755)
@@ -199,7 +209,16 @@ func (h *DesignerHandler) ExportYAML(c *gin.Context) {
 		case "container":
 			b = append(b, "stacks:\n  - id: "+n.Ref+"   # 节点 "+n.Name+"\n"...)
 		case "vm":
-			b = append(b, "# v2 执行器目标（v1 标注性）\n#provision_vms:\n#  - name: "+n.Name+"\n#    template: "+n.Ref+"\n"...)
+			pool, user := n.Pool, n.SSHUser
+			if pool == "" {
+				pool = "-"
+			}
+			if user == "" {
+				user = "root"
+			}
+			b = append(b, fmt.Sprintf("# VM 节点：name=%s image_id=%s pool=%s spec=%dC/%dMB ssh_user=%s apps=%s\n"+
+				"# （SSH 口令不导出；一键落地时在页面填入）\n#provision_vms:\n#  - name: %s\n#    source_image_id: %s\n",
+				n.Name, n.Ref, pool, n.VCPU, n.MemoryMB, user, strings.Join(n.Apps, ","), n.Name, n.Ref)...)
 		case "net":
 			b = append(b, "# 网络: "+n.Name+"（"+n.Ref+"）\n"...)
 		}
@@ -224,7 +243,8 @@ var (
 	dsgApplyRuns  = map[string]*dsgApplyState{}
 )
 
-// Apply POST /api/designer/plans/:id/apply（admin）——顺序部署计划内全部容器栈。
+// Apply POST /api/designer/plans/:id/apply（admin）——顺序落地计划内的容器栈与
+// VM 节点。VM 凭据随请求体一次性携带（不落计划文件）。
 // 进度内存态（GET /apply-status 轮询）；goroutine 自带 recover（AGENTS 并发规范）。
 func (h *DesignerHandler) Apply(c *gin.Context) {
 	if !roleIsAdmin(c) {
@@ -245,6 +265,28 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 	if json.Unmarshal(raw, &p) != nil {
 		Fail(c, http.StatusInternalServerError, "计划解析失败")
 		return
+	}
+	// VM 凭据随本次请求体一次性携带（计划文件里没有）：按节点 id overlay。
+	// 请求体可选——纯容器栈计划可以不带 body。
+	var credBody struct {
+		Credentials map[string]struct {
+			SSHUser   string `json:"ssh_user"`
+			SSHSecret string `json:"ssh_secret"`
+		} `json:"credentials"`
+	}
+	if body, rerr := c.GetRawData(); rerr == nil && len(body) > 0 {
+		if json.Unmarshal(body, &credBody) != nil {
+			Fail(c, http.StatusBadRequest, "请求体格式非法（应为 {credentials:{节点id:{ssh_user,ssh_secret}}}）")
+			return
+		}
+	}
+	for i := range p.Nodes {
+		if cred, ok := credBody.Credentials[p.Nodes[i].ID]; ok {
+			if cred.SSHUser != "" {
+				p.Nodes[i].SSHUser = cred.SSHUser
+			}
+			p.Nodes[i].SSHSecret = cred.SSHSecret
+		}
 	}
 
 	dsgApplyMu.Lock()
@@ -275,7 +317,16 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 				log.Printf("[designer] 计划 %s 应用 panic: %v\n%s", plan.ID, r, debug.Stack())
 			}
 		}()
-				for _, n := range plan.Nodes {
+		// 前置守卫：配了应用的 VM 节点必须拿到口令（凭据随请求体来，计划文件里没有），
+		// 否则建出空口令机器、app_install 必然 SSH 失败——fail-fast 比半途失败省资源
+		for _, n := range plan.Nodes {
+			if n.Kind == "vm" && len(n.Apps) > 0 && n.SSHSecret == "" {
+				st.Status = "failed"
+				st.Error = "VM「" + n.Name + "」配了应用安装但未提供 SSH 口令（落地时需在页面填入）"
+				return
+			}
+		}
+		for _, n := range plan.Nodes {
 			switch n.Kind {
 			case "container":
 				st.Steps = append(st.Steps, "部署栈 "+n.Ref+"（"+n.Name+"）…")
@@ -317,8 +368,9 @@ st.Status = "success"
 }
 
 // provisionVM VM 节点落地（P2B v2）：create_vm 建机（云镜像 + cloud-init 注入
-// 设计器给的 SSH 口令）→ 轮询任务至成功 → 等运行 + IP → app_install 逐个装应用。
-// create_vm / app_install 均复用既有 executor（与页面操作同一套链路），本函数只做编排。
+// 设计器给的 SSH 口令）→ 轮询任务至成功 → 自动开机 → 等 IP（自查 DHCP 租约）→
+// app_install 逐个装应用。create_vm / app_install 均复用既有 executor（与页面
+// 操作同一套链路），本函数只做编排。
 func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error) {
 	// 前置校验：云镜像必须存在于镜像库（images 表按 id）
 	var img model.Image
@@ -387,12 +439,31 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 		return 0, fmt.Errorf("建机任务成功但未返回 vm_id")
 	}
 
-	// 2) 等运行 + IP（provision 成功后 VM 可能仍 booting；DHCP 回填有延迟）
+	// 2) 自动开机（对应 virsh start <域名>）：create_vm 只 define 不 boot，
+	// 不开机则后面的等 IP 循环必然空转到超时
+	if err := h.Virt.StartDomain(n.Name); err != nil {
+		return vmID, fmt.Errorf("开机失败: %w", err)
+	}
+	dbx.PersistBestEffort(h.DB, "designer 开机回写状态", func() error {
+		return h.DB.Model(&model.VM{}).Where("id = ?", vmID).Update("status", model.VMStatusRunning).Error
+	})
+	st.Steps = append(st.Steps, "已开机，等待系统启动与 IP 分配…")
+
+	// 3) 等运行 + IP。IP 自给自足：vms.ip 平时靠列表/详情请求惰性回填（syncVMIPs），
+	// 设计器后台流程没人开页面，必须自己查 DHCP 租约按 MAC 匹配
 	var vm model.VM
 	deadline := time.Now().Add(3 * time.Minute)
 	for time.Now().Before(deadline) {
 		if err := h.DB.First(&vm, vmID).Error; err != nil {
 			return 0, fmt.Errorf("VM 记录读取失败: %w", err)
+		}
+		if vm.Status == model.VMStatusRunning && vm.IP == "" && vm.MACAddress != "" {
+			if ip := h.leaseIPFor(vm.MACAddress); ip != "" {
+				if err := h.DB.Model(&vm).Update("ip", ip).Error; err != nil {
+					log.Printf("[designer] 回填 %s IP=%s 失败: %v", vm.Name, ip, err)
+				}
+				vm.IP = ip
+			}
 		}
 		if vm.Status == model.VMStatusRunning && vm.IP != "" {
 			break
@@ -407,7 +478,7 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 	}
 	st.Steps = append(st.Steps, "VM 运行中，IP="+vm.IP)
 
-	// 3) app_install 逐个装（口令边界就地加密；凭据不落明文）
+	// 4) app_install 逐个装（口令边界就地加密；凭据不落明文）
 	for _, appID := range n.Apps {
 		cipherB64, saltHex, err := secretbox.SealWithMaster(h.VMCred.MasterSecret, n.SSHSecret)
 		if err != nil {
@@ -433,6 +504,23 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 		st.Steps = append(st.Steps, "✓ "+appID+" 安装完成")
 	}
 	return vmID, nil
+}
+
+// leaseIPFor 从 libvirt DHCP 租约按 MAC 找 IP（与 VMHandler.syncVMIPs 同源；
+// 设计器后台流程专用——IP 回填不能依赖有人正开着虚拟机列表页）。
+func (h *DesignerHandler) leaseIPFor(mac string) string {
+	leases, err := h.Virt.ListDHCPLeases()
+	if err != nil {
+		log.Printf("[designer] 查询 DHCP 租约失败: %v", err)
+		return ""
+	}
+	mac = strings.ToLower(mac)
+	for _, it := range leases {
+		if strings.ToLower(it.MAC) == mac {
+			return it.IP
+		}
+	}
+	return ""
 }
 
 // waitTask 轮询任务至终态：成功返回 result JSON（如 {"vm_id":N}）；失败/超时返回 error。

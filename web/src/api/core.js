@@ -192,7 +192,9 @@ export const core = {
   saveDesignerPlan: (plan) => unwrap(http.post('/designer/plans', plan)),
   deleteDesignerPlan: (id) => unwrap(http.delete(`/designer/plans/${id}`)),
   exportDesignerPlan: (id) => http.get(`/designer/plans/${id}/export`).then((r) => r.data),
-  applyDesignerPlan: (id) => unwrap(http.post(`/designer/plans/${id}/apply`)),
+  // payload 可选：{credentials:{节点id:{ssh_user,ssh_secret}}}——VM 口令只随应用请求
+  // 一次性携带，不随计划保存（后端写盘前也会强制剥离 ssh_secret 兜底）
+  applyDesignerPlan: (id, payload) => unwrap(http.post(`/designer/plans/${id}/apply`, payload || {})),
   designerApplyStatus: (id) => unwrap(http.get(`/designer/plans/${id}/apply-status`)),
 
   // 系统公告（公开接口，无需认证——登录页也展示）；写入口走 updateSettings 的 announcement 键

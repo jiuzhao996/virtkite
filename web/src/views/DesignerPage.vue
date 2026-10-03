@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHead title="架构设计" subtitle="选架构 → 摆节点 → 连线 → 一键落地（eNSP 式设计器 v1：容器栈自动部署，VM/网络节点标注导出）" />
+    <PageHead title="架构设计" subtitle="选架构 → 摆节点 → 连线 → 一键落地（容器栈 compose 部署 + VM 建机装应用，口令仅落地时填写不随计划保存）" />
 
     <div class="ds-layout">
       <!-- 左：模板库 + 节点面板 -->
@@ -21,7 +21,10 @@
           <el-select v-if="addKind === 'container'" v-model="addRef" size="small" filterable placeholder="选栈" style="flex: 1">
             <el-option v-for="s in stacks" :key="s.id" :label="s.id" :value="s.id" />
           </el-select>
-          <el-input v-else v-model="addRef" size="small" placeholder="模板/网段建议" style="flex: 1" />
+          <el-select v-else-if="addKind === 'vm'" v-model="addRef" size="small" filterable placeholder="选云镜像" style="flex: 1">
+            <el-option v-for="img in cloudImages" :key="img.id" :label="img.name" :value="String(img.id)" />
+          </el-select>
+          <el-input v-else v-model="addRef" size="small" placeholder="网段建议" style="flex: 1" />
           <el-button type="primary" size="small" :icon="Plus" @click="addNode" />
         </div>
         <el-divider />
@@ -57,7 +60,40 @@
           <el-form label-width="64px" size="small">
             <el-form-item label="名称"><el-input v-model="selected.name" @change="renderChart" /></el-form-item>
             <el-form-item label="类型"><el-tag size="small" effect="plain">{{ kindLabel[selected.kind] }}</el-tag></el-form-item>
-            <el-form-item :label="selected.kind === 'container' ? '引用栈' : '建议值'">
+            <!-- VM 节点落地参数（v2）：这些字段随计划保存，口令除外 -->
+            <template v-if="selected.kind === 'vm'">
+              <el-form-item label="云镜像">
+                <el-select v-model="selected.ref" filterable placeholder="选择云镜像" style="width: 100%">
+                  <el-option v-for="img in cloudImages" :key="img.id" :label="img.name" :value="String(img.id)">
+                    <span>{{ img.name }}</span>
+                    <span class="ds-opt-sub">{{ img.os_version }}</span>
+                  </el-option>
+                </el-select>
+              </el-form-item>
+              <el-form-item label="存储池">
+                <el-select v-model="selected.pool" placeholder="默认池" style="width: 100%">
+                  <el-option v-for="p in storagePools" :key="p.name" :label="p.name" :value="p.name" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="规格">
+                <div class="ds-spec">
+                  <el-input-number v-model="selected.vcpu" :min="1" :max="16" size="small" controls-position="right" style="width: 88px" />
+                  <span class="ds-spec-unit">vCPU</span>
+                  <el-input-number v-model="selected.memory_mb" :min="512" :step="512" size="small" controls-position="right" style="width: 96px" />
+                  <span class="ds-spec-unit">MB</span>
+                </div>
+              </el-form-item>
+              <el-form-item label="SSH 用户"><el-input v-model="selected.ssh_user" placeholder="root" /></el-form-item>
+              <el-form-item label="SSH 口令">
+                <el-input v-model="selected._sshSecret" type="password" show-password autocomplete="new-password" placeholder="仅本次落地使用，不随计划保存" />
+              </el-form-item>
+              <el-form-item label="应用">
+                <el-select v-model="selected.apps" multiple filterable placeholder="落地后自动安装" style="width: 100%">
+                  <el-option v-for="a in apps" :key="a.id" :label="a.name" :value="a.id" />
+                </el-select>
+              </el-form-item>
+            </template>
+            <el-form-item v-else :label="selected.kind === 'container' ? '引用栈' : '建议值'">
               <span class="mono ds-ref">{{ selected.ref }}</span>
             </el-form-item>
             <el-form-item label="备注"><el-input v-model="selected.note" type="textarea" :rows="2" /></el-form-item>
@@ -85,9 +121,11 @@
 </template>
 
 <script setup>
-// 架构设计器 v1（P2B）：模板载入 + 节点/连线编辑 + ECharts 实时预览 +
-// 计划保存(data/designer) + YAML 导出 + 容器栈一键落地（apply-status 轮询进度）。
-// 画布交互刻意用「点选编辑」而非拖拽画布库——零新依赖，v2 可换 AntV X6。
+// 架构设计器（P2B v2）：模板载入 + 节点/连线编辑 + ECharts 实时预览 +
+// 计划保存(data/designer) + YAML 导出 + 一键落地（容器栈 compose up；VM 节点
+// 建机→等 IP→装应用，进度 apply-status 轮询）。SSH 口令只存在内存（_sshSecret
+// 下划线字段），保存/导出经 planPayload 剥离，落地时随 apply 请求体一次性携带。
+// 画布交互刻意用「点选编辑」而非拖拽画布库——零新依赖，v3 可换 AntV X6。
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Download, VideoPlay, DocumentChecked } from '@element-plus/icons-vue'
@@ -101,6 +139,9 @@ echarts.use([GraphChart])
 const templates = ref([])
 const stacks = ref([])
 const plans = ref([])
+const cloudImages = ref([])
+const storagePools = ref([])
+const apps = ref([])
 const planName = ref('')
 const nodes = reactive([])
 const links = reactive([])
@@ -158,10 +199,34 @@ function renderChart() {
 }
 
 function addNode() {
-  if (!addRef.value) return ElMessage.warning('请选择/填写引用')
+  if (!addRef.value) {
+    return ElMessage.warning(addKind.value === 'vm' ? '请选择云镜像' : '请选择/填写引用')
+  }
   const id = 'n' + seq++
-  nodes.push({ id, kind: addKind.value, ref: addRef.value, name: addRef.value, x: 160 + ((seq * 70) % 340), y: 140 + ((seq * 90) % 300) })
+  const n = { id, kind: addKind.value, ref: addRef.value, name: addRef.value, x: 160 + ((seq * 70) % 340), y: 140 + ((seq * 90) % 300) }
+  if (addKind.value === 'vm') {
+    // 新 VM 节点名默认取镜像名（可改）；规格/SSH 给可用初值，口令只进内存字段
+    n.name = cloudImages.value.find((i) => String(i.id) === addRef.value)?.name || 'vm-' + seq
+    n.vcpu = 2
+    n.memory_mb = 2048
+    n.ssh_user = 'root'
+    n.pool = ''
+    n.apps = []
+    n._sshSecret = ''
+  }
+  nodes.push(n)
   renderChart()
+}
+
+// VM 节点字段兜底：旧计划/模板载入时补齐（与后端 provisionVM 的缺省一致）
+function normalizeVMNode(n) {
+  if (n.kind !== 'vm') return n
+  if (!n.vcpu) n.vcpu = 1
+  if (!n.memory_mb) n.memory_mb = 1024
+  if (!n.ssh_user) n.ssh_user = 'root'
+  if (!n.apps) n.apps = []
+  if (n._sshSecret === undefined) n._sshSecret = ''
+  return n
 }
 function addLink() {
   if (!selected.value || !linkTo.value) return
@@ -181,7 +246,7 @@ function clearAll() { nodes.splice(0); links.splice(0); selected.value = null; s
 function loadTemplate(t) {
   clearAll()
   planName.value = t.name
-  for (const n of t.nodes) nodes.push({ ...n })
+  for (const n of t.nodes) nodes.push(normalizeVMNode({ ...n }))
   for (const l of t.links || []) links.push({ ...l })
   seq = t.nodes.length + 1
   renderChart()
@@ -189,16 +254,26 @@ function loadTemplate(t) {
 function loadPlan(p) {
   clearAll()
   planName.value = p.name
-  for (const n of p.nodes) nodes.push({ ...n })
+  for (const n of p.nodes) nodes.push(normalizeVMNode({ ...n }))
   for (const l of p.links || []) links.push({ ...l })
   seq = p.nodes.length + 1
   renderChart()
 }
 
+// 保存/导出/落地共用的计划载荷：剥离 _sshSecret（口令只随 apply 请求体走）
+function planPayload() {
+  return {
+    id: (planName.value || 'plan-' + Date.now()).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 60),
+    name: planName.value || '未命名计划',
+    nodes: nodes.map((n) => { const { _sshSecret, ...rest } = n; return rest }),
+    links: [...links],
+  }
+}
+
 async function savePlan() {
-  const id = (planName.value || 'plan-' + Date.now()).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 60)
-  await api.saveDesignerPlan({ id, name: planName.value || id, nodes: [...nodes], links: [...links] })
-  ElMessage.success('计划已保存：' + id)
+  const p = planPayload()
+  await api.saveDesignerPlan(p)
+  ElMessage.success('计划已保存：' + p.id)
   loadPlans()
 }
 async function removePlan(id) {
@@ -207,32 +282,47 @@ async function removePlan(id) {
   loadPlans()
 }
 async function exportYaml() {
-  const id = (planName.value || 'plan').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 60)
-  await api.saveDesignerPlan({ id, name: planName.value || id, nodes: [...nodes], links: [...links] })
-  const yaml = await api.exportDesignerPlan(id)
+  const p = planPayload()
+  await api.saveDesignerPlan(p)
+  const yaml = await api.exportDesignerPlan(p.id)
   const blob = new Blob([yaml], { type: 'text/yaml;charset=utf-8' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
-  a.download = id + '-plan.yml'
+  a.download = p.id + '-plan.yml'
   a.click()
   URL.revokeObjectURL(a.href)
 }
 
 async function applyPlan() {
   if (!nodes.length) return ElMessage.warning('画布为空')
-  const containers = nodes.filter((n) => n.kind === 'container')
-  if (!containers.length) return ElMessage.warning('计划中没有容器栈节点（VM/网络节点 v1 为标注性）')
+  // 可落地节点 = 容器栈 + VM（v2）；net 仍为标注性
+  const cts = nodes.filter((n) => n.kind === 'container')
+  const vms = nodes.filter((n) => n.kind === 'vm')
+  if (!cts.length && !vms.length) return ElMessage.warning('计划中没有可落地节点（容器栈 / VM）')
+  const noImg = vms.filter((n) => !n.ref)
+  if (noImg.length) return ElMessage.warning('VM「' + noImg.map((n) => n.name).join('、') + '」还未选择云镜像')
+  const needCred = vms.filter((n) => (n.apps || []).length)
+  const noPass = needCred.filter((n) => !n._sshSecret)
+  if (noPass.length) return ElMessage.warning('VM「' + noPass.map((n) => n.name).join('、') + '」配了应用安装，需要填 SSH 口令')
+  const parts = []
+  if (cts.length) parts.push(`部署 ${cts.length} 个容器栈（${cts.map((n) => n.ref).join('、')}）`)
+  if (vms.length) parts.push(`创建并初始化 ${vms.length} 台 VM（${vms.map((n) => n.name).join('、')}）`)
   try {
-    await ElMessageBox.confirm(`一键落地将顺序部署 ${containers.length} 个容器栈（${containers.map((n) => n.ref).join('、')}），镜像拉取可能需要数分钟。`, '落地确认', { type: 'info', confirmButtonText: '开始' })
+    await ElMessageBox.confirm(`一键落地将顺序执行：${parts.join('；')}。镜像拉取与 VM 初始化可能需要数分钟。`, '落地确认', { type: 'info', confirmButtonText: '开始' })
   } catch (e) { if (!isCancel(e)) return }
-  const id = (planName.value || 'plan').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 60)
-  await api.saveDesignerPlan({ id, name: planName.value || id, nodes: [...nodes], links: [...links] })
+  const p = planPayload()
+  // 口令只在这次请求里带上（后端 overlay 到对应节点，不写盘）
+  const credentials = {}
+  for (const n of vms) {
+    if (n._sshSecret) credentials[n.id] = { ssh_user: n.ssh_user || 'root', ssh_secret: n._sshSecret }
+  }
   applying.value = true
   applyStatus.value = { status: 'running', steps: ['已提交…'] }
   try {
-    await api.applyDesignerPlan(id)
+    await api.saveDesignerPlan(p)
+    await api.applyDesignerPlan(p.id, { credentials })
     applyTimer = setInterval(async () => {
-      const res = await api.designerApplyStatus(id)
+      const res = await api.designerApplyStatus(p.id)
       applyStatus.value = res.data
       if (res.data.status !== 'running') {
         clearInterval(applyTimer); applyTimer = null
@@ -252,9 +342,15 @@ async function loadPlans() {
 }
 
 onMounted(async () => {
-  const [t, s] = await Promise.all([api.designerTemplates(), api.listStacks()])
+  // vmOptions 一次带回云镜像+存储池（与创建向导同源）；apps 为应用安装目录
+  const [t, s, opt, appsRes] = await Promise.all([api.designerTemplates(), api.listStacks(), api.vmOptions(), api.listApps()])
   templates.value = (t.data && t.data.items) || []
   stacks.value = (s.data && s.data.items) || []
+  const d = opt.data || {}
+  // ISO 是安装介质（无 cloud-init，落地链路拿不到 IP），设计器只列非 ISO 镜像
+  cloudImages.value = (d.cloud_images || []).filter((i) => (i.format || '').toLowerCase() !== 'iso')
+  storagePools.value = d.storage_pools || []
+  apps.value = Array.isArray(appsRes.data) ? appsRes.data : []
   await loadPlans()
   renderChart()
   window.addEventListener('resize', onResize)
@@ -304,6 +400,9 @@ onUnmounted(() => {
 .ds-step { color: var(--color-muted-foreground); font-size: 0.78rem; line-height: 1.7; }
 .ds-err { color: var(--color-danger); font-size: 0.8rem; margin-top: 4px; word-break: break-all; }
 .ds-ref { font-size: 0.8rem; word-break: break-all; }
+.ds-spec { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ds-spec-unit { font-size: 0.78rem; color: var(--color-muted-foreground); }
+.ds-opt-sub { float: right; font-size: 0.75rem; color: var(--color-muted-foreground); }
 .ds-link-row {
   display: flex; align-items: center; justify-content: space-between;
   font-size: 0.8rem; padding: 4px 0; color: var(--color-muted-foreground);
