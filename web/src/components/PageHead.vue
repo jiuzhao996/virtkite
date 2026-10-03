@@ -1,17 +1,31 @@
 <template>
   <div class="page-head">
-    <div>
+    <div :class="{ 'ph-inline': inline }">
       <h2 class="page-title">{{ title }}</h2>
       <!-- 副标题默认渲染为 span.page-desc；历史上有页面用 p.page-desc（p 的 UA 外边距参与布局，
            不可悄悄换成 span），这类页面用 #subtitle 插槽原样传 p 保持渲染不变 -->
       <slot name="subtitle">
-        <span v-if="subtitle" class="page-desc">{{ subtitle }}</span>
+        <span v-if="subtitle" class="page-desc" :class="{ 'page-desc-inline': inline }">{{ subtitle }}</span>
       </slot>
     </div>
     <!-- 默认插槽 = 右侧动作区（按钮 / 按钮组 / 开关等），由 global .page-head 两端对齐分列 -->
     <slot />
   </div>
 </template>
+
+<style scoped>
+.ph-inline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+.page-desc-inline {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+</style>
 
 <script setup>
 // 页头骨架：左「标题 + 描述」、右动作区。样式全部走 global.css 的
@@ -21,5 +35,8 @@
 defineProps({
   title: { type: String, required: true },
   subtitle: { type: String, default: '' },
+  // inline：副标题与标题同行（baseline 对齐）——tab 页的页头描述贴近标题更整体，
+  // 独立页保持默认的上下堆叠
+  inline: { type: Boolean, default: false },
 })
 </script>
