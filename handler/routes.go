@@ -425,6 +425,10 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		stacksGroup.POST("/:id/deploy", stackHandler.Deploy)
 	}
 
+	// 镜像版本检测（P3：本地 digest vs 镜像代理远端 digest，按钮触发非轮询）
+	versionCheckHandler := NewVersionCheckHandler()
+	docker.GET("/version-check", versionCheckHandler.Check)
+
 	// 架构设计器（P2B：模板/计划 CRUD operator+；export 文本下载；apply admin）
 	designerHandler := NewDesignerHandler()
 	designer := api.Group("/designer")

@@ -1,6 +1,7 @@
 <template>
     <div class="pane-toolbar">
       <el-button type="primary" @click="openPull">拉取镜像</el-button>
+	<el-button :icon="RefreshRight" :loading="vcLoading" @click="checkVersions">检查更新</el-button>
       <el-button type="warning" plain :loading="pruneLoading" @click="pruneImages">清理悬空镜像</el-button>
       <el-input
         v-model="imageKeyword"
@@ -21,6 +22,18 @@
       <el-table-column label="Tag" width="130">
         <template #default="{ row }">
           <el-tag effect="plain" size="small">{{ row.Tag || '—' }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="更新" width="92">
+        <template #default="{ row }">
+          <template v-if="vcMap[`${row.Repository}:${row.Tag}`]">
+            <el-tag v-if="vcMap[`${row.Repository}:${row.Tag}`].status === 'outdated'" size="small" type="warning" effect="light">有更新</el-tag>
+            <el-tag v-else-if="vcMap[`${row.Repository}:${row.Tag}`].status === 'up_to_date'" size="small" type="success" effect="light">最新</el-tag>
+            <el-tooltip v-else :content="vcMap[`${row.Repository}:${row.Tag}`].note || '未知'" placement="top">
+              <span class="mono" style="color: var(--color-muted-foreground)">—</span>
+            </el-tooltip>
+          </template>
+          <span v-else class="mono" style="color: var(--color-muted-foreground)">—</span>
         </template>
       </el-table-column>
       <el-table-column label="ID" width="130">
@@ -75,7 +88,7 @@
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast），操作成功后本地 refresh 重拉。
 import { ref, computed, inject, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
+import { Search, RefreshRight } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { shortId, dockerSize, imageTime } from '../../../utils/docker-format'
@@ -85,6 +98,28 @@ const { reportLoadError, clearLoadError } = inject('dockerPage')
 
 const images = ref([])
 const loading = ref(false)
+// 版本检测（P3）：digest 对比结果 map，key=repository:tag
+const vcMap = ref({})
+const vcLoading = ref(false)
+
+async function checkVersions() {
+  vcLoading.value = true
+  try {
+    const res = await api.versionCheck()
+    const m = {}
+    for (const it of (res.data && res.data.items) || []) {
+      m[`${it.repository}:${it.tag}`] = it
+    }
+    vcMap.value = m
+    const counts = { outdated: 0, up_to_date: 0 }
+    for (const it of Object.values(m)) if (counts[it.status] !== undefined) counts[it.status]++
+    ElMessage.success(`检测完成：${counts.outdated} 个有更新，${counts.up_to_date} 个最新`)
+  } catch (e) {
+    ElMessage.error(errMsg(e, '版本检测失败'))
+  } finally {
+    vcLoading.value = false
+  }
+}
 
 async function refresh() {
   loading.value = true

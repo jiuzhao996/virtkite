@@ -94,6 +94,9 @@ export const core = {
 
   // 网络
   listNetworks: () => unwrap(http.get('/networks')),
+  // 镜像版本检测（P3：digest 对比，按钮触发非轮询）
+  versionCheck: () => unwrap(http.get('/docker/version-check')),
+
   // 网络通信流量视图（P1：连接边 + 接口速率，前端 3s 轮询）
   networkFlows: () => unwrap(http.get('/networks/flows')),
   getNetwork: (name) => unwrap(http.get('/networks/' + name)),
