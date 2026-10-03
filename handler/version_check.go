@@ -68,49 +68,68 @@ func (h *VersionCheckHandler) localDigest(image string) string {
 	return ""
 }
 
-// remoteDigest 经镜像代理查远端 manifest digest（两步 token 流）。
-func (h *VersionCheckHandler) remoteDigest(repo, tag string) (string, error) {
+// remoteDigests 经镜像代理查远端 manifest（两步 token 流，GET 全文），
+// 返回该 tag 的 digest 集合：顶层（index/list）digest + 子 manifest digest——
+// 本地 RepoDigests 记录的是拉取时落地的子 manifest digest，与顶层 digest 不同
+// 属正常现象（多架构 index），对比时命中集合任一即「最新」。
+func (h *VersionCheckHandler) remoteDigests(repo, tag string) ([]string, error) {
 	// scope 包装在 registryToken 模板内（repository:%s:pull）；'/' 原样传——
 	// m.daocloud 对 %2F 编码形态返回 403
 	tr, err := http.NewRequest(http.MethodGet,
 		fmt.Sprintf(registryToken, repo), nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	resp, err := vcClient.Do(tr)
 	if err != nil {
-		return "", fmt.Errorf("token 获取失败: %w", err)
+		return nil, fmt.Errorf("token 获取失败: %w", err)
 	}
 	defer resp.Body.Close()
 	var tok struct {
 		Token string `json:"token"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&tok) != nil || tok.Token == "" {
-		return "", fmt.Errorf("token 响应异常")
+		return nil, fmt.Errorf("token 响应异常")
 	}
 
-	mr, err := http.NewRequest(http.MethodHead,
+	mr, err := http.NewRequest(http.MethodGet,
 		fmt.Sprintf("%s/v2/%s/manifests/%s", registryBase, repo, tag), nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	mr.Header.Set("Authorization", "Bearer "+tok.Token)
-	// 多 manifest 版本都接受：digest 对比不关心 schema 差异，只要远端稳定返回
-	mr.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json")
+	// 多 manifest 版本都接受：需要 body 解析 index 的子 manifest digest
+	mr.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json")
 	resp2, err := vcClient.Do(mr)
 	if err != nil {
-		return "", fmt.Errorf("manifest 查询失败: %w", err)
+		return nil, fmt.Errorf("manifest 查询失败: %w", err)
 	}
 	defer resp2.Body.Close()
-	io.Copy(io.Discard, resp2.Body)
+	body, _ := io.ReadAll(resp2.Body)
 	if resp2.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("manifest 响应 %d", resp2.StatusCode)
+		return nil, fmt.Errorf("manifest 响应 %d", resp2.StatusCode)
 	}
-	digest := resp2.Header.Get("Docker-Content-Digest")
-	if digest == "" {
-		return "", fmt.Errorf("响应无 digest")
+	digests := []string{}
+	if dg := resp2.Header.Get("Docker-Content-Digest"); dg != "" {
+		digests = append(digests, dg)
 	}
-	return digest, nil
+	// 解析 body：单 manifest 无子层；index/list 展开 manifests[].digest
+	var parsed struct {
+		Manifests []struct {
+			Digest string `json:"digest"`
+		} `json:"manifests"`
+	}
+	if json.Unmarshal(body, &parsed) == nil {
+		for _, m := range parsed.Manifests {
+			if m.Digest != "" {
+				digests = append(digests, m.Digest)
+			}
+		}
+	}
+	if len(digests) == 0 {
+		return nil, fmt.Errorf("响应无 digest")
+	}
+	return digests, nil
 }
 
 // vcRepoTag 把本地镜像名拆 repo/tag（无 tag 默认 latest；带 registry host 的
@@ -150,19 +169,29 @@ func (h *VersionCheckHandler) Check(c *gin.Context) {
 			continue
 		}
 		item.LocalDigest = shortDigest(local)
-		remote, err := h.remoteDigest(repo, tag)
+		remote, err := h.remoteDigests(repo, tag)
 		if err != nil {
 			item.Status = "unknown"
 			item.Note = "远端查询失败（" + err.Error() + "）"
 			items = append(items, item)
 			continue
 		}
-		item.RemoteDigest = shortDigest(remote)
-		if strings.HasPrefix(local, remote) || strings.HasPrefix(remote, local) {
+		item.RemoteDigest = shortDigest(remote[0])
+		// 归一化对比：本地 RepoDigests 是裸 hex，远端 digest 带 sha256: 前缀——
+		// 统一剥前缀后比对（否则恒 false，busybox 实测复检误报 outdated）
+		localHex := strings.TrimPrefix(local, "sha256:")
+		match := false
+		for _, dg := range remote {
+			if strings.TrimPrefix(dg, "sha256:") == localHex {
+				match = true
+				break
+			}
+		}
+		if match {
 			item.Status = "up_to_date"
 		} else {
 			item.Status = "outdated"
-			item.Note = "远端镜像有更新/重建（digest 不一致）"
+			item.Note = "远端镜像有更新/重建（digest 有差异）"
 		}
 		items = append(items, item)
 	}

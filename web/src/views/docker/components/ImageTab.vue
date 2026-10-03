@@ -24,10 +24,17 @@
           <el-tag effect="plain" size="small">{{ row.Tag || '—' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="更新" width="92">
+      <el-table-column label="更新" width="130">
         <template #default="{ row }">
           <template v-if="vcMap[`${row.Repository}:${row.Tag}`]">
-            <el-tag v-if="vcMap[`${row.Repository}:${row.Tag}`].status === 'outdated'" size="small" type="warning" effect="light">有更新</el-tag>
+            <template v-if="vcMap[`${row.Repository}:${row.Tag}`].status === 'outdated'">
+              <el-tag size="small" type="warning" effect="light">有更新</el-tag>
+              <el-button
+                text type="primary" size="small"
+                :loading="pullingUpdate === `${row.Repository}:${row.Tag}`"
+                @click="pullUpdate(row)"
+              >拉取</el-button>
+            </template>
             <el-tag v-else-if="vcMap[`${row.Repository}:${row.Tag}`].status === 'up_to_date'" size="small" type="success" effect="light">最新</el-tag>
             <el-tooltip v-else :content="vcMap[`${row.Repository}:${row.Tag}`].note || '未知'" placement="top">
               <span class="mono" style="color: var(--color-muted-foreground)">—</span>
@@ -101,6 +108,7 @@ const loading = ref(false)
 // 版本检测（P3）：digest 对比结果 map，key=repository:tag
 const vcMap = ref({})
 const vcLoading = ref(false)
+const pullingUpdate = ref('')
 
 async function checkVersions() {
   vcLoading.value = true
@@ -118,6 +126,23 @@ async function checkVersions() {
     ElMessage.error(errMsg(e, '版本检测失败'))
   } finally {
     vcLoading.value = false
+  }
+}
+
+// 拉取更新：docker pull 同名 tag 就地更新镜像 → 自动复检 digest。
+// 诚实提示：运行中的容器仍用旧镜像层，需重建（compose up --force-recreate / 重建容器）才会切新镜像。
+async function pullUpdate(row) {
+  const key = `${row.Repository}:${row.Tag}`
+  pullingUpdate.value = key
+  try {
+    await api.dockerPullImage(key)
+    ElMessage.success(`${key} 已拉取最新（运行中的容器需重建后才会使用新镜像）`)
+    await refresh()
+    await checkVersions()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '拉取更新失败'))
+  } finally {
+    pullingUpdate.value = ''
   }
 }
 
