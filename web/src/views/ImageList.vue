@@ -1,9 +1,6 @@
 <template>
   <div v-loading="loading">
-    <!-- 描述原本就是 .page-head 直接子元素（两端对齐把它排到右侧），经默认插槽保持同构 -->
-    <PageHead title="镜像管理">
-      <span class="page-desc">云镜像模板与 ISO 安装镜像分类查看，模板可直接用于创建虚拟机</span>
-    </PageHead>
+    <PageHead title="镜像管理" subtitle="云镜像模板与 ISO 安装镜像分类查看，模板可直接用于创建虚拟机" />
 
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- Tab 1 云镜像/模板盘：登记列表（创建 VM「云镜像」方式的数据源） -->
@@ -65,13 +62,13 @@
                 <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" min-width="270" fixed="right">
+            <el-table-column label="操作" min-width="230" fixed="right">
               <template #default="{ row }">
                 <div class="ops">
-                  <el-button v-if="isAdmin && row.is_template" text size="small" type="primary" :icon="Cpu" @click="openClone(row)">基于此创建 VM</el-button>
-                  <el-button v-if="isAdmin && row.is_template" text size="small" type="primary" :icon="StarFilled" @click="toggleTemplate(row)">取消模板</el-button>
-                  <el-button v-if="isAdmin && !row.is_template" text size="small" type="primary" :icon="Star" @click="toggleTemplate(row)">标记为模板</el-button>
-                  <el-button v-if="isAdmin" text size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+                  <el-button v-if="isAdmin && row.is_template" text size="small" type="primary" @click="openClone(row)">基于此创建 VM</el-button>
+                  <el-button v-if="isAdmin && row.is_template" text size="small" type="primary" @click="toggleTemplate(row)">取消模板</el-button>
+                  <el-button v-if="isAdmin && !row.is_template" text size="small" type="primary" @click="toggleTemplate(row)">标记为模板</el-button>
+                  <el-button v-if="isAdmin" text size="small" type="danger" @click="remove(row)">删除</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -223,7 +220,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Upload, UploadFilled, Delete, Star, StarFilled, Cpu, Search } from '@element-plus/icons-vue'
+import { Refresh, Upload, Search } from '@element-plus/icons-vue'
 import ImageMarketHome from './images/components/ImageMarketHome.vue'
 import ImageMarket from './images/components/ImageMarket.vue'
 import ImageIsoMarket from './images/components/ImageIsoMarket.vue'
