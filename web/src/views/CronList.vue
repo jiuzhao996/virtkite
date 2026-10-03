@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHead title="计划任务">
+    <PageHead v-if="!embedded" title="计划任务">
       <template #subtitle>
         <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
         <p class="page-desc">按 cron 表达式定时执行虚拟机快照、数据库备份等例行运维动作</p>
@@ -187,6 +187,9 @@ import { api } from '../api'
 import { errMsg, isCancel, fmtDateTime, vmStatusText } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
 import PageHead from '../components/PageHead.vue'
+
+// embedded：嵌入系统设置页时隐藏独立页头（IA 归并批次 2026-10）
+defineProps({ embedded: { type: Boolean, default: false } })
 import Toolbar from '../components/Toolbar.vue'
 
 // ===== 列表 =====

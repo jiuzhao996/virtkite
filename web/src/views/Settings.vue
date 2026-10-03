@@ -162,6 +162,20 @@
     <div class="ci-wrap">
       <CloudInitTemplates embedded />
     </div>
+
+    <!-- 宿主机（IA 归并批次 2026-10 并入）：单宿主机平台一页一卡太薄，admin 属性的
+         登记/SSH 测试收进设置页；侧栏不再单列 -->
+    <div class="ci-wrap">
+      <h3 class="sub-section-title">宿主机</h3>
+      <HostList embedded />
+    </div>
+
+    <!-- 计划任务（同批并入）：低频 admin 功能（快照/DB 备份定时化），功能保留，
+         侧栏一级入口让位 -->
+    <div class="ci-wrap">
+      <h3 class="sub-section-title">计划任务</h3>
+      <CronList embedded />
+    </div>
   </div>
 </template>
 
@@ -172,6 +186,8 @@ import { Refresh, QuestionFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, fmtDateTime } from '../utils/format'
 import CloudInitTemplates from './CloudInitTemplates.vue'
+import HostList from './HostList.vue'
+import CronList from './CronList.vue'
 import PageHead from '../components/PageHead.vue'
 
 const loading = ref(false)
@@ -386,6 +402,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.sub-section-title {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+}
 .mb {
   margin-bottom: 16px;
 }

@@ -34,6 +34,9 @@ const routes = [
       { path: 'docker/images', redirect: '/images' },
       { path: 'docker/networks', redirect: '/networks' },
       { path: 'docker/volumes', redirect: '/storage' },
+      // IA 归并批次：宿主机/计划任务并入系统设置，旧地址重定向
+      { path: 'hosts', redirect: '/settings' },
+      { path: 'crons', redirect: '/settings' },
       { path: 'ai', redirect: '/dashboard' },
       { path: 'cloud-init-templates', redirect: '/settings' },
       { path: 'recycle-bin', name: 'recycle-bin', component: () => import('../views/RecycleBin.vue'), meta: { requiresAdmin: true } },

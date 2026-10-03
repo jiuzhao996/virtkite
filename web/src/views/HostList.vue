@@ -1,7 +1,7 @@
 <template>
   <div v-loading="loading">
     <!-- 描述原本就是 .page-head 直接子元素（两端对齐把它排到右侧），经默认插槽保持同构 -->
-    <PageHead title="宿主机管理">
+    <PageHead v-if="!embedded" title="宿主机管理">
       <span class="page-desc">登记宿主机连接信息，采集连通性与实时状态</span>
     </PageHead>
     <el-card shadow="never">
@@ -84,6 +84,9 @@ import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { hostStatusText, hostStatusTag, errMsg, isCancel, fmtDateTime } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
+
+// embedded：嵌入系统设置页时隐藏独立页头（IA 归并批次 2026-10）
+defineProps({ embedded: { type: Boolean, default: false } })
 
 const { isAdmin } = useAuth()
 

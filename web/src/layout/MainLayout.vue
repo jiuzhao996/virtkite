@@ -17,44 +17,25 @@
       <el-menu
         v-if="!collapsed || isMobile"
         :default-active="activeIndex"
+        :default-openeds="menuGroups.map((g) => g.name)"
         router
         class="menu"
         background-color="transparent"
       >
-        <!-- 分组折叠菜单：展开状态由本地 closedGroups 自管（el-menu 的 default-openeds 只在
-             挂载瞬间生效，isAdmin 异步到达后重渲染的分组接不到，会出现刷新后全部收起的竞态） -->
-        <template v-for="group in menuGroups" :key="group.name">
-          <!-- 组内 >1 项才渲染分组标题与折叠；单项目组（如只剩仪表盘的总览组）直接平铺菜单项 -->
-          <el-menu-item-group v-if="group.items.length > 1">
-            <template #title>
-              <!-- 分组标题可折叠：role/tabindex/键盘 Enter 触发（ui-ux-pro-max 可访问性基线） -->
-              <span
-                class="nav-group-title"
-                role="button"
-                tabindex="0"
-                :aria-expanded="!closedGroups.has(group.name)"
-                @click="toggleGroup(group.name)"
-                @keydown.enter.prevent="toggleGroup(group.name)"
-                @keydown.space.prevent="toggleGroup(group.name)"
-              >
-                <span class="group-title">{{ group.name }}</span>
-                <el-icon class="group-caret" :class="{ closed: closedGroups.has(group.name) }"><ArrowDown /></el-icon>
-              </span>
-            </template>
-            <template v-if="!closedGroups.has(group.name)">
-              <el-menu-item v-for="item in group.items" :key="item.index" :index="item.index">
-                <el-icon><component :is="item.icon" /></el-icon>
-                <span>{{ item.label }}</span>
-              </el-menu-item>
-            </template>
-          </el-menu-item-group>
-          <template v-else>
-            <el-menu-item v-for="item in group.items" :key="item.index" :index="item.index">
-              <el-icon><component :is="item.icon" /></el-icon>
-              <span>{{ item.label }}</span>
-            </el-menu-item>
+        <!-- 二级菜单（IA 归并批次 2026-10-03）：el-sub-menu 标准折叠子菜单替代手搓分组
+             （组名升级为可点击父级，展开箭头/键盘导航由 EP 原生处理）。default-openeds
+             在挂载瞬间生效——此安全由 S1-1 的 ensureUserLoaded 屏障保证（守卫先补完
+             me() 才放行，MainLayout 挂载时 isAdmin 已就绪，不存在异步分组竞态）；
+             全组默认展开，点击父级可收起 -->
+        <el-sub-menu v-for="group in menuGroups" :key="group.name" :index="group.name">
+          <template #title>
+            <span class="group-title">{{ group.name }}</span>
           </template>
-        </template>
+          <el-menu-item v-for="item in group.items" :key="item.index" :index="item.index">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.label }}</span>
+          </el-menu-item>
+        </el-sub-menu>
       </el-menu>
       <div v-else-if="collapsed && !isMobile" class="collapse-nav">
         <template v-for="item in navItems" :key="item.index">
@@ -276,13 +257,11 @@ const navItems = [
   // 应用商店/Docker 管理为 operator+ 页面（路由 requiresOperate）：operateOnly 让 viewer 不再看到点进去被弹回的菜单项
   { index: '/apps', label: '应用商店', icon: Goods, group: '资源', operateOnly: true },
   { index: '/grant-requests', label: '资产申请', icon: Ticket, group: '资源', operateOnly: true },
-  { index: '/hosts', label: '宿主机', icon: Cpu, group: '基础设施' },
   { index: '/storage', label: '存储池', icon: FolderOpened, group: '基础设施' },
   { index: '/networks', label: '网络', icon: Connection, group: '基础设施' },
   { index: '/containers', label: '容器', icon: Box, group: '基础设施', operateOnly: true },
   { index: '/tasks', label: '任务中心', icon: List, group: '运维' },
   { index: '/audit', label: '审计中心', icon: Document, group: '运维' },
-  { index: '/crons', label: '计划任务', icon: Timer, group: '运维', adminOnly: true },
   { index: '/recycle-bin', label: '回收站', icon: Delete, group: '运维', adminOnly: true },
   // 工具箱（进程 Top/磁盘诊断）：低频管理员功能，归管理组而非运维组（运维组只留任务/审计/回收等动线）
   { index: '/users', label: '用户管理', icon: User, group: '管理', adminOnly: true },
@@ -298,15 +277,6 @@ const menuGroups = computed(() => {
     .map((name) => ({ name, items: visible.filter((it) => it.group === name) }))
     .filter((g) => g.items.length > 0)
 })
-
-// 分组折叠状态：默认全展开（closedGroups 为空），点击组名切换；不依赖 el-menu 内部展开机制
-const closedGroups = ref(new Set())
-function toggleGroup(name) {
-  const next = new Set(closedGroups.value)
-  if (next.has(name)) next.delete(name)
-  else next.add(name)
-  closedGroups.value = next
-}
 
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard'))
 
@@ -432,35 +402,19 @@ function onUserCommand(cmd) {
 .menu :deep(.el-menu-item-group__title) {
   padding: 0;
 }
-.nav-group-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 14px;
-  font-weight: 600;
-  height: 36px;
-  padding: 0 16px;
-  letter-spacing: 2px;
-  cursor: pointer;
-  user-select: none;
-  transition: color 0.2s ease;
+/* el-sub-menu 二级菜单适配：父级标题与 EP 展开箭头对齐全站质感；
+   深色侧栏上 popup/inline 子菜单背景继承侧栏底色 */
+:deep(.el-sub-menu__title) {
+  padding-left: 20px !important;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.05em;
 }
-.nav-group-title:hover {
-  color: rgba(255, 255, 255, 0.95);
+:deep(.el-sub-menu__title:hover) {
+  background: rgba(255, 255, 255, 0.06);
 }
-.group-title {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 2px;
-}
-.group-caret {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.6);
-  transition: transform 0.2s ease;
-}
-.group-caret.closed {
-  transform: rotate(-90deg);
+:deep(.el-sub-menu .el-menu) {
+  background: transparent !important;
 }
 .collapse-nav {
   flex: 1;
