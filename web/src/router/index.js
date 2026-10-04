@@ -35,13 +35,13 @@ const routes = [
       { path: 'docker/images', redirect: '/images' },
       { path: 'docker/networks', redirect: '/networks' },
       { path: 'docker/volumes', redirect: '/storage' },
-      // IA 归并批次：宿主机/计划任务并入系统设置，旧地址重定向
-      { path: 'hosts', redirect: '/settings' },
-      { path: 'crons', redirect: '/settings' },
+      // IA 归并批次：宿主机并入系统设置（旧地址直接落 HostList 真路由，不再重定向——
+      // 同路径 redirect 会遮住后面的真路由，此前 /crons /hosts 深链全被吞）
       { path: 'ai', redirect: '/dashboard' },
       { path: 'cloud-init-templates', redirect: '/settings' },
       { path: 'recycle-bin', name: 'recycle-bin', component: () => import('../views/RecycleBin.vue'), meta: { requiresAdmin: true } },
       { path: 'crons', name: 'crons', component: () => import('../views/CronList.vue'), meta: { requiresAdmin: true } },
+      { path: 'automation', name: 'automation', component: () => import('../views/Automation.vue'), meta: { requiresOperate: true } },
       { path: 'vms/:id', name: 'vm-detail', component: () => import('../views/VmDetail.vue') },
       { path: 'hosts', name: 'hosts', component: () => import('../views/HostList.vue') },
       { path: 'images', name: 'images', component: () => import('../views/ImageList.vue') },

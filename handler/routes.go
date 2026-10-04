@@ -358,6 +358,15 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		apps.GET("/:id", appsHandler.Get)
 	}
 
+	// 运维自动化（P4 S1）：引擎状态 + adhoc 批量执行（ansible_run 异步任务）
+	ansibleHandler := NewAnsibleHandler(deps.DB, deps.Tasks)
+	ansibleGroup := api.Group("/ansible")
+	ansibleGroup.Use(middleware.OperatorMiddleware())
+	{
+		ansibleGroup.GET("/status", ansibleHandler.Status)
+		ansibleGroup.POST("/run", ansibleHandler.Run)
+	}
+
 	// cloud-init 配置模板（operator/admin：创建向导「套用模板/保存为模板」与管理页共用）
 	citHandler := NewCloudInitTemplateHandler(deps.DB)
 	cit := api.Group("/cloud-init-templates")

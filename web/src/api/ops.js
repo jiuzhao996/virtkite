@@ -24,6 +24,10 @@ export const ops = {
   appDetail: (id) => unwrap(http.get('/apps/' + id)),
   installApp: (payload) => unwrap(http.post('/vms/apps/install', payload)),
 
+  // 运维自动化（P4）：引擎状态 + adhoc 批量执行（ansible_run 异步任务，202 返回 task_id）
+  ansibleStatus: () => unwrap(http.get('/ansible/status')),
+  ansibleRun: (payload) => unwrap(http.post('/ansible/run', payload)),
+
   // 镜像市场（云镜像 + 官方安装 ISO；下载转后台任务，202 返回 task_id）
   imageMarket: () => unwrap(http.get('/images/market')),
   imageMarketIso: () => unwrap(http.get('/images/market/iso')),

@@ -264,7 +264,10 @@ const navItems = [
   { index: '/storage', label: '存储池', icon: FolderOpened, group: '基础设施' },
   { index: '/networks', label: '网络', icon: Connection, group: '基础设施' },
   { index: '/containers', label: '容器', icon: Box, group: '基础设施', operateOnly: true },
+  // 2026-10-04 用户拍板：自动化（P4）+ 计划任务前置到运维组（原藏系统设置，存在感为零）
+  { index: '/automation', label: '自动化', icon: Cpu, group: '运维', operateOnly: true },
   { index: '/tasks', label: '任务中心', icon: List, group: '运维' },
+  { index: '/crons', label: '计划任务', icon: Timer, group: '运维', adminOnly: true },
   { index: '/audit', label: '审计中心', icon: Document, group: '运维' },
   { index: '/recycle-bin', label: '回收站', icon: Delete, group: '运维', adminOnly: true },
   // 工具箱（进程 Top/磁盘诊断）：低频管理员功能，归管理组而非运维组（运维组只留任务/审计/回收等动线）

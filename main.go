@@ -176,6 +176,8 @@ func main() {
 	// 主密钥与凭据托管同源（handler.NewVMCredentialHandler）：app_install 靠它解密服务端 SSH 凭据，
 	// 二者必须一致，否则「保存凭据」与「安装取凭据」会各自用不同密钥而互相解不开
 	tasks.RegisterAppTasks(taskMgr, handler.CredentialMasterSecret())
+	// ansible_run 同源主密钥：批量执行要解密 vm_credentials 托管口令（P4 自动化运维）
+	tasks.RegisterAnsibleTasks(taskMgr, handler.CredentialMasterSecret())
 	cron.NotifyURL = os.Getenv("CRON_NOTIFY_URL") // 计划任务失败通知（机器人 webhook，可空）
 	consoleRegistry := console.NewRegistry(db)
 	consoleRegistry.StartSweeper() // 启动过期清扫协程（内部 recover 兜底）
