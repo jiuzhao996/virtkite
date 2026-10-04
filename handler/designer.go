@@ -454,12 +454,25 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 	st.Steps = append(st.Steps, "已开机，等待系统启动与 IP 分配…")
 
 	// 3) 等运行 + IP。IP 自给自足：vms.ip 平时靠列表/详情请求惰性回填（syncVMIPs），
-	// 设计器后台流程没人开页面，必须自己查 DHCP 租约按 MAC 匹配
+	// 设计器后台流程没人开页面，必须自己查 DHCP 租约按 MAC 匹配。
+	// 双窗口 + 域活性自愈（v3 遗留收口）：首次启动竞态（cloud-init seed 就绪时机/
+	// 磁盘链首次打开慢）可能让域中途停掉，DB 状态是我们乐观写入的反映不出来——
+	// 每轮用 GetDomainState 探活，域已停则自动再开机（最多 2 次），每窗 3 分钟。
 	var vm model.VM
+	restarts := 0
 	deadline := time.Now().Add(3 * time.Minute)
 	for time.Now().Before(deadline) {
 		if err := h.DB.First(&vm, vmID).Error; err != nil {
 			return 0, fmt.Errorf("VM 记录读取失败: %w", err)
+		}
+		if state, serr := h.Virt.GetDomainState(n.Name); serr == nil && state == virt.StatusShutOff && restarts < 2 {
+			restarts++
+			log.Printf("[designer] VM %s(%d) 域已停止（启动竞态），自动重启第 %d 次", n.Name, vmID, restarts)
+			st.Steps = append(st.Steps, "检测到域已停止（启动竞态），自动重启（第 "+strconv.Itoa(restarts)+" 次）…")
+			if serr := h.Virt.StartDomain(n.Name); serr != nil {
+				return vmID, fmt.Errorf("自动重启失败: %w", serr)
+			}
+			deadline = time.Now().Add(3 * time.Minute)
 		}
 		if vm.Status == model.VMStatusRunning && vm.IP == "" && vm.MACAddress != "" {
 			if ip := h.leaseIPFor(vm.MACAddress); ip != "" {
@@ -478,7 +491,7 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 		time.Sleep(5 * time.Second)
 	}
 	if vm.IP == "" {
-		return 0, fmt.Errorf("VM 未获得 IP（DHCP 超时）")
+		return 0, fmt.Errorf("VM 未获得 IP（DHCP 超时，已自动重启 %d 次）", restarts)
 	}
 	st.Steps = append(st.Steps, "VM 运行中，IP="+vm.IP)
 
