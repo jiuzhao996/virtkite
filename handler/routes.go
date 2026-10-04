@@ -425,7 +425,6 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		monitor.GET("/vm-metrics-history", historyHandler.VMDetailedHistory)
 		// 通用只读 PromQL 查询（原生看板扩展层：panels.js 注册表驱动，加面板零后端改动）
 		monitor.POST("/prom-query", historyHandler.PromQuery)
-		// Loki 日志查询（v3 批次 G：指标+日志+告警完整可观测性）
 	}
 
 	// 声明式部署栈（P2A：清单 operator+；deploy admin；docs 命中栈元数据清单才可读）

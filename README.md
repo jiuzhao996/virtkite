@@ -24,7 +24,6 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 | 容器 | Docker CLI / Docker Engine API（`service/dockerx` 封装：结构化输出 + exec TTY 容器终端）+ docker compose |
 | 前端 | Vue 3 + Vite + Element Plus + vue-router + ECharts |
 | 监控 | 内建 Prometheus exporter + Prometheus + Alertmanager（看板由平台 ECharts 原生渲染） |
-| 日志 | Loki + Promtail（可选增量，compose 模板存档于 deploy/；LogQL 经后端代理查询） |
 | AI | OpenAI 兼容 API 代理（SSE 流式 + 平台上下文注入，Key 只存服务端） |
 | 部署 | 二进制直跑 / Docker / docker-compose |
 
@@ -65,10 +64,12 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **SSH 凭据托管（v3）（AES-256-GCM 加密落库：主密钥运行时注入不落库 + 每条记录随机盐，数据库泄露后凭据不可直接可读；文件管理 / VM 应用安装「使用已保存凭据」后端自行解密消费，明文不出服务端）
 - [x] **VM 文件管理（v3：双通道）**（在线通道：SSH/SFTP 浏览/上传/下载/删除/建目录，管开机机；离线通道：guestmount 只读挂载关机机系统盘，不依赖 VM 内 SSH；运行中 VM 一律拒绝离线挂载防磁盘锁，挂载只读——宁可浏览受限不可损坏磁盘）
 - [x] **计划任务（v3，v4 扩动作）**（自研五字段 cron 解析（百行纯函数可单测，不引第三方）+ 整分 tick 调度器：定时快照 / mysqldump 数据库备份 / **定时执行 Playbook**（转 Ansible 任务管线，RECAP 计数入执行历史，调度与引擎各司其职）；启停 / 立即运行 / 执行记录）
-- [x] ~~Loki 日志栈（v3）~~（2026-10 优化期拆除平台集成：查询面板/代理接口/配置字段全删；logstash 式外接栈容器保留在 deploy/ 供自行部署，平台不再强绑——指标+告警已覆盖主链路，日志属可选增量）
+- [x] ~~Loki 日志栈（v3）~~（2026-10 优化期拆除平台集成：查询面板/代理接口/配置字段全删，部署配置亦已随裁剪移出仓库（2026-09-30）——指标+告警已覆盖主链路，日志属可选增量自行外接，平台不再强绑）
 - [x] **镜像市场（云镜像 qcow2 + 官方安装 ISO）**（内置清单一键提交下载任务，异步流式落盘、完成自动登记镜像库；单源直下并逐卡标注来源——清华源为主、个别卡南大源，每卡附「访问源页面」链接；云镜像 5 项 / ISO 6 项含 Ubuntu 26.04）
 - [x] **架构设计器（v4，eNSP 式先设计后落地）**（预置架构模板一键载入 + AntV X6 画布：设备栏拖拽添加、节点自由拖动、边缘拉线连线、对齐吸附、Delete 删除；计划保存 data/designer + YAML 导出；**一键落地**：容器栈 compose up、VM 节点走完整建机管线（cloud-init 注入 → 自动开机 → DHCP 租约自愈重试 → 装应用 → 跑 playbook）；SSH 口令只随落地请求一次性携带，不随计划保存）
 - [x] **Ansible 自动化运维（v4，批量执行引擎缝合）**（宿主机现成 Ansible 引擎探测；**inventory 由平台资产生成**——目标只收 VM id，白名单结构性成立；adhoc 批量执行（ping/command/shell）输出节流实时滚动；**Playbook 库**（CRUD + --syntax-check 校验 + 头部 vars 约定渲染执行表单 + RECAP 逐主机矩阵）；**SSH 免密双通道**（平台托管 ed25519 密钥对：新建 VM cloud-init 直通、存量一键分发公钥，免密 VM 走私钥通道不承载口令文件）；cron 新增 playbook 动作（调度 × 引擎缝合））
+- [x] **声明式部署栈 / 栈商店（v4）**（内置 compose 栈目录八个：ELK 单机 / ES 集群 / Zabbix / Jumpserver / MySQL 主从 / Nginx 负载均衡 / Prometheus 监控栈 / Tomcat，清单 + 部署说明 + 一键部署；清单 operator 可读、部署 admin 专属）
+- [x] **镜像版本检测（v4）**（本地镜像 digest 对比镜像代理源远端 digest，镜像管理页「检查更新」一键比对）
 - [x] **VM 导出/导入（v3）**（tar.gz 全量包 = 域 XML + 系统盘卷；导出 gzip/tar 两级 writer 管道直写响应体，不落临时盘不整载内存；导入失败按副作用逆序清理）
 - [x] **回收站（v3）**（删除是软删——回收站页可视化软删 VM：恢复 / 彻底清除（admin），删错机器的后悔药）
 - [x] **工具箱（v3）**（宿主机快捷运维：进程列表 / 磁盘用量 / Docker 清理 / 任务记录清理，admin 专属）
@@ -77,7 +78,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **系统公告 + 安全入口（v3）**（公告板登录页与仪表盘公开展示（admin 经设置页编辑）；登录接口可设安全入口暗号，无暗号请求一律 404 伪装；建用户/改密密码复杂度校验）
 - [x] **安全加固**（路径参数主键统一解析防 SQL 注入 / libvirt XML 全部走 `encoding/xml` / JWT 锁定 HS256 / SSH 目标白名单 / release 密钥强校验）
 - [x] E2E 回归脚本（`scripts/smoke.sh`，23 项断言）
-- [x] 单元测试（257 个顶层测试函数 / 207 个 `t.Run` 子测试分组 / 18 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
+- [x] 单元测试（239 个顶层测试函数 / 195 个 `t.Run` 子测试分组 / 18 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
 - [x] 前端工程化（路由懒加载 + manualChunks 分包：首屏下载量 −50%；`utils/format.js` 收敛 10 余处重复；图标全部换成 `@element-plus/icons-vue`）
 
 
@@ -88,7 +89,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - MySQL 8.0+（或 Docker）
 - libvirt + KVM（运行虚拟机的宿主机）
 - Docker（可选：容器管理页需要，未安装时相关页面显示不可用提示）
-- Prometheus / Alertmanager（Docker compose 一键栈，见监控章节）；Loki 可选外接
+- Prometheus / Alertmanager（Docker compose 一键栈，见监控章节）
 
 ## 快速开始
 
@@ -331,7 +332,6 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 - 镜像市场：`GET /api/images/market`（清单） `POST /api/images/market/download`（admin，202 任务）
 - VM 导出/导入：`GET /api/vms/:id/export`（tar.gz 流式下载） `POST /api/vms/import-file`（admin）
 - cloud-init 模板：`GET|POST /api/cloud-init-templates` `GET|PUT|DELETE /api/cloud-init-templates/:id`
-- Loki 日志（viewer 403）：`GET /api/monitor/loki/query` `GET /api/monitor/loki/labels`
 - 公告：`GET /api/announcement`（公开读；写入口收敛在 `PUT /api/settings`）
 
 ## 项目结构

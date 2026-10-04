@@ -1,6 +1,6 @@
 # scripts/
 
-一次性运维脚本，均为独立 `main` 包，在仓库根目录用 `go run ./scripts/<name>` 执行。
+一次性运维脚本与回归工具：Go 脚本均为独立 `main` 包，在仓库根目录用 `go run ./scripts/<name>` 执行；
 数据库配置与主线服务一致：读仓库根目录 `.env` 或进程环境变量 `DB_HOST` / `DB_PORT` /
 `DB_USER` / `DB_PASSWORD` / `DB_NAME`。
 
@@ -8,6 +8,8 @@
 | --- | --- | --- |
 | `credential-rekey` | 把 `vm_credentials` 的 SSH 凭据从旧主密钥重加密到新的 `CREDENTIAL_MASTER_KEY` | dry-run，`--apply` 写库 |
 | `purge-task-secrets` | 清除 `tasks.payload` 里历史遗留的 SSH 明文口令 | dry-run，`--apply` 写库 |
+| `init-db.sql` | 建库/建账号初始化 SQL（手工部署 MySQL 时交 mysql 客户端执行，非 Go 脚本） | `mysql < init-db.sql` |
+| `smoke.sh` | E2E 一键回归：23 项断言覆盖核心 API 全链路（只读优先，写操作 `smoke-` 前缀并清理；非 Go 脚本） | `BASE=http://127.0.0.1:8080` |
 
 ## 建议操作顺序（清洗 tasks 明文口令）
 

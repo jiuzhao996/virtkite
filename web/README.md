@@ -7,30 +7,33 @@
 - Vue 3（组合式 API）
 - Vite 5（构建 / 开发服务器）
 - Element Plus（UI 组件库）+ @element-plus/icons-vue
-- vue-router 4（hash 模式路由）
+- vue-router 4（hash 模式路由，懒加载）
 - axios（API 请求）
+- ECharts（监控/拓扑图表）、@antv/x6（架构设计器画布）、@xterm/xterm（终端）、marked + DOMPurify（Markdown 渲染）
 
 ## 目录结构
 
 ```
 web/
-├── index.html              # 入口 HTML
-├── vite.config.js          # Vite 配置（base、dev 代理、build 输出）
+├── index.html              # 入口 HTML（品牌 favicon 三件套 + 标题）
+├── vite.config.js          # Vite 配置（base、dev 代理、manualChunks 分包）
 ├── package.json
+├── public/                 # 静态资源（brand/ 品牌 logo 与 favicon）
 └── src/
-    ├── main.js             # 应用入口（注册 Element Plus / 路由）
-    ├── App.vue             # 根组件（启动拉取用户信息）
+    ├── main.js             # 应用入口（注册 Element Plus / 路由 / 图标全局注册）
+    ├── App.vue             # 根组件（启动拉取用户信息 + 深色模式）
     ├── api/index.js        # axios 实例 + 全部接口封装
     ├── store/auth.js       # token / 用户响应式状态 + 路由守卫
-    ├── router/index.js     # 路由表与鉴权守卫
-    ├── layout/MainLayout.vue  # 侧边栏 + 顶栏布局
-    └── views/              # 页面
-        ├── Login.vue       # 登录
-        ├── Dashboard.vue   # 仪表盘（总览 + VM 状态分布）
-        ├── VmList.vue      # 虚拟机管理（含新建）
-        ├── HostList.vue    # 宿主机管理
-        ├── ImageList.vue   # 镜像管理（上传 / 删除）
-        └── AuditList.vue   # 审计日志（筛选 + 分页）
+    ├── router/index.js     # 路由表与鉴权守卫（懒加载）
+    ├── layout/MainLayout.vue  # 侧栏（二级菜单）+ 顶栏布局
+    ├── components/         # 公共组件（PageHead/Toolbar/AlertBell/VmFileBrowser/ContainerTerminal/CopyButton/DockerGate）
+    ├── composables/        # useAutoRefresh / useChart / usePagination
+    ├── utils/              # format / clipboard / echarts / term-theme 等工具
+    └── views/              # 28 个顶层页面 + 按域子目录（子页与组件）
+        ├── Login.vue / Dashboard.vue / VmList.vue / VmDetail.vue / ...（总览与资产页）
+        ├── console/ images/ storage/ monitor/ vm-detail/ wizard/ ...（按域组件目录）
+        ├── docker/         # Docker 管理（1Panel 式子路由）
+        └── apps/StackStore.vue、network/FlowView.vue、monitor/panels.js
 ```
 
 ## 脚本
@@ -52,6 +55,7 @@ web/
 - 统一响应解包：后端返回 `{code,message,data}`，`api/index.js` 的 `unwrap` 直接返回 `res.data`，页面取 `res.data.xxx`。
 - 鉴权：登录后 token 存入 `localStorage`，axios 请求拦截器自动附加 `Authorization` 头；响应拦截器在 401 时跳回登录页。
 - 权限：路由守卫限制未登录访问；管理员专属接口由后端 `AdminMiddleware` 强制校验，前端仅做菜单/按钮层面的展示控制。
+- 主题：顶栏开关切换深色模式（`html.dark` + Element Plus dark CSS 变量），偏好存 `localStorage` `vmops-theme`。
 
 ## 相关文档
 
