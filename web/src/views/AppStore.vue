@@ -6,12 +6,6 @@
         <p class="page-desc">选择一台虚拟机，一键安装常用服务（在虚拟机内通过 SSH 执行）</p>
       </template>
     </PageHead>
-<PageHead title="应用商店">
-      <template #subtitle>
-        <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
-        <p class="page-desc">选择一台虚拟机，一键安装常用服务（在虚拟机内通过 SSH 执行）</p>
-      </template>
-    </PageHead>
     <!-- 双 tab（P2A）：VM 内脚本应用（原内容）+ 容器部署栈（声明式 YAML） -->
     <el-tabs v-model="activeTab">
       <el-tab-pane label="脚本应用" name="apps">

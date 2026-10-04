@@ -43,7 +43,13 @@
             <span class="ds-tip">拖节点编排 · 节点边缘拉线连线 · Delete 删除选中</span>
           </div>
         </template>
-        <div ref="canvasRef" class="ds-canvas"></div>
+        <!-- 外层锁高（overflow:hidden 兜底），X6 用独立内层容器——autoResize 的
+             SizeSensor 绑的是 X6 容器的父元素（=外层），若让 X6 直接用带 CSS 高度
+             的元素，panning 后传感器会把撑大的高度内联回写、循环锁死（页面被拉到
+             十几万 px，centerContent 失效＝点模板"没反应"） -->
+        <div class="ds-canvas">
+          <div ref="canvasRef" class="ds-canvas-inner"></div>
+        </div>
         <div v-if="applyStatus" class="ds-apply" :class="applyStatus.status">
           <b>{{ applyStatusText }}</b>
           <div v-for="(s, i) in applyStatus.steps" :key="i" class="ds-step mono">{{ s }}</div>
@@ -236,7 +242,9 @@ function initGraph() {
     container: canvasRef.value,
     autoResize: true,
     grid: { size: 16, visible: true, type: 'dot', args: { color: cssVar('--color-border', '#dcdfe6'), thickness: 1 } },
-    panning: { enabled: true },
+    // panning 只认左键拖空白：默认 eventTypes 含 mouseWheel，会与滚轮缩放叠加
+    // 且拖动导致容器尺寸变化，触发 autoResize 把尺寸内联回写（画布爆炸根因之一）
+    panning: { enabled: true, eventTypes: ['leftMouseDown'] },
     mousewheel: { enabled: true, modifiers: [], minScale: 0.4, maxScale: 2.5 },
     highlighting: { magnetAvailable: { name: 'stroke', args: { attrs: { 'stroke-width': 3 } } } },
     connecting: {
@@ -506,9 +514,11 @@ onUnmounted(() => {
 }
 .ds-palette-item:hover { border-color: var(--el-color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .ds-canvas {
+  position: relative;
   height: 520px; border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--el-bg-color); overflow: hidden;
 }
+.ds-canvas-inner { position: absolute; inset: 0; }
 /* 节点边缘连接点：hover 节点时显现，拖出即连线 */
 .ds-canvas :deep(.x6-port-body) { opacity: 0; }
 .ds-canvas :deep(.x6-node:hover .x6-port-body) { opacity: 1; }

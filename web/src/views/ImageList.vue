@@ -117,16 +117,17 @@
           </el-table>
         </el-card>
       </el-tab-pane>
-      <!-- Tab 3 镜像市场：入口落地页（云镜像 / 安装 ISO 两个二级入口，1Panel 式） -->
-      <el-tab-pane label="镜像市场" name="market" lazy>
-        <ImageMarketHome embedded />
-      </el-tab-pane>
-      <!-- Tab 4 容器镜像（Docker 资源拆分批次）：operator+ 可见（viewer 不出 tab）；
-           lazy 首次激活才挂载（避免未激活时打 docker 接口）；门控重试接 ImageTab.refresh -->
+      <!-- Tab 3 容器镜像（Docker 资源拆分批次）：operator+ 可见（viewer 不出 tab）；
+           lazy 首次激活才挂载（避免未激活时打 docker 接口）；门控重试接 ImageTab.refresh
+           （2026-10-04 用户拍板：容器镜像前调、镜像市场殿后） -->
       <el-tab-pane v-if="canOperate" label="容器镜像" name="docker" lazy>
         <DockerGate @retry="dockerTabRef?.refresh?.()">
           <ImageTab ref="dockerTabRef" />
         </DockerGate>
+      </el-tab-pane>
+      <!-- Tab 4 镜像市场：入口落地页（云镜像 / 安装 ISO 两个二级入口，1Panel 式） -->
+      <el-tab-pane label="镜像市场" name="market" lazy>
+        <ImageMarketHome embedded />
       </el-tab-pane>
     </el-tabs>
 
