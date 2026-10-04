@@ -36,22 +36,26 @@ const props = defineProps({
 })
 
 const router = useRouter()
-const { isAdmin } = useAuth()
+const { isAdmin, canOperate } = useAuth()
 
 const stats = computed(() => {
   const o = props.overview || {}
-  // 图标色一律 CSS 变量（硬编码 hex 是审计反模式）；「用户」卡仅管理员可见（/users 为 admin 专属页）
+  // 图标色一律 CSS 变量（硬编码 hex 是审计反模式）；
+  // 「用户」卡仅管理员可见（/users 为 admin 专属页）；
+  // 「宿主机/审计」卡 operator+（/hosts、/audit 后端均为 OperatorMiddleware 及以上，viewer 点击只会得到 403 页）
   const all = [
-    { label: '宿主机', icon: Cpu, color: 'var(--color-primary)', value: o.host_count || 0, to: '/hosts' },
+    { label: '宿主机', icon: Cpu, color: 'var(--color-primary)', value: o.host_count || 0, to: '/hosts', operateOnly: true },
     { label: '虚拟机', icon: Monitor, color: 'var(--color-primary)', value: o.vm_count || 0, to: '/vms' },
     { label: '运行中', icon: VideoPlay, color: 'var(--color-accent)', value: o.running_vm_count || 0, to: '/vms' },
     { label: '存储池', icon: FolderOpened, color: 'var(--color-warning)', value: o.pool_count || 0, to: '/storage' },
     { label: '网络', icon: Connection, color: 'var(--color-secondary)', value: o.network_count || 0, to: '/networks' },
     { label: '镜像', icon: Picture, color: 'var(--color-violet)', value: o.image_count || 0, to: '/images' },
     { label: '用户', icon: User, color: 'var(--color-info)', value: o.user_count || 0, to: '/users', adminOnly: true },
-    { label: '审计', icon: Document, color: 'var(--color-info)', value: o.audit_count || 0, to: '/audit' }
+    { label: '审计', icon: Document, color: 'var(--color-info)', value: o.audit_count || 0, to: '/audit', operateOnly: true }
   ]
-  return all.filter((s) => !s.adminOnly || isAdmin.value)
+  return all.filter(
+    (s) => (!s.adminOnly || isAdmin.value) && (!s.operateOnly || canOperate.value)
+  )
 })
 </script>
 

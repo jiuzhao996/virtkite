@@ -5,7 +5,7 @@
       class="aside"
       :class="{ 'aside-mobile': isMobile, 'aside-mobile-open': isMobile && drawerOpen }"
     >
-      <div class="brand" :class="{ collapsed }">
+      <div class="brand" :class="{ collapsed }" title="回到仪表盘" @click="router.push('/dashboard')">
         <template v-if="!collapsed">
           <img class="brand-logo" src="/brand/mark-white.svg" alt="鸢航" />
           <span class="brand-text">鸢航 VirtKite</span>
@@ -16,11 +16,14 @@
       </div>
       <el-menu
         v-if="!collapsed || isMobile"
+        ref="menuRef"
         :default-active="activeIndex"
-        :default-openeds="menuGroups.map((g) => g.name)"
+        :default-openeds="[...openedGroups]"
         router
         class="menu"
         background-color="transparent"
+        @open="onGroupOpen"
+        @close="onGroupClose"
       >
         <!-- 二级菜单（IA 归并批次 2026-10-03）：el-sub-menu 标准折叠子菜单替代手搓分组
              （组名升级为可点击父级，展开箭头/键盘导航由 EP 原生处理）。default-openeds
@@ -38,20 +41,24 @@
         </el-sub-menu>
       </el-menu>
       <div v-else-if="collapsed && !isMobile" class="collapse-nav">
-        <template v-for="item in navItems" :key="item.index">
-        <el-tooltip
-          v-if="(!item.adminOnly || isAdmin) && (!item.operateOnly || canOperate)"
-          :content="item.label"
-          placement="right"
-        >
-          <div
-            class="collapse-item"
-            :class="{ active: activeIndex === item.index }"
-            @click="$router.push(item.index)"
+        <!-- 折叠态按分组渲染：组间细分隔线保留「总览/资源/基础设施/运维/管理」的扫视结构
+             （平铺 16 个图标只能靠 hover tooltip，分组感全丢） -->
+        <template v-for="(group, gi) in menuGroups" :key="group.name">
+          <div v-if="gi > 0" class="collapse-divider" />
+          <el-tooltip
+            v-for="item in group.items"
+            :key="item.index"
+            :content="item.label"
+            placement="right"
           >
-            <el-icon><component :is="item.icon" /></el-icon>
-          </div>
-        </el-tooltip>
+            <div
+              class="collapse-item"
+              :class="{ active: activeIndex === item.index }"
+              @click="$router.push(item.index)"
+            >
+              <el-icon><component :is="item.icon" /></el-icon>
+            </div>
+          </el-tooltip>
         </template>
       </div>
       <!-- 底部常驻收起/展开条：顶部 brand 角落的收缩键太隐蔽（用户反馈"压根看不出来"），这里给全宽可点的显式入口 -->
@@ -256,19 +263,22 @@ watch(() => route.path, () => {
 const navItems = [
   { index: '/dashboard', label: '仪表盘', icon: DataLine, group: '总览' },
   { index: '/vms', label: '虚拟机', icon: Monitor, group: '资源' },
+  // 架构设计是 v4 差异化主打 +「先设计后落地」动线起点，提到资源组第 2（原第 4 存在感不足）
+  { index: '/designer', label: '架构设计', icon: MagicStick, group: '资源', operateOnly: true },
   { index: '/images', label: '镜像管理', icon: Picture, group: '资源' },
   // 应用商店/Docker 管理为 operator+ 页面（路由 requiresOperate）：operateOnly 让 viewer 不再看到点进去被弹回的菜单项
   { index: '/apps', label: '应用商店', icon: Goods, group: '资源', operateOnly: true },
-  { index: '/designer', label: '架构设计', icon: MagicStick, group: '资源', operateOnly: true },
   { index: '/grant-requests', label: '资产申请', icon: Ticket, group: '资源', operateOnly: true },
   { index: '/storage', label: '存储池', icon: FolderOpened, group: '基础设施' },
   { index: '/networks', label: '网络', icon: Connection, group: '基础设施' },
   { index: '/containers', label: '容器', icon: Box, group: '基础设施', operateOnly: true },
   // 2026-10-04 用户拍板：自动化（P4）+ 计划任务前置到运维组（原藏系统设置，存在感为零）
-  { index: '/automation', label: '自动化', icon: Cpu, group: '运维', operateOnly: true },
+  { index: '/automation', label: '运维自动化', icon: Cpu, group: '运维', operateOnly: true },
   { index: '/tasks', label: '任务中心', icon: List, group: '运维' },
   { index: '/crons', label: '计划任务', icon: Timer, group: '运维', adminOnly: true },
-  { index: '/audit', label: '审计中心', icon: Document, group: '运维' },
+  // 审计中心 operateOnly：后端 /api/audit 为 admin-only、/api/sessions 为 operator-only，
+  // viewer 点进来只会看到一张永远空着的会话表（403 静默失败），直接不展示入口
+  { index: '/audit', label: '审计中心', icon: Document, group: '运维', operateOnly: true },
   { index: '/recycle-bin', label: '回收站', icon: Delete, group: '运维', adminOnly: true },
   // 工具箱（进程 Top/磁盘诊断）：低频管理员功能，归管理组而非运维组（运维组只留任务/审计/回收等动线）
   { index: '/users', label: '用户管理', icon: User, group: '管理', adminOnly: true },
@@ -285,7 +295,30 @@ const menuGroups = computed(() => {
     .filter((g) => g.items.length > 0)
 })
 
+// 分组展开状态（受控）：默认只展开「总览/资源/运维」——五组全开时菜单内容 994px、
+// 900px 视口可视仅 788px（管理组整组沉底不可见且无滚动提示），低频的「基础设施/管理」
+// 默认收起，点组名即开。el-menu 无受控 openeds 属性，且收起侧栏会 v-if 重挂组件、
+// default-openeds 仅挂载瞬间生效——故用 Set 记录用户手动开/关（@open/@close），
+// 重挂后经 default-openeds 还原；深链/搜索跳转经 watch 自动展开高亮项所在组。
+const menuRef = ref(null)
+const openedGroups = ref(new Set(['总览', '资源', '运维']))
+function onGroupOpen(name) {
+  openedGroups.value.add(name)
+}
+function onGroupClose(name) {
+  openedGroups.value.delete(name)
+}
+
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard'))
+
+// 深链/搜索跳转自动展开高亮项所在组（声明须在 activeIndex 之后，watch 首参立即求值）
+watch(activeIndex, (idx) => {
+  const owner = menuGroups.value.find((g) => g.items.some((it) => it.index === idx))
+  if (owner && !openedGroups.value.has(owner.name)) {
+    openedGroups.value.add(owner.name)
+    menuRef.value?.open(owner.name)
+  }
+})
 
 // 全局搜索：每次下拉展开都重新拉 VM 清单（不做常驻缓存，新建/删除的机器下次展开即生效）。
 // viewer 也可用（GET /vms 对 viewer 放行）。拉取失败静默保留旧清单（搜索是辅助入口）。
@@ -404,6 +437,19 @@ function onUserCommand(cmd) {
   /* 菜单项多时允许滚动（侧栏整体 100vh，brand 区之外是菜单区） */
   overflow-y: auto;
   min-height: 0;
+  /* 细滚动条：原生亮色条压深青底过于扎眼，且用户无「下面还有条目」的感知 */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.menu::-webkit-scrollbar {
+  width: 4px;
+}
+.menu::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+}
+.menu::-webkit-scrollbar-track {
+  background: transparent;
 }
 /* 分组标题行（本地折叠状态，点击切换） */
 .menu :deep(.el-menu-item-group__title) {
@@ -433,6 +479,27 @@ function onUserCommand(cmd) {
   /* 折叠态图标同样可能超出 100vh：不滚动的话底部收起/展开条会被 .aside 的 overflow:hidden 裁掉（用户反馈"找不到收回侧边栏"） */
   overflow-y: auto;
   min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.collapse-nav::-webkit-scrollbar {
+  width: 4px;
+}
+.collapse-nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 2px;
+}
+/* 折叠态分组分隔线（总览/资源/基础设施/运维/管理之间的扫视锚点） */
+.collapse-divider {
+  width: 28px;
+  height: 1px;
+  margin: 5px 0;
+  background: rgba(255, 255, 255, 0.14);
+  flex-shrink: 0;
+}
+/* 品牌区可点回仪表盘（通用习惯：点 logo 回首页） */
+.brand {
+  cursor: pointer;
 }
 .collapse-item {
   width: 44px;
