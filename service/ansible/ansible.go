@@ -121,13 +121,11 @@ func BuildInventory(dir string, hosts []HostEntry, groups map[string][]string) (
 		fmt.Fprintf(&b, "%s ansible_host=%s ansible_port=%d ansible_user=%s ansible_ssh_pass='%s'\n",
 			h.Name, h.IP, h.Port, h.User, strings.ReplaceAll(h.Pass, "'", `'"'"'`))
 	}
+	// 成员白名单来自 [all] 主机：groups 只能引用已定义主机，防御性过滤
 	names := map[string]bool{}
-	for _, g := range groups {
-		for _, n := range g {
-			names[n] = true
-		}
+	for _, h := range hosts {
+		names[h.Name] = true
 	}
-	// groups 只能引用已有主机，防御性过滤
 	for g, members := range groups {
 		if g == "all" || len(members) == 0 {
 			continue

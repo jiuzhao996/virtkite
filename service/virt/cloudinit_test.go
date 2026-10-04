@@ -293,11 +293,20 @@ func TestGenerateSeedISOUserData(t *testing.T) {
 		{
 			name: "只有用户名+密码，没有 SSH key（口令登录场景）",
 			spec: &CloudInitSpec{Hostname: "db-01", User: "root", Password: "123456"},
+			// root 口令登录额外注入 PermitRootLogin 放开（P2B v2）：Rocky/RHEL sshd
+			// 默认 prohibit-password，只开 ssh_pwauth 时 root 仍被拒
 			want: "#cloud-config\n" +
 				"user: root\n" +
 				"password: 123456\n" +
 				"chpasswd: {expire: false}\n" +
 				"ssh_pwauth: true\n" +
+				"write_files:\n" +
+				"  - path: /etc/ssh/sshd_config.d/40-enable-root-login.conf\n" +
+				"    content: |\n" +
+				"      PermitRootLogin yes\n" +
+				"runcmd:\n" +
+				"  - [ sed, -i, 's/^#\\?PermitRootLogin.*/PermitRootLogin yes/', /etc/ssh/sshd_config ]\n" +
+				"  - [ systemctl, restart, sshd ]\n" +
 				"hostname: db-01\n",
 		},
 		{

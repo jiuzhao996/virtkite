@@ -90,11 +90,11 @@ type playbookMeta struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-// parsePlaybookHeader 读文件头部找 vmops-playbook 元数据行。
+// parsePlaybookHeader 读文件头部找 vmops-playbook 元数据行（只看前 8 行）。
 func parsePlaybookHeader(raw []byte) (name, desc, targets string) {
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
-		if i > 8 {
+		if i > 7 {
 			break
 		}
 		line = strings.TrimSpace(line)
