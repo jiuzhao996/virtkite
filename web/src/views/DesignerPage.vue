@@ -1,9 +1,9 @@
 <template>
   <div>
-    <PageHead title="架构设计" subtitle="选架构 → 摆节点 → 连线 → 一键落地（容器栈 compose 部署 + VM 建机装应用，口令仅落地时填写不随计划保存）" />
+    <PageHead title="架构设计" subtitle="拖拽编排 → 拉线连线 → 一键落地（容器栈 compose 部署 + VM 建机装应用，口令仅落地时填写不随计划保存）" />
 
     <div class="ds-layout">
-      <!-- 左：模板库 + 节点面板 -->
+      <!-- 左：模板库 + 设备栏（拖进画布）+ 已保存计划 -->
       <el-card shadow="never" class="ds-left">
         <template #header><span class="ds-h">预置架构</span></template>
         <div v-for="t in templates" :key="t.id" class="ds-tpl" @click="loadTemplate(t)">
@@ -11,22 +11,18 @@
           <span class="ds-tpl-desc">{{ t.desc }}</span>
         </div>
         <el-divider />
-        <span class="ds-h">添加节点</span>
-        <div class="ds-add">
-          <el-select v-model="addKind" size="small" style="width: 92px">
-            <el-option label="容器栈" value="container" />
-            <el-option label="VM 角色" value="vm" />
-            <el-option label="网络" value="net" />
-          </el-select>
-          <el-select v-if="addKind === 'container'" v-model="addRef" size="small" filterable placeholder="选栈" style="flex: 1">
-            <el-option v-for="s in stacks" :key="s.id" :label="s.id" :value="s.id" />
-          </el-select>
-          <el-select v-else-if="addKind === 'vm'" v-model="addRef" size="small" filterable placeholder="选云镜像" style="flex: 1">
-            <el-option v-for="img in cloudImages" :key="img.id" :label="img.name" :value="String(img.id)" />
-          </el-select>
-          <el-input v-else v-model="addRef" size="small" placeholder="网段建议" style="flex: 1" />
-          <el-button type="primary" size="small" :icon="Plus" @click="addNode" />
-        </div>
+        <div class="ds-h ds-hrow"><span>设备栏</span><span class="ds-hint">拖进画布添加</span></div>
+        <template v-for="g in paletteGroups" :key="g.kind">
+          <div class="ds-palette-title" :style="{ color: g.color }">{{ g.title }}</div>
+          <div class="ds-palette">
+            <div
+              v-for="it in g.items" :key="it.ref"
+              class="ds-palette-item" :style="{ borderLeftColor: g.color }"
+              :title="it.label + '（按住拖入画布）'"
+              @mousedown="startDrag($event, g.kind, it)"
+            >{{ it.label }}</div>
+          </div>
+        </template>
         <el-divider />
         <span class="ds-h">已保存计划</span>
         <div v-for="p in plans" :key="p.id" class="ds-plan" @click="loadPlan(p)">
@@ -35,17 +31,19 @@
         </div>
       </el-card>
 
-      <!-- 中：画布（ECharts graph 实时预览，点选节点） -->
+      <!-- 中：X6 画布（拖拽/连线/对齐） -->
       <el-card shadow="never" class="ds-mid">
         <template #header>
           <div class="ds-bar">
             <el-input v-model="planName" size="small" placeholder="计划名（保存用）" style="width: 180px" />
             <el-button size="small" :icon="DocumentChecked" @click="savePlan">保存</el-button>
             <el-button size="small" :icon="Download" @click="exportYaml">导出 YAML</el-button>
+            <el-button size="small" :icon="Aim" @click="zoomFit">适应画布</el-button>
             <el-button type="primary" size="small" :icon="VideoPlay" :loading="applying" @click="applyPlan">一键落地</el-button>
+            <span class="ds-tip">拖节点编排 · 节点边缘拉线连线 · Delete 删除选中</span>
           </div>
         </template>
-        <div ref="chartRef" class="ds-chart" />
+        <div ref="canvasRef" class="ds-canvas"></div>
         <div v-if="applyStatus" class="ds-apply" :class="applyStatus.status">
           <b>{{ applyStatusText }}</b>
           <div v-for="(s, i) in applyStatus.steps" :key="i" class="ds-step mono">{{ s }}</div>
@@ -58,9 +56,9 @@
         <template #header><span class="ds-h">节点属性</span></template>
         <template v-if="selected">
           <el-form label-width="64px" size="small">
-            <el-form-item label="名称"><el-input v-model="selected.name" @change="renderChart" /></el-form-item>
+            <el-form-item label="名称"><el-input v-model="selected.name" /></el-form-item>
             <el-form-item label="类型"><el-tag size="small" effect="plain">{{ kindLabel[selected.kind] }}</el-tag></el-form-item>
-            <!-- VM 节点落地参数（v2）：这些字段随计划保存，口令除外 -->
+            <!-- VM 节点落地参数：这些字段随计划保存，口令除外 -->
             <template v-if="selected.kind === 'vm'">
               <el-form-item label="云镜像">
                 <el-select v-model="selected.ref" filterable placeholder="选择云镜像" style="width: 100%">
@@ -93,23 +91,21 @@
                 </el-select>
               </el-form-item>
             </template>
-            <el-form-item v-else :label="selected.kind === 'container' ? '引用栈' : '建议值'">
+            <el-form-item v-else-if="selected.kind === 'container'" label="引用栈">
               <span class="mono ds-ref">{{ selected.ref }}</span>
+            </el-form-item>
+            <el-form-item v-else label="建议值">
+              <el-input v-model="selected.ref" placeholder="网段/用途" />
             </el-form-item>
             <el-form-item label="备注"><el-input v-model="selected.note" type="textarea" :rows="2" /></el-form-item>
           </el-form>
           <el-divider>连线</el-divider>
           <div class="ds-links">
-            <div v-for="(l, i) in linksOf(selected.id)" :key="i" class="ds-link-row">
-              <span class="mono">{{ nodeName(l.from) }} → {{ nodeName(l.to) }}</span>
-              <el-button text size="small" type="danger" :icon="Delete" @click="links.splice(links.indexOf(l), 1); renderChart()" />
+            <div v-for="l in edgesOfSelected" :key="l.id" class="ds-link-row">
+              <span class="mono">{{ l.text }}</span>
+              <el-button text size="small" type="danger" :icon="Delete" @click="removeEdge(l.id)" />
             </div>
-            <div class="ds-add">
-              <el-select v-model="linkTo" size="small" placeholder="连接到…" style="flex: 1">
-                <el-option v-for="n in nodes.filter((x) => x.id !== selected.id)" :key="n.id" :label="n.name" :value="n.id" />
-              </el-select>
-              <el-button size="small" :icon="Plus" @click="addLink" />
-            </div>
+            <div v-if="!edgesOfSelected.length" class="ds-link-empty">从节点边缘的连接点拉线到目标节点</div>
           </div>
           <el-divider />
           <el-button text type="danger" size="small" :icon="Delete" @click="removeSelected">删除节点</el-button>
@@ -121,20 +117,21 @@
 </template>
 
 <script setup>
-// 架构设计器（P2B v2）：模板载入 + 节点/连线编辑 + ECharts 实时预览 +
-// 计划保存(data/designer) + YAML 导出 + 一键落地（容器栈 compose up；VM 节点
-// 建机→等 IP→装应用，进度 apply-status 轮询）。SSH 口令只存在内存（_sshSecret
-// 下划线字段），保存/导出经 planPayload 剥离，落地时随 apply 请求体一次性携带。
-// 画布交互刻意用「点选编辑」而非拖拽画布库——零新依赖，v3 可换 AntV X6。
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+// 架构设计器（P2B v3）：画布换 AntV X6——设备栏拖拽添加（Addon.Dnd）、节点自由
+// 拖动、边缘连接点拉线连线、snapline 对齐、Delete 删除。业务链路（模板/计划存取/
+// YAML 导出/一键落地/属性面板）与 v2 完全一致，仅 planPayload 的数据源从 echarts
+// 数组换成 graphToPlan()（X6 → 计划 JSON 转换层），后端协议零改动。
+// SSH 口令只存在内存（节点 data._sshSecret），graphToPlan 剥离，落地时随 apply
+// 请求体一次性携带（后端写盘前也会强制剥离兜底）。
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Download, VideoPlay, DocumentChecked } from '@element-plus/icons-vue'
+import { Plus, Delete, Download, VideoPlay, DocumentChecked, Aim } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, isCancel, cssVar } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
-import echarts from '../utils/echarts'
-import { GraphChart } from 'echarts/charts'
-echarts.use([GraphChart])
+import { Graph, Shape } from '@antv/x6'
+import { Snapline } from '@antv/x6-plugin-snapline'
+import { Dnd } from '@antv/x6-plugin-dnd'
 
 const templates = ref([])
 const stacks = ref([])
@@ -143,16 +140,14 @@ const cloudImages = ref([])
 const storagePools = ref([])
 const apps = ref([])
 const planName = ref('')
-const nodes = reactive([])
-const links = reactive([])
 const selected = ref(null)
-const addKind = ref('container')
-const addRef = ref('')
-const linkTo = ref('')
+const selectedEdgeId = ref('')
+const edgesOfSelected = ref([])
 const applying = ref(false)
 const applyStatus = ref(null)
-const chartRef = ref(null)
-let chart = null
+const canvasRef = ref(null)
+let graph = null
+let dnd = null
 let applyTimer = null
 let seq = 1
 
@@ -162,63 +157,156 @@ const KIND_COLOR = {
   vm: cssVar('--color-success', '#16a34a'),
   net: cssVar('--color-violet', '#7c3aed'),
 }
-const KIND_SHAPE = { container: 'circle', vm: 'rect', net: 'diamond' }
+const SIDES = ['top', 'right', 'bottom', 'left']
 
-const nodeName = (id) => nodes.find((n) => n.id === id)?.name || id
 const applyStatusText = computed(() => ({ running: '应用中…', success: '✓ 应用完成', failed: '✗ 应用失败' }[applyStatus.value?.status] || applyStatus.value?.status || ''))
-const linksOf = (id) => links.filter((l) => l.from === id || l.to === id)
 
-function renderChart() {
-  if (!chartRef.value) return
-  if (!chart) chart = echarts.init(chartRef.value)
-  chart.setOption({
-    animationDurationUpdate: 300,
-    tooltip: {
-      trigger: 'item',
-      formatter: (p) =>
-        p.dataType === 'node'
-          ? '<b>' + p.data.name + '</b><br/>' + (kindLabel[p.data.kind] || '') + ' · ' + p.data.ref
-          : nodeName(p.data.source) + ' → ' + nodeName(p.data.target)
+// 设备栏分组：容器栈逐栈、VM 逐云镜像（拖哪个进画布 ref 就带哪个值——
+// 省掉 v1「下拉选类型→下拉选引用→点+」三步）、网络给一个标注模板
+const paletteGroups = computed(() => [
+  { kind: 'container', title: '容器栈', color: KIND_COLOR.container, items: stacks.value.map((s) => ({ ref: s.id, label: s.id })) },
+  { kind: 'vm', title: '虚拟机（云镜像）', color: KIND_COLOR.vm, items: cloudImages.value.map((i) => ({ ref: String(i.id), label: i.name })) },
+  { kind: 'net', title: '网络（标注）', color: KIND_COLOR.net, items: [{ ref: '10.0.0.0/24', label: '网段' }] },
+])
+
+// ── X6 节点外观：body/label/sub 三段自定义 markup，四个边缘连接点（hover 显现）──
+const NODE_MARKUP = [
+  { tagName: 'rect', selector: 'body' },
+  { tagName: 'text', selector: 'label' },
+  { tagName: 'text', selector: 'sub' },
+]
+function portsConfig() {
+  return {
+    groups: Object.fromEntries(SIDES.map((s) => [s, {
+      position: s,
+      attrs: { circle: { r: 4.5, magnet: true, stroke: KIND_COLOR.container, strokeWidth: 1.5, fill: 'var(--el-bg-color, #fff)', style: { transition: 'opacity .15s' } } },
+    }])),
+    items: SIDES.map((s) => ({ id: s, group: s })),
+  }
+}
+function buildNodeConfig(n) {
+  const data = { kind: n.kind, ref: n.ref || '', name: n.name || '', note: n.note || '' }
+  if (n.kind === 'vm') {
+    Object.assign(data, { pool: n.pool || '', vcpu: n.vcpu || 0, memory_mb: n.memory_mb || 0, ssh_user: n.ssh_user || '', apps: n.apps ? [...n.apps] : [], _sshSecret: '' })
+  }
+  const base = { id: n.id, x: n.x, y: n.y, data, ports: portsConfig() }
+  if (n.kind === 'container') {
+    return { ...base, shape: 'rect', width: 128, height: 46, markup: NODE_MARKUP,
+      attrs: {
+        body: { rx: 8, ry: 8, fill: KIND_COLOR.container, stroke: 'transparent', strokeWidth: 2, cursor: 'grab' },
+        label: { text: data.name, fill: '#fff', fontSize: 12, fontWeight: 600, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 16, textWrap: { width: -16, ellipsis: true } },
+        sub: { text: data.ref, fill: 'rgba(255,255,255,.72)', fontSize: 10, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 31 },
+      } }
+  }
+  if (n.kind === 'vm') {
+    return { ...base, shape: 'rect', width: 128, height: 46, markup: NODE_MARKUP,
+      attrs: {
+        body: { rx: 4, ry: 4, fill: KIND_COLOR.vm, stroke: 'transparent', strokeWidth: 2, cursor: 'grab' },
+        label: { text: data.name, fill: '#fff', fontSize: 12, fontWeight: 600, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 16, textWrap: { width: -16, ellipsis: true } },
+        sub: { text: (n.vcpu ? n.vcpu + 'C/' + n.memory_mb + 'MB' : '未选规格'), fill: 'rgba(255,255,255,.72)', fontSize: 10, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 31 },
+      } }
+  }
+  return { ...base, shape: 'polygon', width: 92, height: 62,
+    attrs: {
+      body: { refPoints: '46,0 92,31 46,62 0,31', fill: KIND_COLOR.net, stroke: 'transparent', strokeWidth: 2, cursor: 'grab' },
+      label: { text: data.name, fill: '#fff', fontSize: 11, fontWeight: 600, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: '42%' },
+      sub: { text: data.ref, fill: 'rgba(255,255,255,.72)', fontSize: 9, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: '60%' },
+    } }
+}
+// 属性面板改动回写节点：名称/规格摘要同步到节点文字
+function syncNodeView(node, d) {
+  node.attr('label/text', d.name)
+  if (d.kind === 'vm') node.attr('sub/text', d.vcpu ? d.vcpu + 'C/' + d.memory_mb + 'MB' : '未选规格')
+  else node.attr('sub/text', d.ref)
+}
+watch(selected, (v) => {
+  if (!v || !graph) return
+  const node = graph.getCellById(v.id)
+  if (!node || !node.isNode()) return
+  const data = { kind: v.kind, ref: v.ref, name: v.name, note: v.note }
+  if (v.kind === 'vm') Object.assign(data, { pool: v.pool, vcpu: v.vcpu, memory_mb: v.memory_mb, ssh_user: v.ssh_user, apps: v.apps, _sshSecret: v._sshSecret })
+  node.setData(data, { overwrite: true })
+  syncNodeView(node, data)
+  refreshEdges()
+}, { deep: true })
+
+// ── 画布初始化 ──
+function initGraph() {
+  graph = new Graph({
+    container: canvasRef.value,
+    autoResize: true,
+    grid: { size: 16, visible: true, type: 'dot', args: { color: cssVar('--color-border', '#dcdfe6'), thickness: 1 } },
+    panning: { enabled: true },
+    mousewheel: { enabled: true, modifiers: [], minScale: 0.4, maxScale: 2.5 },
+    highlighting: { magnetAvailable: { name: 'stroke', args: { attrs: { 'stroke-width': 3 } } } },
+    connecting: {
+      anchor: 'center',
+      connectionPoint: { name: 'boundary', args: { sticky: true } },
+      allowBlank: false, allowLoop: false, allowNode: false, allowPort: true, allowMulti: false,
+      highlight: true, snap: { radius: 28 },
+      connector: { name: 'smooth', args: { radius: 12 } },
+      createEdge: () => new Shape.Edge({ attrs: { line: { stroke: KIND_COLOR.net, strokeWidth: 2, targetMarker: null } } }),
     },
-    series: [{
-      type: 'graph', layout: 'none', roam: true,
-      data: nodes.map((n) => ({
-        id: n.id, name: n.name, kind: n.kind, ref: n.ref,
-        x: n.x, y: n.y,
-        symbol: KIND_SHAPE[n.kind] || 'circle',
-        symbolSize: n.kind === 'container' ? [110, 44] : 56,
-        itemStyle: { color: KIND_COLOR[n.kind], borderRadius: n.kind === 'container' ? 8 : 4 },
-        label: { show: true, color: '#fff', fontSize: 12, formatter: (p) => p.data.name.length > 8 ? p.data.name.slice(0, 7) + '…' : p.data.name },
-      })),
-      links: links.map((l) => ({ source: l.from, target: l.to, lineStyle: { color: KIND_COLOR.net, width: 2, curveness: 0.1 } })),
-      emphasis: { focus: 'adjacency' },
-    }],
-  }, true)
-  chart.off('click')
-  chart.on('click', (p) => { selected.value = p.dataType === 'node' ? nodes.find((n) => n.id === p.data.id) || null : null })
+  })
+  graph.use(new Snapline({ sharp: true }))
+  bindGraphEvents()
+  dnd = new Dnd({ target: graph, scaled: false, animation: true })
+}
+function bindGraphEvents() {
+  graph.on('node:click', ({ node }) => {
+    selectedEdgeId.value = ''
+    const d = node.getData() || {}
+    selected.value = reactive({ id: node.id, kind: d.kind, ref: d.ref || '', name: d.name || '', note: d.note || '',
+      pool: d.pool || '', vcpu: d.vcpu || 1, memory_mb: d.memory_mb || 1024, ssh_user: d.ssh_user || 'root', apps: d.apps || [], _sshSecret: d._sshSecret || '' })
+    normalizeVMNode(selected.value)
+    refreshEdges()
+  })
+  graph.on('blank:click', () => { selected.value = null; selectedEdgeId.value = ''; refreshEdges() })
+  graph.on('edge:click', ({ edge }) => { selectedEdgeId.value = edge.id; selected.value = null })
+  graph.on('edge:connected', refreshEdges)
+  graph.on('edge:removed', refreshEdges)
+  graph.on('node:removed', () => { selected.value = null; refreshEdges() })
+  // Delete/Backspace 删除选中节点或连线（原生监听即可；X6 的 bindKey 在 keyboard
+  // 插件里，核心没有）。输入框聚焦时不拦截
+  document.addEventListener('keydown', onKeydown)
+}
+function onKeydown(e) {
+  if (e.key !== 'Delete' && e.key !== 'Backspace') return
+  const ae = document.activeElement
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return
+  if (!graph) return
+  if (selectedEdgeId.value) { e.preventDefault(); removeEdge(selectedEdgeId.value); return }
+  if (selected.value) { e.preventDefault(); removeSelected() }
+}
+function refreshEdges() {
+  if (!graph) { edgesOfSelected.value = []; return }
+  edgesOfSelected.value = graph.getEdges().map((e) => ({
+    id: e.id,
+    from: e.getSourceCellId(),
+    to: e.getTargetCellId(),
+    text: nodeName(e.getSourceCellId()) + ' → ' + nodeName(e.getTargetCellId()),
+  })).filter((l) => !selected.value || l.from === selected.value.id || l.to === selected.value.id)
+}
+const nodeName = (id) => (graph && graph.getCellById(id)?.getData()?.name) || id
+function removeEdge(edgeId) {
+  graph?.removeEdge(edgeId)
+  if (selectedEdgeId.value === edgeId) selectedEdgeId.value = ''
+  refreshEdges()
 }
 
-function addNode() {
-  if (!addRef.value) {
-    return ElMessage.warning(addKind.value === 'vm' ? '请选择云镜像' : '请选择/填写引用')
-  }
+// ── 节点增删 ──
+function startDrag(evt, kind, it) {
   const id = 'n' + seq++
-  const n = { id, kind: addKind.value, ref: addRef.value, name: addRef.value, x: 160 + ((seq * 70) % 340), y: 140 + ((seq * 90) % 300) }
-  if (addKind.value === 'vm') {
-    // 新 VM 节点名默认取镜像名（可改）；规格/SSH 给可用初值，口令只进内存字段
-    n.name = cloudImages.value.find((i) => String(i.id) === addRef.value)?.name || 'vm-' + seq
-    n.vcpu = 2
-    n.memory_mb = 2048
-    n.ssh_user = 'root'
-    n.pool = ''
-    n.apps = []
-    n._sshSecret = ''
-  }
-  nodes.push(n)
-  renderChart()
+  const n = { id, kind, ref: it.ref, name: it.label, x: 0, y: 0 }
+  if (kind === 'vm') { n.vcpu = 2; n.memory_mb = 2048; n.ssh_user = 'root' }
+  dnd.start(graph.createNode(buildNodeConfig(n)), evt)
 }
-
-// VM 节点字段兜底：旧计划/模板载入时补齐（与后端 provisionVM 的缺省一致）
+function removeSelected() {
+  if (!selected.value) return
+  graph.getCellById(selected.value.id)?.remove()
+  selected.value = null
+}
+// VM 节点字段兜底（旧计划/模板载入时补齐，与后端 provisionVM 缺省一致）
 function normalizeVMNode(n) {
   if (n.kind !== 'vm') return n
   if (!n.vcpu) n.vcpu = 1
@@ -228,45 +316,60 @@ function normalizeVMNode(n) {
   if (n._sshSecret === undefined) n._sshSecret = ''
   return n
 }
-function addLink() {
-  if (!selected.value || !linkTo.value) return
-  links.push({ from: selected.value.id, to: linkTo.value })
-  linkTo.value = ''
-  renderChart()
-}
-function removeSelected() {
-  const i = nodes.indexOf(selected.value)
-  if (i > -1) nodes.splice(i, 1)
-  for (let j = links.length - 1; j >= 0; j--) if (links[j].from === selected.value.id || links[j].to === selected.value.id) links.splice(j, 1)
-  selected.value = null
-  renderChart()
-}
 
-function clearAll() { nodes.splice(0); links.splice(0); selected.value = null; seq = 1 }
+// ── X6 画布 ↔ 计划 JSON 转换层 ──
+// Dnd 拖放会给节点重新生成 UUID id，统一重映射成 n1..nK 可读 id（连线引用与
+// apply 凭据键都按此换算，也让重复保存的计划 id 稳定）
+function nodeIdMap() {
+  const m = new Map()
+  graph.getNodes().forEach((n, i) => m.set(n.id, 'n' + (i + 1)))
+  return m
+}
+function graphToPlan() {
+  const idMap = nodeIdMap()
+  const nodes = graph.getNodes().map((n) => {
+    const d = n.getData() || {}
+    const p = n.getPosition()
+    const out = { id: idMap.get(n.id), kind: d.kind, ref: d.ref || '', name: d.name || '', x: Math.round(p.x), y: Math.round(p.y), note: d.note || '' }
+    // _sshSecret 刻意不进计划载荷：口令只随 apply 请求体走
+    if (d.kind === 'vm') Object.assign(out, { pool: d.pool || '', vcpu: d.vcpu || 0, memory_mb: d.memory_mb || 0, ssh_user: d.ssh_user || '', apps: d.apps || [] })
+    return out
+  })
+  const links = graph.getEdges().map((e) => ({ from: idMap.get(e.getSourceCellId()), to: idMap.get(e.getTargetCellId()) }))
+  return { nodes, links }
+}
+function loadIntoGraph(pNodes, pLinks) {
+  graph.removeCells([...graph.getNodes(), ...graph.getEdges()])
+  selected.value = null
+  selectedEdgeId.value = ''
+  for (const n of pNodes) graph.addNode(buildNodeConfig(normalizeVMNode({ ...n })))
+  for (const l of pLinks || []) {
+    if (graph.getCellById(l.from) && graph.getCellById(l.to)) graph.addEdge({ source: { cell: l.from }, target: { cell: l.to }, attrs: { line: { stroke: KIND_COLOR.net, strokeWidth: 2, targetMarker: null } } })
+  }
+  graph.centerContent()
+}
+function clearCanvas() {
+  loadIntoGraph([], [])
+  seq = 1
+  planName.value = ''
+}
 function loadTemplate(t) {
-  clearAll()
   planName.value = t.name
-  for (const n of t.nodes) nodes.push(normalizeVMNode({ ...n }))
-  for (const l of t.links || []) links.push({ ...l })
+  loadIntoGraph(t.nodes.map((n) => ({ ...n })), (t.links || []).map((l) => ({ ...l })))
   seq = t.nodes.length + 1
-  renderChart()
 }
 function loadPlan(p) {
-  clearAll()
   planName.value = p.name
-  for (const n of p.nodes) nodes.push(normalizeVMNode({ ...n }))
-  for (const l of p.links || []) links.push({ ...l })
+  loadIntoGraph(p.nodes.map((n) => ({ ...n })), (p.links || []).map((l) => ({ ...l })))
   seq = p.nodes.length + 1
-  renderChart()
 }
 
-// 保存/导出/落地共用的计划载荷：剥离 _sshSecret（口令只随 apply 请求体走）
 function planPayload() {
+  const { nodes, links } = graphToPlan()
   return {
     id: (planName.value || 'plan-' + Date.now()).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 60),
     name: planName.value || '未命名计划',
-    nodes: nodes.map((n) => { const { _sshSecret, ...rest } = n; return rest }),
-    links: [...links],
+    nodes, links,
   }
 }
 
@@ -292,29 +395,33 @@ async function exportYaml() {
   a.click()
   URL.revokeObjectURL(a.href)
 }
+function zoomFit() {
+  graph?.zoomToFit({ padding: 40, maxScale: 1 })
+}
 
 async function applyPlan() {
+  const { nodes, links: _links } = graphToPlan()
   if (!nodes.length) return ElMessage.warning('画布为空')
-  // 可落地节点 = 容器栈 + VM（v2）；net 仍为标注性
-  const cts = nodes.filter((n) => n.kind === 'container')
-  const vms = nodes.filter((n) => n.kind === 'vm')
-  if (!cts.length && !vms.length) return ElMessage.warning('计划中没有可落地节点（容器栈 / VM）')
-  const noImg = vms.filter((n) => !n.ref)
-  if (noImg.length) return ElMessage.warning('VM「' + noImg.map((n) => n.name).join('、') + '」还未选择云镜像')
-  const needCred = vms.filter((n) => (n.apps || []).length)
-  const noPass = needCred.filter((n) => !n._sshSecret)
-  if (noPass.length) return ElMessage.warning('VM「' + noPass.map((n) => n.name).join('、') + '」配了应用安装，需要填 SSH 口令')
+  const idMap = nodeIdMap()
+  const vmDatas = graph.getNodes().map((n) => ({ gid: n.id, d: n.getData() || {} })).filter((x) => x.d.kind === 'vm')
+  if (!cts.length && !vmDatas.length) return ElMessage.warning('计划中没有可落地节点（容器栈 / VM）')
+  const noImg = vmDatas.filter((x) => !x.d.ref)
+  if (noImg.length) return ElMessage.warning('VM「' + noImg.map((x) => x.d.name).join('、') + '」还未选择云镜像')
+  const needCred = vmDatas.filter((x) => (x.d.apps || []).length)
+  const noPass = needCred.filter((x) => !x.d._sshSecret)
+  if (noPass.length) return ElMessage.warning('VM「' + noPass.map((x) => x.d.name).join('、') + '」配了应用安装，需要填 SSH 口令')
   const parts = []
+  const cts = nodes.filter((n) => n.kind === 'container')
   if (cts.length) parts.push(`部署 ${cts.length} 个容器栈（${cts.map((n) => n.ref).join('、')}）`)
-  if (vms.length) parts.push(`创建并初始化 ${vms.length} 台 VM（${vms.map((n) => n.name).join('、')}）`)
+  if (vmDatas.length) parts.push(`创建并初始化 ${vmDatas.length} 台 VM（${vmDatas.map((x) => x.d.name).join('、')}）`)
   try {
     await ElMessageBox.confirm(`一键落地将顺序执行：${parts.join('；')}。镜像拉取与 VM 初始化可能需要数分钟。`, '落地确认', { type: 'info', confirmButtonText: '开始' })
   } catch (e) { if (!isCancel(e)) return }
   const p = planPayload()
-  // 口令只在这次请求里带上（后端 overlay 到对应节点，不写盘）
+  // 口令只在这次请求里带上（后端 overlay 到对应节点，不写盘）；键用重映射后的计划 id
   const credentials = {}
-  for (const n of vms) {
-    if (n._sshSecret) credentials[n.id] = { ssh_user: n.ssh_user || 'root', ssh_secret: n._sshSecret }
+  for (const x of vmDatas) {
+    if (x.d._sshSecret) credentials[idMap.get(x.gid)] = { ssh_user: x.d.ssh_user || 'root', ssh_secret: x.d._sshSecret }
   }
   applying.value = true
   applyStatus.value = { status: 'running', steps: ['已提交…'] }
@@ -351,28 +458,28 @@ onMounted(async () => {
   cloudImages.value = (d.cloud_images || []).filter((i) => (i.format || '').toLowerCase() !== 'iso')
   storagePools.value = d.storage_pools || []
   apps.value = Array.isArray(appsRes.data) ? appsRes.data : []
+  initGraph()
   await loadPlans()
-  renderChart()
-  window.addEventListener('resize', onResize)
 })
-const onResize = () => chart && chart.resize()
 onUnmounted(() => {
-  window.removeEventListener('resize', onResize)
+  document.removeEventListener('keydown', onKeydown)
   if (applyTimer) clearInterval(applyTimer)
-  if (chart) chart.dispose()
+  if (graph) { graph.dispose(); graph = null }
 })
 </script>
 
 <style scoped>
 .ds-layout {
   display: grid;
-  grid-template-columns: 240px 1fr 260px;
+  grid-template-columns: 250px 1fr 260px;
   gap: 16px;
 }
 @media (max-width: 1100px) {
   .ds-layout { grid-template-columns: 1fr; }
 }
 .ds-h { font-weight: 600; font-size: 0.9rem; }
+.ds-hrow { display: flex; align-items: baseline; justify-content: space-between; }
+.ds-hint { font-weight: 400; font-size: 0.72rem; color: var(--color-muted-foreground); }
 .ds-tpl {
   display: flex; flex-direction: column; gap: 2px;
   padding: 8px 10px; margin-bottom: 6px;
@@ -388,9 +495,25 @@ onUnmounted(() => {
   border-radius: var(--radius-sm); cursor: pointer;
 }
 .ds-plan:hover { background: var(--el-fill-color-light); }
-.ds-add { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
-.ds-chart { height: 520px; border: 1px dashed var(--color-border); border-radius: var(--radius-md); }
+.ds-palette-title { font-size: 0.75rem; font-weight: 600; margin: 8px 0 5px; }
+.ds-palette { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.ds-palette-item {
+  padding: 5px 8px; font-size: 0.78rem;
+  border: 1px solid var(--color-border); border-left: 3px solid;
+  border-radius: var(--radius-sm); cursor: grab; user-select: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: all 0.15s ease; background: var(--el-bg-color);
+}
+.ds-palette-item:hover { border-color: var(--el-color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.ds-canvas {
+  height: 520px; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: var(--el-bg-color); overflow: hidden;
+}
+/* 节点边缘连接点：hover 节点时显现，拖出即连线 */
+.ds-canvas :deep(.x6-port-body) { opacity: 0; }
+.ds-canvas :deep(.x6-node:hover .x6-port-body) { opacity: 1; }
 .ds-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ds-tip { font-size: 0.72rem; color: var(--color-muted-foreground); }
 .ds-apply {
   margin-top: 12px; padding: 10px 14px; border-radius: var(--radius-sm);
   background: var(--el-fill-color-light); font-size: 0.85rem;
@@ -403,8 +526,10 @@ onUnmounted(() => {
 .ds-spec { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ds-spec-unit { font-size: 0.78rem; color: var(--color-muted-foreground); }
 .ds-opt-sub { float: right; font-size: 0.75rem; color: var(--color-muted-foreground); }
+.ds-links { display: flex; flex-direction: column; gap: 2px; }
 .ds-link-row {
   display: flex; align-items: center; justify-content: space-between;
   font-size: 0.8rem; padding: 4px 0; color: var(--color-muted-foreground);
 }
+.ds-link-empty { font-size: 0.75rem; color: var(--color-muted-foreground); padding: 4px 0; }
 </style>
