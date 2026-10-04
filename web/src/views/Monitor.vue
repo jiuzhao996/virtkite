@@ -282,55 +282,6 @@
       </p>
     </el-card>
 
-    <!-- 日志查询（Loki，可选外接）：折叠态默认收起——部署配置已裁剪，默认形态不让
-         一个大概率报错的卡片占首屏；需要时展开查询（后端代理保留，LOKI_URL 指向即用）。 -->
-    <el-collapse class="loki-collapse">
-      <el-collapse-item name="loki">
-        <template #title>
-          <div class="loki-head">
-            <span><el-icon class="head-icon"><Memo /></el-icon>日志查询（Loki · 可选外接）</span>
-            <span class="loki-head-note">宿主机日志经 Promtail 采集（job=varlogs）；需自行部署 Loki 并配置 LOKI_URL</span>
-          </div>
-        </template>
-        <div class="loki-body">
-          <div class="alert-head-actions loki-actions">
-            <el-input
-              v-model="lokiQuery"
-              placeholder='LogQL，如 {job="varlogs"}'
-              style="width: 260px"
-              clearable
-              @keyup.enter="queryLoki"
-            />
-            <el-select v-model="lokiLimit" style="width: 96px">
-              <el-option v-for="n in [50, 100, 200]" :key="n" :label="n + ' 条'" :value="n" />
-            </el-select>
-            <el-button type="primary" :icon="Search" :loading="lokiLoading" @click="queryLoki">查询</el-button>
-          </div>
-
-          <el-alert v-if="lokiError" type="warning" :closable="false" show-icon title="日志栈（Loki）未启用（需自行部署 Loki 并配置 LOKI_URL 环境变量）">
-            <template #default>
-              <div class="loki-retry">
-                <span>典型原因：Loki / Promtail 未启动，或 LogQL 语法有误。</span>
-                <el-button size="small" type="primary" plain :icon="Refresh" :loading="lokiLoading" @click="queryLoki">重试</el-button>
-              </div>
-            </template>
-          </el-alert>
-
-          <el-empty v-else-if="!lokiQueried" description="输入 LogQL 后点击「查询」拉取日志" :image-size="60" />
-          <el-empty v-else-if="!lokiRows.length" description="无匹配日志" :image-size="60" />
-
-          <template v-else>
-            <p class="sd-note loki-meta">共 {{ lokiRows.length }} 条 · 最近 1 小时 · 新日志在前</p>
-            <div class="loki-logs">
-              <div v-for="(r, i) in lokiRows" :key="i" class="loki-line">
-                <span class="mono loki-ts">{{ r.ts }}</span>
-                <span class="loki-text mono">{{ r.line }}</span>
-              </div>
-            </div>
-          </template>
-        </div>
-      </el-collapse-item>
-    </el-collapse>
   </div>
 </template>
 
@@ -338,7 +289,7 @@
 // embedded：被仪表盘 tab 嵌入时隐藏独立页头
 defineProps({ embedded: { type: Boolean, default: false } })
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { Aim, AlarmClock, Memo, Refresh, Search, WarningFilled } from '@element-plus/icons-vue'
+import { Aim, AlarmClock, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { cssVar, fmtDateTime, fmtRateBytes } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
@@ -704,43 +655,6 @@ async function loadFileSD() {
   }
 }
 
-// ── 日志查询（Loki）：后端代理原样透传 Loki query_range 响应。日志栈未部署属常态（502），
-// 失败置卡内错误态，不弹全局 toast。
-const lokiQuery = ref('{job="varlogs"}')
-const lokiLimit = ref(100)
-const lokiLoading = ref(false)
-const lokiError = ref(false)
-const lokiQueried = ref(false)
-const lokiRows = ref([])
-
-async function queryLoki() {
-  if (lokiLoading.value) return
-  const q = (lokiQuery.value || '').trim()
-  if (!q) return // 清空后点查询：静默返回，不打扰
-  lokiLoading.value = true
-  try {
-    const res = await api.lokiQuery(q, lokiLimit.value)
-    // 信封 {code,message,data} 的 data 即 Loki 原始 JSON；日志流在 data.result[].values（[纳秒时间戳串, 行]）
-    const streams = (res && res.data && Array.isArray(res.data.result)) ? res.data.result : []
-    const rows = []
-    for (const s of streams) {
-      for (const v of s.values || []) {
-        const ms = Number(v[0]) / 1e6 // 纳秒 → 毫秒
-        rows.push({ tsMs: ms, ts: fmtDateTime(ms), line: String(v[1] || '') })
-      }
-    }
-    rows.sort((a, b) => b.tsMs - a.tsMs) // 新日志在前，便于看最新动态
-    lokiRows.value = rows
-    lokiError.value = false
-    lokiQueried.value = true
-  } catch (e) {
-    lokiError.value = true
-    lokiRows.value = []
-  } finally {
-    lokiLoading.value = false
-  }
-}
-
 // 看板与实时告警轮询：周期取系统设置的 dashboard 偏好；卸载自动停表（useAutoRefresh 托管）。
 // start() 只起表不触发 fn——首拉仍由 onMounted 里的显式 load 负责，与原行为一致。
 const { start: startPolling } = useAutoRefresh(() => {
@@ -885,66 +799,5 @@ onUnmounted(() => {
 }
 
 /* ── Loki 折叠卡：整体是一张可展开的卡片（标题行即折叠头） ── */
-.loki-collapse {
-  margin-bottom: 16px;
-  border-radius: var(--radius-md);
-  --el-collapse-border-color: var(--color-border);
-}
-.loki-collapse :deep(.el-collapse-item__header) {
-  padding: 0 16px;
-  background: var(--color-card);
-  border-radius: var(--radius-md);
-}
-.loki-collapse :deep(.el-collapse-item__wrap) {
-  background: var(--color-card);
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-}
-.loki-collapse :deep(.el-collapse-item__content) {
-  padding: 12px 16px 16px;
-}
-.loki-head {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-.loki-head-note {
-  font-weight: normal;
-  font-size: 0.8rem;
-  color: var(--el-text-color-secondary);
-}
-.loki-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.loki-actions {
-  justify-content: flex-start;
-}
-.loki-retry {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.loki-meta {
-  margin: 0 0 8px;
-}
-.loki-logs {
-  max-height: 360px;
-  overflow: auto;
-}
-.loki-line {
-  display: flex;
-  gap: 12px;
-  padding: 2px 0;
-  font-size: 0.78rem;
-}
-.loki-ts {
-  flex-shrink: 0;
-  color: var(--el-text-color-secondary);
-}
-.loki-text {
-  white-space: pre;
-}
+
 </style>

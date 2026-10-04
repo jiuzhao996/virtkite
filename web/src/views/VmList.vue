@@ -114,7 +114,13 @@
               <div class="spark" :ref="(el) => setSparkRef(vm.id, el)" />
             </div>
             <div class="vm-perf-idle" v-else-if="vm.status !== 'running'">
-              <span class="idle-text">未运行，无实时指标</span>
+              <div class="idle-meta">
+                <div class="idle-chips">
+                  <span class="idle-chip" v-if="vm.created_at">建机 {{ String(vm.created_at).slice(0, 10) }}</span>
+                  <span class="idle-chip idle-desc" v-if="vm.description" :title="vm.description">{{ vm.description.length > 18 ? vm.description.slice(0, 17) + '…' : vm.description }}</span>
+                </div>
+                <span class="idle-text">开机后显示实时指标与曲线</span>
+              </div>
             </div>
             <div class="vm-actions">
               <el-button size="small" :icon="View" @click="router.push({ name: 'vm-detail', params: { id: vm.id } })">详情</el-button>
@@ -899,6 +905,29 @@ onUnmounted(() => {
   margin-bottom: 12px;
   display: flex;
   align-items: center;
+}
+/* 关机卡片不再空白：系统/建机时间/描述摘要元信息（信息密度优化 2026-10） */
+.idle-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.idle-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.idle-chip {
+  font-size: 0.75rem;
+  color: var(--color-muted-foreground);
+  background: var(--el-fill-color-light);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .idle-text {
   font-size: 0.8rem;

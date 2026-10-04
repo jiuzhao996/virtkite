@@ -36,7 +36,6 @@ type Deps struct {
 	PrometheusURL     string
 	AlertWebhookToken string
 	MetricsToken      string
-	LokiURL           string
 }
 
 // RegisterPublic 公开路由（无需认证，注册在引擎根上）。
@@ -118,7 +117,6 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	vmFilesHandler.SetVMCredentialHandler(vmCredHandler)
 	// 应用商店安装：use_saved（或未带口令）走服务端凭据，明文不落 task.payload
 	appsHandler.SetVMCredentialHandler(vmCredHandler)
-	lokiHandler := NewLokiHandler(deps.LokiURL)
 	cronScheduler := &cron.Scheduler{DB: deps.DB, Virt: deps.Virt, BackupDir: "", TaskMgr: deps.Tasks}
 	cronScheduler.Start() // 内部自起 goroutine（整分 tick）
 	cronsHandler := NewCronsHandler(deps.DB, cronScheduler)
@@ -428,8 +426,6 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		// 通用只读 PromQL 查询（原生看板扩展层：panels.js 注册表驱动，加面板零后端改动）
 		monitor.POST("/prom-query", historyHandler.PromQuery)
 		// Loki 日志查询（v3 批次 G：指标+日志+告警完整可观测性）
-		monitor.GET("/loki/query", lokiHandler.Query)
-		monitor.GET("/loki/labels", lokiHandler.Labels)
 	}
 
 	// 声明式部署栈（P2A：清单 operator+；deploy admin；docs 命中栈元数据清单才可读）

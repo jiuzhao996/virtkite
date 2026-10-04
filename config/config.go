@@ -54,8 +54,6 @@ type Config struct {
 	// Authorization: Bearer 匹配；为空则公开，与 deploy/alertmanager.yml 的 webhook_config 配对）
 	AlertWebhookToken string
 
-	// Loki 日志栈地址（监控中心日志查询代理用；compose 内 http://loki:3100）
-	LokiURL string
 
 	// SSH 跳板入口（jumpd）：JUMPD_ENABLED=1 才启动；监听 JUMPD_PORT（默认 2222）。
 	// 默认关闭——公网部署须先评估口令爆破面（服务内有 per-IP 限流兜底）
