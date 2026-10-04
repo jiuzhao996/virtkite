@@ -1,0 +1,39 @@
+# vmops-playbook: name=sysctl-tuning | desc=内核参数优化（backlog/文件数/swappiness/BBR） | targets=linux
+---
+# 内核网络与内存调优：高并发 backlog、文件句柄、换页偏好、BBR 拥塞控制。
+# 写 /etc/sysctl.d/99-vmops.conf 而非改 /etc/sysctl.conf（可追溯、可整体回滚）。
+- name: 内核参数优化
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: 加载 BBR 内核模块（开机自动加载）
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/bbr.conf
+        content: tcp_bbr
+        mode: "0644"
+      notify: 加载 bbr 模块
+
+    - name: 写入 sysctl 调优配置
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-vmops.conf
+        content: |
+          # vmops 内核调优（P4 自动化运维种子）
+          net.core.somaxconn = 65535
+          net.ipv4.tcp_max_syn_backlog = 65535
+          net.core.netdev_max_backlog = 65535
+          fs.file-max = 1048576
+          vm.swappiness = 10
+          net.ipv4.tcp_congestion_control = bbr
+          net.core.default_qdisc = fq
+        mode: "0644"
+      notify: 应用 sysctl
+
+  handlers:
+    - name: 加载 bbr 模块
+      ansible.builtin.command: modprobe tcp_bbr
+      changed_when: true
+
+    - name: 应用 sysctl
+      ansible.builtin.command: sysctl --system
+      changed_when: true

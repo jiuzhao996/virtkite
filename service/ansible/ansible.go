@@ -179,11 +179,14 @@ func (e *Engine) Run(ctx context.Context, opts RunOpts) (string, error) {
 		cmd = exec.CommandContext(ctx, e.AdhocPath, args...)
 	}
 	// HOST_KEY_CHECKING=False：受管 VM 的主机密钥 TOFU 已由 vmssh 层管理，ansible 侧
-	// 对临时 inventory 关闭严格校验（VM 重建后指纹必变，逐台确认不现实）
+	// 对临时 inventory 关闭严格校验（VM 重建后指纹必变，逐台确认不现实）。
+	// NOCOWS：宿主机装了 cowsay 时 ansible 会把 PLAY RECAP 画进牛对话框（`< PLAY RECAP >`），
+	// 破坏输出与 RECAP 截取——关掉
 	cmd.Env = append(os.Environ(),
 		"ANSIBLE_HOST_KEY_CHECKING=False",
 		"ANSIBLE_SSH_ARGS=-o UserKnownHostsFile=/dev/null -o ConnectTimeout=10",
 		"ANSIBLE_FORCE_COLOR=0",
+		"ANSIBLE_NOCOWS=1",
 		"PYTHONUNBUFFERED=1",
 	)
 
@@ -215,7 +218,7 @@ func (e *Engine) Run(ctx context.Context, opts RunOpts) (string, error) {
 		if opts.OnLine != nil {
 			opts.OnLine(line)
 		}
-		if strings.HasPrefix(line, "PLAY RECAP") {
+		if strings.Contains(line, "PLAY RECAP") { // 不用 HasPrefix：装饰性输出可能包住标记行
 			inRecap = true
 		}
 		if inRecap {
@@ -252,4 +255,11 @@ func scanInto(r io.Reader, lines chan<- string) {
 	for sc.Scan() {
 		lines <- sc.Text()
 	}
+}
+
+// execCombined 跑命令并合并 stdout/stderr（SyntaxCheck 等短命令用）。
+func execCombined(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }

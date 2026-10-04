@@ -1,0 +1,76 @@
+# vmops-playbook: name=install-docker | desc=Docker 安装（官方仓库 + 国内镜像加速） | targets=linux
+---
+# Docker 安装：dnf/apt 官方仓库双系，daemon.json 配国内镜像加速（m.daocloud.io）。
+# 已装则幂等跳过（package/repo 模块天然幂等）。
+- name: Docker 安装
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: RedHat 系依赖与仓库
+      ansible.builtin.block:
+        - name: 安装 dnf 插件与依赖
+          ansible.builtin.package:
+            name:
+              - dnf-plugins-core
+              - device-mapper-persistent-data
+              - lvm2
+            state: present
+        - name: 添加 Docker CE 仓库
+          ansible.builtin.command:
+            cmd: dnf config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
+            creates: /etc/yum.repos.d/docker-ce.repo
+      when: ansible_os_family == "RedHat"
+
+    - name: Debian 系依赖与仓库
+      ansible.builtin.block:
+        - name: 安装 apt 依赖
+          ansible.builtin.package:
+            name:
+              - ca-certificates
+              - curl
+              - gnupg
+            state: present
+        - name: 添加 GPG 密钥
+          ansible.builtin.apt_key:
+            url: https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg
+            keyring: /etc/apt/keyrings/docker.gpg
+            state: present
+        - name: 添加 apt 仓库
+          ansible.builtin.apt_repository:
+            repo: "deb [signed-by=/etc/apt/keyrings/docker.gpg] https://mirrors.aliyun.com/docker-ce/linux/ubuntu {{ ansible_distribution_release }} stable"
+            filename: docker-ce
+            state: present
+      when: ansible_os_family == "Debian"
+
+    - name: 安装 Docker CE
+      ansible.builtin.package:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+
+    - name: daemon.json（镜像加速 + 日志轮转）
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "registry-mirrors": ["https://docker.m.daocloud.io"],
+            "log-driver": "json-file",
+            "log-opts": { "max-size": "50m", "max-file": "3" }
+          }
+        mode: "0644"
+      notify: 重启 docker
+
+    - name: 启用并启动
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+  handlers:
+    - name: 重启 docker
+      ansible.builtin.service:
+        name: docker
+        state: restarted

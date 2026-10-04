@@ -1,0 +1,43 @@
+# vmops-playbook: name=harden-ssh | desc=SSH 加固（防爆破；刻意保留平台 root 通道） | targets=linux
+---
+# SSH 加固：防爆破三板斧（限尝试次数/限宽限时长/保活）。
+# ⚠ 刻意不关 root 密码登录、不改端口：平台应用安装/终端/Ansible 全走 root@22 通道，
+#   关掉等于自我锁死。演示答辩讲取舍：加固与可用性的平衡点放在「爆破成本抬高」。
+- name: SSH 加固
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: 写入加固配置（sshd_config.d 片段，不碰主配置）
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/60-vmops-hardening.conf
+        content: |
+          MaxAuthTries 4
+          LoginGraceTime 30
+          ClientAliveInterval 300
+          ClientAliveCountMax 2
+        mode: "0600"
+      notify: 校验并重启 sshd
+
+  handlers:
+    - name: 校验并重启 sshd（配置坏了不让服务起不来）
+      ansible.builtin.block:
+        - name: 语法校验
+          ansible.builtin.command: sshd -t
+          changed_when: false
+        - name: 重启
+          ansible.builtin.service:
+            name: sshd
+            state: restarted
+      rescue:
+        - name: 回滚片段并重启
+          ansible.builtin.file:
+            path: /etc/ssh/sshd_config.d/60-vmops-hardening.conf
+            state: absent
+        - name: 重启（回滚后）
+          ansible.builtin.service:
+            name: sshd
+            state: restarted
+        - name: 报告回滚
+          ansible.builtin.fail:
+            msg: "加固配置未通过 sshd -t，已回滚"

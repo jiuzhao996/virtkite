@@ -1,0 +1,35 @@
+# vmops-playbook: name=deploy-keys | desc=运维用户与 SSH 公钥分发 | targets=linux
+---
+# 创建运维用户 ops 并分发公钥：团队协作场景，平台 root 通道不受影响。
+# ⚠ 编辑 vars.admin_pubkey 换成你自己的公钥再执行（默认占位公钥无效）。
+- name: 运维用户与公钥分发
+  hosts: all
+  gather_facts: false
+
+  vars:
+    ops_user: ops
+    admin_pubkey: "ssh-ed25519 AAAA... replace-me@vmops"
+
+  tasks:
+    - name: 创建运维用户
+      ansible.builtin.user:
+        name: "{{ ops_user }}"
+        shell: /bin/bash
+        groups: wheel
+        append: true
+        state: present
+      ignore_errors: true   # Debian 系是 sudo 组，wheel 组不存在时忽略
+
+    - name: 补充 sudo 组（Debian 系）
+      ansible.builtin.user:
+        name: "{{ ops_user }}"
+        groups: sudo
+        append: true
+      when: ansible_os_family | default('') == "Debian"
+      ignore_errors: true
+
+    - name: 分发 authorized_key
+      ansible.posix.authorized_key:
+        user: "{{ ops_user }}"
+        key: "{{ admin_pubkey }}"
+        state: present

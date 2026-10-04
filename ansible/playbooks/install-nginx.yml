@@ -1,0 +1,28 @@
+# vmops-playbook: name=install-nginx | desc=Nginx 安装（package 双系 + 开机自启） | targets=linux
+---
+# Nginx 安装：package 模块双系幂等。与应用商店的脚本版互为印证——
+# 单机临时装用商店脚本（快），批量/标准化用 playbook（可复用可审计）。
+- name: Nginx 安装
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: 安装 nginx
+      ansible.builtin.package:
+        name: nginx
+        state: present
+
+    - name: 启用并启动
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: RedHat 系放行 http
+      ansible.posix.firewalld:
+        service: http
+        permanent: true
+        immediate: true
+        state: enabled
+      when: ansible_os_family == "RedHat"
+      ignore_errors: true

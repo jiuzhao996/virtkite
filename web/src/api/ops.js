@@ -24,9 +24,16 @@ export const ops = {
   appDetail: (id) => unwrap(http.get('/apps/' + id)),
   installApp: (payload) => unwrap(http.post('/vms/apps/install', payload)),
 
-  // 运维自动化（P4）：引擎状态 + adhoc 批量执行（ansible_run 异步任务，202 返回 task_id）
+  // 运维自动化（P4）：引擎状态 + 批量执行（adhoc/playbook，ansible_run 异步任务）
   ansibleStatus: () => unwrap(http.get('/ansible/status')),
   ansibleRun: (payload) => unwrap(http.post('/ansible/run', payload)),
+  // playbook CRUD（保存前服务端过 --syntax-check）
+  ansiblePlaybooks: () => unwrap(http.get('/ansible/playbooks')),
+  ansiblePlaybook: (id) => unwrap(http.get(`/ansible/playbooks/${id}`)),
+  ansiblePlaybookCreate: (payload) => unwrap(http.post('/ansible/playbooks', payload)),
+  ansiblePlaybookUpdate: (id, payload) => unwrap(http.put(`/ansible/playbooks/${id}`, payload)),
+  ansiblePlaybookDelete: (id) => unwrap(http.delete(`/ansible/playbooks/${id}`)),
+  ansiblePlaybookCheck: (payload) => unwrap(http.post('/ansible/playbooks/check', payload)),
 
   // 镜像市场（云镜像 + 官方安装 ISO；下载转后台任务，202 返回 task_id）
   imageMarket: () => unwrap(http.get('/images/market')),

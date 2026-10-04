@@ -1,0 +1,66 @@
+# vmops-playbook: name=node-exporter | desc=监控 agent（node_exporter 1.8.2 + systemd） | targets=linux
+---
+# node_exporter 裸装：下载二进制 + systemd 单元。供平台告警中心（Prometheus 栈）
+# 抓取——装完后在 Prometheus 配置加 targets 即纳入监控。
+# 注意：从 GitHub releases 下载，VM 需能访问外网（或自行换成内网镜像源地址）。
+- name: node_exporter 监控 agent
+  hosts: all
+  gather_facts: true
+
+  vars:
+    node_exporter_version: "1.8.2"
+
+  tasks:
+    - name: 创建系统用户
+      ansible.builtin.user:
+        name: node_exporter
+        shell: /sbin/nologin
+        system: true
+        state: present
+
+    - name: 下载并解压二进制（x86_64/aarch64 自适配）
+      ansible.builtin.unarchive:
+        src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-{{ ansible_architecture == 'x86_64' | ternary('amd64', 'arm64') }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+        creates: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+
+    - name: 安装到 /usr/local/bin
+      ansible.builtin.copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-{{ ansible_architecture == 'x86_64' | ternary('amd64', 'arm64') }}/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        mode: "0755"
+        remote_src: true
+      notify: 重启 node_exporter
+
+    - name: systemd 单元
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter
+          After=network.target
+
+          [Service]
+          User=node_exporter
+          ExecStart=/usr/local/bin/node_exporter
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: "0644"
+      notify: 重启 node_exporter
+
+    - name: 启用并启动
+      ansible.builtin.systemd:
+        name: node_exporter
+        state: started
+        enabled: true
+        daemon_reload: true
+
+  handlers:
+    - name: 重启 node_exporter
+      ansible.builtin.systemd:
+        name: node_exporter
+        state: restarted
+        daemon_reload: true

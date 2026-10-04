@@ -358,13 +358,20 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		apps.GET("/:id", appsHandler.Get)
 	}
 
-	// 运维自动化（P4 S1）：引擎状态 + adhoc 批量执行（ansible_run 异步任务）
+	// 运维自动化（P4）：引擎状态 + 批量执行（adhoc/playbook）+ playbook CRUD
+	EnsureSeedPlaybooks() // 内置种子 playbook 落盘（缺哪个补哪个，用户改过的不覆盖）
 	ansibleHandler := NewAnsibleHandler(deps.DB, deps.Tasks)
 	ansibleGroup := api.Group("/ansible")
 	ansibleGroup.Use(middleware.OperatorMiddleware())
 	{
 		ansibleGroup.GET("/status", ansibleHandler.Status)
 		ansibleGroup.POST("/run", ansibleHandler.Run)
+		ansibleGroup.GET("/playbooks", ansibleHandler.ListPlaybooks)
+		ansibleGroup.GET("/playbooks/:id", ansibleHandler.GetPlaybook)
+		ansibleGroup.POST("/playbooks", ansibleHandler.CreatePlaybook)
+		ansibleGroup.POST("/playbooks/check", ansibleHandler.CheckPlaybook)
+		ansibleGroup.PUT("/playbooks/:id", ansibleHandler.UpdatePlaybook)
+		ansibleGroup.DELETE("/playbooks/:id", ansibleHandler.DeletePlaybook)
 	}
 
 	// cloud-init 配置模板（operator/admin：创建向导「套用模板/保存为模板」与管理页共用）

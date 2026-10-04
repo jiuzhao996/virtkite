@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,12 +22,19 @@ import (
 // ansible 执行常量。
 const (
 	// ansibleAdhocTimeout adhoc 批量执行兜底超时：局域网内几台 VM 的 ping/command
-	// 秒级完成；10 分钟防 SSH 悬挂长期占用 worker（playbook 版 S2 再放宽）。
+	// 秒级完成；10 分钟防 SSH 悬挂长期占用 worker。
 	ansibleAdhocTimeout = 10 * time.Minute
+	// ansiblePlaybookTimeout playbook 兜底超时：装包类（docker/nginx）分钟级，
+	// 20 分钟兜底。
+	ansiblePlaybookTimeout = 20 * time.Minute
 	// ansibleFlushInterval 输出节流落库间隔：ansible 逐行输出可能很快，
 	// 每行一次 UPDATE 会打爆 DB，按间隔攒批。
 	ansibleFlushInterval = 2 * time.Second
 )
+
+// ansiblePlaybookIDRe playbook 文件 id 白名单（与 handler playbookIDRe 同规，executor
+// 侧纵深防御复检——payload 是持久化数据，不能因「提交点校验过」就无条件信任）。
+var ansiblePlaybookIDRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 // RegisterAnsibleTasks 注册 ansible_run 批量执行 executor（P4 自动化运维）。
 //
@@ -55,10 +63,12 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	if err != nil || len(targets) == 0 {
 		return errors.New("缺少目标虚拟机（targets）")
 	}
+	playbook, _ := strParam(ctx.Payload, "playbook")
 	module, _ := strParam(ctx.Payload, "module")
 	moduleArgs, _ := strParam(ctx.Payload, "args")
-	if module == "" {
-		return errors.New("缺少 adhoc 模块（module）")
+	isPlaybook := playbook != ""
+	if !isPlaybook && module == "" {
+		return errors.New("缺少 adhoc 模块（module）或 playbook")
 	}
 
 	// 1) 目标 VM：必须存在、运行中、有 IP（无 IP 连 ansible 都够不着）
@@ -145,7 +155,22 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	}
 
 	// 4) 执行：逐行回调攒输出，节流刷任务 Result（前端轮询任务即见实时日志）
-	reportProgress(ctx, 20, "ansible "+module+" 执行中（"+strconv.Itoa(len(hosts))+" 台）")
+	var runOpts ansible.RunOpts
+	if isPlaybook {
+		// playbook 分支：id 在 handler 轻校验过，这里按白名单正则后再拼路径（纵深防御）
+		if !ansiblePlaybookIDRe.MatchString(playbook) {
+			return errors.New("playbook ID 非法")
+		}
+		pbPath := filepath.Join("data", "ansible", "playbooks", playbook+".yml")
+		if _, perr := os.Stat(pbPath); perr != nil {
+			return fmt.Errorf("playbook 不存在: %s", playbook)
+		}
+		runOpts = ansible.RunOpts{Inventory: inv, Playbook: pbPath, Timeout: ansiblePlaybookTimeout}
+		reportProgress(ctx, 20, "ansible-playbook "+playbook+" 执行中（"+strconv.Itoa(len(hosts))+" 台）")
+	} else {
+		runOpts = ansible.RunOpts{Inventory: inv, Module: module, ModuleArgs: moduleArgs, Timeout: ansibleAdhocTimeout}
+		reportProgress(ctx, 20, "ansible "+module+" 执行中（"+strconv.Itoa(len(hosts))+" 台）")
+	}
 	var (
 		mu    sync.Mutex
 		buf   []string
@@ -178,32 +203,27 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 			}
 		}
 	}()
-	recap, err := eng.Run(context.Background(), ansible.RunOpts{
-		Inventory:  inv,
-		Module:     module,
-		ModuleArgs: moduleArgs,
-		Timeout:    ansibleAdhocTimeout,
-		OnLine: func(line string) {
-			mu.Lock()
-			buf = append(buf, line)
-			dirty = true
-			mu.Unlock()
-		},
-	})
+	runOpts.OnLine = func(line string) {
+		mu.Lock()
+		buf = append(buf, line)
+		dirty = true
+		mu.Unlock()
+	}
+	recap, err := eng.Run(context.Background(), runOpts)
 	close(stopFlusher)
 	flush()
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
-	// 5) 结构化结果：adhoc 没有 PLAY RECAP（那是 playbook 专属），完整输出必须
-	//    随终态 Result 回传，否则前端只看到空 recap；playbook 两者都有
+	// 5) 结构化结果：playbook 有 PLAY RECAP 逐主机计数；adhoc 输出原文随终态回传
 	mu.Lock()
 	output := truncate(strings.Join(buf, "\n"), 50_000)
 	mu.Unlock()
 	reportProgress(ctx, 90, "汇总执行结果")
 	result := map[string]interface{}{
 		"module":    module,
+		"playbook":  playbook,
 		"targets":   len(hosts),
 		"output":    output,
 		"recap":     parseRecap(recap),

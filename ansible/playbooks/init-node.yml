@@ -1,0 +1,51 @@
+# vmops-playbook: name=init-node | desc=装机初始化（时区/chrony/firewalld/基础包） | targets=linux
+---
+# 装机初始化：新 VM 落地后先跑这个。双系写法用 package 模块（自动适配 dnf/apt）。
+# 注意：不改动 root 登录与 SSH 配置——平台 SSH 通道依赖，加固见 harden-ssh。
+- name: 装机初始化
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: 设置时区为 Asia/Shanghai
+      community.general.timezone:
+        name: Asia/Shanghai
+
+    - name: 安装 chrony（时间同步）
+      ansible.builtin.package:
+        name: chrony
+        state: present
+
+    - name: 启用并启动 chronyd
+      ansible.builtin.service:
+        name: chronyd
+        state: started
+        enabled: true
+      ignore_errors: true   # Debian/Ubuntu 服务名是 chrony 而非 chronyd
+
+    - name: 基础工具包
+      ansible.builtin.package:
+        name:
+          - vim
+          - curl
+          - wget
+          - tar
+          - unzip
+        state: present
+
+    - name: firewalld 放行 SSH 并开机自启
+      ansible.builtin.block:
+        - ansible.builtin.package:
+            name: firewalld
+            state: present
+        - ansible.builtin.service:
+            name: firewalld
+            state: started
+            enabled: true
+        - ansible.posix.firewalld:
+            service: ssh
+            permanent: true
+            immediate: true
+            state: enabled
+      when: ansible_os_family == "RedHat"
+      ignore_errors: true
