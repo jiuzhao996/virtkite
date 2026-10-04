@@ -3,7 +3,6 @@
     <!-- 动作组原本就是 .page-head 直接子元素，经默认插槽保持同构（.page-actions 的 scoped 样式仍生效） -->
     <PageHead title="存储管理">
       <div class="page-actions">
-        <el-button :icon="Share" @click="lineageOpen = true">克隆家谱</el-button>
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreatePool">新建存储池</el-button>
       </div>
@@ -278,19 +277,17 @@
     </el-dialog>
 
     <!-- 克隆家谱与回收工作台（全库跨池血缘图谱 + 回收候选，差异化功能） -->
-    <VolumeLineageDrawer v-model="lineageOpen" />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, h, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, FolderOpened, Edit, Delete, Collection, Brush, Share } from '@element-plus/icons-vue'
+import { Refresh, Plus, FolderOpened, Edit, Delete, Collection, Brush } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId } from '../utils/task.js'
 import PageHead from '../components/PageHead.vue'
-import VolumeLineageDrawer from './storage/components/VolumeLineageDrawer.vue'
 import VolumeLineageGraph from './storage/components/VolumeLineageGraph.vue'
 import DockerGate from '../components/DockerGate.vue'
 import VolumeTab from './docker/components/VolumeTab.vue'
@@ -346,7 +343,6 @@ const poolRules = {
 
 const volDrawer = ref(false)
 // 克隆家谱抽屉（数据随池名取，open 事件内自拉）
-const lineageOpen = ref(false)
 const volCreateDialog = ref(false)
 const regDialog = ref(false)
 const regSaving = ref(false)
