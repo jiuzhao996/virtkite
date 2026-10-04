@@ -96,6 +96,11 @@
                   <el-option v-for="a in apps" :key="a.id" :label="a.name" :value="a.id" />
                 </el-select>
               </el-form-item>
+              <el-form-item label="Playbook">
+                <el-select v-model="selected.playbooks" multiple filterable placeholder="落地后自动执行（初始化/加固/优化）" style="width: 100%">
+                  <el-option v-for="p in playbooks" :key="p.id" :label="p.id + (p.desc ? '（' + p.desc + '）' : '')" :value="p.id" />
+                </el-select>
+              </el-form-item>
             </template>
             <el-form-item v-else-if="selected.kind === 'container'" label="引用栈">
               <span class="mono ds-ref">{{ selected.ref }}</span>
@@ -145,6 +150,7 @@ const plans = ref([])
 const cloudImages = ref([])
 const storagePools = ref([])
 const apps = ref([])
+const playbooks = ref([])
 const planName = ref('')
 const selected = ref(null)
 const selectedEdgeId = ref('')
@@ -193,7 +199,7 @@ function portsConfig() {
 function buildNodeConfig(n) {
   const data = { kind: n.kind, ref: n.ref || '', name: n.name || '', note: n.note || '' }
   if (n.kind === 'vm') {
-    Object.assign(data, { pool: n.pool || '', vcpu: n.vcpu || 0, memory_mb: n.memory_mb || 0, ssh_user: n.ssh_user || '', apps: n.apps ? [...n.apps] : [], _sshSecret: '' })
+    Object.assign(data, { pool: n.pool || '', vcpu: n.vcpu || 0, memory_mb: n.memory_mb || 0, ssh_user: n.ssh_user || '', apps: n.apps ? [...n.apps] : [], playbooks: n.playbooks ? [...n.playbooks] : [], _sshSecret: '' })
   }
   const base = { id: n.id, x: n.x, y: n.y, data, ports: portsConfig() }
   if (n.kind === 'container') {
@@ -230,7 +236,7 @@ watch(selected, (v) => {
   const node = graph.getCellById(v.id)
   if (!node || !node.isNode()) return
   const data = { kind: v.kind, ref: v.ref, name: v.name, note: v.note }
-  if (v.kind === 'vm') Object.assign(data, { pool: v.pool, vcpu: v.vcpu, memory_mb: v.memory_mb, ssh_user: v.ssh_user, apps: v.apps, _sshSecret: v._sshSecret })
+  if (v.kind === 'vm') Object.assign(data, { pool: v.pool, vcpu: v.vcpu, memory_mb: v.memory_mb, ssh_user: v.ssh_user, apps: v.apps, playbooks: v.playbooks, _sshSecret: v._sshSecret })
   node.setData(data, { overwrite: true })
   syncNodeView(node, data)
   refreshEdges()
@@ -265,7 +271,7 @@ function bindGraphEvents() {
     selectedEdgeId.value = ''
     const d = node.getData() || {}
     selected.value = reactive({ id: node.id, kind: d.kind, ref: d.ref || '', name: d.name || '', note: d.note || '',
-      pool: d.pool || '', vcpu: d.vcpu || 1, memory_mb: d.memory_mb || 1024, ssh_user: d.ssh_user || 'root', apps: d.apps || [], _sshSecret: d._sshSecret || '' })
+      pool: d.pool || '', vcpu: d.vcpu || 1, memory_mb: d.memory_mb || 1024, ssh_user: d.ssh_user || 'root', apps: d.apps || [], playbooks: d.playbooks || [], _sshSecret: d._sshSecret || '' })
     normalizeVMNode(selected.value)
     refreshEdges()
   })
@@ -306,7 +312,7 @@ function removeEdge(edgeId) {
 function startDrag(evt, kind, it) {
   const id = 'n' + seq++
   const n = { id, kind, ref: it.ref, name: it.label, x: 0, y: 0 }
-  if (kind === 'vm') { n.vcpu = 2; n.memory_mb = 2048; n.ssh_user = 'root' }
+  if (kind === 'vm') { n.vcpu = 2; n.memory_mb = 2048; n.ssh_user = 'root'; n.apps = []; n.playbooks = [] }
   dnd.start(graph.createNode(buildNodeConfig(n)), evt)
 }
 function removeSelected() {
@@ -321,6 +327,7 @@ function normalizeVMNode(n) {
   if (!n.memory_mb) n.memory_mb = 1024
   if (!n.ssh_user) n.ssh_user = 'root'
   if (!n.apps) n.apps = []
+  if (!n.playbooks) n.playbooks = []
   if (n._sshSecret === undefined) n._sshSecret = ''
   return n
 }
@@ -340,7 +347,7 @@ function graphToPlan() {
     const p = n.getPosition()
     const out = { id: idMap.get(n.id), kind: d.kind, ref: d.ref || '', name: d.name || '', x: Math.round(p.x), y: Math.round(p.y), note: d.note || '' }
     // _sshSecret 刻意不进计划载荷：口令只随 apply 请求体走
-    if (d.kind === 'vm') Object.assign(out, { pool: d.pool || '', vcpu: d.vcpu || 0, memory_mb: d.memory_mb || 0, ssh_user: d.ssh_user || '', apps: d.apps || [] })
+    if (d.kind === 'vm') Object.assign(out, { pool: d.pool || '', vcpu: d.vcpu || 0, memory_mb: d.memory_mb || 0, ssh_user: d.ssh_user || '', apps: d.apps || [], playbooks: d.playbooks || [] })
     return out
   })
   const links = graph.getEdges().map((e) => ({ from: idMap.get(e.getSourceCellId()), to: idMap.get(e.getTargetCellId()) }))
@@ -415,7 +422,7 @@ async function applyPlan() {
   if (!cts.length && !vmDatas.length) return ElMessage.warning('计划中没有可落地节点（容器栈 / VM）')
   const noImg = vmDatas.filter((x) => !x.d.ref)
   if (noImg.length) return ElMessage.warning('VM「' + noImg.map((x) => x.d.name).join('、') + '」还未选择云镜像')
-  const needCred = vmDatas.filter((x) => (x.d.apps || []).length)
+  const needCred = vmDatas.filter((x) => (x.d.apps || []).length || (x.d.playbooks || []).length)
   const noPass = needCred.filter((x) => !x.d._sshSecret)
   if (noPass.length) return ElMessage.warning('VM「' + noPass.map((x) => x.d.name).join('、') + '」配了应用安装，需要填 SSH 口令')
   const parts = []
@@ -466,6 +473,8 @@ onMounted(async () => {
   cloudImages.value = (d.cloud_images || []).filter((i) => (i.format || '').toLowerCase() !== 'iso')
   storagePools.value = d.storage_pools || []
   apps.value = Array.isArray(appsRes.data) ? appsRes.data : []
+  const [t2] = await Promise.all([api.ansiblePlaybooks()])
+  playbooks.value = (t2.data && t2.data.items) || []
   initGraph()
   await loadPlans()
 })

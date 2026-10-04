@@ -119,6 +119,7 @@
           <el-radio-group v-model="form.action">
             <el-radio value="vm_snapshot">虚拟机快照</el-radio>
             <el-radio value="db_backup">数据库备份</el-radio>
+            <el-radio value="ansible_playbook">Playbook 执行</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.action === 'vm_snapshot'" label="目标虚拟机" required>
@@ -126,6 +127,18 @@
             <el-option v-for="vm in vms" :key="vm.id" :label="vmName(vm)" :value="vm.id" />
           </el-select>
           <div class="field-tip">保存后参数自动生成为 {{ snapshotParamsPreview }}</div>
+        </el-form-item>
+        <el-form-item v-else-if="form.action === 'ansible_playbook'" label="Playbook" required>
+          <el-select v-model="form.pb_playbook" filterable placeholder="选择要定时执行的 playbook" style="width: 100%" v-loading="pbLoading">
+            <el-option v-for="p in playbooks" :key="p.id" :label="p.id + (p.desc ? '（' + p.desc + '）' : '')" :value="p.id" />
+          </el-select>
+          <div class="field-tip">执行走 ansible_run 任务管线（凭据/输出/RECAP 全在任务中心可查）</div>
+        </el-form-item>
+        <el-form-item v-if="form.action === 'ansible_playbook'" label="目标虚拟机" required>
+          <el-select v-model="form.pb_targets" multiple filterable placeholder="选择运行中的虚拟机（可多选）" style="width: 100%" v-loading="vmsLoading">
+            <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vmName(vm)" :value="vm.id" />
+          </el-select>
+          <div class="field-tip">执行时逐台复核：需运行中、有 IP、已保存托管凭据</div>
         </el-form-item>
         <el-form-item v-else-if="form.action === 'db_backup'" label="说明">
           <div class="field-tip">备份数据库到主机 backup 目录，按保留份数自动清理旧备份</div>
@@ -219,10 +232,10 @@ const filteredItems = computed(() =>
 
 // 动作 → 中文 / tag 颜色
 function actionText(a) {
-  return { vm_snapshot: '虚拟机快照', db_backup: '数据库备份' }[a] || a
+  return { vm_snapshot: '虚拟机快照', db_backup: '数据库备份', ansible_playbook: 'Playbook 执行' }[a] || a
 }
 function actionTag(a) {
-  return { vm_snapshot: 'primary', db_backup: 'success' }[a] || 'info'
+  return { vm_snapshot: 'primary', db_backup: 'success', ansible_playbook: 'warning' }[a] || 'info'
 }
 
 // 执行状态 → 中文 / tag 颜色（success 绿 / failed 红 / running 蓝）
@@ -260,6 +273,10 @@ function paramsText(row) {
     const vm = vms.value.find((v) => v.id === obj.vm_id)
     return vm ? `虚拟机：${vm.name}` : `vm_id: ${obj.vm_id}`
   }
+  if (obj.playbook) {
+    const names = (obj.targets || []).map((id) => vms.value.find((v) => v.id === id)?.name || `#${id}`)
+    return `playbook：${obj.playbook} → ${names.length ? names.join('、') : '未选目标'}`
+  }
   const keys = Object.keys(obj)
   return keys.length === 0 ? '（无参数）' : JSON.stringify(obj)
 }
@@ -281,6 +298,10 @@ async function load() {
 // ===== VM 下拉数据（快照目标选择 + 参数翻译） =====
 const vms = ref([])
 const vmsLoading = ref(false)
+// playbook 下拉（ansible_playbook 动作）
+const playbooks = ref([])
+const pbLoading = ref(false)
+const runnableVMs = computed(() => vms.value.filter((v) => v.status === 'running' && v.ip))
 
 function vmName(vm) {
   return vm.status ? `${vm.name}（${vmStatusText(vm.status)}）` : vm.name
@@ -295,6 +316,18 @@ async function loadVMs() {
     ElMessage.error(errMsg(e, '获取虚拟机列表失败'))
   } finally {
     vmsLoading.value = false
+  }
+}
+
+async function loadPlaybooks() {
+  pbLoading.value = true
+  try {
+    const res = await api.ansiblePlaybooks()
+    playbooks.value = (res.data && res.data.items) || []
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取 playbook 列表失败'))
+  } finally {
+    pbLoading.value = false
   }
 }
 
@@ -369,18 +402,21 @@ function applyPreset(expr) {
 function openCreate() {
   editingId.value = null
   preset.value = ''
-  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, keep: DEFAULT_KEEP, enabled: true }
+  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, pb_playbook: '', pb_targets: [], keep: DEFAULT_KEEP, enabled: true }
   dialog.value = true
   if (vms.value.length === 0) loadVMs()
+  if (playbooks.value.length === 0) loadPlaybooks()
 }
 
 function openEdit(row) {
   editingId.value = row.id
   preset.value = ''
   let vmId = null
+  let pbParams = { playbook: '', targets: [] }
   try {
     const obj = JSON.parse(row.params || '{}')
     if (obj && obj.vm_id != null) vmId = obj.vm_id
+    if (obj && obj.playbook) pbParams = { playbook: obj.playbook, targets: obj.targets || [] }
   } catch (e) {
     // 旧数据 params 非法时按空处理，保存时会重新生成
   }
@@ -389,11 +425,14 @@ function openEdit(row) {
     cron_expr: row.cron_expr,
     action: row.action,
     vm_id: vmId,
+    pb_playbook: pbParams.playbook,
+    pb_targets: pbParams.targets,
     keep: Number(row.keep) || DEFAULT_KEEP,
     enabled: !!row.enabled
   }
   dialog.value = true
   if (vms.value.length === 0) loadVMs()
+  if (playbooks.value.length === 0) loadPlaybooks()
 }
 
 async function save() {
@@ -402,13 +441,20 @@ async function save() {
   if (form.value.action === 'vm_snapshot' && form.value.vm_id == null) {
     return ElMessage.warning('请选择要快照的虚拟机')
   }
+  if (form.value.action === 'ansible_playbook') {
+    if (!form.value.pb_playbook) return ElMessage.warning('请选择 playbook')
+    if (!form.value.pb_targets.length) return ElMessage.warning('请选择目标虚拟机')
+  }
   if (!form.value.keep || form.value.keep < 1) {
     return ElMessage.warning('保留份数必须是 1-365 的整数')
   }
-  // params 是 JSON 字符串：vm_snapshot 带 {"vm_id":N}，db_backup 空对象
+  // params 是 JSON 字符串：vm_snapshot 带 {"vm_id":N}，ansible_playbook 带
+  // {playbook, targets}，db_backup 空对象
   const params = form.value.action === 'vm_snapshot'
     ? JSON.stringify({ vm_id: form.value.vm_id })
-    : '{}'
+    : form.value.action === 'ansible_playbook'
+      ? JSON.stringify({ playbook: form.value.pb_playbook, targets: form.value.pb_targets })
+      : '{}'
   const payload = {
     name: form.value.name.trim(),
     cron_expr: form.value.cron_expr.trim(),

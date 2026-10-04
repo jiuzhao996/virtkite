@@ -119,7 +119,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	// 应用商店安装：use_saved（或未带口令）走服务端凭据，明文不落 task.payload
 	appsHandler.SetVMCredentialHandler(vmCredHandler)
 	lokiHandler := NewLokiHandler(deps.LokiURL)
-	cronScheduler := &cron.Scheduler{DB: deps.DB, Virt: deps.Virt, BackupDir: ""}
+	cronScheduler := &cron.Scheduler{DB: deps.DB, Virt: deps.Virt, BackupDir: "", TaskMgr: deps.Tasks}
 	cronScheduler.Start() // 内部自起 goroutine（整分 tick）
 	cronsHandler := NewCronsHandler(deps.DB, cronScheduler)
 

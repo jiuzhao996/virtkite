@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -385,8 +387,39 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 	case cron.ActionDBBackup:
 		st.Params = "{}" // 预留扩展位，当前无可配参数
 		return 0, nil
+	case cron.ActionAnsiblePlaybook:
+		// P4-S3：归一化 playbook id（白名单正则）与 targets；executor 会逐台复核
+		// 运行态/IP/托管凭据，这里只做结构性校验
+		var params struct {
+			Playbook string `json:"playbook"`
+			Targets  []uint `json:"targets"`
+		}
+		if strings.TrimSpace(st.Params) == "" {
+			return 0, errors.New(`ansible_playbook 需要 params，例如 {"playbook":"sysctl-tuning","targets":[89]}`)
+		}
+		if err := json.Unmarshal([]byte(st.Params), &params); err != nil {
+			return 0, errors.New(`params 必须为 JSON，例如 {"playbook":"sysctl-tuning","targets":[89]}`)
+		}
+		if !cron.AnsiblePlaybookIDRe.MatchString(params.Playbook) {
+			return 0, errors.New("playbook ID 非法（字母数字与 -_，字母开头）")
+		}
+		if _, err := os.Stat(filepath.Join("data", "ansible", "playbooks", params.Playbook+".yml")); err != nil {
+			return 0, fmt.Errorf("playbook 不存在: %s", params.Playbook)
+		}
+		if len(params.Targets) == 0 {
+			return 0, errors.New("targets 不能为空（至少一台虚拟机）")
+		}
+		if len(params.Targets) > 50 {
+			return 0, errors.New("单次执行最多 50 台")
+		}
+		b, merr := json.Marshal(map[string]interface{}{"playbook": params.Playbook, "targets": params.Targets})
+		if merr != nil {
+			return 0, errors.New("params 序列化失败")
+		}
+		st.Params = string(b)
+		return 0, nil
 	default:
-		return 0, errors.New("action 只支持 vm_snapshot（定时快照）或 db_backup（定时备份数据库）")
+		return 0, errors.New("action 只支持 vm_snapshot（定时快照）/ db_backup（定时备份数据库）/ ansible_playbook（定时执行 playbook）")
 	}
 }
 

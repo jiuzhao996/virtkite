@@ -67,6 +67,9 @@ type dsgNode struct {
 	SSHUser   string   `json:"ssh_user,omitempty"`
 	SSHSecret string   `json:"ssh_secret,omitempty"` // 边界就地加密，不落库明文
 	Apps      []string `json:"apps,omitempty"`       // 待安装应用 id 列表
+	// Playbooks 落地后逐个执行的 playbook id（P4-S3 编排联动）：应用装的是服务，
+	// playbook 做的是初始化/加固/优化，各司其职；同样走 ansible_run 任务管线
+	Playbooks []string `json:"playbooks,omitempty"`
 }
 
 type dsgLink struct {
@@ -317,12 +320,13 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 				log.Printf("[designer] 计划 %s 应用 panic: %v\n%s", plan.ID, r, debug.Stack())
 			}
 		}()
-		// 前置守卫：配了应用的 VM 节点必须拿到口令（凭据随请求体来，计划文件里没有），
-		// 否则建出空口令机器、app_install 必然 SSH 失败——fail-fast 比半途失败省资源
+		// 前置守卫：配了应用或 playbook 的 VM 节点必须拿到口令（凭据随请求体来，
+		// 计划文件里没有）——两类动作都要用口令（app 加密入 payload / playbook 托管
+		// 后走凭据通道），否则建出空口令机器必然失败——fail-fast 比半途失败省资源
 		for _, n := range plan.Nodes {
-			if n.Kind == "vm" && len(n.Apps) > 0 && n.SSHSecret == "" {
+			if n.Kind == "vm" && (len(n.Apps) > 0 || len(n.Playbooks) > 0) && n.SSHSecret == "" {
 				st.Status = "failed"
-				st.Error = "VM「" + n.Name + "」配了应用安装但未提供 SSH 口令（落地时需在页面填入）"
+				st.Error = "VM「" + n.Name + "」配了应用/playbook 但未提供 SSH 口令（落地时需在页面填入）"
 				return
 			}
 		}
@@ -478,6 +482,19 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 	}
 	st.Steps = append(st.Steps, "VM 运行中，IP="+vm.IP)
 
+	// 3) 口令自动托管（P4-S3）：cloud-init 的口令如果不落 vm_credentials，后续
+	// ansible_run（凭据通道）与凭据类功能（终端免密/文件管理）全部不可用
+	if n.SSHSecret != "" {
+		if err := h.VMCred.UpsertForVM(vmID, sshUser, n.SSHSecret); err != nil {
+			// 托管失败不终止落地：应用安装走显式 password_enc 通道不受影响，但
+			// playbook/凭据功能需要用户手工补（留痕 + 步骤可见）
+			log.Printf("[designer] 警告: VM %s(%d) 凭据托管失败: %v", n.Name, vmID, err)
+			st.Steps = append(st.Steps, "⚠ 凭据托管失败（playbook/凭据功能需手工补录）："+err.Error())
+		} else {
+			st.Steps = append(st.Steps, "✓ SSH 口令已自动托管（凭据功能可用）")
+		}
+	}
+
 	// 4) app_install 逐个装（口令边界就地加密；凭据不落明文）
 	for _, appID := range n.Apps {
 		cipherB64, saltHex, err := secretbox.SealWithMaster(h.VMCred.MasterSecret, n.SSHSecret)
@@ -502,6 +519,28 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 			return vmID, err
 		}
 		st.Steps = append(st.Steps, "✓ "+appID+" 安装完成")
+	}
+
+	// 5) playbook 逐个跑（P4-S3 编排联动）：复用 ansible_run 任务管线（凭据解析/
+	// inventory 生成/RECAP 全在 executor），这里只编排。playbook 跑的是初始化/加固/
+	// 优化类动作，与应用安装互补
+	for _, pbID := range n.Playbooks {
+		if !playbookIDRe.MatchString(pbID) {
+			return vmID, fmt.Errorf("playbook ID 非法: %s", pbID)
+		}
+		if _, perr := os.Stat(filepath.Join("data", "ansible", "playbooks", pbID+".yml")); perr != nil {
+			return vmID, fmt.Errorf("playbook 不存在: %s", pbID)
+		}
+		t, err := h.Tasks.Submit("ansible_run", "设计器 playbook "+pbID+" → "+n.Name,
+			map[string]interface{}{"targets": []uint{vmID}, "playbook": pbID}, userID, username, n.Name, &vmID)
+		if err != nil {
+			return vmID, fmt.Errorf("提交 playbook 执行失败（%s）: %w", pbID, err)
+		}
+		st.Steps = append(st.Steps, "执行 playbook "+pbID+"…（task="+strconv.FormatUint(uint64(t.ID), 10)+"）")
+		if _, err := h.waitTask(t.ID, 25*time.Minute); err != nil {
+			return vmID, err
+		}
+		st.Steps = append(st.Steps, "✓ "+pbID+" 完成")
 	}
 	return vmID, nil
 }

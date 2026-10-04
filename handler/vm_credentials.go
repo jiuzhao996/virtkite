@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"log"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -164,6 +165,43 @@ func (h *VMCredentialHandler) Save(c *gin.Context) {
 	// 落库事件留痕（谁、从哪、给哪台机器存了凭据）；口令与掩码都不进日志
 	log.Printf("[vm-cred] 保存凭据 vm=%s(%d) user=%s port=%d from=%s", vm.Name, vm.ID, req.User, port, c.ClientIP())
 	Success(c, gin.H{"message": "已保存凭据", "configured": true, "user": req.User, "port": port})
+}
+
+// UpsertForVM 内部托管通道（非 HTTP）：服务端流程建机后把口令直接托管起来——
+// 设计器 provisionVM 建 VM 时口令只存在于 cloud-init 注入，若不落 vm_credentials，
+// 后续 ansible_run（凭据通道）与凭据类功能（终端免密/文件管理 use_saved）全部不可用。
+// 幂等 upsert：已有凭据覆盖更新（vm_id 唯一索引至多一条）。明文只在内存一瞬，
+// 不进日志不进响应体。
+func (h *VMCredentialHandler) UpsertForVM(vmID uint, user, password string) error {
+	if h == nil || h.MasterSecret == "" {
+		return errors.New("凭据托管未初始化（主密钥未配置）")
+	}
+	if user == "" || password == "" {
+		return errors.New("托管凭据需要非空的用户名与口令")
+	}
+	if len(password) > maxSavedPasswordLen {
+		return errors.New("口令过长")
+	}
+	cipherB64, saltHex, err := secretbox.SealWithMaster(h.MasterSecret, password)
+	if err != nil {
+		return fmt.Errorf("口令加密失败: %w", err)
+	}
+	var rec model.VMCredential
+	err = h.DB.Where("vm_id = ?", vmID).First(&rec).Error
+	switch {
+	case err == nil:
+		return h.DB.Model(&rec).Updates(map[string]interface{}{
+			"user":         user,
+			"port":         22,
+			"password_enc": cipherB64,
+			"salt":         saltHex,
+		}).Error
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		rec = model.VMCredential{VMID: vmID, User: user, Port: 22, PasswordEnc: cipherB64, Salt: saltHex}
+		return h.DB.Create(&rec).Error
+	default:
+		return err
+	}
 }
 
 // Get 查看 VM 已保存凭据的元信息。GET /api/vms/:id/credentials

@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
@@ -27,15 +28,23 @@ import (
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/notify"
+	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
 )
 
 // 动作类型白名单（model.ScheduledTask.Action 的合法取值）。
 const (
-	ActionVMSnapshot = "vm_snapshot" // 定时对指定虚拟机打快照
-	ActionDBBackup   = "db_backup"   // 定时备份数据库（mysqldump）
+	ActionVMSnapshot       = "vm_snapshot"       // 定时对指定虚拟机打快照
+	ActionDBBackup         = "db_backup"         // 定时备份数据库（mysqldump）
+	ActionAnsiblePlaybook  = "ansible_playbook"  // 定时执行 playbook（P4-S3：调度×引擎缝合）
 )
+
+// AnsiblePlaybookMaxWait 定时 playbook 执行的兜底等待：转任务异步跑，这里轮询终态。
+const AnsiblePlaybookMaxWait = 25 * time.Minute
+
+// AnsiblePlaybookIDRe playbook 文件 id 白名单（handler 校验与包内执行共用同一规约）。
+var AnsiblePlaybookIDRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
 const (
 	// defaultBackupDir 数据库备份默认输出目录（Scheduler.BackupDir 为空时使用）。
@@ -269,9 +278,14 @@ type Scheduler struct {
 	DB        *gorm.DB
 	Virt      *virt.Virt
 	BackupDir string // 数据库备份输出目录，空串用 defaultBackupDir
+	// TaskMgr ansible_playbook 动作的提交出口（P4-S3 调度×引擎缝合）：cron 只负责
+	// 「什么时候跑」，执行细节（凭据/inventory/RECAP）全在 ansible_run 任务管线。
+	// 注入接口而非具体类型会更好测，但当前只有这一种出口，先收口在 tasks.Manager。
+	TaskMgr *tasks.Manager
 
 	// execMu 串行化执行：定时 tick 与 handler 的手动触发（ExecuteNow）可能并发
-	// 命中同一任务，mysqldump / 打快照不重入。
+	// 命中同一任务，mysqldump / 打快照不重入。ansible_playbook 转异步任务后本函数
+	// 只做轮询等待（分钟级），同样占用此锁——并发到达的另一个任务会排队。
 	execMu sync.Mutex
 }
 
@@ -362,6 +376,8 @@ func (s *Scheduler) execute(st model.ScheduledTask) error {
 		summary, err = s.runVMSnapshot(st)
 	case ActionDBBackup:
 		summary, err = s.runDBBackup(st)
+	case ActionAnsiblePlaybook:
+		summary, err = s.runAnsiblePlaybook(st)
 	default:
 		err = fmt.Errorf("未知动作类型 %q", st.Action)
 	}
@@ -471,6 +487,91 @@ func (s *Scheduler) pruneVMSnapshots(vmName string, keep int) int {
 // runDBBackup 执行数据库备份：docker exec 进 MySQL 容器跑 mysqldump，
 // 输出落 BackupDir/vmops-YYYYMMDD-HHMM.sql，并只保留最近 keep（st.Keep，<=0 视为 7）份。
 // 返回成果摘要供执行历史 output 使用。
+// runAnsiblePlaybook 定时执行 playbook（P4-S3）：params 形如
+// {"playbook":"sysctl-tuning","targets":[89,90]}。转 ansible_run 异步任务执行
+// （凭据/inventory/输出全在任务管线），这里提交后轮询终态并汇总 RECAP 进执行历史。
+// 调度与引擎各司其职：cron 回答「什么时候跑」，ansible_run 回答「怎么跑」。
+func (s *Scheduler) runAnsiblePlaybook(st model.ScheduledTask) (string, error) {
+	if s.TaskMgr == nil {
+		return "", fmt.Errorf("任务系统未接入（TaskMgr 为空）")
+	}
+	var params struct {
+		Playbook string `json:"playbook"`
+		Targets  []uint `json:"targets"`
+	}
+	if err := json.Unmarshal([]byte(st.Params), &params); err != nil {
+		return "", fmt.Errorf("参数解析失败: %w", err)
+	}
+	if params.Playbook == "" || len(params.Targets) == 0 {
+		return "", fmt.Errorf("参数不完整（需要 playbook 与 targets）")
+	}
+
+	username := "cron"
+	task, err := s.TaskMgr.Submit("ansible_run",
+		fmt.Sprintf("计划任务 %s（playbook %s → %d 台）", st.Name, params.Playbook, len(params.Targets)),
+		map[string]interface{}{"playbook": params.Playbook, "targets": params.Targets},
+		nil, username, "", nil)
+	if err != nil {
+		return "", fmt.Errorf("提交 ansible_run 任务失败: %w", err)
+	}
+
+	// 轮询终态（execute 持有 execMu，此处分钟级等待会让并发的其他计划任务排队——
+	// 当前规模单机 few jobs，可接受；作业多了再改非阻塞）
+	deadline := time.Now().Add(AnsiblePlaybookMaxWait)
+	for {
+		time.Sleep(5 * time.Second)
+		var t model.Task
+		if qerr := s.DB.First(&t, task.ID).Error; qerr != nil {
+			return "", fmt.Errorf("读取任务状态失败: %w", qerr)
+		}
+		switch t.Status {
+		case model.TaskStatusSuccess:
+			return s.summarizeAnsibleRun(params.Playbook, t.Result)
+		case model.TaskStatusFailed:
+			msg := t.Error
+			if msg == "" {
+				msg = "任务失败（无错误详情）"
+			}
+			return "", fmt.Errorf("playbook %s 执行失败: %s", params.Playbook, msg)
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("等待任务 %d 超时（%s）", task.ID, AnsiblePlaybookMaxWait)
+		}
+	}
+}
+
+// summarizeAnsibleRun 从任务 Result JSON 提取 RECAP 计数做执行历史摘要。
+func (s *Scheduler) summarizeAnsibleRun(playbook, result string) (string, error) {
+	var res struct {
+		Recap map[string]map[string]int `json:"recap"`
+	}
+	failedTotal := 0
+	hostLines := make([]string, 0, len(res.Recap))
+	if result != "" {
+		if err := json.Unmarshal([]byte(result), &res); err == nil {
+			hosts := make([]string, 0, len(res.Recap))
+			for h := range res.Recap {
+				hosts = append(hosts, h)
+			}
+			sort.Strings(hosts)
+			for _, h := range hosts {
+				c := res.Recap[h]
+				hostLines = append(hostLines, fmt.Sprintf("%s ok=%d changed=%d failed=%d unreachable=%d",
+					h, c["ok"], c["changed"], c["failed"], c["unreachable"]))
+				failedTotal += c["failed"] + c["unreachable"]
+			}
+		}
+	}
+	summary := fmt.Sprintf("playbook %s 执行完成（task 已入库）", playbook)
+	if len(hostLines) > 0 {
+		summary += ": " + strings.Join(hostLines, "; ")
+	}
+	if failedTotal > 0 {
+		return summary, fmt.Errorf("playbook %s 有 %d 台主机失败", playbook, failedTotal)
+	}
+	return summary, nil
+}
+
 func (s *Scheduler) runDBBackup(st model.ScheduledTask) (string, error) {
 	dir := s.BackupDir
 	if dir == "" {
