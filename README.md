@@ -63,7 +63,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **用户组授权 + 授权申请审批流（v3.6，借鉴堡垒机 4A）**（用户组：组 → 资产批量授权，组内成员即时获得/失去可见性；授权申请：学生在「资产申请」页自助申请（花名册只含名称/状态）→ 教师在审批队列批准（可调时长）或驳回 → 批准即写限时授权，到期自动失效。跳板会话天然禁用 sftp/scp/端口转发——只能敲键盘，传不了东西开不了隧道）
 - [x] **SSH 凭据托管（v3）（AES-256-GCM 加密落库：主密钥运行时注入不落库 + 每条记录随机盐，数据库泄露后凭据不可直接可读；文件管理 / VM 应用安装「使用已保存凭据」后端自行解密消费，明文不出服务端）
 - [x] **VM 文件管理（v3：双通道）**（在线通道：SSH/SFTP 浏览/上传/下载/删除/建目录，管开机机；离线通道：guestmount 只读挂载关机机系统盘，不依赖 VM 内 SSH；运行中 VM 一律拒绝离线挂载防磁盘锁，挂载只读——宁可浏览受限不可损坏磁盘）
-- [x] **计划任务（v3，v4 扩动作）**（自研五字段 cron 解析（百行纯函数可单测，不引第三方）+ 整分 tick 调度器：定时快照 / mysqldump 数据库备份 / **定时执行 Playbook**（转 Ansible 任务管线，RECAP 计数入执行历史，调度与引擎各司其职）；启停 / 立即运行 / 执行记录）
+- [x] **计划任务（v3，v4 扩动作）**（自研五字段 cron 解析（百行纯函数可单测，不引第三方）+ 整分 tick 调度器：定时快照 / mysqldump 数据库备份 / **定时执行 Playbook**（转 Ansible 任务管线，RECAP 计数入执行历史，调度与引擎各司其职）；启停 / 立即运行 / 执行记录；2026-10-04 起并入运维自动化页「计划任务」tab，`/crons` 深链重定向）
 - [x] ~~Loki 日志栈（v3）~~（2026-10 优化期拆除平台集成：查询面板/代理接口/配置字段全删，部署配置亦已随裁剪移出仓库（2026-09-30）——指标+告警已覆盖主链路，日志属可选增量自行外接，平台不再强绑）
 - [x] **镜像市场（云镜像 qcow2 + 官方安装 ISO）**（内置清单一键提交下载任务，异步流式落盘、完成自动登记镜像库；单源直下并逐卡标注来源——清华源为主、个别卡南大源，每卡附「访问源页面」链接；云镜像 5 项 / ISO 6 项含 Ubuntu 26.04）
 - [x] **架构设计器（v4，eNSP 式先设计后落地）**（预置架构模板一键载入 + AntV X6 画布：设备栏拖拽添加、节点自由拖动、边缘拉线连线、对齐吸附、Delete 删除；计划保存 data/designer + YAML 导出；**一键落地**：容器栈 compose up、VM 节点走完整建机管线（cloud-init 注入 → 自动开机 → DHCP 租约自愈重试 → 装应用 → 跑 playbook）；SSH 口令只随落地请求一次性携带，不随计划保存）
@@ -72,7 +72,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **镜像版本检测（v4）**（本地镜像 digest 对比镜像代理源远端 digest，镜像管理页「检查更新」一键比对）
 - [x] **VM 导出/导入（v3）**（tar.gz 全量包 = 域 XML + 系统盘卷；导出 gzip/tar 两级 writer 管道直写响应体，不落临时盘不整载内存；导入失败按副作用逆序清理）
 - [x] **回收站（v3）**（删除是软删——回收站页可视化软删 VM：恢复 / 彻底清除（admin），删错机器的后悔药）
-- [x] **工具箱（v3）**（宿主机快捷运维：进程列表 / 磁盘用量 / Docker 清理 / 任务记录清理，admin 专属）
+- [x] ~~工具箱（v3）~~（宿主机快捷运维：进程列表 / 磁盘用量 / Docker 清理 / 任务记录清理；IA 精简批次整体砍除——低频且可被宿主机原生工具覆盖）
 - [x] **cloud-init 模板（v3）**（初始化配置存为可复用模板，创建向导一键套用 / 当前配置保存为模板）
 - [x] **拓扑图（v3）**（宿主机-存储池-虚拟机从属关系可视化：池节点按容量、VM 节点按状态着色，拖拽布局/滚轮缩放/图例过滤）
 - [x] **系统公告 + 安全入口（v3）**（公告板登录页与仪表盘公开展示（admin 经设置页编辑）；登录接口可设安全入口暗号，无暗号请求一律 404 伪装；建用户/改密密码复杂度校验）
@@ -328,7 +328,6 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 - 计划任务（admin）：`GET|POST /api/crons` `PUT|DELETE /api/crons/:id` `POST /api/crons/:id/{toggle,run}` `GET /api/crons/:id/runs`（执行记录） `GET /api/crons/preview?expr=`（下次执行预览）
 - SSH 主机指纹（TOFU，admin）：`GET /api/ssh-host-keys` `DELETE /api/ssh-host-keys/:id`
 - 回收站（admin）：`GET /api/vms-recycle` `POST /api/vms-recycle/:id/restore` `DELETE /api/vms-recycle/:id/purge`
-- 工具箱（admin）：`GET /api/toolbox/{processes,disk}` `POST /api/toolbox/{docker-prune,tasks-purge}`
 - 镜像市场：`GET /api/images/market`（清单） `POST /api/images/market/download`（admin，202 任务）
 - VM 导出/导入：`GET /api/vms/:id/export`（tar.gz 流式下载） `POST /api/vms/import-file`（admin）
 - cloud-init 模板：`GET|POST /api/cloud-init-templates` `GET|PUT|DELETE /api/cloud-init-templates/:id`

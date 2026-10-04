@@ -202,7 +202,7 @@
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 // 图标按需显式 import：Share/Tickets 随拓扑图与 cloud-init 独立菜单项撤销一并移除
-import { ArrowDown, MagicStick, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Picture, Setting, SwitchButton, Ticket, Timer, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, MagicStick, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Picture, Setting, SwitchButton, Ticket, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { roleText, vmStatusText, vmStatusTag } from '../utils/format'
@@ -272,15 +272,14 @@ const navItems = [
   { index: '/storage', label: '存储池', icon: FolderOpened, group: '基础设施' },
   { index: '/networks', label: '网络', icon: Connection, group: '基础设施' },
   { index: '/containers', label: '容器', icon: Box, group: '基础设施', operateOnly: true },
-  // 2026-10-04 用户拍板：自动化（P4）+ 计划任务前置到运维组（原藏系统设置，存在感为零）
+  // 2026-10-04 用户拍板：自动化（P4）前置到运维组；计划任务随后并入自动化页「计划任务」
+  // tab（/crons 重定向），独立菜单项撤销——调度器与执行引擎同页，运维组不再双入口
   { index: '/automation', label: '运维自动化', icon: Cpu, group: '运维', operateOnly: true },
   { index: '/tasks', label: '任务中心', icon: List, group: '运维' },
-  { index: '/crons', label: '计划任务', icon: Timer, group: '运维', adminOnly: true },
   // 审计中心 operateOnly：后端 /api/audit 为 admin-only、/api/sessions 为 operator-only，
   // viewer 点进来只会看到一张永远空着的会话表（403 静默失败），直接不展示入口
   { index: '/audit', label: '审计中心', icon: Document, group: '运维', operateOnly: true },
   { index: '/recycle-bin', label: '回收站', icon: Delete, group: '运维', adminOnly: true },
-  // 工具箱（进程 Top/磁盘诊断）：低频管理员功能，归管理组而非运维组（运维组只留任务/审计/回收等动线）
   { index: '/users', label: '用户管理', icon: User, group: '管理', adminOnly: true },
   { index: '/settings', label: '系统设置', icon: Setting, group: '管理', adminOnly: true }
 ]

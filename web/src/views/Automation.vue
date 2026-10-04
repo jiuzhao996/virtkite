@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHead title="运维自动化" subtitle="Ansible 批量执行引擎——inventory 由平台虚拟机资产自动生成，SSH 口令经托管凭据注入，目标白名单结构性成立" />
+    <PageHead title="运维自动化" subtitle="Ansible 批量执行与计划任务调度同页各司其职——inventory 由平台虚拟机资产自动生成，SSH 口令经托管凭据注入，目标白名单结构性成立" />
 
     <!-- 引擎状态 -->
     <el-card shadow="never" class="auto-engine" v-loading="statusLoading">
@@ -113,6 +113,12 @@
           </el-table>
         </el-card>
       </el-tab-pane>
+
+      <!-- Tab 4 计划任务（2026-10-04 并入，原独立菜单撤销）：调度与引擎同页各司其职；
+           后端 /api/crons 挂 AdminMiddleware，tab 仅管理员可见；lazy 使切换到本 tab 才挂载拉数 -->
+      <el-tab-pane v-if="isAdmin" label="计划任务" name="cron" lazy>
+        <CronList embedded />
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 执行输出（tab 外共用：adhoc / playbook / 历史回看） -->
@@ -198,11 +204,17 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, VideoPlay, Edit, Delete, Close } from '@element-plus/icons-vue'
+import { useRoute } from 'vue-router'
 import { api } from '../api'
 import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
+import { useAuth } from '../store/auth'
+import CronList from './CronList.vue'
 
-const activeTab = ref('adhoc')
+const route = useRoute()
+const { isAdmin } = useAuth()
+// 深链支持：/crons 重定向到 /automation?tab=cron（仅管理员生效，否则落默认 tab）
+const activeTab = ref(route.query.tab === 'cron' && isAdmin.value ? 'cron' : 'adhoc')
 const engine = ref({})
 const statusLoading = ref(true)
 const vms = ref([])

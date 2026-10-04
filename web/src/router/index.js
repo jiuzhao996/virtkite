@@ -40,8 +40,9 @@ const routes = [
       { path: 'ai', redirect: '/dashboard' },
       { path: 'cloud-init-templates', redirect: '/settings' },
       { path: 'recycle-bin', name: 'recycle-bin', component: () => import('../views/RecycleBin.vue'), meta: { requiresAdmin: true } },
-      { path: 'crons', name: 'crons', component: () => import('../views/CronList.vue'), meta: { requiresAdmin: true } },
       { path: 'automation', name: 'automation', component: () => import('../views/Automation.vue'), meta: { requiresOperate: true } },
+      // 计划任务 2026-10-04 并入运维自动化页「计划任务」tab，独立页面撤销、深链重定向
+      { path: 'crons', redirect: '/automation?tab=cron' },
       { path: 'vms/:id', name: 'vm-detail', component: () => import('../views/VmDetail.vue') },
       { path: 'hosts', name: 'hosts', component: () => import('../views/HostList.vue') },
       { path: 'images', name: 'images', component: () => import('../views/ImageList.vue') },
