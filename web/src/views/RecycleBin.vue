@@ -15,7 +15,8 @@
       </Toolbar>
       <!-- 空态：回收站没有软删记录 -->
       <el-empty v-if="!loading && items.length === 0" description="回收站是空的" :image-size="80" />
-      <el-table v-else :data="items" size="small">
+      <!-- 行点击进入原机信息抽屉；行内按钮 .stop 防冒泡 -->
+      <el-table v-else :data="items" size="small" @row-click="openDetail" row-class-name="clickable-row">
         <el-table-column label="名称" prop="name" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="vm-name">{{ row.name }}</span>
@@ -64,7 +65,7 @@
               size="small"
               :icon="RefreshLeft"
               :loading="actingId === row.id"
-              @click="restore(row)"
+              @click.stop="restore(row)"
             >恢复</el-button>
             <el-button
               text
@@ -72,12 +73,43 @@
               size="small"
               :icon="Delete"
               :disabled="actingId === row.id"
-              @click="purge(row)"
+              @click.stop="purge(row)"
             >彻底清除</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 原机信息抽屉（行点击进入）：数据全部来自列表行，无需再请求。
+         字段以回收站接口 deletedVMItem 实际返回为准（id/name/uuid/status/storage_pool/deleted_at/domain_exists），
+         vCPU/内存/磁盘等规格字段后端未下发，缺的字段不编造 -->
+    <el-drawer v-model="detailOpen" title="原机信息" :size="440" :append-to-body="true" destroy-on-close>
+      <template v-if="detail">
+        <div class="rb-head">
+          <span class="rb-name">{{ detail.name }}</span>
+          <el-tag :type="vmStatusTag(detail.status)" effect="light" size="small">{{ vmStatusText(detail.status, '未知') }}</el-tag>
+          <el-tag :type="detail.domain_exists ? 'success' : 'info'" effect="light" size="small">
+            {{ detail.domain_exists ? '域存在' : '域不存在' }}
+          </el-tag>
+        </div>
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="UUID">
+            <span class="mono uuid">{{ detail.uuid || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="所属存储池">{{ detail.storage_pool || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="删除时间">
+            <span class="mono">{{ fmtDateTime(detail.deleted_at) }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="libvirt 域">
+            <!-- 语义与表格「域状态」列 tooltip 同源：存在多为删除中途失败的残留 -->
+            {{ detail.domain_exists
+              ? '仍存在同名域定义（删除中途失败的残留），恢复后可直接开机'
+              : '域定义已彻底删除，恢复后需重新定义' }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <div class="rb-note">恢复后配置原样回归；彻底清除不可逆。</div>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -160,6 +192,15 @@ async function purge(row) {
   }
 }
 
+// ===== 原机信息抽屉（行点击进入）：数据全部来自列表行，无需再请求 =====
+const detailOpen = ref(false)
+const detail = ref(null)
+
+function openDetail(row) {
+  detail.value = row
+  detailOpen.value = true
+}
+
 onMounted(load)
 </script>
 
@@ -181,5 +222,32 @@ onMounted(load)
 .col-help .el-icon {
   font-size: 13px;
   color: var(--color-muted-foreground);
+}
+
+/* ===== 原机信息抽屉 ===== */
+.rb-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-bottom: var(--space-xl);
+}
+.rb-name {
+  font-size: 18px;
+  font-weight: 600;
+}
+.rb-note {
+  margin-top: var(--space-xl);
+  padding: var(--space-md) var(--space-lg);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-color-primary-dark-2);
+  background: var(--el-color-primary-light-9);
+  border-radius: var(--radius-sm);
+}
+
+/* 行点击进入信息抽屉：scoped 需穿透 el-table 内部行 */
+:deep(.clickable-row) {
+  cursor: pointer;
 }
 </style>

@@ -2,6 +2,36 @@
   <div v-loading="loading && !firstLoading">
       <PageHead title="虚拟机管理" />
       <el-card shadow="never">
+        <!-- 状态分布堆叠色条（质感专项）：按列表全量数据的各状态占比分段，随 5s 轮询联动刷新；
+             图例 chip 点击写回 q.status（与下方状态下拉同一状态源，互斥/清除筛选天然一致），
+             再点一次取消；列表为空（含首载骨架期）整块不渲染 -->
+        <div v-if="statusDist.length" class="status-bar-block">
+          <div class="status-bar" role="img" :aria-label="statusBarAria">
+            <div
+              v-for="seg in statusDist"
+              :key="seg.status"
+              class="status-bar-seg"
+              :style="{ flexGrow: seg.count, flexBasis: 0, background: seg.color }"
+              :title="`${seg.label} ${seg.count} 台（${seg.pct}%）`"
+            />
+          </div>
+          <div class="status-legend">
+            <button
+              v-for="seg in statusDist"
+              :key="seg.status"
+              type="button"
+              class="legend-chip"
+              :class="{ active: q.status === seg.status }"
+              :aria-pressed="q.status === seg.status"
+              :title="q.status === seg.status ? '再次点击取消该状态筛选' : '点击只看' + seg.label"
+              @click="toggleStatusFilter(seg.status)"
+            >
+              <span class="legend-dot" :style="{ background: seg.color }" />
+              <span>{{ seg.label }}</span>
+              <span class="legend-count">{{ seg.count }}</span>
+            </button>
+          </div>
+        </div>
         <!-- 原左分组为 gap 8px + flex-wrap，经 wrap 传入保持不变；计数为 .toolbar 直接子元素走默认插槽 -->
         <Toolbar wrap>
           <template #left>
@@ -311,6 +341,36 @@ const filteredItems = computed(() => {
     return true
   })
 })
+
+/* ── 状态分布堆叠色条（质感专项）── */
+// 段色一律走主题变量（禁止浅色专用 hex）：running=品牌青绿主色（答辩主视觉），
+// 已关机=边框族加深档（--color-border 在浅色卡片上过淡、图例色点难辨认，取同族
+// --color-border-strong 保证深浅色双模式可读），暂停/异常用语义色
+const STATUS_SEGMENTS = [
+  { status: 'running', label: '运行中', color: 'var(--color-primary)' },
+  { status: 'shut off', label: '已关机', color: 'var(--color-border-strong)' },
+  { status: 'paused', label: '已暂停', color: 'var(--color-warning)' },
+  { status: 'error', label: '异常', color: 'var(--color-danger)' }
+]
+// 各状态计数 → 分段数据（0 计数段不渲染）；stopped 为早期列表接口的历史键，并入「已关机」口径
+const statusDist = computed(() => {
+  if (!items.value.length) return []
+  const counts = {}
+  for (const vm of items.value) {
+    const st = vm.status === 'stopped' ? 'shut off' : vm.status
+    counts[st] = (counts[st] || 0) + 1
+  }
+  const sum = items.value.length
+  return STATUS_SEGMENTS.map((s) => ({ ...s, count: counts[s.status] || 0 }))
+    .filter((s) => s.count > 0)
+    .map((s) => ({ ...s, pct: Math.round((s.count / sum) * 100) }))
+})
+// 色条 role=img 无文本内容，读屏描述走 aria-label
+const statusBarAria = computed(() => '虚拟机状态分布：' + statusDist.value.map((s) => `${s.label} ${s.count} 台`).join('，'))
+// 图例 chip 点击过滤：写回现有 q.status（与状态下拉同源），命中同一状态再点一次即取消
+function toggleStatusFilter(status) {
+  q.status = q.status === status ? '' : status
+}
 
 function perfOf(row) {
   return perfMap.value[row.id] || null
@@ -724,6 +784,65 @@ onUnmounted(() => {
 .filter-count {
   font-size: 0.85rem;
   color: var(--color-muted-foreground);
+}
+/* ── 状态分布堆叠色条（质感专项）── */
+.status-bar-block {
+  margin-bottom: var(--space-xl);
+}
+/* 条体：高 10px 圆角胶囊，段间 2px 缝露出卡片底色；段宽按各状态计数比例分配（flex-grow=计数） */
+.status-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.status-bar-seg {
+  min-width: 6px; /* 单台残留：占比极小的段仍保持可见 */
+  transition: flex-grow var(--dur-base) var(--ease-standard);
+}
+.status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+/* 图例 chip：原生 button 保键盘可达（焦点环走 global :focus-visible）；激活高亮与状态下拉同源 */
+.legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-muted-foreground);
+  font-size: 0.8rem;
+  font-family: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+}
+.legend-chip:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-foreground);
+}
+.legend-chip.active {
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px var(--color-border); /* 灰色圆点在浅底上的最低可见度兜底 */
+}
+.legend-count {
+  font-family: var(--font-mono);
+  font-weight: 700;
 }
 /* VM 卡片网格 */
 .vm-grid {

@@ -5,6 +5,24 @@
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- Tab 1 云镜像/模板盘：登记列表（创建 VM「云镜像」方式的数据源） -->
       <el-tab-pane label="云镜像 / 模板盘" name="images">
+        <!-- 存储池容量区（质感专项）：与镜像同源存储，单色比例条（>90% 红 / >75% 橙 / 其余品牌青绿），
+             与 VmList 状态堆叠条同款视觉；数据随 listStoragePools 一次拉取，拉取失败或无激活池时整块
+             静默隐藏（不打扰镜像主功能）；后端 listImages 仅支持 is_template 过滤、无按池筛选能力，
+             故池行不做点击联动（核实结论，见页脚注释） -->
+        <div v-if="poolCaps.length" class="pool-caps">
+          <div class="pool-caps-head">
+            <span class="pool-caps-title">存储池容量</span>
+            <span class="pool-caps-sub">镜像与 ISO 所在池的已用比例</span>
+          </div>
+          <div v-for="p in poolCaps" :key="p.name" class="pool-cap-row">
+            <span class="pool-cap-name" :title="p.name">{{ p.name }}</span>
+            <div class="pool-cap-track">
+              <div class="pool-cap-fill" :style="{ width: p.pct + '%', background: capColor(p.pct) }" />
+            </div>
+            <span class="pool-cap-text mono">已用 {{ fmtSizeBytes(p.used) }} / {{ fmtSizeBytes(p.total) }}</span>
+            <span class="pool-cap-pct mono" :style="{ color: capColor(p.pct) }">{{ p.pct }}%</span>
+          </div>
+        </div>
         <el-card shadow="never">
           <!-- 原左右分组 gap 为 var(--space-lg)（12px），经 gap/right-gap 传入保持不变 -->
           <Toolbar gap="var(--space-lg)" right-gap="var(--space-lg)">
@@ -233,7 +251,7 @@ import Toolbar from '../components/Toolbar.vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
-import { fmtSizeGB, fmtSizeBytes, fmtDateTime, errMsg, isCancel } from '../utils/format'
+import { fmtSizeGB, fmtSizeBytes, fmtDateTime, errMsg, isCancel, clampPct } from '../utils/format'
 
 const { isAdmin, canOperate } = useAuth()
 
@@ -331,14 +349,38 @@ function onTabChange(name) {
   }
 }
 
-// 存储池下拉：默认 img，可手输其他池名
+/* ── 存储池容量区（质感专项）── */
+// 与上传下拉共用 listStoragePools 一次响应（loadPools 内双消费）；仅收激活池
+// （capacity/allocation 为 libvirt 实时口径，未激活池拿不到值）；拉取失败 → 空数组 → 区块隐藏
+const poolCaps = ref([])
+// 比例条配色：>90% 红 / >75% 橙 / 其余品牌青绿（与 VmList 状态条同源语义色，两主题各有限定值）
+function capColor(pct) {
+  if (pct > 90) return 'var(--color-danger)'
+  if (pct > 75) return 'var(--color-warning)'
+  return 'var(--color-primary)'
+}
+
+// 存储池下拉：默认 img，可手输其他池名；同一响应顺带产出容量条数据（一次拉取，双消费）
 async function loadPools() {
   try {
     const res = await api.listStoragePools()
-    const names = ((res.data && res.data.items) || []).map((p) => p.name)
+    const list = (res.data && res.data.items) || []
+    const names = list.map((p) => p.name)
     poolOptions.value = [...new Set(['img', ...names])]
+    // 已用口径与存储池页一致：allocation/capacity（StorageList.vue poolPct 同式），钳制 0~100；
+    // 按已用比例降序，「快满的池」排前面更符合阅读顺序
+    poolCaps.value = list
+      .filter((p) => p.active && p.capacity)
+      .map((p) => ({
+        name: p.name,
+        used: p.allocation || 0,
+        total: p.capacity,
+        pct: clampPct(((p.allocation || 0) / p.capacity) * 100)
+      }))
+      .sort((a, b) => b.pct - a.pct)
   } catch (e) {
     poolOptions.value = ['img']
+    poolCaps.value = [] // 容量区静默隐藏，不打扰镜像主功能
   }
 }
 
@@ -377,6 +419,7 @@ async function upload() {
     dialog.value = false
     file.value = null
     await load()
+    loadPools() // 大文件落池会改变已用比例，容量条随上传结果同步刷新（内部自带静默降级）
   } catch (e) {
     ElMessage.error(errMsg(e, '上传失败'))
   } finally {
@@ -466,6 +509,7 @@ async function remove(img) {
     await api.deleteImage(img.id)
     ElMessage.success('已删除')
     await load()
+    loadPools() // 删镜像释放池空间，容量条同步刷新（内部自带静默降级）
   } catch (e) {
     if (!isCancel(e)) {
       ElMessage.error(errMsg(e, '删除失败'))
@@ -497,5 +541,68 @@ onMounted(() => {
 .os-hint {
   color: var(--color-muted-foreground);
   font-size: 0.82rem;
+}
+/* ── 存储池容量区（质感专项）：轻量区块（非 el-card），底色用 muted 令牌与下方列表卡区分层级 ── */
+.pool-caps {
+  background: var(--color-muted);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-xl);
+  margin-bottom: var(--space-lg);
+}
+.pool-caps-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+.pool-caps-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-foreground);
+}
+.pool-caps-sub {
+  font-size: 0.75rem;
+  color: var(--color-muted-foreground);
+}
+.pool-cap-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  padding: var(--space-sm) 0;
+}
+.pool-cap-name {
+  width: 140px;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 槽底用边框族加深档：在 muted 面板底上两种主题都可辨（--color-border 过淡） */
+.pool-cap-track {
+  flex: 1;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--color-border-strong);
+  overflow: hidden;
+}
+.pool-cap-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--dur-base) var(--ease-standard);
+}
+.pool-cap-text {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: var(--color-muted-foreground);
+}
+.pool-cap-pct {
+  flex-shrink: 0;
+  width: 44px;
+  text-align: right;
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 </style>
