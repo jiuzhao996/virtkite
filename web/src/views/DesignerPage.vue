@@ -3,14 +3,9 @@
     <PageHead title="架构设计" subtitle="拖拽编排 → 拉线连线 → 一键落地（容器栈 compose 部署 + VM 建机装应用，口令仅落地时填写不随计划保存）" />
 
     <div class="ds-layout">
-      <!-- 左：模板库 + 设备栏（拖进画布）+ 已保存计划 -->
+      <!-- 左：设备栏（拖进画布，置顶——最高频入口沉底要滚才能拖，用户实测反馈）
+           + 预置架构 + 已保存计划；桌面端面板自身内部滚动 -->
       <el-card shadow="never" class="ds-left">
-        <template #header><span class="ds-h">预置架构</span></template>
-        <div v-for="t in templates" :key="t.id" class="ds-tpl" @click="loadTemplate(t)">
-          <span class="ds-tpl-name">{{ t.name }}</span>
-          <span class="ds-tpl-desc">{{ t.desc }}</span>
-        </div>
-        <el-divider />
         <div class="ds-h ds-hrow"><span>设备栏</span><span class="ds-hint">拖进画布添加</span></div>
         <template v-for="g in paletteGroups" :key="g.kind">
           <div class="ds-palette-title" :style="{ color: g.color }">{{ g.title }}</div>
@@ -23,6 +18,12 @@
             >{{ it.label }}</div>
           </div>
         </template>
+        <el-divider />
+        <span class="ds-h">预置架构</span>
+        <div v-for="t in templates" :key="t.id" class="ds-tpl" @click="loadTemplate(t)">
+          <span class="ds-tpl-name">{{ t.name }}</span>
+          <span class="ds-tpl-desc">{{ t.desc }}</span>
+        </div>
         <el-divider />
         <span class="ds-h">已保存计划</span>
         <div v-for="p in plans" :key="p.id" class="ds-plan" @click="loadPlan(p)">
@@ -491,6 +492,47 @@ onUnmounted(() => {
   grid-template-columns: 250px 1fr 260px;
   gap: 16px;
 }
+/* 工作台布局（>1100px）：整页不滚动——左右面板各自内部滚动、画布吃满剩余高度、
+   工具栏常驻可视。此前整页随左卡（模板+设备栏+计划，约 820px）滚动：设备栏沉底
+   要滚才见；滚轮悬在画布上又被 X6 缩放劫持，"滚动→拖拽→点工具栏"循环体感割裂
+   （用户实测：设备在左下要往下划，滚完上面的保存/落地按钮点不了） */
+@media (min-width: 1101px) {
+  .ds-layout {
+    /* 顶栏 60 + PageHead 区 86 + el-main 底垫 24 ≈ 170 */
+    height: calc(100vh - 170px);
+    min-height: 460px;
+  }
+  .ds-left,
+  .ds-right {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .ds-left :deep(.el-card__body),
+  .ds-right :deep(.el-card__body) {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+  }
+  .ds-mid {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .ds-mid :deep(.el-card__body) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .ds-canvas {
+    flex: 1;
+    min-height: 0;
+  }
+}
 @media (max-width: 1100px) {
   .ds-layout { grid-template-columns: 1fr; }
 }
@@ -524,7 +566,8 @@ onUnmounted(() => {
 .ds-palette-item:hover { border-color: var(--el-color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .ds-canvas {
   position: relative;
-  height: 520px; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  height: 520px; /* 窄屏堆叠布局兜底高；桌面端由上方 media 覆盖为 flex 撑满 */
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--el-bg-color); overflow: hidden;
 }
 .ds-canvas-inner { position: absolute; inset: 0; }
