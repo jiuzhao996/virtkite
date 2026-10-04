@@ -128,6 +128,22 @@
 
     <!-- 卷抽屉（池名 · 角色） -->
     <el-drawer v-model="volDrawer" :title="curPool ? curPool + ' · ' + (curRole || '未分类') : '卷管理'" size="72%">
+      <!-- 本池血缘图（P4 后新增，克隆家谱同款渲染）：开抽屉即见——池内卷的
+           backing 链与挂载关系一图看全；跨池克隆链保留对端（置灰边界节点） -->
+      <el-card shadow="never" class="pool-graph-card" v-loading="poolGraphLoading">
+        <template #header>
+          <div class="pool-graph-head">
+            <span class="pool-graph-title">本池血缘图谱<span class="pool-graph-hint">金菱=模板 · 青圆=在用 · 灰圆=孤儿 · 淡圆=跨池链对端 · 点击节点看 tooltip</span></span>
+            <el-button text size="small" :icon="Refresh" @click="loadPoolGraph">刷新图</el-button>
+          </div>
+        </template>
+        <VolumeLineageGraph :nodes="poolGraphNodes" :edges="poolGraphEdges" height="360px" />
+        <div v-if="poolGraphNodes.length" class="pool-graph-stats mono">
+          本池 {{ poolInCount }} 卷 ｜ 虚拟 {{ poolVirtualText }} / 实际 {{ poolActualText }}
+          <template v-if="poolBoundaryCount"> ｜ 跨池链对端 {{ poolBoundaryCount }}</template>
+        </div>
+        <el-empty v-if="!poolGraphLoading && !poolGraphNodes.length" description="该池暂无存储卷" :image-size="48" />
+      </el-card>
       <div class="toolbar">
         <div>
           <el-button v-if="isAdmin" type="primary" size="small" :icon="Plus" @click="openCreateVol">新建卷</el-button>
@@ -275,6 +291,7 @@ import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId } from '../utils/task.js'
 import PageHead from '../components/PageHead.vue'
 import VolumeLineageDrawer from './storage/components/VolumeLineageDrawer.vue'
+import VolumeLineageGraph from './storage/components/VolumeLineageGraph.vue'
 import DockerGate from '../components/DockerGate.vue'
 import VolumeTab from './docker/components/VolumeTab.vue'
 // 容量格式化 / 错误文案 / 取消判定统一走 utils/format.js（原本地三份实现已删）
@@ -335,6 +352,9 @@ const regDialog = ref(false)
 const regSaving = ref(false)
 const curPool = ref('')
 const curRole = ref('')
+// 本池血缘图（克隆家谱同源数据，池维度过滤视图）
+const poolGraphLoading = ref(false)
+const poolGraphRaw = ref({ nodes: [], edges: [] })
 const regVol = ref('')
 
 const poolForm = ref({ name: '', path: '', description: '' })
@@ -504,12 +524,65 @@ async function openVolumes(pool) {
   curPool.value = pool.name
   curRole.value = pool.role || ''
   volDrawer.value = true
-  await fetchVolumes(pool.name)
+  await Promise.all([fetchVolumes(pool.name), loadPoolGraph()])
+}
+
+// 全库图拉取 + 池维度过滤：本池节点 + 跨池克隆链对端（boundary，置灰），链路不断
+async function loadPoolGraph() {
+  if (!curPool.value) return
+  poolGraphLoading.value = true
+  try {
+    const res = await api.volumeGraph()
+    poolGraphRaw.value = res.data || { nodes: [], edges: [] }
+  } catch (e) {
+    // 图是增强视图，失败不阻断卷表格
+    poolGraphRaw.value = { nodes: [], edges: [] }
+  } finally {
+    poolGraphLoading.value = false
+  }
+}
+
+const poolGraphNodes = computed(() => {
+  const pool = curPool.value
+  const all = poolGraphRaw.value.nodes || []
+  if (!pool) return all
+  const inPool = all.filter((n) => n.pool === pool)
+  const inPaths = new Set(inPool.map((n) => n.path))
+  // 边界节点：不在本池、但与池内卷有 backing 关系（跨池克隆链对端/池外父盘）
+  const boundary = new Set()
+  for (const e of poolGraphRaw.value.edges || []) {
+    if (inPaths.has(e.parent) && !inPaths.has(e.child)) boundary.add(e.child)
+    if (inPaths.has(e.child) && !inPaths.has(e.parent)) boundary.add(e.parent)
+  }
+  return [
+    ...inPool,
+    ...all.filter((n) => boundary.has(n.path)).map((n) => ({ ...n, _boundary: true })),
+  ]
+})
+
+const poolGraphEdges = computed(() => {
+  const pool = curPool.value
+  const paths = new Set(poolGraphNodes.value.map((n) => n.path))
+  return (poolGraphRaw.value.edges || []).filter((e) => paths.has(e.parent) && paths.has(e.child))
+})
+
+const poolInCount = computed(() => poolGraphNodes.value.filter((n) => n.pool === curPool.value).length)
+const poolBoundaryCount = computed(() => poolGraphNodes.value.filter((n) => n._boundary).length)
+const poolVirtualText = computed(() => fmtGBSum(poolGraphNodes.value.filter((n) => n.pool === curPool.value)))
+const poolActualText = computed(() => fmtGBSum(poolGraphNodes.value.filter((n) => n.pool === curPool.value), 'allocation_gb'))
+
+function fmtGBSum(list, key = 'capacity_gb') {
+  const total = list.reduce((acc, n) => acc + (Number(n[key]) || 0), 0)
+  if (total >= 1024) return (total / 1024).toFixed(2).replace(/\.0$/, '') + ' TB'
+  if (total >= 100) return total.toFixed(0) + ' GB'
+  if (total >= 1) return total.toFixed(1).replace(/\.0$/, '') + ' GB'
+  return (total * 1024).toFixed(0) + ' MB'
 }
 
 // 刷新卷列表 + 引用（新建卷/删卷/登记镜像后调用）
 async function refreshVolumes() {
   await fetchVolumes(curPool.value)
+  loadPoolGraph() // 卷变动后本池血缘图同步刷新（失败不阻断表格）
 }
 
 async function fetchVolumes(poolName) {
@@ -815,5 +888,31 @@ onMounted(load)
 .ref-tags {
   display: inline-flex;
   gap: 4px;
+}
+
+/* 本池血缘图卡（volDrawer 顶部） */
+.pool-graph-card {
+  margin-bottom: 12px;
+}
+.pool-graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pool-graph-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.pool-graph-hint {
+  margin-left: 10px;
+  font-weight: 400;
+  font-size: 0.72rem;
+  color: var(--color-muted-foreground);
+}
+.pool-graph-stats {
+  margin-top: 10px;
+  font-size: 0.78rem;
+  color: var(--color-muted-foreground);
 }
 </style>

@@ -29,7 +29,13 @@
 
       <!-- 血缘图谱：模板/基盘 → 增量克隆链（跨池） → 挂载关系；点击节点看详情与级联影响 -->
       <div class="graph-title">血缘图谱<span class="graph-hint">跨池克隆链一图看全 · 金菱=模板 · 青圆=在用 · 灰圆=孤儿 · 点击节点看详情</span></div>
-      <div v-show="nodes.length" ref="graphRef" class="lineage-graph" />
+      <VolumeLineageGraph
+        ref="graphComp"
+        :nodes="nodes"
+        :edges="edges"
+        height="440px"
+        @select="(n) => (selected = n)"
+      />
       <el-empty v-if="!loading && !nodes.length" description="全库暂无存储卷" :image-size="60" />
 
       <!-- 节点详情（点击图节点或表格行联动） -->
@@ -115,8 +121,8 @@ const onViewportChange = () => { isMobile.value = window.matchMedia('(max-width:
 window.addEventListener('resize', onViewportChange)
 onUnmounted(() => window.removeEventListener('resize', onViewportChange))
 import { ElMessage, ElMessageBox } from 'element-plus'
+import VolumeLineageGraph from './VolumeLineageGraph.vue'
 import { api } from '../../../api'
-import echarts from '../../../utils/echarts'
 import { cssVar, errMsg, isCancel } from '../../../utils/format'
 
 const props = defineProps({
@@ -130,138 +136,7 @@ const edges = ref([])
 const summary = ref(null)
 const selected = ref(null)
 const deleting = ref('')
-const graphRef = ref(null)
-let chart = null
-
-const primaryColor = cssVar('--el-color-primary', '#2a9da5')
-const goldColor = cssVar('--color-gold', '#ffd268')
-const mutedColor = cssVar('--color-muted-foreground', '#64748b')
-
-const orphanRows = computed(() =>
-  summary.value ? nodes.value.filter((n) => summary.value.orphans.includes(n.pool + '/' + n.name)) : []
-)
-
-// 级联影响：沿 backing 边 BFS 收集全部后代卷上挂载的虚拟机（节点以路径连接，全库规模可忽略）
-const descendantVMs = computed(() => {
-  if (!selected.value) return []
-  const childMap = {}
-  for (const e of edges.value) (childMap[e.parent] = childMap[e.parent] || []).push(e.child)
-  const seen = new Set([selected.value.path])
-  const queue = [selected.value.path]
-  const vms = new Set()
-  while (queue.length) {
-    const cur = queue.shift()
-    for (const c of childMap[cur] || []) {
-      if (seen.has(c)) continue
-      seen.add(c)
-      queue.push(c)
-      const node = nodes.value.find((n) => n.path === c)
-      for (const vm of node ? node.vms : []) vms.add(vm)
-    }
-  }
-  return Array.from(vms).sort()
-})
-
-function fmtGB(v) {
-  const n = Number(v) || 0
-  if (n >= 100) return n.toFixed(0) + ' GB'
-  if (n >= 1) return n.toFixed(1).replace(/\.0$/, '') + ' GB'
-  return (n * 1024).toFixed(0) + ' MB'
-}
-
-async function load() {
-  loading.value = true
-  selected.value = null
-  try {
-    const res = await api.volumeGraph()
-    const d = res.data || {}
-    nodes.value = Array.isArray(d.nodes) ? d.nodes : []
-    edges.value = Array.isArray(d.edges) ? d.edges : []
-    summary.value = d.summary || null
-    await nextTick()
-    renderGraph()
-  } finally {
-    loading.value = false
-  }
-}
-
-function nodeCategory(n) {
-  if (n.is_template) return 0 // 模板基盘
-  if (!n.in_use) return 2 // 孤儿
-  return 1 // 在用
-}
-
-function renderGraph() {
-  if (!graphRef.value || !nodes.value.length) return
-  if (!chart) {
-    chart = echarts.init(graphRef.value)
-  }
-  chart.resize()
-  // 节点体量 = 实际占用（对数缩放，避免大基盘把孤儿卷挤成针尖）
-  const maxSize = Math.max(...nodes.value.map((n) => n.allocation_gb), 1)
-  const categories = [
-    { name: '模板基盘', itemStyle: { color: goldColor } },
-    { name: '在用卷', itemStyle: { color: primaryColor } },
-    { name: '孤儿卷', itemStyle: { color: mutedColor } },
-  ]
-  chart.setOption(
-    {
-      tooltip: {
-        formatter: (p) => {
-          if (p.dataType === 'edge') {
-            const s = nodes.value.find((x) => x.path === p.data.source)
-            const t = nodes.value.find((x) => x.path === p.data.target)
-            return `${s ? s.pool + '/' + s.name : '?'} → ${t ? t.pool + '/' + t.name : '?'}（backing）`
-          }
-          const n = nodes.value.find((x) => x.path === p.data.id)
-          if (!n) return p.name
-          return [
-            `<b>${n.pool} / ${n.name}</b>${n.is_template ? '（模板）' : ''}${n.phantom ? '（池外）' : ''}`,
-            n.phantom ? '容量未知（卷不在任何激活池）' : `虚拟 ${fmtGB(n.capacity_gb)} / 实际 ${fmtGB(n.allocation_gb)}`,
-            n.vms.length ? `挂载：${n.vms.join('、')}` : null,
-            n.children.length ? `子卷：${n.children.length} 个` : null,
-            !n.in_use && !n.phantom ? '零引用（可回收）' : null,
-          ].filter(Boolean).join('<br/>')
-        },
-      },
-      legend: [{ data: categories.map((c) => c.name), textStyle: { color: mutedColor } }],
-      series: [
-        {
-          type: 'graph',
-          layout: 'force',
-          roam: true,
-          draggable: true,
-          force: { repulsion: 260, edgeLength: [90, 220], gravity: 0.08 },
-          categories,
-          color: categories.map((c) => c.itemStyle.color),
-          data: nodes.value.map((n) => ({
-            id: n.path,
-            name: n.name,
-            category: nodeCategory(n),
-            symbolSize: n.is_template || n.children.length ? 44 : 14 + 30 * Math.sqrt(n.allocation_gb / maxSize),
-            itemStyle: n.in_use || n.phantom ? undefined : { opacity: 0.55 },
-            label: { show: n.is_template || n.children.length > 0 || n.allocation_gb / maxSize > 0.08 },
-          })),
-          links: edges.value.map((e) => ({
-            source: e.parent,
-            target: e.child,
-            lineStyle: { color: primaryColor, width: 1.5, curveness: 0.15 },
-          })),
-          edgeSymbol: ['none', 'arrow'],
-          edgeSymbolSize: 8,
-          label: { show: true, position: 'bottom', color: mutedColor, fontSize: 11 },
-          emphasis: { focus: 'adjacency', lineStyle: { width: 3 } },
-        },
-      ],
-    },
-    true
-  )
-  // 点击节点联动详情卡（空白处点击取消选中）
-  chart.off('click')
-  chart.on('click', (p) => {
-    selected.value = p.dataType === 'node' ? nodes.value.find((n) => n.path === p.data.id) : null
-  })
-}
+const graphComp = ref(null)
 
 // 回收候选逐卷删除：确认 → DeleteVolume（后端仍过三重守卫）→ 刷新图与汇总
 async function removeVolume(row) {
@@ -290,19 +165,14 @@ async function removeVolume(row) {
 watch(
   () => props.modelValue,
   (open) => {
-    if (open) nextTick(() => chart && chart.resize())
+    if (open) nextTick(() => graphComp.value && graphComp.value.resize())
   }
 )
 
 // 抽屉关闭即销毁实例：显式释放最稳
 function disposeChart() {
-  if (chart) {
-    chart.dispose()
-    chart = null
-  }
+  graphComp.value && graphComp.value.dispose()
 }
-defineExpose({ disposeChart })
-onUnmounted(disposeChart)
 </script>
 
 <style scoped>
