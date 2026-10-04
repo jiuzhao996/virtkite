@@ -27,6 +27,7 @@ export const ops = {
   // 运维自动化（P4）：引擎状态 + 批量执行（adhoc/playbook，ansible_run 异步任务）
   ansibleStatus: () => unwrap(http.get('/ansible/status')),
   ansibleRun: (payload) => unwrap(http.post('/ansible/run', payload)),
+  ansibleDeployKey: (payload) => unwrap(http.post('/ansible/deploy-key', payload)),
   // playbook CRUD（保存前服务端过 --syntax-check）
   ansiblePlaybooks: () => unwrap(http.get('/ansible/playbooks')),
   ansiblePlaybook: (id) => unwrap(http.get(`/ansible/playbooks/${id}`)),

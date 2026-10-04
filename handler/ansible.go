@@ -4,6 +4,7 @@
 package handler
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -17,19 +18,22 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/ansible"
+	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/tasks"
+	"github.com/jiuzhao/vmops/service/vmssh"
 	"gorm.io/gorm"
 )
 
 // AnsibleHandler 运维自动化处理器。
 type AnsibleHandler struct {
-	DB    *gorm.DB
-	Tasks *tasks.Manager
+	DB           *gorm.DB
+	Tasks        *tasks.Manager
+	MasterSecret string // 凭据主密钥（分发公钥时解密托管口令；与 VMCredentialHandler 同源）
 }
 
 // NewAnsibleHandler 创建处理器。
-func NewAnsibleHandler(db *gorm.DB, taskMgr *tasks.Manager) *AnsibleHandler {
-	return &AnsibleHandler{DB: db, Tasks: taskMgr}
+func NewAnsibleHandler(db *gorm.DB, taskMgr *tasks.Manager, masterSecret string) *AnsibleHandler {
+	return &AnsibleHandler{DB: db, Tasks: taskMgr, MasterSecret: masterSecret}
 }
 
 // S1 允许的 adhoc 模块：ping=连通性、command=无 shell 命令、shell=完整 shell。
@@ -81,17 +85,20 @@ func EnsureSeedPlaybooks() {
 
 // playbookMeta 列表条目：头部机器可读行解析（# vmops-playbook: name=x | desc=y | targets=z）。
 type playbookMeta struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Desc      string `json:"desc"`
-	Targets   string `json:"targets"`
-	BuiltIn   bool   `json:"built_in"`
-	SizeBytes int64  `json:"size_bytes"`
-	UpdatedAt string `json:"updated_at"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Desc      string   `json:"desc"`
+	Targets   string   `json:"targets"`
+	Vars      []string `json:"vars,omitempty"`
+	BuiltIn   bool     `json:"built_in"`
+	SizeBytes int64    `json:"size_bytes"`
+	UpdatedAt string   `json:"updated_at"`
 }
 
 // parsePlaybookHeader 读文件头部找 vmops-playbook 元数据行（只看前 8 行）。
-func parsePlaybookHeader(raw []byte) (name, desc, targets string) {
+// vars 逗号分隔的变量名清单（S4 vars 表单化约定）：执行对话框按它渲染输入框，
+// 值经 -e JSON 注入，优先级高于 playbook 内 vars 段。
+func parsePlaybookHeader(raw []byte) (name, desc, targets string, vars []string) {
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
 		if i > 7 {
@@ -113,6 +120,12 @@ func parsePlaybookHeader(raw []byte) (name, desc, targets string) {
 				desc = strings.TrimSpace(kv[1])
 			case "targets":
 				targets = strings.TrimSpace(kv[1])
+			case "vars":
+				for _, v := range strings.Split(strings.TrimSpace(kv[1]), ",") {
+					if v = strings.TrimSpace(v); v != "" {
+						vars = append(vars, v)
+					}
+				}
 			}
 		}
 		break
@@ -139,12 +152,12 @@ func (h *AnsibleHandler) ListPlaybooks(c *gin.Context) {
 			continue
 		}
 		info, _ := e.Info()
-		name, desc, targets := parsePlaybookHeader(raw)
+		name, desc, targets, pvars := parsePlaybookHeader(raw)
 		if name == "" {
 			name = id
 		}
 		items = append(items, playbookMeta{
-			ID: id, Name: name, Desc: desc, Targets: targets,
+			ID: id, Name: name, Desc: desc, Targets: targets, Vars: pvars,
 			BuiltIn: isSeedFile(e.Name()), SizeBytes: info.Size(),
 			UpdatedAt: info.ModTime().Format(time.DateTime),
 		})
@@ -266,7 +279,7 @@ func (h *AnsibleHandler) CheckPlaybook(c *gin.Context) {
 	Success(c, gin.H{"valid": true})
 }
 
-// Status GET /api/ansible/status —— 引擎探测（路径 + 版本），未装返回引导信息。
+// Status GET /api/ansible/status —— 引擎探测 + 免密态势（P4-S4）。
 func (h *AnsibleHandler) Status(c *gin.Context) {
 	eng, err := ansible.Detect()
 	if err != nil {
@@ -276,11 +289,102 @@ func (h *AnsibleHandler) Status(c *gin.Context) {
 		})
 		return
 	}
-	Success(c, gin.H{
+	out := gin.H{
 		"installed": true,
 		"path":      eng.PlaybookPath,
 		"version":   eng.Version,
-	})
+	}
+	// 免密态势：平台密钥指纹 + 已注入 VM 数 / 已托管凭据 VM 数（分发的候选池）
+	if _, pub, kerr := ansible.EnsureKeyPair("data/ansible"); kerr == nil {
+		out["key_fingerprint"] = ansible.FingerprintPair(pub)
+		out["pubkey"] = pub
+	}
+	var readyCnt, credCnt int64
+	h.DB.Model(&model.VM{}).Where("ansible_ready = ?", true).Count(&readyCnt)
+	h.DB.Model(&model.VMCredential{}).Count(&credCnt)
+	out["ansible_ready_count"] = readyCnt
+	out["cred_count"] = credCnt
+	Success(c, out)
+}
+
+// DeployKey POST /api/ansible/deploy-key —— 平台公钥分发（存量 VM 补注入）。
+// targets 可省：默认全部「已托管凭据且未免密」的 VM。逐台经现有凭据通道 SSH
+// 注入 authorized_key（grep -qxF 幂等，不重复写），成功即标记 ansible_ready。
+func (h *AnsibleHandler) DeployKey(c *gin.Context) {
+	var req struct {
+		Targets []uint `json:"targets"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	if h.MasterSecret == "" {
+		Fail(c, http.StatusServiceUnavailable, "凭据加密未初始化，请联系管理员配置主密钥后重启服务")
+		return
+	}
+	_, pub, err := ansible.EnsureKeyPair("data/ansible")
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "平台密钥不可用", err)
+		return
+	}
+	q := h.DB.Model(&model.VM{}).Where("ansible_ready = ?", false)
+	if len(req.Targets) > 0 {
+		q = q.Where("id IN ?", req.Targets)
+	}
+	var vms []model.VM
+	if err := q.Find(&vms).Error; err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "读取虚拟机失败", err)
+		return
+	}
+	if len(vms) == 0 {
+		Success(c, gin.H{"ok": 0, "skipped": 0, "failed": []gin.H{}, "message": "没有需要分发的虚拟机（全部已免密或无目标）"})
+		return
+	}
+	// 只处理有托管凭据的（无凭据的连口令通道都没有，无从注入）
+	ids := make([]uint, 0, len(vms))
+	for _, vm := range vms {
+		ids = append(ids, vm.ID)
+	}
+	var creds []model.VMCredential
+	h.DB.Where("vm_id IN ?", ids).Find(&creds)
+	credByVM := map[uint]model.VMCredential{}
+	for _, c := range creds {
+		credByVM[c.VMID] = c
+	}
+
+	okCnt, skipCnt := 0, 0
+	failed := []gin.H{}
+	for _, vm := range vms {
+		cred, has := credByVM[vm.ID]
+		if !has {
+			skipCnt++
+			failed = append(failed, gin.H{"name": vm.Name, "reason": "未保存托管凭据"})
+			continue
+		}
+		port := cred.Port
+		if port <= 0 {
+			port = 22
+		}
+		plain, derr := secretbox.OpenWithMaster(h.MasterSecret, cred.Salt, cred.PasswordEnc)
+		if derr != nil {
+			failed = append(failed, gin.H{"name": vm.Name, "reason": "凭据解密失败"})
+			continue
+		}
+		opt, oerr := vmssh.NewOptions(vm.IP, vm.IP, port, cred.User, string(plain))
+		if oerr != nil {
+			failed = append(failed, gin.H{"name": vm.Name, "reason": "目标未通过安全校验"})
+			continue
+		}
+		// 幂等注入：已存在同款公钥（整行精确匹配）不重复写
+		cmd := fmt.Sprintf("mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && grep -qxF %q ~/.ssh/authorized_keys || echo %q >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys", pub, pub)
+		if _, _, rerr := vmssh.Run(opt, cmd, 30*time.Second); rerr != nil {
+			failed = append(failed, gin.H{"name": vm.Name, "reason": "SSH 注入失败"})
+			continue
+		}
+		if uerr := h.DB.Model(&model.VM{}).Where("id = ?", vm.ID).Update("ansible_ready", true).Error; uerr != nil {
+			log.Printf("[ansible] 标记 ansible_ready 失败 vm=%s: %v", vm.Name, uerr)
+		}
+		okCnt++
+	}
+	log.Printf("[ansible] 公钥分发完成 ok=%d skip=%d failed=%d from=%s", okCnt, skipCnt, len(failed), c.ClientIP())
+	Success(c, gin.H{"ok": okCnt, "skipped": skipCnt, "failed": failed})
 }
 
 // Run POST /api/ansible/run —— 批量执行（operator+，路由组已挡）。
@@ -288,10 +392,11 @@ func (h *AnsibleHandler) Status(c *gin.Context) {
 // playbook：body {targets*[vm_id], playbook*(id)}（S2）
 func (h *AnsibleHandler) Run(c *gin.Context) {
 	var req struct {
-		Targets  []uint `json:"targets"`
-		Module   string `json:"module"`
-		Args     string `json:"args"`
-		Playbook string `json:"playbook"`
+		Targets    []uint               `json:"targets"`
+		Module     string               `json:"module"`
+		Args       string               `json:"args"`
+		Playbook   string               `json:"playbook"`
+		ExtraVars  map[string]string    `json:"extra_vars"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数格式非法")
@@ -325,6 +430,9 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 			return
 		}
 		payload["playbook"] = req.Playbook
+		if len(req.ExtraVars) > 0 {
+			payload["extra_vars"] = req.ExtraVars
+		}
 		title = "Ansible playbook " + req.Playbook + " → " + strconv.Itoa(len(req.Targets)) + " 台"
 	} else {
 		req.Module = strings.TrimSpace(req.Module)

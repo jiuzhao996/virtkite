@@ -360,12 +360,13 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 
 	// 运维自动化（P4）：引擎状态 + 批量执行（adhoc/playbook）+ playbook CRUD
 	EnsureSeedPlaybooks() // 内置种子 playbook 落盘（缺哪个补哪个，用户改过的不覆盖）
-	ansibleHandler := NewAnsibleHandler(deps.DB, deps.Tasks)
+	ansibleHandler := NewAnsibleHandler(deps.DB, deps.Tasks, CredentialMasterSecret())
 	ansibleGroup := api.Group("/ansible")
 	ansibleGroup.Use(middleware.OperatorMiddleware())
 	{
 		ansibleGroup.GET("/status", ansibleHandler.Status)
 		ansibleGroup.POST("/run", ansibleHandler.Run)
+		ansibleGroup.POST("/deploy-key", ansibleHandler.DeployKey)
 		ansibleGroup.GET("/playbooks", ansibleHandler.ListPlaybooks)
 		ansibleGroup.GET("/playbooks/:id", ansibleHandler.GetPlaybook)
 		ansibleGroup.POST("/playbooks", ansibleHandler.CreatePlaybook)

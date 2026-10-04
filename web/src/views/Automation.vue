@@ -12,6 +12,12 @@
           <el-tag effect="plain">ansible {{ engine.version }}</el-tag>
         </div>
         <div class="auto-engine-desc">adhoc：ping / command / shell ｜ playbook：{{ playbooks.length }} 个（内置种子 + 自建，保存前自动语法校验）</div>
+        <div v-if="engine.installed && engine.key_fingerprint" class="auto-keyrow">
+          <el-tag size="small" type="success" effect="plain">平台密钥</el-tag>
+          <span class="mono auto-path">{{ engine.key_fingerprint }}</span>
+          <span class="auto-count">免密 {{ engine.ansible_ready_count || 0 }} 台 / 已托管凭据 {{ engine.cred_count || 0 }} 台</span>
+          <el-button size="small" :loading="deploying" @click="deployKey">分发公钥到未免密 VM</el-button>
+        </div>
       </template>
       <el-empty v-else :description="engine.hint || '正在探测宿主机引擎…'" :image-size="60" />
     </el-card>
@@ -168,9 +174,14 @@
             <el-button size="small" @click="selectAll">全选</el-button>
           </div>
         </el-form-item>
-        <el-form-item v-if="runPb" :label="'说明'">
+        <el-form-item v-if="runPb" label="说明">
           <span class="auto-hint">{{ runPb.desc || '（无说明）' }}</span>
         </el-form-item>
+        <template v-if="runPb && (runPb.vars || []).length">
+          <el-form-item v-for="v in runPb.vars" :key="v" :label="v">
+            <el-input v-model="extraVars[v]" :placeholder="v + ' 的值（经 -e 注入，覆盖 playbook 默认值）'" class="mono" />
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="runDialogOpen = false">取消</el-button>
@@ -184,11 +195,11 @@
 // 运维自动化（P4 S2）：三 tab——快速执行（adhoc）/ Playbook 库（CRUD + 语法校验）/
 // 执行历史（RECAP 矩阵）。执行全走 ansible_run 异步任务：提交得 task_id → 轮询
 // 任务详情（executor 端 2s 节流落库 Result，前端 1.5s 轮询即实时日志）。
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, VideoPlay, Edit, Delete, Close } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { errMsg } from '../utils/format'
+import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 
 const activeTab = ref('adhoc')
@@ -199,6 +210,8 @@ const targets = ref([])
 const module = ref('ping')
 const args = ref('')
 const submitting = ref(false)
+const deploying = ref(false)
+const extraVars = reactive({})
 const runTask = ref(null)
 const logBox = ref(null)
 let pollTimer = null
@@ -296,6 +309,26 @@ async function loadPlaybooks() {
   }
 }
 
+async function deployKey() {
+  try {
+    await ElMessageBox.confirm('将平台公钥注入所有「已托管凭据且未免密」的虚拟机（幂等，重复执行不重复写）。继续？', '分发公钥', { type: 'info', confirmButtonText: '开始分发' })
+  } catch (e) {
+    if (!isCancel(e)) return
+    else return
+  }
+  deploying.value = true
+  try {
+    const res = await api.ansibleDeployKey({})
+    const d = res.data || {}
+    ElMessage.success(`分发完成：成功 ${d.ok || 0}，跳过 ${d.skipped || 0}，失败 ${(d.failed || []).length}`)
+    loadStatus()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '分发失败'))
+  } finally {
+    deploying.value = false
+  }
+}
+
 async function loadHistory() {
   histLoading.value = true
   try {
@@ -330,13 +363,18 @@ async function runAdhoc() {
 function openRunDialog(pb) {
   runPb.value = pb
   targets.value = []
+  Object.keys(extraVars).forEach((k) => delete extraVars[k])
   runDialogOpen.value = true
 }
 
 async function runPlaybook() {
   submitting.value = true
   try {
-    const res = await api.ansibleRun({ targets: targets.value, playbook: runPb.value.id })
+    const ev = {}
+    for (const [k, v] of Object.entries(extraVars)) {
+      if (v !== '' && v != null) ev[k] = v
+    }
+    const res = await api.ansibleRun({ targets: targets.value, playbook: runPb.value.id, extra_vars: ev })
     runDialogOpen.value = false
     ElMessage.success('任务已提交')
     startPolling(res.data.task_id)
@@ -459,6 +497,7 @@ onUnmounted(stopPolling)
 .auto-engine-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .auto-path { font-size: 0.82rem; color: var(--color-muted-foreground); word-break: break-all; }
 .auto-engine-desc { margin-top: 10px; font-size: 0.8rem; color: var(--color-muted-foreground); }
+.auto-keyrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
 .auto-targets { display: flex; align-items: center; gap: 10px; width: 100%; flex-wrap: wrap; }
 .auto-count { font-size: 0.8rem; color: var(--color-muted-foreground); white-space: nowrap; }
 .auto-hint { margin-left: 12px; font-size: 0.78rem; color: var(--color-muted-foreground); }

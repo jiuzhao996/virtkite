@@ -15,6 +15,8 @@ type CloudInitSpec struct {
 	User     string   `json:"user,omitempty"`
 	Password string   `json:"password,omitempty"`
 	SSHKey   string   `json:"ssh_key,omitempty"`
+	// SSHKeys 多公钥注入（P4-S4 免密渐进）：平台 ansible 公钥与用户自备公钥并存
+	SSHKeys  []string `json:"ssh_keys,omitempty"`
 	NetMode  string   `json:"net_mode,omitempty"` // dhcp / static
 	IP       string   `json:"ip,omitempty"`
 	Gateway  string   `json:"gateway,omitempty"`
@@ -55,10 +57,21 @@ func GenerateSeedISO(cfg *CloudInitSpec) ([]byte, error) {
 				"  - [ systemctl, restart, sshd ]\n")
 		}
 	}
+	// 公钥合并成单个 ssh_authorized_keys 列表（YAML 映射里重复键会覆盖，不能分开写）
+	keys := make([]string, 0, 1+len(cfg.SSHKeys))
 	if cfg.SSHKey != "" {
-		ub.WriteString("ssh_authorized_keys:\n  - ")
-		ub.WriteString(cfg.SSHKey)
-		ub.WriteString("\n")
+		keys = append(keys, cfg.SSHKey)
+	}
+	for _, k := range cfg.SSHKeys {
+		if strings.TrimSpace(k) != "" {
+			keys = append(keys, strings.TrimSpace(k))
+		}
+	}
+	if len(keys) > 0 {
+		ub.WriteString("ssh_authorized_keys:\n")
+		for _, k := range keys {
+			ub.WriteString("  - " + k + "\n")
+		}
 	}
 	fmt.Fprintf(&ub, "hostname: %s\n", hostname)
 

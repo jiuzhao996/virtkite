@@ -1,4 +1,4 @@
-# vmops-playbook: name=deploy-keys | desc=运维用户与 SSH 公钥分发 | targets=linux
+# vmops-playbook: name=deploy-keys | desc=运维用户与 SSH 公钥分发（vars 可在执行时填写） | targets=linux | vars=ops_user,admin_pubkey
 ---
 # 创建运维用户 ops 并分发公钥：团队协作场景，平台 root 通道不受影响。
 # ⚠ 编辑 vars.admin_pubkey 换成你自己的公钥再执行（默认占位公钥无效）。
@@ -7,6 +7,7 @@
   gather_facts: false
 
   vars:
+    # 默认值占位；执行对话框按头部 vars= 声明渲染输入框，填的值经 -e 注入覆盖
     ops_user: ops
     admin_pubkey: "ssh-ed25519 AAAA... replace-me@vmops"
 

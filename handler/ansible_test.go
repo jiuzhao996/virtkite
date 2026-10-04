@@ -10,25 +10,28 @@ import (
 // 退化成裸文件名；同时解析必须只看前 8 行，恶意构造的深层注释不应被当元数据。
 func TestParsePlaybookHeader(t *testing.T) {
 	raw := []byte("# vmops-playbook: name=init-node | desc=装机初始化 | targets=linux\n---\n- name: x\n")
-	name, desc, targets := parsePlaybookHeader(raw)
+	name, desc, targets, vars := parsePlaybookHeader(raw)
 	if name != "init-node" || desc != "装机初始化" || targets != "linux" {
 		t.Errorf("三段元数据解析不符: %q %q %q", name, desc, targets)
+	}
+	if len(vars) != 0 {
+		t.Errorf("无 vars 声明应得空切片: %v", vars)
 	}
 
 	// 只取第一条匹配（后续行同形态不算数）
 	raw2 := []byte("# vmops-playbook: name=first\n---\n# vmops-playbook: name=second\n")
-	if n, _, _ := parsePlaybookHeader(raw2); n != "first" {
+	if n, _, _, _ := parsePlaybookHeader(raw2); n != "first" {
 		t.Errorf("应只取第一条元数据行: %q", n)
 	}
 
 	// 无元数据行 → 全空（列表页回退用文件 id 当名称）
-	if n, d, tg := parsePlaybookHeader([]byte("---\n- name: x\n")); n != "" || d != "" || tg != "" {
+	if n, d, tg, _ := parsePlaybookHeader([]byte("---\n- name: x\n")); n != "" || d != "" || tg != "" {
 		t.Errorf("无元数据行应返回空串: %q %q %q", n, d, tg)
 	}
 
 	// 元数据行在 8 行之后 → 不识别
 	deep := []byte("# a\n# b\n# c\n# d\n# e\n# f\n# g\n# h\n# vmops-playbook: name=late\n---\n")
-	if n, _, _ := parsePlaybookHeader(deep); n != "" {
+	if n, _, _, _ := parsePlaybookHeader(deep); n != "" {
 		t.Errorf("超过头部窗口的元数据行不应识别: %q", n)
 	}
 }

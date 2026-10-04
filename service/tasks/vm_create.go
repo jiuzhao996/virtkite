@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/ansible"
 	"github.com/jiuzhao/vmops/service/virt"
 )
 
@@ -258,6 +259,7 @@ func execCreateVM(ctx *ExecContext) error {
 
 	// cloud-init：顶层缺失时从磁盘项中查找，生成 seed ISO 落到 seed 目录，挂为只读 cdrom。
 	cfg := cloudInit
+	keyInjected := false
 	if cfg == nil {
 		for i := range disks {
 			if disks[i].CloudInit != nil {
@@ -269,6 +271,15 @@ func execCreateVM(ctx *ExecContext) error {
 	if cfg != nil {
 		if cfg.Hostname == "" {
 			cfg.Hostname = name
+		}
+		// 平台 ansible 公钥注入（P4-S4 免密渐进）：cloud-init 建机直通——此后该 VM
+		// 走私钥免密通道，ansible inventory 不再瞬时承载口令文件。密钥不可用只降级
+		// 回口令通道（warn），不阻断建机
+		if _, pub, kerr := ansible.EnsureKeyPair("data/ansible"); kerr == nil {
+			cfg.SSHKeys = append(cfg.SSHKeys, pub)
+			keyInjected = true
+		} else {
+			log.Printf("[tasks] 警告: 平台密钥不可用，VM %s 降级口令通道: %v", name, kerr)
 		}
 		seedBytes, err := virt.GenerateSeedISO(cfg)
 		if err != nil {
@@ -343,15 +354,16 @@ func execCreateVM(ctx *ExecContext) error {
 		dbPool = firstDiskPool
 	}
 	vm := model.VM{
-		UUID:        uuid,
-		Name:        name,
-		HostID:      host.ID,
-		StoragePool: dbPool,
-		VCPU:        vcpu,
-		MemoryMB:    memoryMB,
-		DiskGB:      totalDiskGB,
-		MACAddress:  nicMAC,
-		Status:      model.VMStatusShutOff,
+		UUID:         uuid,
+		Name:         name,
+		HostID:       host.ID,
+		StoragePool:  dbPool,
+		VCPU:         vcpu,
+		MemoryMB:     memoryMB,
+		DiskGB:       totalDiskGB,
+		MACAddress:   nicMAC,
+		Status:       model.VMStatusShutOff,
+		AnsibleReady: keyInjected,
 	}
 	if err := ctx.DB.Create(&vm).Error; err != nil {
 		cleanup()

@@ -15,6 +15,7 @@ package ansible
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -108,6 +109,9 @@ type HostEntry struct {
 	User string
 	Port int
 	Pass string
+	// KeyFile 非 0 时走私钥免密通道（ansible_ssh_private_key_file），Pass 被忽略——
+	// 平台公钥已注入的 VM（AnsibleReady）不再承载瞬时口令文件（P4-S4）
+	KeyFile string
 }
 
 // BuildInventory 生成执行用 inventory（[all] 段 + 可选分组 children），返回文件路径。
@@ -118,6 +122,11 @@ func BuildInventory(dir string, hosts []HostEntry, groups map[string][]string) (
 	var b strings.Builder
 	b.WriteString("[all]\n")
 	for _, h := range hosts {
+		if h.KeyFile != "" {
+			fmt.Fprintf(&b, "%s ansible_host=%s ansible_port=%d ansible_user=%s ansible_ssh_private_key_file=%s\n",
+				h.Name, h.IP, h.Port, h.User, h.KeyFile)
+			continue
+		}
 		fmt.Fprintf(&b, "%s ansible_host=%s ansible_port=%d ansible_user=%s ansible_ssh_pass='%s'\n",
 			h.Name, h.IP, h.Port, h.User, strings.ReplaceAll(h.Pass, "'", `'"'"'`))
 	}
@@ -151,8 +160,11 @@ type RunOpts struct {
 	Playbook   string
 	Module     string
 	ModuleArgs string
-	Timeout    time.Duration
-	OnLine     func(line string) // 逐行输出回调（executor 用于节流刷任务 Result）
+	// ExtraVars playbook 变量注入（S4 vars 表单化）：以 JSON 走 -e，优先级高于
+	// playbook 内 vars 段（ansible 语义）
+	ExtraVars map[string]string
+	Timeout   time.Duration
+	OnLine    func(line string) // 逐行输出回调（executor 用于节流刷任务 Result）
 }
 
 // Run 驱动引擎执行，返回 RECAP 段原文（含逐主机 ok/changed/failed 计数）。
@@ -165,7 +177,14 @@ func (e *Engine) Run(ctx context.Context, opts RunOpts) (string, error) {
 	}
 	var cmd *exec.Cmd
 	if opts.Playbook != "" {
-		cmd = exec.CommandContext(ctx, e.PlaybookPath, "-i", opts.Inventory, opts.Playbook)
+		args := []string{"-i", opts.Inventory}
+		if len(opts.ExtraVars) > 0 {
+			if raw, jerr := json.Marshal(opts.ExtraVars); jerr == nil {
+				args = append(args, "-e", string(raw))
+			}
+		}
+		args = append(args, opts.Playbook)
+		cmd = exec.CommandContext(ctx, e.PlaybookPath, args...)
 	} else {
 		if opts.Module == "" {
 			return "", errors.New("adhoc 模式需要指定模块")

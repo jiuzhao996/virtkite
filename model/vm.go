@@ -33,6 +33,9 @@ type VM struct {
 	Status      string         `gorm:"size:20;default:shut off" json:"status"` // gorm tag 内不能引用常量，此处字面量必须与 VMStatusShutOff 同步
 	OSType      string         `gorm:"size:50" json:"os_type"`
 	Description string         `gorm:"type:text" json:"description"`
+	// AnsibleReady 平台公钥已注入该 VM（cloud-init 建机直通或分发动作补注）——
+	// ansible 对它走私钥免密通道，inventory 不再瞬时承载口令文件（P4-S4）
+	AnsibleReady bool           `gorm:"default:false" json:"ansible_ready"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`

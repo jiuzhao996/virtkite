@@ -90,27 +90,38 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		return fmt.Errorf("%s 不可执行，目标虚拟机需运行中且已获得 IP", strings.Join(unreachable, "、"))
 	}
 
-	// 2) 托管凭据：每台一份；缺 = fail 并列出补录指引
+	// 2) 认证通道分流（P4-S4）：平台公钥已注入（AnsibleReady）走私钥免密；其余走
+	// 托管口令（每台一份；缺 = fail 并列出补录指引）
 	var creds []model.VMCredential
-	if err := ctx.DB.Where("vm_id IN ?", targets).Find(&creds).Error; err != nil {
-		return fmt.Errorf("读取托管凭据失败: %w", err)
-	}
-	credByVM := make(map[uint]model.VMCredential, len(creds))
-	for _, c := range creds {
-		credByVM[c.VMID] = c
-	}
-	var missing []string
+	needPass := []uint{}
 	for _, vm := range vms {
-		if _, ok := credByVM[vm.ID]; !ok {
-			missing = append(missing, vm.Name)
+		if !vm.AnsibleReady {
+			needPass = append(needPass, vm.ID)
 		}
 	}
-	if len(missing) > 0 {
-		// 名单放在冒号前：Task.Error 经 friendlyError 取首个冒号前段回显前端
-		return fmt.Errorf("%s 未保存托管凭据（请先到虚拟机详情「凭据」保存）", strings.Join(missing, "、"))
-	}
-	if masterSecret == "" {
-		return errors.New("服务端未配置凭据主密钥，无法解密 SSH 凭据")
+	credByVM := map[uint]model.VMCredential{}
+	if len(needPass) > 0 {
+		if err := ctx.DB.Where("vm_id IN ?", needPass).Find(&creds).Error; err != nil {
+			return fmt.Errorf("读取托管凭据失败: %w", err)
+		}
+		for _, c := range creds {
+			credByVM[c.VMID] = c
+		}
+		var missing []string
+		for _, vm := range vms {
+			if !vm.AnsibleReady {
+				if _, ok := credByVM[vm.ID]; !ok {
+					missing = append(missing, vm.Name)
+				}
+			}
+		}
+		if len(missing) > 0 {
+			// 名单放在冒号前：Task.Error 经 friendlyError 取首个冒号前段回显前端
+			return fmt.Errorf("%s 未保存托管凭据（请先到虚拟机详情「凭据」保存，或在自动化页分发平台公钥）", strings.Join(missing, "、"))
+		}
+		if masterSecret == "" {
+			return errors.New("服务端未配置凭据主密钥，无法解密 SSH 凭据")
+		}
 	}
 
 	// 3) inventory：明文口令只在 run 目录瞬时存在（0700/0600，跑完即删，见包注释）
@@ -127,14 +138,29 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	}()
 	hosts := make([]ansible.HostEntry, 0, len(vms))
 	nameTaken := map[string]int{}
+	keyFile := ""
+	if len(needPass) < len(vms) { // 有免密目标才探测私钥
+		kf, _, kerr := ansible.EnsureKeyPair("data/ansible")
+		if kerr == nil {
+			keyFile = kf
+		}
+	}
 	for _, vm := range vms {
-		cred := credByVM[vm.ID]
 		name := vm.Name
 		nameTaken[name]++
 		if nameTaken[name] > 1 {
 			// VM 名理论唯一，防御性去重（inventory 主机名必须唯一）
 			name = fmt.Sprintf("%s-%d", vm.Name, vm.ID)
 		}
+		if vm.AnsibleReady && keyFile != "" {
+			user := "root"
+			if cred, ok := credByVM[vm.ID]; ok && cred.User != "" {
+				user = cred.User
+			}
+			hosts = append(hosts, ansible.HostEntry{Name: name, IP: vm.IP, User: user, Port: 22, KeyFile: keyFile})
+			continue
+		}
+		cred := credByVM[vm.ID]
 		port := cred.Port
 		if port <= 0 {
 			port = 22
@@ -170,6 +196,13 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	} else {
 		runOpts = ansible.RunOpts{Inventory: inv, Module: module, ModuleArgs: moduleArgs, Timeout: ansibleAdhocTimeout}
 		reportProgress(ctx, 20, "ansible "+module+" 执行中（"+strconv.Itoa(len(hosts))+" 台）")
+	}
+	if raw, ok := ctx.Payload["extra_vars"].(map[string]interface{}); ok && len(raw) > 0 {
+		ev := map[string]string{}
+		for k, v := range raw {
+			ev[k] = fmt.Sprintf("%v", v)
+		}
+		runOpts.ExtraVars = ev
 	}
 	var (
 		mu    sync.Mutex
