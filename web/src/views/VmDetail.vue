@@ -202,7 +202,7 @@ import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
-import { vmStatusText, vmStatusTag, isCancel } from '../utils/format'
+import { vmStatusText, vmStatusTag, isCancel, fmtDateTime } from '../utils/format'
 import VmPerfCard from './vm-detail/components/VmPerfCard.vue'
 import GuestMetricsCard from './vm-detail/components/GuestMetricsCard.vue'
 import VmHardwarePanels from './vm-detail/components/VmHardwarePanels.vue'
@@ -242,9 +242,7 @@ const isRunning = computed(() => !!(vm.value && vm.value.status === 'running'))
 const isPaused = computed(() => !!(vm.value && vm.value.status === 'paused'))
 const vmName = computed(() => (spec.value && spec.value.name) || (vm.value && vm.value.name) || '…')
 const hostName = computed(() => (vm.value && vm.value.host && vm.value.host.name) || '—')
-const createdText = computed(() =>
-  vm.value && vm.value.created_at ? new Date(vm.value.created_at).toLocaleString() : '—'
-)
+const createdText = computed(() => fmtDateTime(vm.value && vm.value.created_at))
 const macText = computed(() => {
   if (spec.value && spec.value.interfaces && spec.value.interfaces.length) {
     const macs = spec.value.interfaces.map((i) => i.mac).filter(Boolean)

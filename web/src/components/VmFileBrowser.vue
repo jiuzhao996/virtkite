@@ -82,7 +82,7 @@ import { reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, FolderAdd, Upload, Folder, Document, Download, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { errMsg } from '../utils/format'
+import { errMsg, fmtDateTime } from '../utils/format'
 
 const props = defineProps({
   id: { type: Number, required: true },
@@ -276,7 +276,7 @@ function sizeText(n) {
 function timeText(sec) {
   const n = Number(sec || 0)
   if (!n) return '—'
-  return new Date(n * 1000).toLocaleString('zh-CN', { hour12: false })
+  return fmtDateTime(n * 1000)
 }
 </script>
 

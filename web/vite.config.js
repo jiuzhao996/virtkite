@@ -54,6 +54,18 @@ function manualChunks(id) {
   // 终端：只有 ConsolePage 用；xterm 零第三方依赖，是干净的叶子包
   if (inPkg(path, '@xterm/xterm') || inPkg(path, '@xterm/addon-fit')) return 'vendor-xterm'
 
+  // 拓扑图设计器：只有 DesignerPage 用（x6 本体 + dnd/snapline 两插件，需逐包列全：
+  // inPkg 是精确目录匹配，'@antv/x6' 不会连带 '@antv/x6-plugin-*'）。
+  // 全家 ~450KB 与设计器业务混在 rollup 默认 chunk 时，业务代码一改全量重新下载；
+  // 拆出后库 hash 稳定可长期缓存。依赖方向 plugin → x6 → vue，无环可安全独立
+  if (
+    inPkg(path, '@antv/x6') ||
+    inPkg(path, '@antv/x6-plugin-dnd') ||
+    inPkg(path, '@antv/x6-plugin-snapline')
+  ) {
+    return 'vendor-x6'
+  }
+
   // 图表：只有 Dashboard / VmList / VmDetail 用（经 src/utils/echarts.js 按需注册）。
   // echarts 与 zrender 分拆两个 chunk：按需引入后 echarts 本体已不足 500kB，
   // 但 echarts+zrender 合并仍超限；依赖链单向 echarts → zrender → tslib

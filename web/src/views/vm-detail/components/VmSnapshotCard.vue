@@ -79,7 +79,7 @@ async function loadSnapshots() {
     const raw = (res.data && (res.data.items || res.data)) || []
     snapshots.value = raw.map((s) => ({
       ...s,
-      timeText: s.creation_time ? new Date(s.creation_time * 1000).toLocaleString() : '—',
+      timeText: s.creation_time ? fmtDateTime(s.creation_time * 1000) : '—',
       stateText: vmStatusText(s.state, '—'),
       stateTag: vmStatusTag(s.state)
     }))

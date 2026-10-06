@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/database"
@@ -110,6 +111,24 @@ func main() {
 	// 镜像上传走 multipart：超过该阈值的部分落磁盘临时文件，不再全量驻留内存，
 	// 避免多 GB 的 qcow2/ISO 把进程内存打满（显式声明 32MB 意图，勿改大）
 	r.MaxMultipartMemory = 32 << 20
+
+	// gzip 传输压缩：前端构建产物（主 chunk ~900KB）与 API JSON 明细在线缆上缩 3-5 倍，
+	// 远程访问首屏与列表刷新体感差距明显。默认档压缩比优于 BestSpeed 且响应都是
+	// KB 级（导出等 GB 级流不走这里，见排除表），CPU 无压力。
+	// 排除表里的路径一个都不能少（按序核对 routes.go）：
+	//   - WS 升级连接（串口/SSH 终端/容器终端）：gzipWriter 虽透传 Hijacker，但 101
+	//     握手响应不该带 Content-Encoding 头，语义干净起见直接绕过；
+	//   - /api/vms/:id/export：响应本身是 tar.gz（vm_export.go 已 gzip），二次压缩
+	//     纯烧 CPU（20GB 级流），压缩比趋近 0；
+	//   - /api/ai/chat：SSE 流式回答，绕过压缩避免任何 flush 时延与缓冲干扰。
+	r.Use(gzip.Gzip(gzip.DefaultCompression,
+		gzip.WithExcludedPathsRegexs([]string{
+			`/api/vms/[^/]+/serial`,
+			`/api/vms/[^/]+/terminal`,
+			`/api/docker/containers/[^/]+/terminal`,
+			`/api/vms/[^/]+/export`,
+			`/api/ai/chat`,
+		})))
 
 	// 注册中间件
 	r.Use(middleware.CORSMiddleware())

@@ -85,7 +85,8 @@
       </el-tab-pane>
       <el-tab-pane label="监控" name="monitor" lazy>
         <!-- ⚠️ 必须用 MonitorView：Monitor 已被 @element-plus/icons-vue 的显示器图标占用 -->
-        <MonitorView v-if="visitedTabs.has('monitor')" embedded />
+        <!-- active 随 tab：切走时 Monitor 内部停告警/看板轮询（组件不卸载，不停则后台空转） -->
+        <MonitorView v-if="visitedTabs.has('monitor')" embedded :active="activeTab === 'monitor'" />
       </el-tab-pane>
       <el-tab-pane label="拓扑" name="topology" lazy>
         <!-- 拓扑图并入仪表盘第三 tab（IA 精简批次）；active-tick 用于 tab 切回时触发子图 resize -->
@@ -221,6 +222,23 @@ function onTabChange(name) {
     visitedTabs.add('topology')
     if (revisit) topoTick.value++
   } else overviewTick.value++
+  // 概览轮询表随 tab 启停：切走全停（概览不可见不该打后端），切回重启
+  setOverviewTimers(name === 'overview')
+}
+
+// 概览三张轮询表（宿主机 / VM / 告警）的统一启停。
+// el-tabs 切走只是 display:none，组件与定时器都活着——不停表则监控/拓扑 tab 下
+// 概览数据仍在后台空转轮询；且 tab=monitor 时内嵌 Monitor 也在轮询告警，不停会双路打同一接口。
+// 周期每次启停现取（切回 overview 时若设置页改过轮询偏好，无需刷新即生效）。
+function setOverviewTimers(on) {
+  clearInterval(hostTimer)
+  clearInterval(vmTimer)
+  clearInterval(alertTimer)
+  if (!on) return
+  const ms = getPollInterval('dashboard', POLL_DEFAULTS.dashboard)
+  hostTimer = setInterval(pollHost, ms)
+  vmTimer = setInterval(pollVms, ms)
+  alertTimer = setInterval(loadAlerts, ms)
 }
 const capacity = ref({ has_host: false, vm_count: 0, allocated_vcpu: 0, allocated_mem_mb: 0, physical_cores: 0, physical_mem_mb: 0, cpu_ratio: 0, mem_ratio: 0 })
 async function loadCapacity() {
@@ -325,15 +343,15 @@ onMounted(async () => {
     visitedTabs.add(route.query.tab)
   }
   await loadAll()
-  const ms = getPollInterval('dashboard', POLL_DEFAULTS.dashboard)
-  hostTimer = setInterval(pollHost, ms)
-  vmTimer = setInterval(pollVms, ms)
-  // 告警概览与平台信息：进页拉一次，告警随仪表盘节奏轮询
+  // 概览轮询表（宿主机/VM/告警）统一由 setOverviewTimers 托管：
+  // 切到监控/拓扑 tab 时概览不可见，停表不空转（监控 tab 由内嵌 Monitor 自己轮询，
+  // Dashboard 侧告警表同步停掉，否则同一接口双路轮询）
+  setOverviewTimers(true)
+  // 告警概览与平台信息：进页拉一次（告警后续走轮询表）
   loadAlerts()
   loadSysInfo()
   loadCapacity()
   loadAnnouncement()
-  alertTimer = setInterval(loadAlerts, ms)
   // 历史曲线预填：先画满过去一小时，再由轮询无缝追加
   prefillHostHistory()
 })

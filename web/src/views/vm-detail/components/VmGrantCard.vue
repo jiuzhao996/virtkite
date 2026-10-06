@@ -92,6 +92,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { taskErrorMessage } from '../../../utils/task.js'
+import { fmtDateTime } from '../../../utils/format'
 
 const props = defineProps({
   vmId: { type: [String, Number], required: true },
@@ -235,9 +236,8 @@ async function loadGrantUsers() {
 }
 
 function grantExpiryText(v) {
-  if (!v) return '—'
-  const d = new Date(v)
-  return isNaN(d.getTime()) ? v : d.toLocaleString('zh-CN', { hour12: false })
+  // 统一走 fmtDateTime（空值 '—'、非法值原样返回，与原手写实现语义一致）
+  return fmtDateTime(v)
 }
 
 // 分区激活时拉取（每次切入都刷，等价原壳 watch(activeView) 的 'grants' 分支）

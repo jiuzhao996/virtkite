@@ -287,7 +287,11 @@
 
 <script setup>
 // embedded：被仪表盘 tab 嵌入时隐藏独立页头
-defineProps({ embedded: { type: Boolean, default: false } })
+// active：嵌入场景随所在 tab 激活态启停轮询（独立路由页保持默认 true 一直轮询）
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+  active: { type: Boolean, default: true }
+})
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { Aim, AlarmClock, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -657,10 +661,17 @@ async function loadFileSD() {
 
 // 看板与实时告警轮询：周期取系统设置的 dashboard 偏好；卸载自动停表（useAutoRefresh 托管）。
 // start() 只起表不触发 fn——首拉仍由 onMounted 里的显式 load 负责，与原行为一致。
-const { start: startPolling } = useAutoRefresh(() => {
+const { start: startPolling, stop: stopPolling } = useAutoRefresh(() => {
   loadAlerts()
   loadBoard()
 }, { intervalKey: 'dashboard' })
+
+// 嵌入仪表盘时随 tab 激活态启停：el-tabs 切走只是 display:none、组件不卸载，
+// 不停表则告警/看板在后台空转，且与 Dashboard 概览侧告警表双路打同一接口
+watch(
+  () => props.active,
+  (on) => (on ? startPolling() : stopPolling())
+)
 
 onMounted(() => {
   loadAlerts()
