@@ -13,13 +13,21 @@
 //
 // 约定：容器由调用方通过 chartRef 绑定；多次 setOption 默认 notMerge=true（与既有
 // 各页「整体重画」语义一致），需要增量合并的传第二参 false。
-import { onUnmounted, ref } from 'vue'
+import { onUnmounted, ref, watch } from 'vue'
 import echarts from '../utils/echarts'
 
 export function useChart() {
   const chartRef = ref(null)
   let chart = null
   let ro = null
+
+  // 容器被 v-if 卸载重建（如运行状态切换隐藏/重现图表区）后，模板会重绑新 el；
+  // 旧实例仍持有已脱离 DOM 的 canvas，继续 setOption 会画进空处。检测 el 更替并重建。
+  watch(chartRef, (el) => {
+    if (chart && el && chart.getDom() !== el) {
+      dispose()
+    }
+  })
 
   function ensureInit() {
     if (chart) return chart
