@@ -8,6 +8,7 @@
 package handler
 
 import (
+	"bytes"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,16 +17,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/service/dockerx"
+	"github.com/jiuzhao/vmops/service/tasks"
 )
 
-// StackHandler 声明式部署栈处理器。
+// StackHandler 声明式部署栈处理器。Tasks 用于栈升级（stack_upgrade 异步任务）。
 type StackHandler struct {
 	Docker *dockerx.Dockerx
+	Tasks  *tasks.Manager
 }
 
 // NewStackHandler 创建栈处理器。
-func NewStackHandler() *StackHandler {
-	return &StackHandler{Docker: dockerx.New()}
+func NewStackHandler(tm *tasks.Manager) *StackHandler {
+	return &StackHandler{Docker: dockerx.New(), Tasks: tm}
 }
 
 // stacksDir 栈目录定位：cwd/stacks（与 locateWebRoot 同形约定，仓库根运行即命中）。
@@ -165,6 +168,130 @@ func (h *StackHandler) Deploy(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"id": id, "deployed": true, "desc": meta.Desc})
+}
+
+// Detail GET /api/stacks/:id/detail —— 栈详情：服务列表 + 部署副本内容 + 漂移标志。
+// 漂移 = data/stacks/<id>/docker-compose.yml（可编辑副本）与 stacks/<id>.yml（仓库模板）
+// 字节不一致；未部署时回模板内容并置 deployed=false。
+func (h *StackHandler) Detail(c *gin.Context) {
+	id := c.Param("id")
+	if !dockerx.SafeStackID(id) {
+		Fail(c, http.StatusBadRequest, "栈 ID 非法（仅允许字母数字与 -_.）")
+		return
+	}
+	meta, tmplRaw, err := parseStackMeta(filepath.Join(stacksDir(), id+".yml"))
+	if err != nil {
+		Fail(c, http.StatusNotFound, "栈不存在："+id)
+		return
+	}
+	copyPath := filepath.Join("data", "stacks", id, "docker-compose.yml")
+	copyRaw, copyErr := os.ReadFile(copyPath)
+	deployed := copyErr == nil
+	content := tmplRaw
+	if deployed {
+		content = copyRaw
+	}
+	drift := deployed && !bytes.Equal(bytes.TrimSpace(copyRaw), bytes.TrimSpace(tmplRaw))
+
+	services := []interface{}{}
+	if deployed {
+		if list, serr := h.Docker.ComposeServices(id); serr == nil {
+			for _, s := range list {
+				services = append(services, s)
+			}
+		}
+	}
+	var composeStatus string
+	if projects, perr := h.Docker.ComposeList(); perr == nil {
+		for _, p := range projects {
+			if p.Name == id {
+				composeStatus = p.Status
+				break
+			}
+		}
+	}
+	Success(c, gin.H{
+		"id": id, "category": meta.Category, "description": meta.Desc,
+		"docs": meta.Docs, "templateServices": stackServices(tmplRaw),
+		"deployed": deployed, "drift": drift, "content": string(content),
+		"template": string(tmplRaw), "services": services, "status": composeStatus,
+	})
+}
+
+// File PUT /api/stacks/:id/file（admin）——写部署副本 data/stacks/<id>/docker-compose.yml。
+// 仓库模板 stacks/*.yml 永不可经 API 写：它同时是商店目录的源数据，被写坏会污染所有
+// 用户的部署入口。写前用 compose config -q 真校验，不过则 400 并回显 docker 原生报错
+// （含行号，对教学场景有价值）。
+func (h *StackHandler) File(c *gin.Context) {
+	if !roleIsAdmin(c) {
+		Fail(c, http.StatusForbidden, "栈文件编辑仅管理员可用")
+		return
+	}
+	id := c.Param("id")
+	if !dockerx.SafeStackID(id) {
+		Fail(c, http.StatusBadRequest, "栈 ID 非法（仅允许字母数字与 -_.）")
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Content) == "" {
+		Fail(c, http.StatusBadRequest, "请提供 compose 文件内容")
+		return
+	}
+	target := filepath.Join("data", "stacks", id)
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "创建部署目录失败", err)
+		return
+	}
+	// 先写临时文件校验，通过后再落正式文件——避免校验期间污染正在运行的部署副本
+	tmp := filepath.Join(target, ".check.yml")
+	if err := os.WriteFile(tmp, []byte(body.Content), 0o644); err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "写入校验文件失败", err)
+		return
+	}
+	if err := h.Docker.ComposeConfigCheck(tmp); err != nil {
+		_ = os.Remove(tmp)
+		Fail(c, http.StatusBadRequest, "compose 文件校验失败："+err.Error())
+		return
+	}
+	_ = os.Remove(tmp)
+	if err := os.WriteFile(filepath.Join(target, "docker-compose.yml"), []byte(body.Content), 0o644); err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "保存 compose 文件失败", err)
+		return
+	}
+	Success(c, gin.H{"id": id, "message": "已保存，需重新部署后生效", "drift": true})
+}
+
+// Upgrade POST /api/stacks/:id/upgrade（admin）——提交 stack_upgrade 异步任务（pull+up -d）。
+// 拉镜像可达数十分钟，同步挂在 HTTP 请求上正是任务管线要解决的问题（app_install 同款取舍），
+// 故直接走慢池任务，前端按 TaskList 轮询进度。
+func (h *StackHandler) Upgrade(c *gin.Context) {
+	if !roleIsAdmin(c) {
+		Fail(c, http.StatusForbidden, "栈升级仅管理员可用")
+		return
+	}
+	id := c.Param("id")
+	if !dockerx.SafeStackID(id) {
+		Fail(c, http.StatusBadRequest, "栈 ID 非法（仅允许字母数字与 -_.）")
+		return
+	}
+	dir := filepath.Join("data", "stacks", id)
+	if _, err := os.Stat(filepath.Join(dir, "docker-compose.yml")); err != nil {
+		Fail(c, http.StatusNotFound, "该栈尚未部署，请先部署后再升级")
+		return
+	}
+	if h.Tasks == nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "任务系统未就绪", nil)
+		return
+	}
+	uid, uname := taskUserFromContext(c)
+	t, err := h.Tasks.Submit("stack_upgrade", "升级栈 "+id, gin.H{"stack_id": id, "dir": dir}, uid, uname, "", nil)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "提交升级任务失败", err)
+		return
+	}
+	Success(c, gin.H{"id": id, "task_id": t.ID, "message": "升级任务已提交，可在任务中心查看进度"})
 }
 
 // Docs GET /api/stacks/:id/docs?path=xx.md —— 栈参考笔记原文（前端 markdown 渲染）。

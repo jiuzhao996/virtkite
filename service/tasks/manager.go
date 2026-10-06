@@ -69,6 +69,7 @@ var slowTaskTypes = map[string]bool{
 	"image_download":  true, // 公网下载（可达数十分钟）
 	"app_install":     true, // compose 拉镜像 + 起栈
 	"ansible_run":     true, // playbook 分钟级
+	"stack_upgrade":   true, // compose pull + up（大栈拉镜像可达数十分钟）
 }
 
 // taskTimeouts 任务级执行超时（防 executor 挂死占死 worker，见 run）。
@@ -82,6 +83,7 @@ var taskTimeouts = map[string]time.Duration{
 	"delete_vm":       15 * time.Minute, // 多卷逐个删
 	"cleanup_volumes": 15 * time.Minute,
 	"app_install":     15 * time.Minute, // compose pull 不可控
+	"stack_upgrade":   30 * time.Minute, // compose pull 大栈（ELK/Zabbix）可达数十分钟
 	"stop_vm":         5 * time.Minute,  // ACPI 关机 + 兜底 destroy 本应分钟内
 }
 

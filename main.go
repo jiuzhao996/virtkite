@@ -218,6 +218,8 @@ func main() {
 	tasks.RegisterAppTasks(taskMgr, handler.CredentialMasterSecret())
 	// ansible_run 同源主密钥：批量执行要解密 vm_credentials 托管口令（P4 自动化运维）
 	tasks.RegisterAnsibleTasks(taskMgr, handler.CredentialMasterSecret())
+	// stack_upgrade：compose pull + up -d（栈一键升级，慢池 30 分钟）
+	tasks.RegisterStackTasks(taskMgr)
 	cron.NotifyURL = os.Getenv("CRON_NOTIFY_URL") // 计划任务失败通知（机器人 webhook，可空）
 	consoleRegistry := console.NewRegistry(db)
 	consoleRegistry.StartSweeper() // 启动过期清扫协程（内部 recover 兜底）

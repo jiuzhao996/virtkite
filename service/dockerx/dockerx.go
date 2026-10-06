@@ -542,6 +542,109 @@ func (d *Dockerx) ComposeUpFromFile(projectDir string) error {
 	return nil
 }
 
+// ComposeService compose 服务条目（docker compose ps -a --format json）。
+// Publishers 在部分版本是对象数组（含 PublishedPort），统一转成字符串便于前端直显。
+type ComposeService struct {
+	Service  string `json:"Service"`
+	Name     string `json:"Name"`
+	Image    string `json:"Image"`
+	State    string `json:"State"`
+	Status   string `json:"Status"`
+	Ports    string `json:"Ports"`
+	ID       string `json:"ID"`
+	ExitCode int    `json:"ExitCode"`
+}
+
+// ComposeServices 列出 compose 项目的服务容器（docker compose -p <project> ps -a）。
+func (d *Dockerx) ComposeServices(project string) ([]ComposeService, error) {
+	if !safeDockerName(project) {
+		return nil, errors.New("项目名非法（仅允许字母数字与 -_.）")
+	}
+	out, err := runTimeout(30*time.Second, "compose", "-p", project, "ps", "-a", "--format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("获取服务列表失败: %w", err)
+	}
+	list := []ComposeService{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var s ComposeService
+		if err := jsonUnmarshal(line, &s); err != nil {
+			// Port 字段在部分 compose 版本是对象数组，反序列化失败会整行丢弃——
+			// 服务列表的端口只是展示项，宁可丢端口也不能丢整行，故回退为 map 解析
+			var m map[string]interface{}
+			if jsonUnmarshal(line, &m) != nil {
+				continue
+			}
+			s = ComposeService{
+				Service: stringField(m, "Service"),
+				Name:    stringField(m, "Name"),
+				Image:   stringField(m, "Image"),
+				State:   stringField(m, "State"),
+				Status:  stringField(m, "Status"),
+				ID:      stringField(m, "ID"),
+			}
+		}
+		list = append(list, s)
+	}
+	return list, nil
+}
+
+// stringField 从 map 取字符串字段（缺失或非字符串返回空串）。
+func stringField(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// composeServiceActions 服务级操作白名单（只放开 restart：单服务 stop/start 语义易与
+// 项目级操作混淆，先给最小可用面）。
+var composeServiceActions = map[string]bool{"restart": true}
+
+// ComposeServiceAction 对 compose 项目内单个服务执行操作（docker compose -p <project> <action> <service>）。
+func (d *Dockerx) ComposeServiceAction(project, service, action string) error {
+	if !safeDockerName(project) || !safeDockerName(service) {
+		return errors.New("项目名或服务名非法（仅允许字母数字与 -_.）")
+	}
+	if !composeServiceActions[action] {
+		return errors.New("不支持的服务操作（restart）")
+	}
+	if _, err := runTimeout(2*time.Minute, "compose", "-p", project, action, service); err != nil {
+		return fmt.Errorf("服务操作失败: %w", err)
+	}
+	return nil
+}
+
+// ComposePull 拉取 compose 项目全部镜像（docker compose --project-directory <dir> pull）。
+// 大栈（ELK/Zabbix）拉镜像可达数十分钟，超时单独设为 30 分钟。
+func (d *Dockerx) ComposePull(projectDir string) (string, error) {
+	if !safeDockerName(filepath.Base(projectDir)) {
+		return "", errors.New("项目目录名非法（仅允许字母数字与 -_.）")
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
+		return "", fmt.Errorf("compose 文件不存在: %w", err)
+	}
+	out, err := runTimeout(30*time.Minute, "compose", "--project-directory", projectDir, "pull")
+	if err != nil {
+		return out, fmt.Errorf("拉取镜像失败: %w", err)
+	}
+	return out, nil
+}
+
+// ComposeConfigCheck 校验 compose 文件语法（docker compose -f <file> config -q，只问退出码）。
+// 校验失败时 docker 的原生报错文本（含行号）对教学场景有价值，由调用方回显给用户。
+func (d *Dockerx) ComposeConfigCheck(file string) error {
+	if _, err := runTimeout(30*time.Second, "compose", "-f", file, "config", "-q"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // SafeStackID 栈 ID 白名单校验（handler 侧防路径穿越用，规则同 safeDockerName）。
 func SafeStackID(s string) bool { return safeDockerName(s) }
 

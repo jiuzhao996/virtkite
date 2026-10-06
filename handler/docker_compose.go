@@ -56,3 +56,40 @@ func (h *DockerHandler) ComposeAction(c *gin.Context) {
 	}
 	Success(c, gin.H{"name": name, "action": action, "message": message})
 }
+
+// ComposeServices GET /api/docker/compose/:name/services —— 项目内服务容器列表。
+func (h *DockerHandler) ComposeServices(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	name := c.Param("name")
+	if !safeDockerID(name) {
+		Fail(c, http.StatusBadRequest, "项目名非法")
+		return
+	}
+	list, err := h.Docker.ComposeServices(name)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"total": len(list), "items": list})
+}
+
+// ComposeServiceAction POST /api/docker/compose/:name/services/:service/:action
+// 服务级操作（当前仅 restart），白名单由 dockerx.ComposeServiceAction 二次校验。
+func (h *DockerHandler) ComposeServiceAction(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	name, service := c.Param("name"), c.Param("service")
+	if !safeDockerID(name) || !safeDockerID(service) {
+		Fail(c, http.StatusBadRequest, "项目名或服务名非法")
+		return
+	}
+	action := c.Param("action")
+	if err := h.Docker.ComposeServiceAction(name, service, action); err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"name": name, "service": service, "action": action, "message": "服务已重启"})
+}

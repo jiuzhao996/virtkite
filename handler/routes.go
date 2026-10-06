@@ -339,6 +339,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		// 编排项目（v3.2：compose ls + 项目级启停）
 		docker.GET("/compose", dockerHandler.ComposeList)
 		docker.POST("/compose/:name/:action", dockerHandler.ComposeAction)
+		// 服务级：列表与单服务重启（栈详情抽屉用）
+		docker.GET("/compose/:name/services", dockerHandler.ComposeServices)
+		docker.POST("/compose/:name/services/:service/:action", dockerHandler.ComposeServiceAction)
 		docker.GET("/images", dockerHandler.ListImages)
 		docker.DELETE("/images/:id", dockerHandler.RemoveImage)
 	}
@@ -431,13 +434,17 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	}
 
 	// 声明式部署栈（P2A：清单 operator+；deploy admin；docs 命中栈元数据清单才可读）
-	stackHandler := NewStackHandler()
+	stackHandler := NewStackHandler(deps.Tasks)
 	stacksGroup := api.Group("/stacks")
 	stacksGroup.Use(middleware.OperatorMiddleware())
 	{
 		stacksGroup.GET("", stackHandler.List)
 		stacksGroup.GET("/:id/docs", stackHandler.Docs)
 		stacksGroup.POST("/:id/deploy", stackHandler.Deploy)
+		// 栈详情（服务列表 + 部署副本 + 漂移）与文件编辑（admin）、升级（admin，异步任务）
+		stacksGroup.GET("/:id/detail", stackHandler.Detail)
+		stacksGroup.PUT("/:id/file", stackHandler.File)
+		stacksGroup.POST("/:id/upgrade", stackHandler.Upgrade)
 	}
 
 	// 镜像版本检测（P3：本地 digest vs 镜像代理远端 digest，按钮触发非轮询）

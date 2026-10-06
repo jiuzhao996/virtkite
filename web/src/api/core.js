@@ -185,6 +185,10 @@ export const core = {
   listStacks: () => unwrap(http.get('/stacks')),
   deployStack: (id) => unwrap(http.post(`/stacks/${id}/deploy`)),
   stackDocs: (id, path) => http.get(`/stacks/${id}/docs`, { params: { path } }).then((r) => r.data),
+  // 栈详情（服务列表 + 部署副本内容 + 漂移标志）/ 编辑部署副本（admin）/ 升级（admin，异步任务）
+  stackDetail: (id) => unwrap(http.get(`/stacks/${id}/detail`)),
+  saveStackFile: (id, content) => unwrap(http.put(`/stacks/${id}/file`, { content })),
+  upgradeStack: (id) => unwrap(http.post(`/stacks/${id}/upgrade`)),
 
   // 架构设计器（P2B）：模板/计划 CRUD/导出/应用（apply admin）
   designerTemplates: () => unwrap(http.get('/designer/templates')),

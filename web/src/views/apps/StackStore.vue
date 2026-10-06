@@ -26,12 +26,17 @@
               :loading="deploying === st.id" :disabled="!!st.deployed"
               @click="deploy(st)"
             >{{ st.deployed ? '已部署' : '一键部署' }}</el-button>
+            <!-- 管理：栈详情（服务矩阵/组合日志/编排文件编辑/升级） -->
+            <el-button size="small" :icon="Setting" @click="openDetail(st)">管理</el-button>
             <el-button v-if="st.docs && st.docs.length" text size="small" :icon="Reading" @click="openDocs(st)">参考笔记</el-button>
           </div>
         </el-card>
       </el-col>
     </el-row>
     <el-empty v-if="!stacks.length && !loading" description="栈目录为空（stacks/*.yml）" :image-size="80" />
+
+    <!-- 栈详情抽屉（Dockge 式：服务 / 组合日志 / 编排文件编辑 / 升级） -->
+    <StackDetailDrawer ref="detailDrawerRef" @changed="onStackChanged" @terminal="onStackTerminal" />
 
     <!-- 参考笔记抽屉：markdown 渲染（sanitize 后 v-html） -->
     <el-drawer v-model="docsDrawer" :title="'参考笔记 — ' + docsStack" size="55%">
@@ -47,13 +52,34 @@
 // 部署栈商店（P2A）：栈卡片（分类/服务徽标/部署状态/参考笔记）+ 一键部署 + 笔记抽屉。
 // markdown 渲染复用 AiChat 同款 marked + DOMPurify（v-html 前必须 sanitize）。
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, VideoPlay, Reading } from '@element-plus/icons-vue'
+import { Refresh, VideoPlay, Reading, Setting } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { api } from '../../api'
 import { errMsg, isCancel } from '../../utils/format'
 import Toolbar from '../../components/Toolbar.vue'
+import StackDetailDrawer from './StackDetailDrawer.vue'
+
+const router = useRouter()
+
+// 栈详情抽屉：管理入口（服务矩阵 / 组合日志 / 编排文件编辑 / 一键升级）
+const detailDrawerRef = ref(null)
+function openDetail(st) {
+  detailDrawerRef.value.open(st.id)
+}
+// 抽屉内操作（升级/重新部署/保存编排文件）后刷新清单（部署状态可能变了）
+function onStackChanged() {
+  load()
+}
+
+// 栈内服务跳容器域：本页没有终端/日志抽屉，落到容器页并带容器 ID
+function onStackTerminal(row) {
+  const id = String(row.ID || '')
+  router.push({ path: '/containers', query: { id, open: row.openLogs ? 'logs' : 'terminal' } })
+  ElMessage.info(`已跳转到容器页，请定位容器 ${id.slice(0, 12)}`)
+}
 
 const stacks = ref([])
 const loading = ref(false)

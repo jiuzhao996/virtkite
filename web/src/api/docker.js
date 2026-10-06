@@ -40,5 +40,8 @@ export const docker = {
 
   // compose 项目：action ∈ up/start/stop/restart/down（down 含重建，耗时可达分钟级，单独放宽超时）
   dockerComposeList: () => unwrap(http.get('/docker/compose')),
-  dockerComposeAction: (project, action) => unwrap(http.post('/docker/compose/' + encodeURIComponent(project) + '/' + action, null, { timeout: 150000 }))
+  dockerComposeAction: (project, action) => unwrap(http.post('/docker/compose/' + encodeURIComponent(project) + '/' + action, null, { timeout: 150000 })),
+  // compose 服务级：项目内服务列表 + 单服务操作（restart）
+  dockerComposeServices: (project) => unwrap(http.get('/docker/compose/' + encodeURIComponent(project) + '/services')),
+  dockerComposeServiceAction: (project, service, action) => unwrap(http.post(`/docker/compose/${encodeURIComponent(project)}/services/${encodeURIComponent(service)}/${action}`, null, { timeout: 150000 }))
 }
