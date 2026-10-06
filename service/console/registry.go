@@ -57,10 +57,38 @@ func (r *Registry) sweepOnce() {
 	}()
 
 	cutoff := time.Now().Add(-StaleAfterResolver())
+	now := time.Now()
 	if err := r.DB.Model(&model.ConsoleSession{}).
 		Where("status = ? AND type = ? AND last_seen < ?", "active", "vnc", cutoff).
-		Updates(map[string]interface{}{"status": "closed", "ended_at": time.Now()}).Error; err != nil {
+		Updates(map[string]interface{}{"status": "closed", "ended_at": now}).Error; err != nil {
 		log.Printf("[console] 收敛过期 VNC 会话失败: %v", err)
+	}
+	// jump 会话有心跳（60s 一次，见 jumpd heartbeat），last_seen 停更超阈值即死：
+	// jumpd 关闭路径写 DB 失败（进程被杀/DB 抖动）时靠这里兜底，判据与 VNC 同款
+	if err := r.DB.Model(&model.ConsoleSession{}).
+		Where("status = ? AND type = ? AND last_seen < ?", "active", "jump", cutoff).
+		Updates(map[string]interface{}{"status": "closed", "ended_at": now}).Error; err != nil {
+		log.Printf("[console] 收敛过期 jump 会话失败: %v", err)
+	}
+	// ssh/serial/docker-exec 无关闭事件旁路兜底：正常路径 WS 断开由 handler 调 Close 置
+	// closed，但 handler panic / 写 DB 失败（Close 走 best-effort）会把行永远留在 active。
+	// 这类会话的活连接全部持有在内存 conns 里，DB active 却不在内存 = 连接早已消失，
+	// 对账收敛。started_at 留 10 分钟余量避开 Open「DB 已建、连接未登记」的窗口
+	// （实际窗口是微秒级，保守取整为清扫周期两倍）。
+	r.mu.Lock()
+	live := make([]uint, 0, len(r.conns))
+	for id := range r.conns {
+		live = append(live, id)
+	}
+	r.mu.Unlock()
+	reconcile := r.DB.Model(&model.ConsoleSession{}).
+		Where("status = ? AND type NOT IN ?", "active", []string{"vnc", "jump"}).
+		Where("started_at < ?", now.Add(-10*time.Minute))
+	if len(live) > 0 {
+		reconcile = reconcile.Where("id NOT IN ?", live)
+	}
+	if err := reconcile.Updates(map[string]interface{}{"status": "closed", "ended_at": now}).Error; err != nil {
+		log.Printf("[console] 对账收敛失联的 ssh/serial 会话失败: %v", err)
 	}
 
 	// 先在锁内取快照，逐条查库在锁外进行：持锁做 DB IO 会阻塞所有会话的开启与关闭

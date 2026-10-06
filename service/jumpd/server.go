@@ -409,8 +409,27 @@ func forwardKeys(ks *keyStream, stdin io.Writer, waitDone <-chan struct{}, onBlo
 				line = line[:0]
 				continue
 			}
-			// 非行结束字节照常透传（vim/htop 等全屏交互不受影响）
-			line = append(line, b)
+			// 非行结束字节照常透传（vim/htop 等全屏交互不受影响）。
+			// 行编辑控制字节必须同步维护本地缓冲，使其与目标 tty 行编辑后的「逻辑行」
+			// 一致——否则攻击者可输入「rmX⌫ -rf /」：本地缓冲是 rmx\x7f -rf /（不含
+			// 黑名单词，放行），目标 shell 行编辑删掉 X 后实际执行 rm -rf /（旁路绕过）
+			switch b {
+			case 0x7f, 0x08: // 退格：删前一字符（与 tty canonical 模式一致）
+				if len(line) > 0 {
+					line = line[:len(line)-1]
+				}
+			case 0x15: // Ctrl-U：清当前行
+				line = line[:0]
+			case 0x17: // Ctrl-W：删前一个词（先剥尾部空白再删到词首）
+				for len(line) > 0 && line[len(line)-1] == ' ' {
+					line = line[:len(line)-1]
+				}
+				for len(line) > 0 && line[len(line)-1] != ' ' {
+					line = line[:len(line)-1]
+				}
+			default:
+				line = append(line, b)
+			}
 			if _, err := stdin.Write([]byte{b}); err != nil {
 				return
 			}
