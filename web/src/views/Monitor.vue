@@ -798,6 +798,4 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 
-/* ── Loki 折叠卡：整体是一张可展开的卡片（标题行即折叠头） ── */
-
 </style>

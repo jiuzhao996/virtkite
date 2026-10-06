@@ -56,7 +56,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] 存量 VM 导入 / 纳管
 - [x] **监控闭环**（Prometheus file_sd 服务发现自动下发 running 且已知 IP 的 VM 目标；Alertmanager webhook 告警网关按 fingerprint 去重入库 + 分页历史；**告警出站通知**（v3.4：设置页配置飞书/钉钉机器人地址，仅新增 firing 或 resolved→firing 推送、同 fingerprint 重复去重，best-effort 不影响 webhook 响应）；`vms.ip` DHCP 租约 + QGA 双通道回填）
 - [x] **容器管理（v3：KVM 域 + Docker 容器「双运行时」统一面板）**（容器 / 编排两 tab（镜像/网络/卷按语义分散至镜像管理第 4 tab 与存储/网络页，避免单页堆五类资源）+ **容器创建**（v3.4：名称/镜像/端口映射/挂载卷/环境变量/重启策略/启动命令 → `docker run` 参数映射，纯函数校验，本地缺镜像自动拉取）+ 容器终端（WebSocket ↔ Docker Engine API exec TTY，支持运行中调窗）+ 日志查看（跟随/下载/tail 行数）+ 资源占用实时统计 + 批量启停删与悬空镜像/容器清理；viewer 403，容器终端与 SSH 终端共用 `console.Conn` 写锁 + recover 纪律与会话强断）
-- [x] **应用商店（v3，SSH 脚本版）**（选虚拟机 → 一键装 nginx/mysql/redis/php/nodejs/docker-engine 等常用服务：安装走异步任务，虚拟机内经 SSH 幂等执行内置脚本，已装自动跳过；compose 版应用商店已于 2026-09-26 砍除，模板存档 deploy/）
+- [x] **应用商店（v3，SSH 脚本版）**（选虚拟机 → 一键装 nginx/mysql/redis/php/nodejs/docker-engine 等常用服务：安装走异步任务，虚拟机内经 SSH 幂等执行内置脚本，已装自动跳过；compose 版应用商店已于 2026-09-26 砍除，模板未存档、可考古 git 历史）
 - [x] **VM 应用（v3）**（不经容器往虚拟机里装软件：SSH 在客户机内幂等执行安装脚本，10 个内置应用（nginx/mysql/redis/php/nodejs/docker-engine 等），已装检测自动跳过）
 - [x] **AI 运维助手（v3）**（OpenAI 兼容 `/chat/completions` 代理：API Key 只存服务端永不下发前端；`with_context` 注入平台环境摘要（VM/容器/告警统计），能答「我平台几台虚拟机在跑」；SSE 流式逐段转发；助手只读问答、不具备任何写操作能力；viewer 403）
 - [x] **SSH 跳板入口（v3.6，借鉴堡垒机 4A）**（任意终端工具 `ssh <用户名>@<宿主机> -p 2222` 直达资产：平台密码认证 + per-IP 爆破限流 → 交互式资产菜单只列「有效授权 ∩ 运行中 ∩ 有 IP ∩ 已托管凭据」→ 连接前现查重验（授权/状态/IP 任何一项失效当场拒绝）→ vmssh 安全链桥接直达 VM shell；exit 回菜单、q 断开；会话落 console_sessions 审计；**命令黑名单**：rm -rf/mkfs/dd 等高危命令整行拦截并落审计（大小写/多空格归一，设置页可配）。`JUMPD_ENABLED=1` 开启，默认关闭）
@@ -339,11 +339,11 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 vmops/
 ├── main.go              # 入口：静态托管（四候选探测）/Deps 组装/任务管理器/会话注册表/种子数据/启动收敛
 ├── config/              # 环境变量配置（含 SEED_DIR）
-├── database/            # GORM 连接与自动迁移（16 张表）
+├── database/            # GORM 连接与自动迁移（21 张表）
 ├── handler/             # HTTP 处理器，routes.go 按域收口注册
 │                        #   vm/存储/网络/镜像/任务/会话/设置/监控/历史 + v3：docker*/apps/
 │                        #   ai/crons/vm_files*/vm_credentials/image_market/vm_export/vm_recycle/
-│                        #   toolbox/cloud_init_templates/announcement/container_terminal/loki
+│                        #   cloud_init_templates/announcement/container_terminal
 │                        #   param.go：paramID/parseID，路径参数主键统一解析（禁止直传 GORM）
 ├── middleware/          # JWT / OperatorMiddleware(RBAC) / NonViewerMiddleware / CORS / 审计 / 安全入口
 ├── model/               # GORM 模型（user/host/vm/image/audit/task/session + vm_grant/vm_credential/
@@ -363,10 +363,15 @@ vmops/
 │   ├── monitor/         # Prometheus file_sd 服务发现（GenerateFileSD 纯函数 + 原子落盘）
 │   ├── metrics/         # Prometheus 内建采集
 │   ├── setting/         # 系统设置 KV（白名单校验 + 内存缓存）
-│   └── vnc/             # VNC token 存储
+│   ├── vnc/             # VNC token 存储
+│   ├── vmlock/          # VM 进程内互斥（lockVM 防并发写操作）
+│   ├── dbx/             # 持久化重试助手（Persist/PersistBestEffort，杜绝静默吞错）
+│   ├── notify/          # 告警出站通知（飞书/钉钉机器人 webhook）
+│   ├── jumpd/           # SSH 跳板入口（资产菜单/连接重验/命令黑名单）
+│   └── ansible/         # Ansible 引擎封装（inventory 生成/adhoc/Playbook 执行）
 ├── scripts/             # init-db.sql（手工建库）/ smoke.sh（E2E 回归）/ credential-rekey、purge-task-secrets（密钥运维，独立 main 包）
 ├── deploy/              # prometheus.yml(.example) / alerts.yml / alertmanager.yml(.example) / gen-monitor-conf.sh / docker-compose
-├── web/                 # Vue3 + Vite 前端（26 个视图：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
+├── web/                 # Vue3 + Vite 前端（30 个视图：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
 │                        #   Host/Image(四 tab 含镜像市场与容器镜像)/Storage(含 Docker 卷)/Network(含 Docker 网络)/Containers(容器+编排)/Task/Audit/Settings/UserList/Profile/Login）
 │   ├── src/utils/format.js  # 状态文案/时间/尺寸/错误提取统一实现（收敛 10 余处重复）
 │   └── dist/            # 构建产物，由后端托管（路由懒加载 + manualChunks：首屏 −50%）

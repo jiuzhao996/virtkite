@@ -11,7 +11,6 @@
 
 # 数据目录
 /data/
-/data/images/
 
 # 前端依赖与构建产物
 web/node_modules/
@@ -48,15 +47,3 @@ deploy/tls/
 # 监控真实配置（含 .env 注入的令牌，由 deploy/gen-monitor-conf.sh 从 .example 模板生成）
 deploy/prometheus.yml
 deploy/alertmanager.yml
-
-gui-test-screenshots/
-.~*.docx
-
-# 会话工具工作目录
-.workbuddy/
-.superpowers/
-
-# 文档站构建产物与依赖
-docs-site/node_modules/
-docs-site/.vitepress/cache/
-docs-site/.vitepress/dist/

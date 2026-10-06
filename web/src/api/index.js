@@ -1,5 +1,5 @@
 // API 统一封装（目录化组装）：页面一律 `import { api } from '@/api'`，
-// 禁止直接 import http 裸调——Docker/Crons/AppStore/回收站/镜像市场/AI/Loki/VM 文件
+// 禁止直接 import http 裸调——Docker/Crons/AppStore/回收站/镜像市场/AI/VM 文件
 // 曾因此形成双轨制（裸调走 res.data.data 解包、api 走 res.data，路径混乱且丢统一拦截语义）。
 // 各域拆分：http.js（axios 基建）/ core.js（既有核心域）/ docker.js（Docker 全域）/ ops.js（运维与扩展域）。
 import { http } from './http'
