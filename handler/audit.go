@@ -27,9 +27,12 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 	// 筛选条件与 CSV 导出共用 applyAuditFilters（同一口径，防两处漂移）
 	query := h.applyAuditFilters(c)
 
-	// 总数统计
+	// 总数统计（失败按 500 返回，不带着 total=0 继续查——两段查询同一口径）
 	var total int64
-	query.Count(&total)
+	if err := query.Count(&total).Error; err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
 
 	// 分页
 	page, pageSize := parsePageQuery(c, 20, 100)

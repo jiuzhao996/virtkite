@@ -13,13 +13,15 @@ type Alert struct {
 	// Labels / Annotations 原始 JSON 文本（结构随告警规则变化，不建强类型列），查询时反序列化
 	Labels      string `gorm:"type:text" json:"labels"`
 	Annotations string `gorm:"type:text" json:"annotations"`
-	Status      string `gorm:"size:20" json:"status"` // firing / resolved
+	// Status firing / resolved；与 UpdatedAt 组成复合索引——告警历史页的常用查询是
+	// 「按状态过滤 + updated_at 倒序分页」，没有索引时每次翻页全表排序
+	Status string `gorm:"size:20;index:idx_alerts_status_updated,priority:1" json:"status"`
 	// StartsAt 告警开始时间（Alertmanager 必带）
 	StartsAt time.Time `json:"starts_at"`
 	// EndsAt 恢复时间：必须用指针——firing 告警不携带该字段，值类型零值会写成 MySQL 零日期
 	// '0000-00-00'，在严格 SQL 模式（NO_ZERO_DATE）下直接插入失败（实测 Error 1292）
 	EndsAt    *time.Time `json:"ends_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	UpdatedAt time.Time  `gorm:"index:idx_alerts_status_updated,priority:2" json:"updated_at"`
 	CreatedAt time.Time  `json:"created_at"`
 }
 

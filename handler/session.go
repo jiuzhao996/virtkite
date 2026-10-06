@@ -30,7 +30,8 @@ func (h *SessionHandler) ListSessions(c *gin.Context) {
 	if status := c.Query("status"); status == "active" || status == "closed" {
 		query = query.Where("status = ?", status)
 	}
-	if t := c.Query("type"); t == "vnc" || t == "ssh" || t == "serial" || t == "jump" {
+	// 五种会话类型与 sweeper/registry 口径一致（docker-exec 漏在早期白名单外）
+	if t := c.Query("type"); t == "vnc" || t == "ssh" || t == "serial" || t == "jump" || t == "docker-exec" {
 		query = query.Where("type = ?", t)
 	}
 	if q := c.Query("vm_name"); q != "" {
