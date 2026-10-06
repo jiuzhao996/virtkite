@@ -9,6 +9,7 @@ package handler
 import (
 	"net/http"
 	"regexp"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
@@ -136,22 +137,36 @@ func (h *VMHandler) ListVMs(c *gin.Context) {
 		}
 	}
 
-	// 实时性能：仅 running 采样，key 为 VM id（与 /dashboard/vm-perf 同口径，供列表页合并请求）
+	// 实时性能：仅 running 采样，key 为 VM id（与 /dashboard/vm-perf 同口径，供列表页合并请求）。
+	// 逐域一次 RPC，串行执行时 N 台机就是 N 个 RTT 叠加，列表页轮询明显变慢；
+	// go-libvirt 连接支持并发多路 RPC（内部按序列号多路复用），这里并发采样，
+	// map 写入互斥。单机采样失败静默跳过（保持原行为：缺该项前端显示 —）。
 	perf := make(map[uint]gin.H, len(vms))
+	var perfMu sync.Mutex
+	var wg sync.WaitGroup
 	for _, vm := range vms {
 		if vm.Status != model.VMStatusRunning {
 			continue
 		}
-		if st, err := h.Virt.GetDomainStats(vm.Name); err == nil && st != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			st, err := h.Virt.GetDomainStats(vm.Name)
+			if err != nil || st == nil {
+				return
+			}
 			memPct := 0.0
 			if st.GuestTotalKiB > 0 {
 				memPct = float64(st.GuestUsedKiB) / float64(st.GuestTotalKiB) * 100
 			} else if st.MemTotalKiB > 0 {
 				memPct = float64(st.MemUsedKiB) / float64(st.MemTotalKiB) * 100
 			}
+			perfMu.Lock()
 			perf[vm.ID] = gin.H{"cpu_percent": st.CpuPercent, "mem_pct": memPct}
-		}
+			perfMu.Unlock()
+		}()
 	}
+	wg.Wait()
 
 	Success(c, gin.H{
 		"total": len(vms),

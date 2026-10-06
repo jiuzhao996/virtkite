@@ -146,7 +146,16 @@ func main() {
 			c.Data(http.StatusOK, "text/html; charset=utf-8", indexBytes)
 		}
 		r.GET("/", serveIndex)
-		r.NoRoute(serveIndex)
+		// NoRoute 兜底只应服务 SPA 前端路由；/api/* 未知路径必须 JSON 404——
+		// 兜底成 200+HTML 会让前端 axios 按默认类型解析失败，报的错与真实原因
+		//（路径拼错/接口已下线）对不上，排查绕远路
+		r.NoRoute(func(c *gin.Context) {
+			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+				handler.Fail(c, http.StatusNotFound, "接口不存在")
+				return
+			}
+			serveIndex(c)
+		})
 
 		// 托管前端静态资源。目录必须取自上面探测命中的 webDir，不能硬编码相对路径（工作目录不确定）。
 		// /assets：Vite 打包产物（js/css/图片，文件名带 hash）
