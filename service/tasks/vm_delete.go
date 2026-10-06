@@ -148,6 +148,12 @@ func execDeleteVM(ctx *ExecContext) error {
 	// 其余错误（连接失败、权限等）仍中止删除。
 	if err := ctx.Virt.UndefineDomain(vm.Name); err != nil {
 		if !virt.IsDomainNotFound(err) {
+			// 失败上下文进 Result（manager 失败路径会落库）：此时域与磁盘都未动、
+			// 状态一致，直接重试即可——用户看到失败往往不敢重试，说明这一点
+			setTaskResultVM(ctx, map[string]interface{}{
+				"stage": "undefine",
+				"note":  "域定义删除失败，磁盘与记录均未清理，状态完整，可直接重试删除",
+			}, vm.ID, vm.Name)
 			return fmt.Errorf("删除虚拟机定义失败: %w", err)
 		}
 		log.Printf("[tasks] 域定义已不存在，按已 undefine 处理（回收站恢复后的二次删除场景） vm=%s", vm.Name)
@@ -272,6 +278,12 @@ func execDeleteVM(ctx *ExecContext) error {
 
 	// 5. 软删除数据库记录，并回收该 VM 的全部授权（授权随资产消亡，不悬挂）。
 	if err := ctx.DB.Delete(&vm).Error; err != nil {
+		// 失败上下文进 Result：域与磁盘已清理、仅记录未删，重试会走
+		//「域不存在容错」路径继续收尾——不写明的话用户以为失败后不能重试
+		setTaskResultVM(ctx, map[string]interface{}{
+			"stage": "db_record",
+			"note":  "域定义与磁盘已清理，仅数据库记录删除失败；重试删除可继续完成收尾",
+		}, vm.ID, vm.Name)
 		return fmt.Errorf("删除虚拟机记录失败: %w", err)
 	}
 	if err := ctx.DB.Where("vm_id = ?", vm.ID).Delete(&model.VMGrant{}).Error; err != nil {

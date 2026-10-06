@@ -384,6 +384,17 @@ func (m *Manager) run(id uint) {
 		if err != nil {
 			// 原始错误链（含 libvirt 具体报错）只进日志，DB 只存 friendly 中文（该字段回显前端）
 			log.Printf("[tasks] 任务失败 id=%d type=%s vm=%s err=%v", id, task.Type, task.VMName, err)
+			// executor 在失败路径设置的 Result（如删除任务失败时写明的已执行步骤与
+			// 残留状态）一并落库：失败原因 Task.Error 只有脱敏短句，运维定位
+			//「删到哪一步、能不能重试」靠这段上下文，不写就只剩翻日志一条路。
+			if execCtx.Task != nil && execCtx.Task.Result != "" {
+				m.updateTaskFields(id, map[string]interface{}{
+					"status": statusFailed,
+					"error":  friendlyError(err),
+					"result": execCtx.Task.Result,
+				}, "失败终态")
+				return
+			}
 			m.markFailed(id, friendlyError(err))
 			return
 		}

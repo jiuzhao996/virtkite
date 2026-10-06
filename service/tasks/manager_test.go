@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/jiuzhao/vmops/model"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // TestMain 初始化 tasks 包测试环境：丢弃日志输出。
@@ -519,4 +522,61 @@ func TestRegisterVMTasks(t *testing.T) {
 		}()
 		RegisterVMTasks(nil)
 	})
+}
+
+// TestRunPersistsResultOnFailure 失败路径 executor 设置的 Result 必须落库。
+//
+// 风险点：execDeleteVM 在 undefine / db_record 阶段失败时把「已执行步骤与残留状态」
+// 写进 ctx.Task.Result（能否重试的关键信息）；run 的失败分支若只写 status/error，
+// 这段上下文全部丢弃——Task.Error 又被 friendlyError 脱敏成一句短话，运维定位
+// 「删到哪一步」就只剩翻服务日志一条路。
+func TestRunPersistsResultOnFailure(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("打开内存库失败: %v", err)
+	}
+	if err := db.AutoMigrate(&model.Task{}); err != nil {
+		t.Fatalf("AutoMigrate 失败: %v", err)
+	}
+	t.Cleanup(func() {
+		if sqlDB, cErr := db.DB(); cErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	m := &Manager{
+		DB:        db,
+		queueFast: make(chan uint, 1),
+		queueSlow: make(chan uint, 1),
+		executors: map[string]Executor{},
+	}
+	m.Register("stop_vm", func(c *ExecContext) error {
+		// 模拟 execDeleteVM 失败路径：设置 Result 上下文后返回错误
+		c.Task.Result = `{"stage":"undefine","note":"域定义删除失败，磁盘与记录均未清理"}`
+		return errors.New("删除虚拟机定义失败: connection refused")
+	})
+
+	task := &model.Task{Type: "stop_vm", Status: statusPending, VMName: "web-01"}
+	if err := db.Create(task).Error; err != nil {
+		t.Fatalf("建任务失败: %v", err)
+	}
+
+	m.run(task.ID) // 直接执行（不经队列），同步等待终态写入
+
+	var got model.Task
+	if err := db.First(&got, task.ID).Error; err != nil {
+		t.Fatalf("回读任务失败: %v", err)
+	}
+	if got.Status != statusFailed {
+		t.Fatalf("任务状态错误：期望 failed，实际 %s", got.Status)
+	}
+	if !strings.Contains(got.Error, "删除虚拟机定义失败") {
+		t.Errorf("失败文案错误：期望脱敏中文短句，实际 %q", got.Error)
+	}
+	if strings.Contains(got.Error, "connection refused") {
+		t.Errorf("原始错误链泄漏进 Task.Error（该字段回显前端）：%q", got.Error)
+	}
+	if !strings.Contains(got.Result, "undefine") {
+		t.Errorf("executor 设置的失败上下文未落库：Result=%q", got.Result)
+	}
 }

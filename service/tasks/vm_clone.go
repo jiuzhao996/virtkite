@@ -118,6 +118,24 @@ func execCloneVM(ctx *ExecContext) error {
 		Status:      model.VMStatusShutOff,
 	}
 	if err := ctx.DB.Create(&clone).Error; err != nil {
+		// 失败清理：走到这里时 libvirt 侧域已定义、克隆卷已落盘，直接返回会留下
+		// 永久孤儿（DB 无记录，列表页不可见，只能人工 virsh undefine + vol-delete）。
+		// 从新域 spec 反查全部盘卷逐个回收（多盘克隆的额外卷一并覆盖），尽力而为：
+		// 回收失败只留痕，不掩盖原始的落库错误
+		if ns, serr := ctx.Virt.GetDomainSpec(name); serr == nil && ns != nil {
+			for _, d := range ns.Disks {
+				if d.Device == "disk" && d.Source != "" {
+					if pn, vn, lerr := ctx.Virt.LookupVolByPath(d.Source); lerr == nil {
+						if derr := ctx.Virt.DeleteVolume(pn, vn); derr != nil {
+							log.Printf("[tasks] 克隆落库失败回收卷失败 vm=%s pool=%s vol=%s err=%v", name, pn, vn, derr)
+						}
+					}
+				}
+			}
+		}
+		if uerr := ctx.Virt.UndefineDomain(name); uerr != nil {
+			log.Printf("[tasks] 克隆落库失败回收域失败 vm=%s err=%v", name, uerr)
+		}
 		return fmt.Errorf("记录克隆虚拟机失败: %w", err)
 	}
 	reportProgress(ctx, 70, "克隆记录已落盘")
