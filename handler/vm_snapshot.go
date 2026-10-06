@@ -49,6 +49,15 @@ func (h *VMHandler) CreateSnapshot(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 快照属生命周期写操作（AGENTS 条款 16）：克隆进行中对源盘打快照会让子盘继承脏状态
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	var req struct {
 		Name        string `json:"name" binding:"required"`
@@ -81,6 +90,14 @@ func (h *VMHandler) DeleteSnapshot(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	if err := h.Virt.DeleteSnapshot(vm.Name, snapName); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
@@ -100,6 +117,15 @@ func (h *VMHandler) RevertSnapshot(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 回滚与 delete_vm 的 undefine(带 SNAPSHOTS_METADATA)并发会撞正在操作的快照元数据
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	if err := h.Virt.RevertSnapshot(vm.Name, snapName); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)

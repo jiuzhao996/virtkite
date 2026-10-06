@@ -110,6 +110,15 @@ func (h *VMRecycleHandler) Restore(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 恢复含重 define 域（域已 undefine 时），与生命周期写操作互斥（AGENTS 条款 16）
+	if !guardVMIdle(c, h.DB, vm.ID) {
+		return
+	}
+	release, ok := lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	// 同名活记录防撞：软删期间可能用同名重建过机器，恢复会让列表出现两台同名 VM，
 	// libvirt 域操作按名字寻址会打到别人头上。
 	var cnt int64
@@ -264,6 +273,15 @@ func (h *VMRecycleHandler) Purge(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// purge_volumes 删盘文件，守卫数据基于当下快照，须与克隆/删除/热插拔互斥
+	if !guardVMIdle(c, h.DB, vm.ID) {
+		return
+	}
+	release, ok := lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	purgeVolumes := c.Query("purge_volumes") == "true"
 
 	removed := 0

@@ -21,6 +21,16 @@ func (h *VMHandler) AttachDisk(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 热插拔属生命周期写操作（AGENTS 条款 16）：与 delete_vm 并发时删除的磁盘清单
+	// 是插盘前枚举的，新挂卷会漏删成孤儿；与克隆并发则子盘引用未就绪的源
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	var req struct {
 		Disk virt.DiskSpec `json:"disk"`
@@ -67,6 +77,14 @@ func (h *VMHandler) QuickAttachDisk(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	var req struct {
 		SizeGB int    `json:"size_gb"`
@@ -197,6 +215,15 @@ func (h *VMHandler) DetachDisk(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 删卷的守卫数据（backing 引用/其他域挂载）基于分离瞬间的快照，必须与克隆/删除互斥
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	deleteVolume := c.Query("delete_volume") == "true"
 
 	// 需要删卷时先取分离前的 spec，确定该 target 的磁盘源路径与设备类型；
@@ -344,6 +371,14 @@ func (h *VMHandler) AttachInterface(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	var req struct {
 		Interface virt.InterfaceSpec `json:"interface"`
@@ -381,6 +416,14 @@ func (h *VMHandler) DetachInterface(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	if err := h.Virt.DetachInterface(vm.Name, mac); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return

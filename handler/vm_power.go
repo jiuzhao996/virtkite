@@ -104,6 +104,10 @@ func (h *VMHandler) StopVM(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 与 RestartVM 同款：提交前确认无未完结任务（克隆/删除进行中时关机会与后台 executor 抢域）
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
 	release, ok := h.lockVM(c, vm.ID)
 	if !ok {
 		return

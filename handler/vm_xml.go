@@ -152,6 +152,16 @@ func (h *VMHandler) UpdateVMXML(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 重 define 在 AGENTS 条款 16 清单内：与删除/克隆/规格变更并发会把已 undefine 的域
+	// define 回来或改出脏配置，admin 直定义同样要过 guard+lock
+	if !h.guardVMIdle(c, vm.ID) {
+		return
+	}
+	release, ok := h.lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
 
 	var req struct {
 		XML string `json:"xml" binding:"required"`

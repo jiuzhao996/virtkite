@@ -86,6 +86,18 @@ func (h *VMExportHandler) Export(c *gin.Context) {
 		return
 	}
 
+	// 导出全程持锁：流式拷贝历时数分钟（20GB 级），期间 Start/Delete/Clone 若并发进入——
+	// 开机会拷出文件系统不一致的坏镜像，delete_vm 会直接截断正在读的盘文件。锁在
+	// handler 返回（流写完或出错）时释放，天然覆盖全程；先 guard 挡已提交未完结任务。
+	if !guardVMIdle(c, h.DB, vm.ID) {
+		return
+	}
+	release, ok := lockVM(c, vm.ID)
+	if !ok {
+		return
+	}
+	defer release()
+
 	// 必须关机：运行中拷磁盘相当于拔盘复制，拿到的是文件系统不一致的坏镜像
 	state, err := h.Virt.GetDomainState(vm.Name)
 	if err != nil {

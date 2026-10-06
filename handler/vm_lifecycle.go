@@ -101,6 +101,11 @@ func (h *VMHandler) CloneVM(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "虚拟机不存在")
 		return
 	}
+	// 源机有未完结任务时拒绝提交：delete_vm 进行到一半时提交克隆，
+	// 克隆出的子盘 backing 指向即将被删的父盘，克隆机磁盘立即不可读
+	if !h.guardVMIdle(c, src.ID) {
+		return
+	}
 	// 克隆期间禁止源机被并发改动（双开提交会克隆出两份脏卷）
 	release, ok := h.lockVM(c, src.ID)
 	if !ok {
@@ -148,6 +153,10 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 	}
 	vm, ok := h.findVM(c)
 	if !ok {
+		return
+	}
+	// 与 CloneVM 互斥：克隆任务未完结时提交删除，后台删掉的正是克隆体刚要引用的父盘
+	if !h.guardVMIdle(c, vm.ID) {
 		return
 	}
 	release, ok := h.lockVM(c, vm.ID)

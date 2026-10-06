@@ -211,12 +211,7 @@ func (h *VMHandler) GetVMStats(c *gin.Context) {
 // 与 guardVMIdle 互补而非替代：锁拦住「同一瞬间并发进来的两个请求」（双开、误触、
 // 脚本重放最常见的形态），guardVMIdle 拦住「HTTP 已返回但后台任务仍在跑」的时间窗。
 func (h *VMHandler) lockVM(c *gin.Context, vmID uint) (func(), bool) {
-	release, ok := vmlock.Try(vmID)
-	if !ok {
-		Fail(c, http.StatusConflict, "该虚拟机有操作正在进行，请稍后再试")
-		return nil, false
-	}
-	return release, true
+	return lockVM(c, vmID)
 }
 
 // guardVMIdle 校验该 VM 当前没有未终结的异步任务（pending/running），返回 true 表示可以下发。
@@ -225,8 +220,25 @@ func (h *VMHandler) lockVM(c *gin.Context, vmID uint) (func(), bool) {
 // 会对正在 undefine/迁移的域发 reboot，产生不可预期的域状态与脏卷，因此必须先挡住。
 // 查询失败一律 fail-closed（拒绝下发）：DB 抖动时宁可让用户再点一次，也不能并发写域。
 func (h *VMHandler) guardVMIdle(c *gin.Context, vmID uint) bool {
+	return guardVMIdle(c, h.DB, vmID)
+}
+
+// lockVM 包级版：供非 VMHandler 承载的生命周期入口（导出/回收站恢复等）共用同一把
+// 进程内互斥与同一套 409 文案。语义与 VMHandler 方法版完全一致。
+func lockVM(c *gin.Context, vmID uint) (func(), bool) {
+	release, ok := vmlock.Try(vmID)
+	if !ok {
+		Fail(c, http.StatusConflict, "该虚拟机有操作正在进行，请稍后再试")
+		return nil, false
+	}
+	return release, true
+}
+
+// guardVMIdle 包级版：校验该 VM 无 pending/running 异步任务，失败响应与 fail-closed
+// 语义同 VMHandler 方法版。
+func guardVMIdle(c *gin.Context, db *gorm.DB, vmID uint) bool {
 	var n int64
-	err := h.DB.Model(&model.Task{}).
+	err := db.Model(&model.Task{}).
 		Where("vm_id = ? AND status IN ?", vmID, []string{model.TaskStatusPending, model.TaskStatusRunning}).
 		Count(&n).Error
 	if err != nil {
