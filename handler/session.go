@@ -24,18 +24,7 @@ func NewSessionHandler(db *gorm.DB, sessions *console.Registry) *SessionHandler 
 // ListSessions 会话列表（进行中优先，其次按开始时间倒序）。
 // 支持 status/type 精确过滤、vm_name/username 模糊过滤、page/page_size 真分页（total 为真实总数）。
 func (h *SessionHandler) ListSessions(c *gin.Context) {
-	page := 1
-	if s := c.Query("page"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			page = n
-		}
-	}
-	pageSize := 20
-	if s := c.Query("page_size"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 500 {
-			pageSize = n
-		}
-	}
+	page, pageSize := parsePageQuery(c, 20, 500)
 
 	query := h.DB.Model(&model.ConsoleSession{})
 	if status := c.Query("status"); status == "active" || status == "closed" {

@@ -29,23 +29,7 @@ func (h *TaskHandler) ListTasks(c *gin.Context) {
 		return
 	}
 	status := c.Query("status")
-	page := 1
-	if s := c.Query("page"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			page = n
-		}
-	}
-	pageSize := 50
-	if s := c.Query("page_size"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			pageSize = n
-		}
-	} else if s := c.Query("limit"); s != "" {
-		// 旧参数兼容：limit 语义等价 page_size
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			pageSize = n
-		}
-	}
+	page, pageSize := parsePageQuery(c, 50, 200)
 	items, total, err := h.Tasks.ListPaged(page, pageSize, status)
 	if err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "查询任务列表失败", err)

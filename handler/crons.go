@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -155,26 +154,7 @@ func (h *CronsHandler) ListRuns(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "计划任务不存在")
 		return
 	}
-	page := 1
-	if s := c.Query("page"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			page = n
-		}
-	}
-	pageSize := runsPageSize
-	if s := c.Query("page_size"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			pageSize = n
-		}
-	} else if s := c.Query("limit"); s != "" {
-		// 旧参数兼容：limit 语义等价 page_size
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			pageSize = n
-		}
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = runsPageSize
-	}
+	page, pageSize := parsePageQuery(c, runsPageSize, 100)
 	var total int64
 	if err := h.DB.Model(&model.CronRun{}).Where("task_id = ?", id).Count(&total).Error; err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)

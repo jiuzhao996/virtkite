@@ -32,14 +32,7 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 	query.Count(&total)
 
 	// 分页
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := parsePageQuery(c, 20, 100)
 	offset := (page - 1) * pageSize
 
 	var logs []model.AuditLog

@@ -36,3 +36,27 @@ func paramID(c *gin.Context, name string) (uint, bool) {
 	}
 	return id, true
 }
+
+// parsePageQuery 解析 ?page=&page_size= 分页参数（线上参数名不变），返回钳制后的
+// (page, pageSize)。收敛此前六处三种植皮写法的行为差异：
+//   - page 缺省/非法归 1；pageSize 缺省/非法归 defaultPageSize；
+//   - pageSize 统一上限 maxPageSize——task/crons 原先无上限（page_size=100000 等于
+//     关闭分页全表拉取，DB 一次吐几万行直接拖垮响应），补上与服务层 ListPaged
+//     同口径的钳制；session/monitor/audit/notification 保留各自原有上限；
+//   - limit 作为 page_size 的旧参数别名始终兼容（语义等价，task/crons 的历史
+//     调用方仍在用，其余端点无人传该参数，认了也无副作用）。
+func parsePageQuery(c *gin.Context, defaultPageSize, maxPageSize int) (page, pageSize int) {
+	page = 1
+	if n, err := strconv.Atoi(c.Query("page")); err == nil && n > 0 {
+		page = n
+	}
+	pageSize = defaultPageSize
+	sizeRaw := c.Query("page_size")
+	if sizeRaw == "" {
+		sizeRaw = c.Query("limit") // 旧参数兼容：limit 语义等价 page_size
+	}
+	if n, err := strconv.Atoi(sizeRaw); err == nil && n > 0 && n <= maxPageSize {
+		pageSize = n
+	}
+	return page, pageSize
+}

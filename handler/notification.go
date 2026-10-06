@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
@@ -34,14 +33,7 @@ func (h *NotificationHandler) List(c *gin.Context) {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize := parsePageQuery(c, 20, 100)
 	var items []model.Notification
 	if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)

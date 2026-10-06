@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -85,18 +84,7 @@ func (h *MonitorHandler) PreviewFileSD(c *gin.Context) {
 // 支持 status（firing/resolved）与 fingerprint 精确过滤，page/page_size 真分页（total 为真实总数），
 // 按 UpdatedAt 倒序（最近一次状态流转优先）。labels/annotations 反序列化为对象返回。
 func (h *MonitorHandler) AlertHistory(c *gin.Context) {
-	page := 1
-	if s := c.Query("page"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			page = n
-		}
-	}
-	pageSize := 20
-	if s := c.Query("page_size"); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 500 {
-			pageSize = n
-		}
-	}
+	page, pageSize := parsePageQuery(c, 20, 500)
 
 	query := h.DB.Model(&model.Alert{})
 	if status := c.Query("status"); status == model.AlertStatusFiring || status == model.AlertStatusResolved {
