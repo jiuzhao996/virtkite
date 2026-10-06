@@ -52,7 +52,8 @@
 </template>
 
 <script setup>
-// VM 实时性能表卡（自 Dashboard.vue 拆出，渲染输出不变）。
+// VM 实时性能表（自 Dashboard.vue 拆出，渲染输出不变；2026-10 更名 VmPerfTable——
+// 它是表格不是曲线卡，与 vm-detail/VmPerfCard 同名易混）。
 // 纯展示组件：vmPerf 数组由 shell pollVms 轮询后经 props 下发。
 import { Monitor } from '@element-plus/icons-vue'
 import { vmStatusText, vmStatusTag, usageColor, clampPct } from '../../../utils/format'
