@@ -13,6 +13,7 @@
           <el-option label="图形控制台" value="vnc" />
           <el-option label="Web 终端" value="ssh" />
           <el-option label="串口 Console" value="serial" />
+          <el-option label="跳板终端" value="jump" />
         </el-select>
         <el-input v-model="q.vm_name" placeholder="按虚拟机名搜索" clearable style="width: 170px" @keyup.enter="search" @clear="search" />
         <el-input v-model="q.username" placeholder="按用户搜索" clearable style="width: 140px" @keyup.enter="search" @clear="search" />
@@ -25,7 +26,7 @@
         type="info"
         :closable="false"
         show-icon
-        title="VNC 走 websockify 中转，后端看不到断开事件（靠过期自动收敛），仅 SSH/串口支持服务端强制断开"
+        title="VNC 走 websockify 中转，后端看不到断开事件（靠过期自动收敛），SSH/串口/跳板终端均支持服务端强制断开"
         style="margin-bottom: 12px"
       />
 

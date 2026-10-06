@@ -151,7 +151,9 @@ export function hostStatusTag(status) {
 const SESSION_TYPE_TEXT = {
   vnc: '图形控制台',
   ssh: 'Web 终端',
-  serial: '串口'
+  serial: '串口',
+  jump: '跳板终端',
+  'docker-exec': '容器终端'
 }
 
 /** 会话方式文案；未知类型原样返回。 */
@@ -162,7 +164,7 @@ export function sessionTypeText(type) {
 /** 会话方式 → el-tag 的 type。 */
 export function sessionTypeTag(type) {
   if (type === 'vnc') return 'primary'
-  if (type === 'ssh') return 'success'
+  if (type === 'ssh' || type === 'jump') return 'success'
   return 'warning'
 }
 
@@ -186,7 +188,7 @@ export const FALLBACK_ACTION_LABELS = {
   upload_image: '上传镜像', delete_image: '删除镜像', set_image_template: '设置镜像模板', clone_image: '镜像创建虚拟机',
   create_network: '创建网络', update_network: '更新网络', delete_network: '删除网络',
   create_volume: '创建存储卷', delete_volume: '删除存储卷',
-  'jumpd.cmd_blocked': '跳板拦截危险命令',
+  'jumpd.cmd': '跳板执行命令', 'jumpd.cmd_blocked': '跳板拦截危险命令',
   access: '访问'
 }
 

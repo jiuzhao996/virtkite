@@ -2,6 +2,7 @@ package jumpd
 
 import (
 	"bytes"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -170,4 +171,84 @@ func TestSafeCopyRecovers(t *testing.T) {
 	if dst.String() != "hello jump" {
 		t.Fatalf("正常拷贝内容不对: %q", dst.String())
 	}
+}
+
+// TestForwardKeysAuditsAllLines 回归（全量命令审计）：行回调对放行行也必须触发
+// （jumpd.cmd），空行不触发；blocked 标志与拦截行为一致。
+func TestForwardKeysAuditsAllLines(t *testing.T) {
+	fake := &fakeChannel{}
+	ks := startKeyReader(fake)
+	stdin := &lockedBuffer{}
+	quit := make(chan struct{})
+	defer close(quit)
+
+	type rec struct {
+		line    string
+		blocked bool
+	}
+	lines := make(chan rec, 8)
+	go forwardKeys(ks, stdin, quit, func(line string, blocked bool) { lines <- rec{line, blocked} })
+
+	recv := func() rec {
+		select {
+		case r := <-lines:
+			return r
+		case <-time.After(2 * time.Second):
+			t.Fatal("行回调未触发（超时）")
+			return rec{}
+		}
+	}
+
+	fake.push([]byte("uptime \r")) // 尾随空格应 Trim 后回调
+	if r := recv(); r.line != "uptime" || r.blocked {
+		t.Errorf("放行行回调不符: %+v", r)
+	}
+	fake.push([]byte("rm -fr /tmp/x\r")) // flag 排列变体命中黑名单
+	if r := recv(); r.line != "rm -fr /tmp/x" || !r.blocked {
+		t.Errorf("拦截行回调不符: %+v", r)
+	}
+	fake.push([]byte("\r")) // 纯回车空行：不回调（审计不落噪音行）
+	select {
+	case r := <-lines:
+		t.Errorf("空行不应回调: %+v", r)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// TestLiveSessionsRegisterDisconnect 强断登记表（Web 端「强制断开」通道）：
+// 登记 → DisconnectSession 命中且钩子恰好调用一次 → 注销后未命中；sid=0 不登记。
+func TestLiveSessionsRegisterDisconnect(t *testing.T) {
+	const sid = 424242
+	if DisconnectSession(sid) {
+		t.Fatal("未登记的 ID 不应命中")
+	}
+	called := make(chan struct{}, 2)
+	unregister := registerLive(sid, func() { called <- struct{}{} })
+	if !DisconnectSession(sid) {
+		t.Fatal("登记后应命中")
+	}
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("强断钩子未被调用")
+	}
+	unregister() // 收桥注销（DisconnectSession 已原子摘除，幂等）
+	if DisconnectSession(sid) {
+		t.Fatal("注销后不应命中")
+	}
+	select {
+	case <-called:
+		t.Fatal("钩子被调用两次")
+	default:
+	}
+	// sid=0（会话行登记失败无 ID 可寻）：不登记、不 panic
+	registerLive(0, func() { t.Error("sid=0 不应登记") })()
+}
+
+// TestEnableKeepAliveNonTCPNoop 非 TCP 连接（net.Pipe 无 TCP 语义）静默跳过不 panic
+func TestEnableKeepAliveNonTCPNoop(t *testing.T) {
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	enableKeepAlive(c1)
 }

@@ -146,12 +146,17 @@ func TestKeyStreamForwardStopsOnQuit(t *testing.T) {
 }
 
 // runForward 在独立 goroutine 里跑 forwardKeys 并返回收集拦截行的回调收口。
-// 拦截行经由 channel 传回，避免测试里对 onBlocked 的调用做同步等待时卡死。
+// 拦截行经由 channel 传回，避免测试里对行回调的调用做同步等待时卡死
+// （放行行回调的覆盖见 TestForwardKeysAuditsAllLines）。
 func runForward(ks *keyStream, stdin io.Writer, quit <-chan struct{}) (blocked chan string, done chan struct{}) {
 	blocked = make(chan string, 4)
 	done = make(chan struct{})
 	go func() {
-		forwardKeys(ks, stdin, quit, func(line string) { blocked <- line })
+		forwardKeys(ks, stdin, quit, func(line string, isBlocked bool) {
+			if isBlocked {
+				blocked <- line
+			}
+		})
 		close(done)
 	}()
 	return blocked, done

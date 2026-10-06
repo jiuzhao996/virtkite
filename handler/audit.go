@@ -168,6 +168,7 @@ var ActionLabels = map[string]string{
 
 	"create_volume": "创建存储卷", "delete_volume": "删除存储卷",
 
+	"jumpd.cmd": "跳板执行命令",
 	"jumpd.cmd_blocked": "跳板拦截危险命令",
 
 	"access": "访问",

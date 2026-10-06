@@ -236,11 +236,27 @@ func (s *Server) listenAndServe(port int) {
 	}
 }
 
+// enableKeepAlive 尽力开启 TCP 保活：非 TCP 连接（测试假件/管道）静默跳过。
+// 客户端掉电/断网形成的半开连接靠它探测（Idle 60s 后每 15s 一次、4 次无应答判死，
+// 约 2 分钟内 Read 报错）——否则键流不关、心跳一直喂 last_seen，会话行能「活跃」
+// 挂数小时（sweeper 的 last_seen 兜底判据被喂活，形同虚设）。
+func enableKeepAlive(conn net.Conn) {
+	type keepAliveSetter interface {
+		SetKeepAliveConfig(net.KeepAliveConfig) error
+	}
+	if c, ok := conn.(keepAliveSetter); ok {
+		_ = c.SetKeepAliveConfig(net.KeepAliveConfig{
+			Enable: true, Idle: 60 * time.Second, Interval: 15 * time.Second, Count: 4,
+		})
+	}
+}
+
 // handleConn 单连接全流程：SSH 握手（含密码认证）→ 菜单循环 → 重验 → 拨号 → IO 桥。
 // 目标地址唯一来源是 revalidateSelection 返回的 DB 行——本函数及下游不存在从
 // 用户键盘输入解析 IP/主机名的任何通道（计划代码评审硬项）。
 func (s *Server) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 	defer conn.Close()
+	enableKeepAlive(conn)
 	sconn, chans, reqs, err := ssh.NewServerConn(conn, config)
 	if err != nil {
 		// 认证失败已在 PasswordCallback 留痕；其余握手错误（版本协商/KEX 异常）值得记录
@@ -369,11 +385,14 @@ func startKeyReader(ch ssh.Channel) *keyStream {
 
 // forwardKeys 桥接期按键转发：ks → 目标 stdin；桥接结束（waitDone 关闭）即停，
 // 停止后未消费的字节留在 ks 里归菜单读取
-// onBlockedFn 命令拦截回调（bridgeSession 注入）：落审计 + 写用户提示。
-// 独立成参数以便单测（不依赖 DB / channel）。
-type onBlockedFn func(line string)
+// onLineFn 行完成回调（bridgeSession 注入）：每条非空完整行回调一次（放行与拦截都回），
+// 供全量命令审计与拦截提示。独立成参数以便单测（不依赖 DB / channel）。
+type onLineFn func(line string, blocked bool)
 
-func forwardKeys(ks *keyStream, stdin io.Writer, waitDone <-chan struct{}, onBlocked onBlockedFn) {
+// maxLineBuf 当前行缓冲上限：粘贴巨块且无换行时的内存护栏（继续透传，只停止累积）
+const maxLineBuf = 4096
+
+func forwardKeys(ks *keyStream, stdin io.Writer, waitDone <-chan struct{}, onLine onLineFn) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[jumpd] 按键转发异常: %v\n%s", r, debug.Stack())
@@ -388,18 +407,19 @@ func forwardKeys(ks *keyStream, stdin io.Writer, waitDone <-chan struct{}, onBlo
 				return
 			}
 			if b == '\r' || b == '\n' {
-				// 行结束：先判黑名单再决定放行
+				// 行结束：先判黑名单再决定放行；非空行回调（全量命令审计）
 				lineStr := strings.TrimSpace(string(line))
-				if matchBlacklist(lineStr, blacklist) {
+				blocked := matchBlacklist(lineStr, blacklist)
+				if lineStr != "" && onLine != nil {
+					onLine(lineStr, blocked)
+				}
+				if blocked {
 					// 拦截整行：目标机 tty 里已回显的命令用 Ctrl-U（0x15）清行，
 					// 防止用户下一条命令的回车把残留行误执行；本地缓冲清零
 					if _, wErr := stdin.Write([]byte{0x15, '\r'}); wErr != nil {
 						return
 					}
 					io.WriteString(stdin, "\r\n")
-					if onBlocked != nil {
-						onBlocked(lineStr)
-					}
 				} else {
 					// 正常放行：补发行结束符（逐字节已透传，这里只送回车）
 					if _, wErr := stdin.Write([]byte{b}); wErr != nil {
@@ -428,7 +448,9 @@ func forwardKeys(ks *keyStream, stdin io.Writer, waitDone <-chan struct{}, onBlo
 					line = line[:len(line)-1]
 				}
 			default:
-				line = append(line, b)
+				if len(line) < maxLineBuf {
+					line = append(line, b)
+				}
 			}
 			if _, err := stdin.Write([]byte{b}); err != nil {
 				return
@@ -683,6 +705,15 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 		return
 	}
 
+	// 强断登记：Web 端「强制断开」经 liveSessions 找到这里（会话行 ID → kill 钩子）。
+	// kill 同时关目标客户端与用户 channel——waitDone/键流双路随即就绪，整条桥按正常
+	// 拆链路径收敛（会话行照常收口），用户侧表现为连接被服务端关闭
+	unregisterLive := registerLive(sid, func() {
+		_ = client.Close()
+		_ = ch.Close()
+	})
+	defer unregisterLive()
+
 	// 目标会话结束信号（用户 exit / 目标侧断开）
 	waitDone := make(chan struct{})
 	go func() {
@@ -699,7 +730,10 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 	// 单读者模型（终审 I-2）：ch 的读者只有 keyStream 一个，桥接期由 forwardKeys
 	// 消费，结束后未消费字节归还菜单；绝不 safeCopy(stdin, ch) 再开第二个读者
 	go func() { safeCopy(ch, stdout, sid) }()
-	// last_seen 心跳：60s 一次（会话页不显示"僵死"观感；bridge 结束即停）
+	// last_seen 心跳 + 目标侧探活：60s 一次（bridge 结束即停）。
+	// 先探活再刷 last_seen——探测失败（目标半开：VM 挂起/网段变更/宿主机路由消失）
+	// 说明桥已名存实亡，主动关客户端收桥；不探则心跳空转喂 last_seen， sweeper
+	// 永远收敛不了一条输出早已断流的死会话（客户端侧的半开由 enableKeepAlive 兜）
 	heartbeatStop := make(chan struct{})
 	go func() {
 		defer func() {
@@ -712,6 +746,11 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 		for {
 			select {
 			case <-t.C:
+				if _, _, kerr := client.SendRequest("keepalive@openssh.com", true, nil); kerr != nil {
+					log.Printf("[jumpd] 会话 %d 目标侧探活失败，主动收桥: %v", sid, kerr)
+					_ = client.Close()
+					return
+				}
 				if sid != 0 {
 					dbx.PersistBestEffort(s.DB, "jumpd-session-touch", func() error {
 						return s.DB.Model(&model.ConsoleSession{}).
@@ -730,23 +769,33 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 	}
 	forwardDone := make(chan struct{})
 	go func() {
-		onBlocked := func(line string) {
-			// 审计落行：Action=jumpd.cmd_blocked，审计中心操作日志 tab 直接可见
-			now := time.Now()
+		onLine := func(line string, blocked bool) {
+			// 全量命令审计（JumpServer 核心能力的教学版）：放行行也落审计——
+			// 事后可查「谁在这台机器上跑过什么」；黑名单只是事前护栏（防误操作），
+			// 追责靠的是这里的全量留痕。审计行截断（粘贴巨块不撑爆 Detail）
+			if r := []rune(line); len(r) > 512 {
+				line = string(r[:512]) + "…(截断)"
+			}
+			action, status, detail := "jumpd.cmd", "ok", "执行命令: "+line
+			if blocked {
+				action, status, detail = "jumpd.cmd_blocked", "blocked", "拦截高危命令: "+line
+			}
 			audit := model.AuditLog{
 				UserID: &user.ID, Username: user.Username,
-				Action: "jumpd.cmd_blocked", ObjectType: "vm", ObjectID: &vmID,
-				Detail:   "拦截高危命令: " + line,
-				SourceIP: clientIP, Status: "blocked", CreatedAt: now,
+				Action: action, ObjectType: "vm", ObjectID: &vmID,
+				Detail:   detail,
+				SourceIP: clientIP, Status: status, CreatedAt: time.Now(),
 			}
-			dbx.PersistBestEffort(s.DB, "jumpd-cmd-blocked", func() error {
+			dbx.PersistBestEffort(s.DB, "jumpd-cmd-audit", func() error {
 				return s.DB.Create(&audit).Error
 			})
-			log.Printf("[jumpd] 已拦截高危命令 user=%s vm=%d cmd=%q", user.Username, vmID, line)
-			// 用户提示（写在目标 tty 流里，拦谁都看得见）
-			io.WriteString(ch, "\r\n\033[31m✗ 危险命令已被安全策略拦截并审计：\033[0m"+line+"\r\n")
+			if blocked {
+				log.Printf("[jumpd] 已拦截高危命令 user=%s vm=%d cmd=%q", user.Username, vmID, line)
+				// 用户提示（写在目标 tty 流里，拦谁都看得见）
+				io.WriteString(ch, "\r\n\033[31m✗ 危险命令已被安全策略拦截并审计：\033[0m"+line+"\r\n")
+			}
 		}
-		forwardKeys(ks, stdin, waitDone, onBlocked)
+		forwardKeys(ks, stdin, waitDone, onLine)
 		close(forwardDone)
 	}()
 

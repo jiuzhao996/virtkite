@@ -3,10 +3,12 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/console"
+	"github.com/jiuzhao/vmops/service/jumpd"
 	"gorm.io/gorm"
 )
 
@@ -62,7 +64,8 @@ func (h *SessionHandler) ListSessions(c *gin.Context) {
 }
 
 // DisconnectSession 强制断开会话。
-// ssh/serial 关闭服务端 WS（浏览器端随即掉线）；VNC 中转连接无法切断，返回明确提示。
+// ssh/serial 关闭服务端 WS（浏览器端随即掉线）；jump 会话经 jumpd 进程内登记表
+// 强断（连接与进程同生命周期）；VNC 中转连接无法切断，返回明确提示。
 func (h *SessionHandler) DisconnectSession(c *gin.Context) {
 	id64, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -76,6 +79,23 @@ func (h *SessionHandler) DisconnectSession(c *gin.Context) {
 	}
 	if sess.Status != "active" {
 		Fail(c, http.StatusConflict, "会话已结束")
+		return
+	}
+	// jump：不在 WS 注册表（console.Registry），强断通道是 jumpd 的 liveSessions。
+	// 未命中 = 本进程内已无此桥接（服务重启后的残留行——跳板连接与进程同生命周期），
+	// 行本身已是死的，直接收敛 DB 状态即可
+	if sess.Type == "jump" {
+		if jumpd.DisconnectSession(sess.ID) {
+			Success(c, gin.H{"message": "已断开跳板会话"})
+			return
+		}
+		now := time.Now()
+		if err := h.DB.Model(&model.ConsoleSession{ID: sess.ID}).Where("status = ?", "active").
+			Updates(map[string]interface{}{"status": "closed", "ended_at": now}).Error; err != nil {
+			ErrorWithMessage(c, http.StatusInternalServerError, "会话状态收敛失败", err)
+			return
+		}
+		Success(c, gin.H{"message": "连接已不在线（服务重启残留），会话已标记结束"})
 		return
 	}
 	if h.Sessions == nil {
