@@ -105,7 +105,7 @@ func (h *VMExportHandler) Export(c *gin.Context) {
 		return
 	}
 	if state != virt.StatusShutOff {
-		Fail(c, http.StatusBadRequest, "请先关机再导出")
+		Fail(c, http.StatusConflict, "请先关机再导出")
 		return
 	}
 

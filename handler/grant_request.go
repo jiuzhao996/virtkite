@@ -64,7 +64,7 @@ func (h *VMHandler) ApplyForAsset(c *gin.Context) {
 		Where("user_id = ? AND vm_id = ? AND (expires_at IS NULL OR expires_at > ?)", *uid, vm.ID, time.Now()).
 		Count(&granted)
 	if granted > 0 {
-		Fail(c, http.StatusBadRequest, "你已持有该虚拟机的有效授权，无需申请")
+		Fail(c, http.StatusConflict, "你已持有该虚拟机的有效授权，无需申请")
 		return
 	}
 

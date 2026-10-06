@@ -75,7 +75,7 @@ func (h *SessionHandler) DisconnectSession(c *gin.Context) {
 		return
 	}
 	if sess.Status != "active" {
-		Fail(c, http.StatusBadRequest, "会话已结束")
+		Fail(c, http.StatusConflict, "会话已结束")
 		return
 	}
 	if h.Sessions == nil {

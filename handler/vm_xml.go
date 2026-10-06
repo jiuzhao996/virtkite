@@ -66,9 +66,9 @@ func (h *VMHandler) UpdateVMSpec(c *gin.Context) {
 		return
 	}
 
-	// 运行时禁止整体重定义，提示先关机
+	// 运行时禁止整体重定义，提示先关机（状态冲突走 409，与 lockVM/guardVMIdle 同口径）
 	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state == virt.StatusRunning {
-		Fail(c, http.StatusBadRequest, "虚拟机运行中，请先关机后再修改配置")
+		Fail(c, http.StatusConflict, "虚拟机运行中，请先关机后再修改配置")
 		return
 	}
 

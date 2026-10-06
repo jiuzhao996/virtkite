@@ -80,7 +80,7 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 		return
 	}
 	if task.Status != "success" && task.Status != "failed" {
-		Fail(c, http.StatusBadRequest, "仅允许删除已完成(success/failed)的任务")
+		Fail(c, http.StatusConflict, "仅允许删除已完成(success/failed)的任务")
 		return
 	}
 	if err := h.DB.Delete(&model.Task{}, task.ID).Error; err != nil {

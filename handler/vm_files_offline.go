@@ -135,7 +135,7 @@ func (h *VMFilesHandler) OfflineMount(c *gin.Context) {
 
 	state, err := h.Virt.GetDomainState(vm.Name)
 	if err == nil && state != virt.StatusShutOff {
-		Fail(c, http.StatusBadRequest, "虚拟机运行中，请先关机再挂载磁盘浏览（运行中的磁盘被 qemu 锁定且写操作不安全）")
+		Fail(c, http.StatusConflict, "虚拟机运行中，请先关机再挂载磁盘浏览（运行中的磁盘被 qemu 锁定且写操作不安全）")
 		return
 	}
 
