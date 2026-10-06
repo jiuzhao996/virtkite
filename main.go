@@ -128,7 +128,10 @@ func main() {
 	//     握手响应不该带 Content-Encoding 头，语义干净起见直接绕过；
 	//   - /api/vms/:id/export：响应本身是 tar.gz（vm_export.go 已 gzip），二次压缩
 	//     纯烧 CPU（20GB 级流），压缩比趋近 0；
-	//   - /api/ai/chat：SSE 流式回答，绕过压缩避免任何 flush 时延与缓冲干扰。
+	//   - /api/ai/chat：SSE 流式回答，绕过压缩避免任何 flush 时延与缓冲干扰；
+	//   - /metrics：promhttp 按 Accept-Encoding 自协商压缩，gin 层再裹一层会产出
+	//     双层 gzip 且 Content-Encoding 错乱——Prometheus 解不开报 INVALID，抓取
+	//     持续失败直接触发 VmopsDown 告警（2026-10-06 线上事故根因，勿删）。
 	r.Use(gzip.Gzip(gzip.DefaultCompression,
 		gzip.WithExcludedPathsRegexs([]string{
 			`/api/vms/[^/]+/serial`,
@@ -136,6 +139,7 @@ func main() {
 			`/api/docker/containers/[^/]+/terminal`,
 			`/api/vms/[^/]+/export`,
 			`/api/ai/chat`,
+			`^/metrics$`,
 		})))
 
 	// 注册中间件
