@@ -206,6 +206,19 @@ export function fmtDateTime(v) {
 }
 
 /**
+ * 时间戳 → `YYYY-MM-DD`（仅日期，补零）。
+ * @param {string|number|Date} v 后端时间字段（RFC3339 字符串 / 毫秒时间戳 / Date）
+ * @returns {string} 空值返回 '—'；无法解析时原样返回入参（便于排查脏数据）
+ */
+export function fmtDate(v) {
+  if (!v) return '—'
+  const d = new Date(v)
+  if (isNaN(d.getTime())) return v
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/**
  * 当前时刻 → `HH:MM:SS`（24 小时制）。
  * 注意：这是「取现在的时间」，不是格式化某个入参，用于实时采样的时间轴标签。
  */
@@ -252,6 +265,21 @@ export function fmtRateBytes(bps) {
     i++
   }
   return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i]
+}
+
+/**
+ * 卷/磁盘容量（GB）列表按字段求和并格式化，**字段单位是 GB**
+ * （存储卷的 capacity_gb / allocation_gb 这类已折算好的字段）。
+ * @param {Array} list 对象数组
+ * @param {string} key 求和字段名，默认 capacity_gb
+ * @returns {string} 自动进位/降位的总量串，形如 '1.5 TB' / '120 GB' / '512 MB'
+ */
+export function fmtGBSum(list, key = 'capacity_gb') {
+  const total = (list || []).reduce((acc, n) => acc + (Number(n[key]) || 0), 0)
+  if (total >= 1024) return (total / 1024).toFixed(2).replace(/\.0$/, '') + ' TB'
+  if (total >= 100) return total.toFixed(0) + ' GB'
+  if (total >= 1) return total.toFixed(1).replace(/\.0$/, '') + ' GB'
+  return (total * 1024).toFixed(0) + ' MB'
 }
 
 /* ==================== 错误 / 取消 ==================== */

@@ -47,7 +47,7 @@
     <div class="vm-perf-idle" v-else-if="vm.status !== 'running'">
       <div class="idle-meta">
         <div class="idle-chips">
-          <span class="idle-chip" v-if="vm.created_at">建机 {{ String(vm.created_at).slice(0, 10) }}</span>
+          <span class="idle-chip" v-if="vm.created_at">建机 {{ fmtDate(vm.created_at) }}</span>
           <span class="idle-chip idle-desc" v-if="vm.description" :title="vm.description">{{ vm.description.length > 18 ? vm.description.slice(0, 17) + '…' : vm.description }}</span>
         </div>
         <span class="idle-text">开机后显示实时指标与曲线</span>
@@ -98,7 +98,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { VideoPlay, SwitchButton, Monitor, Delete, View, CopyDocument, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
 import { useChart } from '../../../composables/useChart'
-import { vmStatusText, usageColor, cssVar } from '../../../utils/format'
+import { vmStatusText, usageColor, cssVar, fmtDate } from '../../../utils/format'
 import { copyText } from '../../../utils/clipboard'
 
 const props = defineProps({

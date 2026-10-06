@@ -293,7 +293,7 @@ import DockerGate from '../components/DockerGate.vue'
 import VolumeTab from './docker/components/VolumeTab.vue'
 // 容量格式化 / 错误文案 / 取消判定统一走 utils/format.js（原本地三份实现已删）
 // 本页的 .page-head / .page-title / .toolbar / .count 与其他列表页逐字相同，已收进 global.css
-import { fmtSizeBytes, errMsg, isCancel, usageColor, clampPct } from '../utils/format'
+import { fmtSizeBytes, fmtGBSum, errMsg, isCancel, usageColor, clampPct } from '../utils/format'
 
 const { isAdmin, canOperate } = useAuth()
 const activeTab = ref('pools')
@@ -566,14 +566,6 @@ const poolInCount = computed(() => poolGraphNodes.value.filter((n) => n.pool ===
 const poolBoundaryCount = computed(() => poolGraphNodes.value.filter((n) => n._boundary).length)
 const poolVirtualText = computed(() => fmtGBSum(poolGraphNodes.value.filter((n) => n.pool === curPool.value)))
 const poolActualText = computed(() => fmtGBSum(poolGraphNodes.value.filter((n) => n.pool === curPool.value), 'allocation_gb'))
-
-function fmtGBSum(list, key = 'capacity_gb') {
-  const total = list.reduce((acc, n) => acc + (Number(n[key]) || 0), 0)
-  if (total >= 1024) return (total / 1024).toFixed(2).replace(/\.0$/, '') + ' TB'
-  if (total >= 100) return total.toFixed(0) + ' GB'
-  if (total >= 1) return total.toFixed(1).replace(/\.0$/, '') + ' GB'
-  return (total * 1024).toFixed(0) + ' MB'
-}
 
 // 刷新卷列表 + 引用（新建卷/删卷/登记镜像后调用）
 async function refreshVolumes() {
