@@ -415,8 +415,11 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 		}
 		st.Params = string(b)
 		return 0, nil
+	case cron.ActionImageVersionCheck:
+		st.Params = "{}" // 无参数
+		return 0, nil
 	default:
-		return 0, errors.New("action 只支持 vm_snapshot（定时快照）/ db_backup（定时备份数据库）/ ansible_playbook（定时执行 playbook）/ container_healthcheck（容器健康巡检）")
+		return 0, errors.New("action 只支持 vm_snapshot（定时快照）/ db_backup（定时备份数据库）/ ansible_playbook（定时执行 playbook）/ container_healthcheck（容器健康巡检）/ image_version_check（镜像版本巡检）")
 	}
 }
 

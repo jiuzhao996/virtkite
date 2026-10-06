@@ -122,6 +122,7 @@
             <el-radio value="db_backup">数据库备份</el-radio>
             <el-radio value="ansible_playbook">Playbook 执行</el-radio>
             <el-radio value="container_healthcheck">容器健康巡检</el-radio>
+            <el-radio value="image_version_check">镜像版本巡检</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.action === 'vm_snapshot'" label="目标虚拟机" required>
@@ -147,6 +148,9 @@
         </el-form-item>
         <el-form-item v-else-if="form.action === 'container_healthcheck'" label="说明">
           <div class="field-tip">巡检所有运行中容器，unhealthy 且连续失败 ≥3 次时自动重启并通知（需容器创建时配置了健康检查）</div>
+        </el-form-item>
+        <el-form-item v-else-if="form.action === 'image_version_check'" label="说明">
+          <div class="field-tip">对比本地镜像与远端仓库 digest，有更新时推送镜像名列表（远端查询秒级，需外网可达）</div>
         </el-form-item>
         <el-form-item label="保留份数">
           <el-input-number v-model="form.keep" :min="1" :max="365" controls-position="right" style="width: 160px" />

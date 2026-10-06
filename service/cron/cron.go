@@ -27,6 +27,8 @@ import (
 
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/dockerx"
+	"github.com/jiuzhao/vmops/service/imgver"
 	"github.com/jiuzhao/vmops/service/notify"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
@@ -39,6 +41,7 @@ const (
 	ActionDBBackup            = "db_backup"            // 定时备份数据库（mysqldump）
 	ActionAnsiblePlaybook     = "ansible_playbook"     // 定时执行 playbook（P4-S3：调度×引擎缝合）
 	ActionContainerHealthcheck = "container_healthcheck" // 容器健康巡检：unhealthy 自动重启（R8）
+	ActionImageVersionCheck    = "image_version_check"   // 镜像版本巡检：outdated 时通知（R9）
 )
 
 // AnsiblePlaybookMaxWait 定时 playbook 执行的兜底等待：转任务异步跑，这里轮询终态。
@@ -381,6 +384,8 @@ func (s *Scheduler) execute(st model.ScheduledTask) error {
 		summary, err = s.runAnsiblePlaybook(st)
 	case ActionContainerHealthcheck:
 		summary, err = s.runContainerHealthcheck(st)
+	case ActionImageVersionCheck:
+		summary, err = s.runImageVersionCheck(st)
 	default:
 		err = fmt.Errorf("未知动作类型 %q", st.Action)
 	}
@@ -591,6 +596,75 @@ func notifyHealth(taskName, summary string) {
 		}()
 		if err := notify.SendText(url, text); err != nil {
 			log.Printf("[cron] 健康自愈通知推送失败: %v", err)
+		}
+	}()
+}
+
+// runImageVersionCheck 镜像版本巡检（R9）：复用 imgver 的 digest 对比，
+// outdated>0 时经 NotifyURL 推送镜像名列表（截前 10）。检查本身只读，失败即报错。
+func (s *Scheduler) runImageVersionCheck(st model.ScheduledTask) (string, error) {
+	d := dockerx.New()
+	runner := &imgver.Runner{
+		ListImages: func() ([][2]string, error) {
+			imgs, err := d.Images()
+			if err != nil {
+				return nil, err
+			}
+			out := make([][2]string, 0, len(imgs))
+			for _, im := range imgs {
+				out = append(out, [2]string{im.Repository, im.Tag})
+			}
+			return out, nil
+		},
+		LocalDigest: func(image string) string {
+			info, err := d.Inspect(image)
+			if err != nil {
+				return ""
+			}
+			if arr, ok := info["RepoDigests"].([]interface{}); ok {
+				for _, dg := range arr {
+					if sv, ok := dg.(string); ok && strings.Contains(sv, "@sha256:") {
+						return sv[strings.Index(sv, "@sha256:")+len("@sha256:"):]
+					}
+				}
+			}
+			return ""
+		},
+	}
+	items, err := runner.CheckAll()
+	if err != nil {
+		return "", fmt.Errorf("镜像版本检测失败: %w", err)
+	}
+	outdated := imgver.Outdated(items)
+	if len(outdated) == 0 {
+		return fmt.Sprintf("巡检 %d 个镜像，全部为最新", len(items)), nil
+	}
+	shown := outdated
+	extra := ""
+	if len(outdated) > 10 {
+		shown = outdated[:10]
+		extra = fmt.Sprintf(" 等 %d 个", len(outdated))
+	}
+	summary := fmt.Sprintf("巡检 %d 个镜像，%d 个有更新：%s%s", len(items), len(outdated), strings.Join(shown, "、"), extra)
+	notifyVersion(summary)
+	return summary, nil
+}
+
+// notifyVersion 镜像更新通知（经 NotifyURL 推送；为空则不推）。
+func notifyVersion(summary string) {
+	url := NotifyURL
+	if url == "" {
+		return
+	}
+	text := "[鸢航VirtKite] 镜像版本巡检: " + summary
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[cron] 镜像版本通知协程 panic: %v\n%s", r, debug.Stack())
+			}
+		}()
+		if err := notify.SendText(url, text); err != nil {
+			log.Printf("[cron] 镜像版本通知推送失败: %v", err)
 		}
 	}()
 }

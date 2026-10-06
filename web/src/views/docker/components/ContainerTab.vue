@@ -141,6 +141,8 @@
             @change="toggleCardSelect(row)"
           />
           <span class="ct-card-name mono" :title="containerName(row.Names)">{{ containerName(row.Names) }}</span>
+          <!-- 运行中状态点带呼吸动效（复用全局 breathe；感官收尾，与 VM 卡片同款） -->
+          <span v-if="row.State === 'running'" class="ct-live-dot" title="运行中" />
           <el-tag :type="stateTag(row.State)" effect="light" size="small">{{ stateText(row.State) }}</el-tag>
         </div>
         <div class="ct-card-meta mono" :title="row.Image">{{ row.Image || '—' }}</div>
@@ -642,6 +644,15 @@ defineExpose({ refresh })
 }
 .ct-card-head .el-tag {
   flex: none;
+}
+/* 运行中呼吸点（复用全局 breathe 关键帧，与 VM 卡片同款观感） */
+.ct-live-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-success, #67c23a);
+  animation: breathe 1.6s ease-in-out infinite;
 }
 .ct-card-meta {
   font-size: 0.82rem;
