@@ -133,7 +133,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { TOKEN_KEY } from '../../../api'
-import consoleBg from '../../../assets/console-bg.jpg'
+import consoleBg from '../../../assets/console-bg.webp'
 import { buildTermTheme, VM_TERM_SURFACE } from '../../../utils/term-theme'
 
 const props = defineProps({

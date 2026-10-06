@@ -64,7 +64,7 @@ import { InfoFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg } from '../utils/format'
 import { useAuth } from '../store/auth'
-import loginBg from '../assets/login-bg.jpg'
+import loginBg from '../assets/login-bg.webp'
 
 const router = useRouter()
 const { setToken, setUser } = useAuth()

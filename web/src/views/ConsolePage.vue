@@ -96,7 +96,7 @@
           @request-reload="load"
         />
 
-        <!-- SSH / 串口 共用终端视图：深色 + console-bg.jpg 背景 -->
+        <!-- SSH / 串口 共用终端视图：深色 + console-bg.webp 背景 -->
         <TermView
           v-else
           ref="termView"
