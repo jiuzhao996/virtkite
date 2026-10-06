@@ -103,12 +103,16 @@ func (d *Dockerx) Remove(id string, force bool) error {
 	return err
 }
 
-// Logs 返回容器尾部日志。
-func (d *Dockerx) Logs(id string, tail int) (string, error) {
+// Logs 返回容器尾部日志；timestamps 为真时每行前置 RFC3339Nano 时间戳。
+func (d *Dockerx) Logs(id string, tail int, timestamps bool) (string, error) {
 	if tail <= 0 || tail > 2000 {
 		tail = 200
 	}
-	out, err := runTimeout(60*time.Second, "logs", "--tail", fmt.Sprint(tail), id)
+	args := []string{"logs", "--tail", fmt.Sprint(tail)}
+	if timestamps {
+		args = append(args, "--timestamps")
+	}
+	out, err := runTimeout(60*time.Second, append(args, id)...)
 	if err != nil {
 		return "", err
 	}

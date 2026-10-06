@@ -163,7 +163,7 @@ func (h *DockerHandler) ContainerLogs(c *gin.Context) {
 		return
 	}
 	tail, _ := strconv.Atoi(c.DefaultQuery("tail", "200"))
-	logs, err := h.Docker.Logs(id, tail)
+	logs, err := h.Docker.Logs(id, tail, c.Query("timestamps") == "1")
 	if err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
