@@ -6,7 +6,7 @@
       <Toolbar wrap>
         <template #left>
           <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 140px" @change="load">
+          <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 140px" @change="search">
             <el-option label="进行中" value="active" />
             <el-option label="成功" value="success" />
             <el-option label="失败" value="failed" />
@@ -27,7 +27,7 @@
             @click="clearFinished"
           >清理本页已完成 ({{ finishedCount }})</el-button>
         </template>
-        <span class="count">共 {{ serverTotal }} 个任务<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span></span>
+        <span class="count">共 {{ total }} 个任务<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span></span>
       </Toolbar>
 
       <!-- 行点击钻取：整行可点开任务详情抽屉；行内按钮/链接一律 .stop 防止误触发钻取 -->
@@ -89,13 +89,13 @@
       </el-table>
 
       <el-pagination
-        v-model:current-page="q.page"
-        v-model:page-size="q.page_size"
-        :total="serverTotal"
+        :current-page="page"
+        v-model:page-size="pageSize"
+        :total="total"
         :page-sizes="[20, 50, 100]"
         layout="total, sizes, prev, pager, next"
         class="pager"
-        @current-change="load"
+        @current-change="onPage"
         @size-change="onPageSizeChange"
       />
     </el-card>
@@ -229,14 +229,25 @@ import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 import { useAuth } from '../store/auth'
 import { taskTypeText, taskStatusText, taskStatusTag, fmtDateTime, errMsg, isCancel } from '../utils/format'
+import { usePagination } from '../composables/usePagination'
 
 const router = useRouter()
 const { isAdmin } = useAuth()
 
 const items = ref([])
-const serverTotal = ref(0)
-const loading = ref(false)
-const q = ref({ status: '', page: 1, page_size: 50 })
+// 分页状态与流转收进 usePagination（范式与 AuditList/SessionList 一致）：筛选变更/改页大回第 1 页、
+// 翻页保留筛选（原实现筛选 @change 调 load 不回第 1 页，筛选后停留高页码会看空页，迁移顺手修正）
+const {
+  page,
+  pageSize,
+  total,
+  loading,
+  handleCurrentChange: onPage,
+  handleSizeChange: onPageSizeChange,
+  reloadFromFirst: search,
+  reload: load
+} = usePagination(fetchTaskPage, { defaultPageSize: 50 })
+const q = ref({ status: '' })
 
 // format.js 的 TASK_TYPE_TEXT 只覆盖 5 种 VM 类任务；这里补齐 service/tasks 里其余注册类型
 // （vm_tasks.go 的 cleanup_volumes、app_tasks.go 的 app_install、image_download.go 的 image_download、
@@ -517,41 +528,29 @@ const filteredItems = computed(() => {
   )
 })
 
-// 拉取列表（手动刷新与静默轮询共用，只负责取数与赋值，不动 loading）
-async function fetchTasks() {
-  // "进行中"= pending+running 两请求并发合并（原"整页拉取再前端过滤"分页数与可见条数漂移）
-  if (q.value.status === 'active') {
-    const [run, pend] = await Promise.all([
-      api.listTasks({ page: q.value.page, page_size: q.value.page_size, status: 'running' }),
-      api.listTasks({ page: q.value.page, page_size: q.value.page_size, status: 'pending' })
-    ])
-    const rl = (run.data && run.data.items) || []
-    const pl = (pend.data && pend.data.items) || []
-    items.value = [...rl, ...pl]
-    serverTotal.value = ((run.data && run.data.total) || 0) + ((pend.data && pend.data.total) || 0)
-  } else {
-    const params = { page: q.value.page, page_size: q.value.page_size }
+// 拉取列表（手动刷新与静默轮询共用）：api 调用与响应解包留在页面内，
+// 异常自行捕获提示（fetcher 契约），返回 total 由 composable 同步
+async function fetchTaskPage({ page, pageSize }) {
+  try {
+    // "进行中"= pending+running 两请求并发合并（原"整页拉取再前端过滤"分页数与可见条数漂移）
+    if (q.value.status === 'active') {
+      const [run, pend] = await Promise.all([
+        api.listTasks({ page, page_size: pageSize, status: 'running' }),
+        api.listTasks({ page, page_size: pageSize, status: 'pending' })
+      ])
+      const rl = (run.data && run.data.items) || []
+      const pl = (pend.data && pend.data.items) || []
+      items.value = [...rl, ...pl]
+      return ((run.data && run.data.total) || 0) + ((pend.data && pend.data.total) || 0)
+    }
+    const params = { page, page_size: pageSize }
     if (q.value.status) params.status = q.value.status
     const res = await api.listTasks(params)
     items.value = (res.data && res.data.items) || []
-    serverTotal.value = (res.data && res.data.total) || items.value.length
-  }
-}
-
-async function load() {
-  loading.value = true
-  try {
-    await fetchTasks()
+    return (res.data && res.data.total) || items.value.length
   } catch (e) {
     ElMessage.error(errMsg(e, '获取任务列表失败'))
-  } finally {
-    loading.value = false
   }
-}
-
-function onPageSizeChange() {
-  q.value.page = 1
-  load()
 }
 
 // 智能轮询：有进行中任务才刷（3s），无则停
@@ -563,7 +562,7 @@ async function silentRefresh() {
   if (refreshing || loading.value) return
   refreshing = true
   try {
-    await fetchTasks()
+    await fetchTaskPage({ page: page.value, pageSize: pageSize.value })
   } catch (e) {
     // 轮询失败静默，不打扰用户，下一轮自动重试
   } finally {

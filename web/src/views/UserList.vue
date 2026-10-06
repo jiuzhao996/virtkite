@@ -374,7 +374,7 @@ async function save() {
 
 async function remove(row) {
   try {
-    await ElMessageBox.confirm(`确定删除用户「${row.username}」？该操作不可恢复。`, '删除用户', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除用户「${row.username}」？该操作不可恢复。`, '删除用户', { type: 'warning', confirmButtonClass: 'el-button--danger' })
   } catch {
     return
   }

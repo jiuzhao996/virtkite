@@ -396,7 +396,7 @@ async function savePlan() {
   loadPlans()
 }
 async function removePlan(id) {
-  try { await ElMessageBox.confirm(`删除计划「${id}」？`, '删除', { type: 'warning' }) } catch (e) { if (!isCancel(e)) return }
+  try { await ElMessageBox.confirm(`删除计划「${id}」？`, '删除', { type: 'warning', confirmButtonClass: 'el-button--danger' }) } catch (e) { if (!isCancel(e)) return }
   await api.deleteDesignerPlan(id)
   loadPlans()
 }

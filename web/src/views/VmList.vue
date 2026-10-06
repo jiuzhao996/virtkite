@@ -43,7 +43,7 @@
                  按钮统一 plain 弱化视觉，避免一排实底彩钮压过主操作 -->
             <el-divider v-if="canOperate && checked.length" direction="vertical" />
             <template v-if="canOperate && checked.length">
-              <span class="bulk-count">已选 {{ checked.length }} 台</span>
+              <span class="bulk-count">{{ bulkBusy ? bulkProgress : `已选 ${checked.length} 台` }}</span>
               <!-- 批量电源：全关机→批量开机，全运行→批量关机；混合状态按钮禁用并提示分开操作
                    （混合时"批量开关机"没有单一语义，硬执行会既开机又关机） -->
               <el-button
@@ -268,7 +268,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import echarts from '../utils/echarts'
 import { Refresh, Plus, Upload, VideoPlay, SwitchButton, Monitor, Delete, Search, View, CopyDocument, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
+import { useAutoRefresh } from '../composables/useAutoRefresh'
 import { useAuth } from '../store/auth'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
@@ -293,6 +293,8 @@ const firstLoading = ref(true)
 const busy = ref(new Set())
 const checked = ref([])
 const bulkBusy = ref(false)
+// 批量操作逐台进度文案（bulkBusy 期间替换「已选 X 台」显示，避免批量关机逐台等待时全程无反馈）
+const bulkProgress = ref('')
 // 批量电源按钮：选中状态唯一时给出确定动作（全关机→start / 全运行→stop）；
 // 状态混合（含 paused/error 混入或运行关机并存）时无单一语义，禁用并提示分开操作
 const bulkPower = computed(() => checked.value.some((r) => r.status === 'running') ? 'stop' : 'start')
@@ -548,7 +550,9 @@ async function silentRefresh() {
   }
 }
 
-let pollTimer = null
+// 静默轮询收进 useAutoRefresh（周期取 vmlist 偏好，卸载自动停表）；
+// 守卫逻辑留在 silentRefresh 内部（批量操作/导入扫描期间跳过刷新）
+const { start: startPolling } = useAutoRefresh(silentRefresh, { intervalKey: 'vmlist' })
 
 async function openImport() {
   importDialog.value = true
@@ -638,7 +642,7 @@ async function bulkAction(type) {
       await ElMessageBox.confirm(
         `此操作不可撤销。确定删除选中的 ${rows.length} 台虚拟机（${rows.map((r) => r.name).join('、')}）？`,
         '确认批量删除',
-        { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' }
+        { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
       )
     } catch (e) {
       return
@@ -647,7 +651,10 @@ async function bulkAction(type) {
   bulkBusy.value = true
   let ok = 0
   let fail = 0
-  for (const vm of rows) {
+  const failedNames = []
+  for (let i = 0; i < rows.length; i++) {
+    const vm = rows[i]
+    bulkProgress.value = `正在${label}（${i + 1}/${rows.length}）：${vm.name}`
     try {
       if (type === 'start') {
         await api.startVM(vm.id)
@@ -659,11 +666,18 @@ async function bulkAction(type) {
       ok++
     } catch (e) {
       fail++
+      failedNames.push(vm.name)
     }
   }
   bulkBusy.value = false
+  bulkProgress.value = ''
   checked.value = []
-  ElMessage[fail ? 'warning' : 'success'](`${label}完成：成功 ${ok} 台${fail ? '，失败 ' + fail + ' 台' : ''}`)
+  // 失败时点名前 3 台（再多只报数量）：批量失败常见原因是某台任务超时/被锁，
+  // 不点名的话用户得逐台翻任务列表才能定位是谁没成功
+  const failDetail = failedNames.length
+    ? `，失败 ${fail} 台（${failedNames.slice(0, 3).join('、')}${fail > 3 ? ` 等 ${fail} 台` : ''}）`
+    : ''
+  ElMessage[fail ? 'warning' : 'success'](`${label}完成：成功 ${ok} 台${failDetail}`)
   await load()
 }
 
@@ -692,6 +706,7 @@ async function action(vm, type) {
           type: 'warning',
           confirmButtonText: '确认删除',
           cancelButtonText: '取消',
+          confirmButtonClass: 'el-button--danger',
           inputPlaceholder: vm.name,
           inputValidator: (v) => (v && v.trim() === vm.name) || '请输入正确的虚拟机名称'
         }
@@ -754,11 +769,10 @@ async function prefillVMHistories() {
 
 onMounted(() => {
   load().then(prefillVMHistories)
-  pollTimer = setInterval(silentRefresh, getPollInterval('vmlist', POLL_DEFAULTS.vmlist))
+  startPolling()
   window.addEventListener('resize', onWinResize)
 })
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
   window.removeEventListener('resize', onWinResize)
   for (const [, inst] of sparkInsts) {
     try {

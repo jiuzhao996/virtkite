@@ -263,7 +263,7 @@ async function save() {
 
 async function remove(row) {
   try {
-    await ElMessageBox.confirm(`确定删除模板「${row.name}」？不影响已创建的虚拟机。`, '删除模板', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除模板「${row.name}」？不影响已创建的虚拟机。`, '删除模板', { type: 'warning', confirmButtonClass: 'el-button--danger' })
   } catch {
     return
   }

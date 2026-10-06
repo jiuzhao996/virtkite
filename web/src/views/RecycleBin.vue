@@ -168,7 +168,7 @@ async function purge(row) {
     await ElMessageBox.confirm(
       `确定彻底清除「${row.name}」？该操作不可恢复：数据库记录将物理删除，卷文件将一并删除，共享卷会被平台保留。`,
       '彻底清除确认',
-      { type: 'warning', confirmButtonText: '彻底清除', cancelButtonText: '取消' }
+      { type: 'warning', confirmButtonText: '彻底清除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
     )
   } catch (e) {
     return // 用户取消

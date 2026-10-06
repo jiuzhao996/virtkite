@@ -330,6 +330,7 @@ async function doDelete() {
       type: 'warning',
       confirmButtonText: '确认删除',
       cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
       inputPlaceholder: vm.value.name,
       inputValidator: (v) => (v && v.trim() === vm.value.name) || '请输入正确的虚拟机名称'
     })

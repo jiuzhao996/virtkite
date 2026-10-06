@@ -168,7 +168,7 @@ async function showStats(h) {
 
 async function remove(h) {
   try {
-    await ElMessageBox.confirm('确定删除宿主机「' + h.name + '」？', '确认删除', { type: 'warning' })
+    await ElMessageBox.confirm('确定删除宿主机「' + h.name + '」？', '确认删除', { type: 'warning', confirmButtonClass: 'el-button--danger' })
     await api.deleteHost(h.id)
     ElMessage.success('已删除')
     await load()

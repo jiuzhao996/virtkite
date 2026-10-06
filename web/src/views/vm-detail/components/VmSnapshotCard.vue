@@ -117,7 +117,7 @@ async function submitSnapshot() {
 
 async function revertSnap(snap) {
   try {
-    await ElMessageBox.confirm('确定回滚到快照「' + snap.name + '」？此操作会覆盖当前状态。', '确认回滚', { type: 'warning' })
+    await ElMessageBox.confirm('确定回滚到快照「' + snap.name + '」？此操作会覆盖当前状态。', '确认回滚', { type: 'warning', confirmButtonClass: 'el-button--danger' })
     await api.revertSnapshot(props.vmId, snap.name)
     ElMessage.success('已回滚')
     await loadSnapshots()
@@ -129,7 +129,7 @@ async function revertSnap(snap) {
 
 async function removeSnap(snap) {
   try {
-    await ElMessageBox.confirm('确定删除快照「' + snap.name + '」？', '确认删除', { type: 'warning' })
+    await ElMessageBox.confirm('确定删除快照「' + snap.name + '」？', '确认删除', { type: 'warning', confirmButtonClass: 'el-button--danger' })
     await api.deleteSnapshot(props.vmId, snap.name)
     ElMessage.success('快照已删除')
     await loadSnapshots()

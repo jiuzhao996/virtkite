@@ -397,7 +397,8 @@ async function clearSession() {
     await ElMessageBox.confirm('确定清空当前会话？聊天记录仅保存在本页内存，清空后不可恢复。', '清空会话', {
       type: 'warning',
       confirmButtonText: '清空',
-      cancelButtonText: '取消'
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
     })
   } catch {
     return // 用户取消

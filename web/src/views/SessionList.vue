@@ -4,18 +4,18 @@
     <!-- 原左分组为 gap 8px + flex-wrap，经 wrap 传入保持不变；计数为 .toolbar 直接子元素走默认插槽 -->
     <Toolbar wrap>
       <template #left>
-        <el-button type="primary" :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
-        <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 120px" @change="reload">
+        <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+        <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 120px" @change="search">
           <el-option label="进行中" value="active" />
           <el-option label="已结束" value="closed" />
         </el-select>
-        <el-select v-model="q.type" placeholder="连接方式" clearable style="width: 120px" @change="reload">
+        <el-select v-model="q.type" placeholder="连接方式" clearable style="width: 120px" @change="search">
           <el-option label="图形控制台" value="vnc" />
           <el-option label="Web 终端" value="ssh" />
           <el-option label="串口 Console" value="serial" />
         </el-select>
-        <el-input v-model="q.vm_name" placeholder="按虚拟机名搜索" clearable style="width: 170px" @keyup.enter="reload" @clear="reload" />
-        <el-input v-model="q.username" placeholder="按用户搜索" clearable style="width: 140px" @keyup.enter="reload" @clear="reload" />
+        <el-input v-model="q.vm_name" placeholder="按虚拟机名搜索" clearable style="width: 170px" @keyup.enter="search" @clear="search" />
+        <el-input v-model="q.username" placeholder="按用户搜索" clearable style="width: 140px" @keyup.enter="search" @clear="search" />
       </template>
       <span class="count">共 {{ total }} 个会话<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span></span>
     </Toolbar>
@@ -80,34 +80,45 @@
       </el-table>
 
       <el-pagination
-        v-model:current-page="q.page"
-        v-model:page-size="q.page_size"
+        :current-page="page"
+        v-model:page-size="pageSize"
         :total="total"
         :page-sizes="[20, 50, 100]"
         layout="total, sizes, prev, pager, next"
         class="pager"
-        @current-change="load"
+        @current-change="onPage"
         @size-change="onPageSizeChange"
       />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
+import { useAutoRefresh } from '../composables/useAutoRefresh'
 import { useAuth } from '../store/auth'
 import Toolbar from '../components/Toolbar.vue'
 import { sessionTypeText, sessionTypeTag, fmtDateTime, errMsg, isCancel } from '../utils/format'
+import { usePagination } from '../composables/usePagination'
 
 const { isAdmin } = useAuth()
 
 const items = ref([])
-const total = ref(0)
-const loading = ref(false)
-const q = ref({ status: '', type: '', vm_name: '', username: '', page: 1, page_size: 20 })
+// 分页状态与流转收进 usePagination（范式与 AuditList 一致）：筛选变更/改页大回第 1 页、翻页保留筛选。
+// search / onPage / onPageSizeChange / load 以解构别名保留原函数语义，模板绑定零改动
+const {
+  page,
+  pageSize,
+  total,
+  loading,
+  handleCurrentChange: onPage,
+  handleSizeChange: onPageSizeChange,
+  reloadFromFirst: search,
+  reload: load
+} = usePagination(fetchSessionPage, { defaultPageSize: 20 })
+const q = ref({ status: '', type: '', vm_name: '', username: '' })
 
 function duration(row) {
   const start = new Date(row.started_at).getTime()
@@ -122,38 +133,20 @@ const activeCount = computed(() => items.value.filter((s) => s.status === 'activ
 // 本页是否存在 VNC 会话：决定「VNC 无法强断」说明条是否显示
 const hasVncSession = computed(() => items.value.some((s) => s.type === 'vnc'))
 
-// 拉取列表（首屏/手动刷新与静默轮询共用，只负责取数与赋值）
-async function fetchSessions() {
-  const params = { page: q.value.page, page_size: q.value.page_size }
-  if (q.value.status) params.status = q.value.status
-  if (q.value.type) params.type = q.value.type
-  if (q.value.vm_name) params.vm_name = q.value.vm_name
-  if (q.value.username) params.username = q.value.username
-  const res = await api.listSessions(params)
-  items.value = (res.data && res.data.items) || []
-  total.value = (res.data && res.data.total) || 0
-}
-
-// 筛选条件变更：回到第 1 页再查
-function reload() {
-  q.value.page = 1
-  load()
-}
-
-function onPageSizeChange() {
-  q.value.page = 1
-  load()
-}
-
-// 首屏 / 手动刷新 / 切筛选：带整页 loading
-async function load() {
-  loading.value = true
+// 拉取列表（首屏/手动刷新与静默轮询共用）：api 调用与响应解包留在页面内，
+// 异常自行捕获提示（fetcher 契约），返回 total 由 composable 同步
+async function fetchSessionPage({ page, pageSize }) {
   try {
-    await fetchSessions()
+    const params = { page, page_size: pageSize }
+    if (q.value.status) params.status = q.value.status
+    if (q.value.type) params.type = q.value.type
+    if (q.value.vm_name) params.vm_name = q.value.vm_name
+    if (q.value.username) params.username = q.value.username
+    const res = await api.listSessions(params)
+    items.value = (res.data && res.data.items) || []
+    return (res.data && res.data.total) || 0
   } catch (e) {
     ElMessage.error(errMsg(e, '获取会话列表失败'))
-  } finally {
-    loading.value = false
   }
 }
 
@@ -164,7 +157,7 @@ async function silentRefresh() {
   if (refreshing || loading.value) return
   refreshing = true
   try {
-    await fetchSessions()
+    await fetchSessionPage({ page: page.value, pageSize: pageSize.value })
   } catch (e) {
     // 忽略：轮询失败不打扰用户，下一轮自动重试
   } finally {
@@ -172,11 +165,12 @@ async function silentRefresh() {
   }
 }
 
-let pollTimer = null
+// 静默轮询收进 useAutoRefresh（周期取 sessions 偏好，卸载自动停表）
+const { start: startPolling } = useAutoRefresh(silentRefresh, { intervalKey: 'sessions' })
 
 async function disconnect(row) {
   try {
-    await ElMessageBox.confirm(`确定强制断开 ${row.username || '未知用户'} 的 ${sessionTypeText(row.type)}会话（${row.vm_name}）？`, '确认断开', { type: 'warning' })
+    await ElMessageBox.confirm(`确定强制断开 ${row.username || '未知用户'} 的 ${sessionTypeText(row.type)}会话（${row.vm_name}）？`, '确认断开', { type: 'warning', confirmButtonClass: 'el-button--danger' })
     await api.disconnectSession(row.id)
     ElMessage.success('已断开')
     await load()
@@ -187,10 +181,7 @@ async function disconnect(row) {
 
 onMounted(() => {
   load()
-  pollTimer = setInterval(silentRefresh, getPollInterval('sessions', POLL_DEFAULTS.sessions))
-})
-onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
+  startPolling()
 })
 </script>
 

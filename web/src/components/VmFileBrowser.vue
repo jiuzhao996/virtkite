@@ -235,7 +235,7 @@ async function doUpload(ev) {
 
 async function remove(row) {
   try {
-    await ElMessageBox.confirm(`确定删除「${row.name}」？目录将递归删除，不可恢复。`, '删除', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除「${row.name}」？目录将递归删除，不可恢复。`, '删除', { type: 'warning', confirmButtonClass: 'el-button--danger' })
   } catch { return }
   try {
     await api.vmFilesDelete(props.id, { ...creds(), paths: [join(row.name)] })
