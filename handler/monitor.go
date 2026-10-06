@@ -58,7 +58,16 @@ func (h *MonitorHandler) ListAlerts(c *gin.Context) {
 		Fail(c, http.StatusBadGateway, "查询告警失败（Alertmanager 响应异常）")
 		return
 	}
-	c.Data(http.StatusOK, "application/json; charset=utf-8", body)
+	// 信封统一：与全站 {code,message,data} 同构。此前裸透传 AM 数组，前端 unwrap 后
+	// 取 res.data 恒为 undefined，三处消费方（Monitor/Dashboard/Topology）的实时告警
+	// 一律空列表。RawMessage 逐条原样保留，不重排 AM 的字段与结构。
+	var alerts []json.RawMessage
+	if err := json.Unmarshal(body, &alerts); err != nil {
+		LogError(c, fmt.Errorf("解析 Alertmanager 告警失败: %w", err))
+		Fail(c, http.StatusBadGateway, "查询告警失败（Alertmanager 响应异常）")
+		return
+	}
+	Success(c, alerts)
 }
 
 // PreviewFileSD GET /api/monitor/file-sd → 实时查库计算当前将生成的 file_sd JSON，
