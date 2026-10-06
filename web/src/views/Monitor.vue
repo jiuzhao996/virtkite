@@ -38,14 +38,14 @@
           <div v-show="hostSource === 'unavailable'" class="chart-empty">
             <el-empty description="Prometheus 历史不可用（监控栈未启动或暂无采样）" :image-size="56" />
           </div>
-          <div v-show="hostSource !== 'unavailable'" ref="hostChartRef" class="chart-box" />
+          <div v-show="hostSource !== 'unavailable'" :ref="hostHandle.chartRef" class="chart-box" />
         </div>
         <div class="chart-cell">
           <div class="chart-title">存储池使用率（%）</div>
           <div v-if="poolSource === 'unavailable' || !poolNames.length" class="chart-empty">
             <el-empty :description="poolSource === 'unavailable' ? 'Prometheus 历史不可用' : '暂无存储池采样数据'" :image-size="56" />
           </div>
-          <div v-show="poolSource !== 'unavailable' && poolNames.length" ref="poolChartRef" class="chart-box" />
+          <div v-show="poolSource !== 'unavailable' && poolNames.length" :ref="poolHandle.chartRef" class="chart-box" />
         </div>
       </div>
 
@@ -61,7 +61,7 @@
         <div v-if="selectedVM && vmSource !== 'unavailable'" class="chart-grid six">
           <div v-for="m in VM_METRICS" :key="m.key" class="chart-cell">
             <div class="chart-title">{{ m.label }}</div>
-            <div :ref="(el) => (metricChartRefs[m.key] = el)" class="chart-box small" />
+            <div :ref="(el) => bindMetricRef(m.key, el)" class="chart-box small" />
           </div>
         </div>
       </div>
@@ -76,7 +76,7 @@
             <span>{{ p.title }}</span>
           </div>
         </template>
-        <div :ref="(el) => (panelChartRefs[p.id] = el)" class="chart-box panel-box" />
+        <div :ref="(el) => bindPanelRef(p.id, el)" class="chart-box panel-box" />
         <div v-if="panelEmpty(p)" class="chart-empty panel-empty-hint">
           <span>{{ p.empty }}</span>
         </div>
@@ -292,18 +292,16 @@ const props = defineProps({
   embedded: { type: Boolean, default: false },
   active: { type: Boolean, default: true }
 })
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { Aim, AlarmClock, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { cssVar, fmtDateTime, fmtRateBytes } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
-import echarts from '../utils/echarts'
+import { useChart } from '../composables/useChart'
 import { PANELS } from './monitor/panels'
 
 // ── 扩展面板（panels.js 注册表）：通用 prom-query 端点 + 声明式渲染 ──
-const panelChartRefs = reactive({})
-const panelCharts = reactive({})
 const panelData = reactive({}) // panelId → [{name, points}]
 
 function panelUnitFormatter(unit) {
@@ -337,14 +335,8 @@ async function loadPanels() {
 }
 
 function renderPanel(p) {
-  const el = panelChartRefs[p.id]
-  if (!el) return
-  let chart = panelCharts[p.id]
-  if (!chart) {
-    chart = echarts.init(el)
-    watchSize(el)
-    panelCharts[p.id] = chart
-  }
+  const holder = panelHandles[p.id]
+  if (!holder) return
   const rows = panelData[p.id] || []
   const colors = [primaryColor, successColor, '#d97706']
   const first = rows.find((r) => r.points && r.points.length)
@@ -369,7 +361,7 @@ function renderPanel(p) {
     areaStyle: { opacity: 0.08 },
     step: p.unit === 'bool' || p.unit === 'count' ? 'end' : undefined
   }))
-  chart.setOption(opt, true)
+  holder.setOption(opt)
 }
 
 // ── 原生看板（Grafana 退役批次）：ECharts 直连平台代理的 Prometheus 历史 ──
@@ -394,12 +386,21 @@ const VM_METRICS = [
   { key: 'net_tx', label: '网络发送', rate: true },
 ]
 
-const hostChartRef = ref(null)
-const poolChartRef = ref(null)
-const metricChartRefs = reactive({})
-let hostChart = null
-let poolChart = null
-const metricCharts = reactive({})
+// 看板图表实例全部交 useChart 托管（init 惰性、ResizeObserver 自动 resize、卸载自动
+// dispose，S1-2 收敛写法）：键在 setup 期静态可知，每键一个 handle（与 GuestMetricsCard
+// 同一套惯例）。顺带修掉旧单例 ResizeObserver 只重排 host/pool/metric、漏掉面板图的缺陷。
+const hostHandle = useChart()
+const poolHandle = useChart()
+const metricHandles = Object.fromEntries(VM_METRICS.map((m) => [m.key, useChart()]))
+const panelHandles = Object.fromEntries(PANELS.map((p) => [p.id, useChart()]))
+
+// 模板 :ref 转发到对应 handle 的 chartRef（ensureInit 在首次 setOption 时取）
+function bindMetricRef(key, el) {
+  metricHandles[key].chartRef.value = el
+}
+function bindPanelRef(id, el) {
+  panelHandles[id].chartRef.value = el
+}
 
 const hostSource = ref('prometheus')
 const poolSource = ref('prometheus')
@@ -408,19 +409,6 @@ const vmSource = ref('prometheus')
 const vmData = ref({})
 const vmNames = computed(() => Object.keys(vmData.value).sort())
 const selectedVM = ref('')
-
-// ResizeObserver：v-show 切换/侧栏折叠等容器尺寸变化时自动 resize
-// （echarts 在 display:none 容器上初始化会得到 0 尺寸，恢复显示后必须补一刀）。
-// 单实例统一重排本组件全部图表——若按元素各绑闭包，首个闭包会吞掉其它图表的 resize。
-const ro = new ResizeObserver(() => {
-  for (const c of [hostChart, poolChart, ...Object.values(metricCharts)]) {
-    if (c) c.resize()
-  }
-})
-
-function watchSize(el) {
-  ro.observe(el)
-}
 
 function baseOption() {
   return {
@@ -462,26 +450,16 @@ function lineSeries(name, points, color, { area = true, percent = false, rate = 
 }
 
 function renderHostChart(points) {
-  if (!hostChartRef.value) return
-  if (!hostChart) {
-    hostChart = echarts.init(hostChartRef.value)
-    watchSize(hostChartRef.value)
-  }
   const opt = baseOption()
   opt.xAxis.data = points.map((p) => p.t)
   opt.series = [
     lineSeries('CPU %', points.map((p) => ({ t: p.t, val: p.cpu })), primaryColor),
     lineSeries('内存 %', points.map((p) => ({ t: p.t, val: p.mem })), successColor),
   ]
-  hostChart.setOption(opt, true)
+  hostHandle.setOption(opt)
 }
 
 function renderPoolChart(pools) {
-  if (!poolChartRef.value) return
-  if (!poolChart) {
-    poolChart = echarts.init(poolChartRef.value)
-    watchSize(poolChartRef.value)
-  }
   const names = Object.keys(pools).sort()
   const first = pools[names[0]] || []
   const opt = baseOption()
@@ -489,18 +467,12 @@ function renderPoolChart(pools) {
   opt.xAxis.data = first.map((p) => p.t)
   opt.yAxis.max = 100
   opt.series = names.map((n) => lineSeries(n, pools[n]))
-  poolChart.setOption(opt, true)
+  poolHandle.setOption(opt)
 }
 
 function renderMetricChart(key, def, points) {
-  const el = metricChartRefs[key]
-  if (!el) return
-  let chart = metricCharts[key]
-  if (!chart) {
-    chart = echarts.init(el)
-    watchSize(el)
-    metricCharts[key] = chart
-  }
+  const holder = metricHandles[key]
+  if (!holder) return
   const opt = baseOption()
   opt.legend.show = false
   opt.tooltip.formatter = def.rate
@@ -512,7 +484,7 @@ function renderMetricChart(key, def, points) {
   opt.xAxis.data = points.map((p) => p.t)
   opt.series = [lineSeries(def.label, points, primaryColor, { area: true, percent: def.percent, rate: def.rate })]
   if (def.rate) delete opt.series[0].tooltip
-  chart.setOption(opt, true)
+  holder.setOption(opt)
 }
 
 async function loadBoard() {
@@ -681,14 +653,7 @@ onMounted(() => {
   loadPanels()
   startPolling()
 })
-onUnmounted(() => {
-  // 告警轮询定时器清理由 useAutoRefresh 自带
-  if (ro) ro.disconnect()
-  hostChart && hostChart.dispose()
-  poolChart && poolChart.dispose()
-  Object.values(metricCharts).forEach((c) => c.dispose())
-  Object.values(panelCharts).forEach((c) => c.dispose())
-})
+// 卸载清理全部自带：轮询定时器在 useAutoRefresh、图表 dispose/观察断开在各 useChart handle
 </script>
 
 <style scoped>
