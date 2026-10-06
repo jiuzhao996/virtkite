@@ -105,6 +105,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -113,6 +114,7 @@ import { errMsg, fmtDateTime } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 
 const { isAdmin } = useAuth()
+const router = useRouter()
 const loading = ref(false)
 const catalog = ref([])
 const mine = ref([])
@@ -189,6 +191,19 @@ async function openApprove(row) {
   try {
     const res = await api.approveGrantRequest(row.id, { hours: Number(hours) })
     ElMessage.success((res.data && res.data.message) || '已批准')
+    // 流程出口：批准后给「查看该虚拟机」入口（此前批准后无任何去向）
+    if (row.vm_id) {
+      try {
+        await ElMessageBox.confirm(
+          `${row.username} 现已可连接「${row.vm_name}」，是否前往该虚拟机？`,
+          '已批准',
+          { type: 'success', confirmButtonText: '查看虚拟机', cancelButtonText: '留在本页' }
+        )
+        router.push(`/vms/${row.vm_id}`)
+      } catch (e) {
+        // 取消 = 留在本页
+      }
+    }
     loadRequests()
   } catch (e) {
     ElMessage.error(errMsg(e, '批准失败'))

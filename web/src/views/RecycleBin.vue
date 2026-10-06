@@ -115,6 +115,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, RefreshLeft, Delete, QuestionFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -123,6 +124,7 @@ import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 
 // ===== 列表（GET /vms-recycle → {total, items}）=====
+const router = useRouter()
 const loading = ref(false)
 const items = ref([])
 
@@ -153,6 +155,17 @@ async function restore(row) {
       ElMessage.warning(d.message || '记录已恢复，但虚拟机定义已不存在，可在创建向导用同名卷重新定义')
     } else {
       ElMessage.success(d.message || `已恢复 ${row.name}`)
+    }
+    // 流程出口：恢复完成给「下一步」入口（此前恢复后无任何去向引导）
+    try {
+      await ElMessageBox.confirm(
+        `已恢复 ${row.name}，是否前往虚拟机列表查看？`,
+        '恢复成功',
+        { type: 'success', confirmButtonText: '查看虚拟机', cancelButtonText: '留在本页' }
+      )
+      router.push('/vms')
+    } catch (e) {
+      // 取消 = 留在本页，非错误
     }
     load()
   } catch (e) {

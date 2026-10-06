@@ -136,6 +136,7 @@
 // SSH 口令只存在内存（节点 data._sshSecret），graphToPlan 剥离，落地时随 apply
 // 请求体一次性携带（后端写盘前也会强制剥离兜底）。
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Download, VideoPlay, DocumentChecked, Aim } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -146,6 +147,7 @@ import { Snapline } from '@antv/x6-plugin-snapline'
 import { Dnd } from '@antv/x6-plugin-dnd'
 
 const templates = ref([])
+const router = useRouter()
 const stacks = ref([])
 const plans = ref([])
 const cloudImages = ref([])
@@ -450,7 +452,17 @@ async function applyPlan() {
       if (res.data.status !== 'running') {
         clearInterval(applyTimer); applyTimer = null
         applying.value = false
-        if (res.data.status === 'success') ElMessage.success('架构落地完成')
+        if (res.data.status === 'success') {
+          // 流程出口：架构落地完成给「查看结果」入口（此前成功只弹一句提示，无去向）
+          try {
+            await ElMessageBox.confirm('架构已落地为实际虚拟机，是否前往查看？', '落地完成', {
+              type: 'success', confirmButtonText: '查看虚拟机', cancelButtonText: '留在本页'
+            })
+            router.push('/vms')
+          } catch (e) {
+            // 取消 = 留在本页
+          }
+        }
       }
     }, 2000)
   } catch (e) {

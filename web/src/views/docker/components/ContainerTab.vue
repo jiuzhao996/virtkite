@@ -54,7 +54,9 @@
       </el-table-column>
       <el-table-column prop="Image" label="镜像" min-width="108" show-overflow-tooltip>
         <template #default="{ row }">
-          <span class="mono">{{ row.Image || '—' }}</span>
+          <!-- 镜像名可点跳镜像页（织网：容器↔镜像） -->
+          <router-link v-if="row.Image" class="mono ct-img-link" to="/images">{{ row.Image }}</router-link>
+          <span v-else class="mono">—</span>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="72">
@@ -583,6 +585,14 @@ defineExpose({ refresh })
 }
 .ct-count {
   margin-left: auto;
+}
+/* 镜像列链接：与普通文本区分（容器↔镜像织网） */
+.ct-img-link {
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+.ct-img-link:hover {
+  text-decoration: underline;
 }
 /* 开关 + 文字标签（容器工具栏「自动刷新」/ 日志抽屉「跟随」共用） */
 .ct-auto {

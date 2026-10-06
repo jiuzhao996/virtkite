@@ -140,9 +140,9 @@ const importScanning = ref(false)
 const runningCount = computed(() => items.value.filter((i) => i.status === 'running').length)
 
 // 筛选：关键词（名称）+ 状态（客户端即时过滤）
-// 状态初值取自路由 query（仪表盘环图图例下钻：/vms?status=running）
+// 初值取自路由 query（仪表盘环图下钻 /vms?status=running；监控页出口 /vms?keyword=<name>）
 const route = useRoute()
-const q = reactive({ keyword: '', status: String(route.query.status || '') })
+const q = reactive({ keyword: String(route.query.keyword || ''), status: String(route.query.status || '') })
 const isFiltered = computed(() => !!(q.keyword.trim() || q.status))
 // 清除筛选：重置关键词与状态，回到全量列表（筛选空态的「清除筛选」按钮入口）
 function clearFilters() {

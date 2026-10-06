@@ -55,6 +55,9 @@
           <el-select v-model="selectedVM" filterable placeholder="选择虚拟机" style="width: 260px">
             <el-option v-for="name in vmNames" :key="name" :label="name" :value="name" />
           </el-select>
+          <!-- 出口：监控看的是 VM，此前看完无法回到该 VM 详情（观测页 → 操作对象断链）。
+               只有名字没有 ID，带 keyword 跳列表（VmList 读 query.keyword 预置筛选） -->
+          <el-button v-if="selectedVM" size="small" @click="goVmList">查看虚拟机 →</el-button>
           <span v-if="vmSource === 'unavailable'" class="chart-hint">Prometheus 历史不可用（监控栈未启动或暂无采样）</span>
           <span v-else-if="!vmNames.length" class="chart-hint">暂无虚拟机采样数据（关机 VM 不产生指标）</span>
         </div>
@@ -293,6 +296,7 @@ const props = defineProps({
   active: { type: Boolean, default: true }
 })
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { Aim, AlarmClock, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { cssVar, fmtDateTime, fmtRateBytes } from '../utils/format'
@@ -409,6 +413,12 @@ const vmSource = ref('prometheus')
 const vmData = ref({})
 const vmNames = computed(() => Object.keys(vmData.value).sort())
 const selectedVM = ref('')
+const router = useRouter()
+
+// 观测页出口：带 VM 名跳到列表并预置关键词筛选（VmList 读 query.keyword）
+function goVmList() {
+  router.push({ path: '/vms', query: { keyword: selectedVM.value } })
+}
 
 function baseOption() {
   return {

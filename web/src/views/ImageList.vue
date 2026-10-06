@@ -55,7 +55,12 @@
             title="登记的是 qcow2 磁盘模板（增量克隆父盘）——创建 VM 选「云镜像 + cloud-init」时从这里选。"
           />
           <el-table :data="filteredItems" stripe border style="width: 100%">
-            <template #empty><el-empty description="暂无镜像，点击上方「上传镜像」或到存储池登记既有卷" :image-size="80" /></template>
+            <template #empty>
+              <el-empty description="暂无镜像" :image-size="80">
+                <el-button size="small" @click="$router.push('/storage')">去存储池登记既有卷</el-button>
+                <el-button size="small" @click="$router.push('/vms')">查看虚拟机</el-button>
+              </el-empty>
+            </template>
             <el-table-column prop="name" label="名称" min-width="150" />
             <el-table-column prop="os_version" label="OS 版本" min-width="130" />
             <el-table-column label="大小(GB)" width="110">

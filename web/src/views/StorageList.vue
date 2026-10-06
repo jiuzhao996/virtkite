@@ -46,7 +46,14 @@
     </el-card>
 
     <!-- 池卡片网格（替代 el-table，卡片样式对齐 VmList） -->
-    <el-empty v-if="!pools.length && !loading" description="暂无存储池" :image-size="80" />
+    <!-- 空态引导：孤岛页此前 0 个出站链接，空态连个下一步都没有 -->
+    <el-empty v-if="!pools.length && !loading" description="暂无存储池" :image-size="80">
+      <template #description>
+        <p>暂无存储池，可到系统设置登记宿主机后再回来查看</p>
+      </template>
+      <el-button type="primary" size="small" @click="$router.push('/settings')">去系统设置</el-button>
+      <el-button size="small" @click="$router.push('/vms')">查看虚拟机</el-button>
+    </el-empty>
     <el-row v-else :gutter="16">
       <el-col v-for="pool in pools" :key="pool.name" :xs="24" :sm="12" :md="8" class="pool-col">
         <el-card shadow="hover" class="pool-card" @click="openVolumes(pool)">

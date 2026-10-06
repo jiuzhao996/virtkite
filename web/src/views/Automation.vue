@@ -105,9 +105,11 @@
               </template>
             </el-table-column>
             <el-table-column prop="created_at" label="提交时间" width="180" />
-            <el-table-column label="操作" width="80" fixed="right">
+            <el-table-column label="操作" width="150" fixed="right">
               <template #default="{ row }">
                 <el-button text size="small" type="primary" @click.stop="viewHistoryTask(row)">输出</el-button>
+                <!-- 出口：跳到任务中心看该任务的完整时间线与结构化结果 -->
+                <el-button text size="small" @click.stop="goTaskCenter(row)">任务中心 →</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -204,7 +206,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, VideoPlay, Edit, Delete, Close } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
@@ -212,6 +214,7 @@ import { useAuth } from '../store/auth'
 import CronList from './CronList.vue'
 
 const route = useRoute()
+const router = useRouter()
 const { isAdmin } = useAuth()
 // 深链支持：/crons 重定向到 /automation?tab=cron（仅管理员生效，否则落默认 tab）
 const activeTab = ref(route.query.tab === 'cron' && isAdmin.value ? 'cron' : 'adhoc')
@@ -490,6 +493,10 @@ function viewHistoryTask(row) {
   stopPolling()
   runTask.value = row
   scrollToBottom()
+}
+// 跳任务中心看该任务完整详情（自动化执行历史此前是流程终点，无出口）
+function goTaskCenter(row) {
+  router.push({ path: '/tasks', query: { id: row.id } })
 }
 function scrollToBottom() {
   nextTick(() => {

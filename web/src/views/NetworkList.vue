@@ -26,7 +26,14 @@
       </Toolbar>
 
       <!-- 网络卡片（腾讯云风格）：网络属性多（网桥/转发/网关/DHCP），少量对象时卡片比表格信息层次更好 -->
-      <el-empty v-if="!networks.length && !loading" description="暂无虚拟网络，点击「新建 NAT 网络」创建" :image-size="80" />
+      <!-- 空态引导：孤岛页此前 0 个出站链接 -->
+      <el-empty v-if="!networks.length && !loading" description="暂无虚拟网络" :image-size="80">
+        <template #description>
+          <p>暂无虚拟网络，可新建 NAT 网络，或到容器页查看 Docker 网络</p>
+        </template>
+        <el-button size="small" @click="$router.push('/containers')">查看容器与网络</el-button>
+        <el-button size="small" @click="$router.push('/vms')">查看虚拟机</el-button>
+      </el-empty>
       <el-row v-else :gutter="16">
         <el-col v-for="row in networks" :key="row.name" :xs="24" :sm="12" :md="8">
         <el-card shadow="hover" class="net-card" :class="{ inactive: !row.active }">

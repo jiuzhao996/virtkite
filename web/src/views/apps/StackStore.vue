@@ -28,6 +28,8 @@
             >{{ st.deployed ? '已部署' : '一键部署' }}</el-button>
             <!-- 管理：栈详情（服务矩阵/组合日志/编排文件编辑/升级） -->
             <el-button size="small" :icon="Setting" @click="openDetail(st)">管理</el-button>
+            <!-- 已部署 → 直跳容器页编排 tab（栈商店与容器页此前零互链） -->
+            <el-button v-if="st.deployed" size="small" text type="primary" @click="goCompose">去编排 →</el-button>
             <el-button v-if="st.docs && st.docs.length" text size="small" :icon="Reading" @click="openDocs(st)">参考笔记</el-button>
           </div>
         </el-card>
@@ -79,6 +81,11 @@ function onStackTerminal(row) {
   const id = String(row.ID || '')
   router.push({ path: '/containers', query: { id, open: row.openLogs ? 'logs' : 'terminal' } })
   ElMessage.info(`已跳转到容器页，请定位容器 ${id.slice(0, 12)}`)
+}
+
+// 已部署栈 → 容器页编排 tab（栈商店此前与容器页零互链）
+function goCompose() {
+  router.push({ path: '/containers', query: { tab: 'compose' } })
 }
 
 const stacks = ref([])

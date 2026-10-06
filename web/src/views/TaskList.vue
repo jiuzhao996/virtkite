@@ -156,6 +156,12 @@
           </div>
         </template>
 
+        <!-- 非 VM 任务的对象出口（栈升级/应用安装/镜像下载）：流程终点给下一步 -->
+        <template v-if="taskObjectLink">
+          <h4 class="detail-sec">相关入口</h4>
+          <el-button size="small" type="primary" plain @click="goTaskObject">{{ taskObjectLink.text }}</el-button>
+        </template>
+
         <div v-if="detail.status === 'failed' && detail.error" class="detail-error">{{ detail.error }}</div>
 
         <!-- 任务参数 payload：后端 model.Task.Payload 为 json:"-" 不下发，本块仅在接口放开后自动生效；
@@ -221,7 +227,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Delete, Search, Monitor } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -233,6 +239,7 @@ import { taskTypeText, taskStatusText, taskStatusTag, fmtDateTime, errMsg, isCan
 import { usePagination } from '../composables/usePagination'
 
 const router = useRouter()
+const route = useRoute()
 const { isAdmin } = useAuth()
 
 const items = ref([])
@@ -390,6 +397,24 @@ const vmLinks = computed(() => {
   }
   return out
 })
+
+// 非 VM 任务的对象出口：栈升级 → 部署栈、应用安装 → 应用商店。
+// 任务是「流程终点」之一，此前执行完没有任何去向；这里按任务类型给下一步入口。
+const taskObjectLink = computed(() => {
+  const d = detail.value
+  if (!d) return null
+  if (d.type === 'stack_upgrade') return { text: '查看部署栈 →', to: '/apps?tab=stacks' }
+  if (d.type === 'app_install') return { text: '查看应用商店 →', to: '/apps' }
+  if (d.type === 'image_download') return { text: '查看镜像库 →', to: '/images' }
+  return null
+})
+
+function goTaskObject() {
+  if (taskObjectLink.value) {
+    detailDrawer.value = false
+    router.push(taskObjectLink.value.to)
+  }
+}
 
 // ==================== 时间线 ====================
 
@@ -625,6 +650,18 @@ async function clearFinished() {
 onMounted(() => {
   load()
   pollTimer = setInterval(tick, getPollInterval('tasks', POLL_DEFAULTS.tasks))
+  // 外部跳转落点：/tasks?id=<taskID> 自动打开该任务详情（自动化执行历史「任务中心 →」入口）
+  const qid = Number(route.query.id)
+  if (qid) {
+    const found = items.value.find((t) => t.id === qid)
+    if (found) openDetail(found)
+    else {
+      // 列表尚未加载完或不在当前页：单查一次补开
+      api.getTask(qid).then((res) => {
+        if (res && res.data) openDetail(res.data)
+      }).catch(() => {})
+    }
+  }
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
