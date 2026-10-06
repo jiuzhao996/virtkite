@@ -72,7 +72,7 @@
               size="small"
               type="danger"
               :disabled="row.status !== 'active' || row.type === 'vnc'"
-              :title="row.type === 'vnc' ? 'VNC 中转连接无法强制断开' : '强制断开'"
+              :title="row.status !== 'active' ? '会话已结束' : row.type === 'vnc' ? 'VNC 中转连接无法强制断开' : '强制断开'"
               @click="disconnect(row)"
             >断开</el-button>
           </template>

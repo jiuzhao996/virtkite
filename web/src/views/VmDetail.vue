@@ -9,7 +9,7 @@
         <span v-if="vm && vm.ip" class="tb-ip">{{ vm.ip }}</span>
       </div>
       <div class="tb-actions">
-        <el-button type="primary" :icon="Monitor" :disabled="!isRunning" @click="goConsole">控制台</el-button>
+        <el-button type="primary" :icon="Monitor" :disabled="!isRunning" :title="isRunning ? '' : '开机后可用控制台'" @click="goConsole">控制台</el-button>
         <!-- 电源 / 挂起 状态切换按钮：一个按钮按当前状态显示对应动作（运行中→关机/暂停，关机→开机，暂停→恢复）。
              语义保持与拆分版一致：暂停态须先恢复（电源钮禁用），关机态禁用挂起钮；busy 期间锁定防止动作切换闪烁 -->
         <el-button
@@ -26,7 +26,7 @@
           :disabled="(!isRunning && !isPaused) || (!!busy && busy !== 'stop' && busy !== 'start')"
           @click="act(isPaused ? 'resume' : 'pause')"
         >{{ isPaused ? '恢复' : '暂停' }}</el-button>
-        <el-button v-if="canOperate && vm" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" @click="act('restart')">重启</el-button>
+        <el-button v-if="canOperate && vm" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" :title="isRunning ? '' : '开机后才能重启'" @click="act('restart')">重启</el-button>
         <el-button v-if="canOperate" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
       </div>
     </div>

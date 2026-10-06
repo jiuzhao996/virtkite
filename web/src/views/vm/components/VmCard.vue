@@ -69,7 +69,7 @@
         :disabled="busy"
         @click="$emit('action', vm, 'stop')"
       >关机</el-button>
-      <el-button size="small" :icon="Monitor" :disabled="vm.status !== 'running'" @click="$emit('console', vm)">控制台</el-button>
+      <el-button size="small" :icon="Monitor" :disabled="vm.status !== 'running'" :title="vm.status === 'running' ? '' : '开机后可用控制台'" @click="$emit('console', vm)">控制台</el-button>
       <!-- 删除常驻（原「更多」下拉悬浮突兀，重启去详情页操作）：删除有输入名称确认弹窗兜底；
            icon-only 必须带 tooltip + aria-label（ui-ux-pro-max §1） -->
       <el-tooltip :content="'删除 ' + vm.name" placement="top">

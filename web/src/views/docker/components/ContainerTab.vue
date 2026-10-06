@@ -104,7 +104,7 @@
             :disabled="!!actingKey && actingKey !== row.ID + ':restart'"
             @click="containerAction(row, 'restart')"
           >重启</el-button>
-          <el-button size="small" text type="primary" :disabled="row.State !== 'running'" @click="openTerminal(row)">终端</el-button>
+          <el-button size="small" text type="primary" :disabled="row.State !== 'running'" :title="row.State !== 'running' ? '容器未运行' : ''" @click="openTerminal(row)">终端</el-button>
           <el-button size="small" text type="primary" @click="openInspect(row)">详情</el-button>
           <el-button size="small" text type="primary" @click="openLogs(row)">日志</el-button>
           <el-button size="small" text type="danger" @click="removeContainer(row)">删除</el-button>

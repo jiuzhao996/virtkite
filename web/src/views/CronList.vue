@@ -85,6 +85,7 @@
               type="primary"
               :loading="runningId === row.id"
               :disabled="!!runningId && runningId !== row.id"
+              :title="runningId && runningId !== row.id ? '另一个任务正在执行中' : ''"
               @click="runNow(row)"
             >立即运行</el-button>
             <el-button size="small" text type="primary" @click="openHistory(row)">历史</el-button>

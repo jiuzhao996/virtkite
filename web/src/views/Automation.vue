@@ -59,7 +59,7 @@
         <el-card shadow="never">
           <div class="auto-pb-bar">
             <el-button size="small" :icon="Refresh" @click="loadPlaybooks">刷新</el-button>
-            <el-button type="primary" size="small" :icon="Plus" @click="openEditor(null)" :disabled="!engine.installed">新建 Playbook</el-button>
+            <el-button type="primary" size="small" :icon="Plus" @click="openEditor(null)" :disabled="!engine.installed" :title="engine.installed ? '' : '宿主机未安装 Ansible'">新建 Playbook</el-button>
             <span class="auto-hint">内置种子出厂预设，删掉会复活；自建完全自治。保存前自动过 ansible-playbook --syntax-check</span>
           </div>
           <el-table :data="playbooks" v-loading="pbLoading" size="small" @row-dblclick="(row) => openEditor(row)">
@@ -76,7 +76,7 @@
             <el-table-column prop="updated_at" label="更新时间" width="170" />
             <el-table-column label="操作" width="200" fixed="right">
               <template #default="{ row }">
-                <el-button text size="small" type="primary" :icon="VideoPlay" @click="openRunDialog(row)" :disabled="!engine.installed">执行</el-button>
+                <el-button text size="small" type="primary" :icon="VideoPlay" @click="openRunDialog(row)" :disabled="!engine.installed" :title="engine.installed ? '' : '宿主机未安装 Ansible'">执行</el-button>
                 <el-button text size="small" :icon="Edit" @click="openEditor(row)">编辑</el-button>
                 <el-popconfirm title="删除该 playbook？" confirm-button-text="删除" @confirm="removePlaybook(row.id)">
                   <template #reference>

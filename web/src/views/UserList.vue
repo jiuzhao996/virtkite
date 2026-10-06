@@ -84,6 +84,7 @@
               type="danger"
               size="small"
               :disabled="row.username === (state.user && state.user.username)"
+              :title="row.username === (state.user && state.user.username) ? '不能删除当前登录账号' : ''"
               @click.stop="remove(row)"
             >删除</el-button>
           </template>

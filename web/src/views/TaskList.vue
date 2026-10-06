@@ -82,6 +82,7 @@
               type="danger"
               size="small"
               :disabled="row.status !== 'success' && row.status !== 'failed'"
+              :title="row.status === 'success' || row.status === 'failed' ? '' : '任务未结束，暂不能删除'"
               @click.stop="remove(row)"
             >删除</el-button>
           </template>
