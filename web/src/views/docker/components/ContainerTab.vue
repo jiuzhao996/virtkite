@@ -2,6 +2,7 @@
     <div class="pane-toolbar">
       <!-- 主操作「创建容器」primary 实底（「拉取镜像」在镜像 tab，同为各自 tab 的主操作） -->
       <el-button type="primary" :icon="Plus" @click="openCreateDrawer">创建容器</el-button>
+      <el-button :loading="pruneLoading" @click="pruneStopped">清理已停止容器</el-button>
       <el-select v-model="stateFilter" class="ct-state" placeholder="全部状态">
         <el-option label="全部状态" value="" />
         <el-option v-for="s in stateOptions" :key="s.value" :label="`${s.value}（${s.count}）`" :value="s.value" />
@@ -82,10 +83,10 @@
           <span class="mono">{{ dockerTime(row.CreatedAt || row.Created) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="330" fixed="right" class-name="ct-op">
+      <el-table-column label="操作" width="368" fixed="right" class-name="ct-op">
         <template #default="{ row }">
           <el-button
-            v-if="row.State !== 'running'"
+            v-if="row.State !== 'running' && row.State !== 'paused'"
             size="small" text type="success"
             :loading="actingKey === row.ID + ':start'"
             :disabled="!!actingKey && actingKey !== row.ID + ':start'"
@@ -98,6 +99,21 @@
             :disabled="!!actingKey && actingKey !== row.ID + ':stop'"
             @click="containerAction(row, 'stop')"
           >停止</el-button>
+          <!-- 暂停/恢复按 State 互斥：paused 容器 docker start 会报错，只能 unpause -->
+          <el-button
+            v-if="row.State === 'running'"
+            size="small" text type="info"
+            :loading="actingKey === row.ID + ':pause'"
+            :disabled="!!actingKey && actingKey !== row.ID + ':pause'"
+            @click="containerAction(row, 'pause')"
+          >暂停</el-button>
+          <el-button
+            v-else-if="row.State === 'paused'"
+            size="small" text type="success"
+            :loading="actingKey === row.ID + ':unpause'"
+            :disabled="!!actingKey && actingKey !== row.ID + ':unpause'"
+            @click="containerAction(row, 'unpause')"
+          >恢复</el-button>
           <el-button
             size="small" text type="primary"
             :loading="actingKey === row.ID + ':restart'"
@@ -134,7 +150,7 @@
         </div>
         <div class="ct-card-actions">
           <el-button
-            v-if="row.State !== 'running'"
+            v-if="row.State !== 'running' && row.State !== 'paused'"
             size="small" :icon="VideoPlay"
             :loading="actingKey === row.ID + ':start'"
             :disabled="!!actingKey && actingKey !== row.ID + ':start'"
@@ -154,6 +170,8 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="logs">日志</el-dropdown-item>
+                <el-dropdown-item v-if="row.State === 'running'" command="pause">暂停</el-dropdown-item>
+                <el-dropdown-item v-else-if="row.State === 'paused'" command="unpause">恢复</el-dropdown-item>
                 <el-dropdown-item command="restart" :disabled="row.State !== 'running'">重启</el-dropdown-item>
                 <el-dropdown-item command="inspect">详情</el-dropdown-item>
               </el-dropdown-menu>
@@ -180,98 +198,15 @@
     <!-- 容器日志抽屉（tail 切换 / 跟随 / 复制 / 下载）：内聚于 ContainerLogsDrawer -->
     <ContainerLogsDrawer ref="logsDrawerRef" />
 
-    <!-- 创建容器抽屉：name/image 必填；端口/挂载/环境变量为动态行（空行提交前过滤）；重启策略四选一 -->
-    <el-drawer v-model="createDrawer" title="创建容器" size="42%" :close-on-click-modal="false" @close="resetCreateForm">
-      <el-form label-width="88px" @submit.prevent>
-        <el-form-item label="名称" required>
-          <el-input v-model="createForm.name" placeholder="如 my-nginx，字母数字开头，可含 _ . -" clearable />
-          <div v-if="nameError" class="field-error">{{ nameError }}</div>
-        </el-form-item>
-        <el-form-item label="镜像" required>
-          <!-- filterable + allow-create：下拉选本页镜像 tab 已加载的镜像（打开时未加载会自动补拉），也可手输任意镜像名 -->
-          <el-select
-            v-model="createForm.image"
-            filterable
-            allow-create
-            default-first-option
-            clearable
-            placeholder="选择已有镜像或输入如 nginx:1.27"
-            style="width: 100%"
-          >
-            <el-option v-for="img in imageOptions" :key="img" :label="img" :value="img" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="端口映射">
-          <div class="dyn-list">
-            <div v-for="(row, i) in createForm.ports" :key="'port-' + i" class="dyn-row">
-              <el-input v-model="createForm.ports[i]" placeholder="宿主:容器 如 8080:80" clearable />
-              <el-tooltip content="删除该行" placement="top">
-                <el-button
-                  :icon="Delete" text type="danger"
-                  :aria-label="'删除端口映射第 ' + (i + 1) + ' 行'"
-                  @click="createForm.ports.splice(i, 1)"
-                />
-              </el-tooltip>
-            </div>
-            <div v-if="portsError" class="field-error">{{ portsError }}</div>
-            <el-button text type="primary" :icon="Plus" @click="createForm.ports.push('')">添加</el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="挂载卷">
-          <div class="dyn-list">
-            <div v-for="(row, i) in createForm.volumes" :key="'vol-' + i" class="dyn-row">
-              <el-input v-model="createForm.volumes[i]" placeholder="宿主路径:容器路径[:ro]" clearable />
-              <el-tooltip content="删除该行" placement="top">
-                <el-button
-                  :icon="Delete" text type="danger"
-                  :aria-label="'删除挂载卷第 ' + (i + 1) + ' 行'"
-                  @click="createForm.volumes.splice(i, 1)"
-                />
-              </el-tooltip>
-            </div>
-            <el-button text type="primary" :icon="Plus" @click="createForm.volumes.push('')">添加</el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="环境变量">
-          <div class="dyn-list">
-            <div v-for="(row, i) in createForm.envs" :key="'env-' + i" class="dyn-row">
-              <el-input v-model="createForm.envs[i]" placeholder="KEY=VALUE" clearable />
-              <el-tooltip content="删除该行" placement="top">
-                <el-button
-                  :icon="Delete" text type="danger"
-                  :aria-label="'删除环境变量第 ' + (i + 1) + ' 行'"
-                  @click="createForm.envs.splice(i, 1)"
-                />
-              </el-tooltip>
-            </div>
-            <el-button text type="primary" :icon="Plus" @click="createForm.envs.push('')">添加</el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="重启策略">
-          <el-select v-model="createForm.restart" style="width: 100%">
-            <el-option v-for="opt in RESTART_OPTIONS" :key="opt.value" :value="opt.value" :label="opt.label">
-              <el-tooltip :content="opt.tip" placement="left" :show-after="200">
-                <span>{{ opt.label }}</span>
-              </el-tooltip>
-            </el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="启动命令">
-          <el-input v-model="createForm.command" placeholder="留空使用镜像默认 ENTRYPOINT" clearable />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button :disabled="creating" @click="createDrawer = false">取消</el-button>
-        <el-button type="primary" :loading="creating" @click="submitCreate">{{ creating ? '正在创建…' : '创建' }}</el-button>
-      </template>
-    </el-drawer>
+    <!-- 创建容器抽屉：抽为独立组件，容器页与镜像页「从镜像运行」共用同一表单 -->
+    <ContainerCreateDrawer ref="createDrawerRef" @created="onCreated" />
 </template>
 
 <script setup>
 // 容器页（原容器 tab，1Panel 式子路由化）：数据（containers / statsMap）与容器域全部交互自持。
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast）；10s 静默轮询随本页走，
 // KeepAlive 下 onUnmounted 不触发，故用 onActivated/onDeactivated 显式启停轮询（防切走后后台空转）。
-import { ref, computed, reactive, inject, watch, onMounted, onActivated, onDeactivated } from 'vue'
+import { ref, computed, inject, watch, onMounted, onActivated, onDeactivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {  Search, Plus, Delete, VideoPlay, VideoPause, Monitor, Document, MoreFilled } from '@element-plus/icons-vue'
 import { api } from '../../../api'
@@ -279,6 +214,7 @@ import { errMsg, isCancel } from '../../../utils/format'
 import { containerName, stateTag, stateText, portsText, dockerTime } from '../../../utils/docker-format'
 import { useAutoRefresh } from '../../../composables/useAutoRefresh'
 import ContainerTerminal from '../../../components/ContainerTerminal.vue'
+import ContainerCreateDrawer from './ContainerCreateDrawer.vue'
 import ContainerInspectDrawer from './ContainerInspectDrawer.vue'
 import ContainerLogsDrawer from './ContainerLogsDrawer.vue'
 
@@ -449,9 +385,11 @@ function toggleCardSelect(row) {
   if (idx > -1) selection.value.splice(idx, 1)
   else selection.value.push(row)
 }
-// 卡片「更多」下拉：日志 / 重启 / 详情（inspect 抽屉）
+// 卡片「更多」下拉：日志 / 暂停恢复 / 重启 / 详情（inspect 抽屉）
 function cardMore(row, cmd) {
   if (cmd === 'logs') return openLogs(row)
+  if (cmd === 'pause') return containerAction(row, 'pause')
+  if (cmd === 'unpause') return containerAction(row, 'unpause')
   if (cmd === 'restart') return containerAction(row, 'restart')
   if (cmd === 'inspect') return openInspect(row)
 }
@@ -506,7 +444,7 @@ async function bulkAction(action) {
 const actingKey = ref('')
 
 async function containerAction(row, action) {
-  const label = { start: '启动', stop: '停止', restart: '重启' }[action]
+  const label = { start: '启动', stop: '停止', restart: '重启', pause: '暂停', unpause: '恢复' }[action]
   actingKey.value = row.ID + ':' + action
   try {
     await api.dockerContainerAction(row.ID, action)
@@ -544,6 +482,33 @@ async function removeContainer(row) {
   }
 }
 
+// ── 清理已停止容器（docker container prune，运行中的不受影响）──
+
+const pruneLoading = ref(false)
+
+async function pruneStopped() {
+  try {
+    await ElMessageBox.confirm(
+      '将删除所有已停止的容器（运行中与暂停中的不受影响），此操作不可恢复。确定清理？',
+      '清理已停止容器',
+      { type: 'warning', confirmButtonText: '清理', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch (e) {
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))
+    return
+  }
+  pruneLoading.value = true
+  try {
+    const res = await api.dockerPrune('containers')
+    ElMessage.success((res.data && res.data.message) || '清理完成')
+    await Promise.all([fetchContainers(), fetchStats()])
+  } catch (e) {
+    ElMessage.error(errMsg(e, '清理失败'))
+  } finally {
+    pruneLoading.value = false
+  }
+}
+
 // ═══════════════ 容器终端 / 详情 / 日志抽屉 ═══════════════
 
 const termDrawer = ref(false)
@@ -572,123 +537,17 @@ function openLogs(row) {
   logsDrawerRef.value.open(row)
 }
 
-// ═══════════════ 创建容器（抽屉表单）═══════════════
+// ═══════════════ 创建容器（独立抽屉组件）═══════════════
 
-const createDrawer = ref(false)
-const creating = ref(false)
-// 动态行用「一行空串占位」起步，提交前 trim + 过滤空行
-const createForm = reactive({
-  name: '',
-  image: '',
-  ports: [''],
-  volumes: [''],
-  envs: [''],
-  restart: 'no',
-  command: ''
-})
-
-// 重启策略四选一（对应 docker --restart）：label 为选项短文案，tip 为悬浮说明
-const RESTART_OPTIONS = [
-  { value: 'no', label: 'no（退出即停）', tip: '容器退出后不自动重启，需手动启动' },
-  { value: 'always', label: 'always（总是重启）', tip: '任何退出都自动重启，Docker 守护进程启动时也会拉起' },
-  { value: 'unless-stopped', label: 'unless-stopped（除非手动停止）', tip: '异常退出自动重启；手动停止后不再自动拉起' },
-  { value: 'on-failure', label: 'on-failure（异常退出时）', tip: '仅非零退出码（异常退出）时自动重启' }
-]
-
-// 名称弱校验（行内红字）：字母数字开头，仅含 _ . -，最长 64；强校验在后端
-const nameError = computed(() => {
-  const n = createForm.name.trim()
-  if (!n) return ''
-  return /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(n)
-    ? ''
-    : '名称需以字母或数字开头，仅可包含字母、数字与 _ . -，最长 64 字符'
-})
-
-// 端口映射弱校验：非空行须含冒号（宿主:容器）；IP:宿主:容器 形态与端口范围校验交给后端
-const portsError = computed(() => {
-  for (const p of createForm.ports) {
-    const v = p.trim()
-    if (v && !v.includes(':')) return `端口映射「${v}」需包含冒号，格式如 8080:80`
-  }
-  return ''
-})
-
-// 镜像下拉候选：打开创建抽屉时自行拉取一次镜像列表（不再依赖壳的跨页共享 images），拼 Repository:Tag（跳过 <none> 悬空层）
-const imageOptions = ref([])
-
-async function fetchImageOptions() {
-  try {
-    const res = await api.dockerImages()
-    const items = (res.data || {}).items || []
-    imageOptions.value = items
-      .filter((r) => r.Repository && r.Repository !== '<none>')
-      .map((r) => `${r.Repository}:${r.Tag || 'latest'}`)
-  } catch (e) {
-    // fire-and-forget：候选拉取失败不阻断开抽屉，用户仍可手输任意镜像名
-  }
-}
+const createDrawerRef = ref(null)
 
 function openCreateDrawer() {
-  // 打开抽屉即补拉镜像候选（fire-and-forget）；不影响手输任意镜像名
-  fetchImageOptions()
-  createDrawer.value = true
+  createDrawerRef.value.open()
 }
 
-// 抽屉关闭即清空表单（各动态区重置为一行空占位）
-function resetCreateForm() {
-  createForm.name = ''
-  createForm.image = ''
-  createForm.ports = ['']
-  createForm.volumes = ['']
-  createForm.envs = ['']
-  createForm.restart = 'no'
-  createForm.command = ''
-}
-
-// 动态行清洗：trim + 丢弃空行，空数组交给后端按缺省处理
-function cleanRows(rows) {
-  return rows.map((s) => String(s || '').trim()).filter(Boolean)
-}
-
-async function submitCreate() {
-  const name = createForm.name.trim()
-  const image = createForm.image.trim()
-  if (!name) {
-    ElMessage.warning('请输入容器名称')
-    return
-  }
-  if (nameError.value) {
-    ElMessage.warning(nameError.value)
-    return
-  }
-  if (!image) {
-    ElMessage.warning('请选择或输入镜像名')
-    return
-  }
-  if (portsError.value) {
-    ElMessage.warning(portsError.value)
-    return
-  }
-  creating.value = true
-  try {
-    await api.createContainer({
-      name,
-      image,
-      ports: cleanRows(createForm.ports),
-      volumes: cleanRows(createForm.volumes),
-      envs: cleanRows(createForm.envs),
-      restart: createForm.restart,
-      command: createForm.command.trim()
-    })
-    ElMessage.success('容器已创建')
-    createDrawer.value = false
-    // 强制重拉列表 + stats（本页即容器页，无需再切 tab）
-    await refresh()
-  } catch (e) {
-    ElMessage.error(errMsg(e, '创建容器失败'))
-  } finally {
-    creating.value = false
-  }
+// 创建成功后重拉列表 + stats（本页即容器页，无需再切 tab）
+async function onCreated() {
+  await refresh()
 }
 
 defineExpose({ refresh })
@@ -729,33 +588,6 @@ defineExpose({ refresh })
 .ct-auto-label {
   font-size: 0.85rem;
   color: var(--el-text-color-regular, #606266);
-}
-/* 创建容器抽屉：动态行列表（整行 = 输入框 + 删除图标钮）与行内校验红字 */
-.dyn-list {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  width: 100%;
-}
-.dyn-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-}
-.dyn-row .el-input {
-  flex: 1;
-}
-/* icon-only 删除钮贴合行内布局，去掉相邻按钮默认左距（间距交给 flex gap） */
-.dyn-row .el-button {
-  margin-left: 0;
-}
-.field-error {
-  width: 100%;
-  color: var(--color-danger, #f56c6c);
-  font-size: 0.78rem;
-  line-height: 1.4;
 }
 /* ── 卡片视图（用户拍板：虚拟机列表同款卡片）── */
 .ct-grid {

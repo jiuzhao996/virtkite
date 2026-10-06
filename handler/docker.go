@@ -110,6 +110,10 @@ func (h *DockerHandler) ContainerAction(c *gin.Context) {
 		err, label = h.Docker.Stop(id), "停止"
 	case "restart":
 		err, label = h.Docker.Restart(id), "重启"
+	case "pause":
+		err, label = h.Docker.Pause(id), "暂停"
+	case "unpause":
+		err, label = h.Docker.Unpause(id), "恢复"
 	case "rename":
 		// v3.2 批次 R：重命名复用既有 :action 路由，请求体 {"name":"新名称"}
 		var body struct {

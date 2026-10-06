@@ -87,6 +87,12 @@ func (d *Dockerx) Stop(id string) error { _, err := run("stop", id); return err 
 // Restart 重启容器。
 func (d *Dockerx) Restart(id string) error { _, err := run("restart", id); return err }
 
+// Pause 暂停容器（冻结进程不释放资源；前端按 State=paused 区分暂停/恢复按钮）。
+func (d *Dockerx) Pause(id string) error { _, err := run("pause", id); return err }
+
+// Unpause 恢复被暂停的容器。
+func (d *Dockerx) Unpause(id string) error { _, err := run("unpause", id); return err }
+
 // Remove 删除容器（须先停止，强制场景前端二次确认）。
 func (d *Dockerx) Remove(id string, force bool) error {
 	args := []string{"rm"}

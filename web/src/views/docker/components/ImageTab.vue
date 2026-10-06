@@ -56,8 +56,14 @@
           <span class="mono">{{ imageTime(row.CreatedSince || row.Created) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="90" fixed="right">
+      <el-table-column label="操作" width="136" fixed="right">
         <template #default="{ row }">
+          <el-button
+            size="small" text type="primary"
+            :disabled="!row.Repository || row.Repository === '<none>'"
+            :title="row.Repository === '<none>' ? '悬空镜像无法直接运行' : '以此镜像创建容器'"
+            @click="runImage(row)"
+          >运行</el-button>
           <el-button size="small" text type="danger" @click="removeImage(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -88,6 +94,9 @@
         <el-button type="primary" :loading="pullLoading" @click="confirmPull">{{ pullLoading ? '正在拉取镜像…' : '开始拉取' }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- 从镜像运行：复用容器页的创建抽屉，预填 Repository:Tag -->
+    <ContainerCreateDrawer ref="createDrawerRef" @created="onContainerCreated" />
 </template>
 
 <script setup>
@@ -99,6 +108,7 @@ import { Search, RefreshRight } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { shortId, dockerSize, imageTime } from '../../../utils/docker-format'
+import ContainerCreateDrawer from './ContainerCreateDrawer.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')
@@ -262,6 +272,18 @@ async function removeImage(row) {
   } catch (e) {
     ElMessage.error(errMsg(e, '删除失败'))
   }
+}
+
+// ── 从镜像运行：复用容器页创建抽屉，预填 Repository:Tag ──
+
+const createDrawerRef = ref(null)
+
+function runImage(row) {
+  createDrawerRef.value.open(`${row.Repository}:${row.Tag || 'latest'}`)
+}
+
+function onContainerCreated() {
+  ElMessage.success('容器已创建，可在「容器」页查看')
 }
 </script>
 

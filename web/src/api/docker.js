@@ -8,6 +8,10 @@ export const docker = {
   dockerStats: () => unwrap(http.get('/docker/stats')),
   // 单容器动作：start/stop/restart/pause/unpause
   dockerContainerAction: (id, action) => unwrap(http.post(`/docker/containers/${id}/${action}`)),
+  // 重命名（复用 :action 路由，请求体 {"name":"新名称"}）
+  dockerContainerRename: (id, name) => unwrap(http.post(`/docker/containers/${id}/rename`, { name })),
+  // 单容器实时 stats（--no-stream，含 CPU%/内存/网络/块 IO/PIDs）
+  dockerContainerStats: (id) => unwrap(http.get(`/docker/containers/${id}/stats`)),
   // 删除容器：force=true 时运行中容器强制删除（后端按 State 决定 force 参数）
   dockerContainerDelete: (id, force) => unwrap(http.delete('/docker/containers/' + id, { params: force ? { force: 'true' } : {} })),
   dockerContainerInspect: (id) => unwrap(http.get(`/docker/containers/${id}/inspect`)),
@@ -34,7 +38,7 @@ export const docker = {
   dockerCreateNetwork: (payload) => unwrap(http.post('/docker/networks', payload)),
   dockerDeleteNetwork: (name) => unwrap(http.delete('/docker/networks/' + encodeURIComponent(name))),
 
-  // compose 项目：action ∈ up/down/restart（down 含重建，耗时可达分钟级，单独放宽超时）
+  // compose 项目：action ∈ up/start/stop/restart/down（down 含重建，耗时可达分钟级，单独放宽超时）
   dockerComposeList: () => unwrap(http.get('/docker/compose')),
   dockerComposeAction: (project, action) => unwrap(http.post('/docker/compose/' + encodeURIComponent(project) + '/' + action, null, { timeout: 150000 }))
 }

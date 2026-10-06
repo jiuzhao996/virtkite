@@ -19,8 +19,16 @@
           <span class="mono">{{ row.ConfigFiles || '—' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="270" fixed="right">
+      <el-table-column label="操作" width="352" fixed="right">
         <template #default="{ row }">
+          <!-- up 需项目目录内有 compose 文件（ConfigFiles 为空即无法 up），禁用并说明 -->
+          <el-button
+            size="small" text type="primary"
+            :loading="composeKey === row.Name + ':up'"
+            :disabled="!row.ConfigFiles || composeKey !== ''"
+            :title="!row.ConfigFiles ? '未找到 compose 文件，无法构建启动' : '按 compose 文件重建并启动（up -d）'"
+            @click="composeAction(row, 'up')"
+          >构建启动</el-button>
           <el-button
             size="small" text type="success"
             :loading="composeKey === row.Name + ':start'"
