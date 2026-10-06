@@ -23,9 +23,14 @@ import (
 )
 
 const (
-	// workerCount worker goroutine 数量（固定 worker 池）。
-	workerCount = 4
-	// queueBufferSize 任务队列缓冲长度。
+	// fastWorkerCount 快池 worker 数：只跑秒级 libvirt RPC 型任务（开关机），
+	// 保证电源操作永远有 worker 响应，不被长任务排队挤占。
+	fastWorkerCount = 4
+	// slowWorkerCount 慢池 worker 数：跑分钟级 IO/网络型任务（建删盘、克隆、
+	// 下载、playbook）。限 2 个并发：这类任务瓶颈在磁盘/带宽，并发再高只是
+	// 相互拖慢 + 把宿主机 IO 打满。
+	slowWorkerCount = 2
+	// queueBufferSize 任务队列缓冲长度（快慢两池各自一条，互不占用）。
 	queueBufferSize = 128
 	// enqueueTimeout 队列满时的入队等待上限，超时把任务置 failed
 	// （宁可失败并告知用户，也不为入队起无上限 goroutine 悬挂等待）。
@@ -43,11 +48,45 @@ const (
 	finalWriteBackoff = 100 * time.Millisecond
 )
 
-// WorkerCount / QueueBufferSize 供系统设置页展示真实生效值（handler/settings 快照读取）。
+// WorkerCountFast / WorkerCountSlow / QueueBufferSize 供系统设置页展示真实生效值
+// （handler/settings 快照读取）。
 const (
-	WorkerCount     = workerCount
+	WorkerCountFast = fastWorkerCount
+	WorkerCountSlow = slowWorkerCount
 	QueueBufferSize = queueBufferSize
 )
+
+// slowTaskTypes 分池表：慢池（IO/网络型，分钟级）任务类型；不在表内走快池。
+// 分界依据是「任务时长的量级」，不是重要性——快池存在的意义只有一个：
+// 电源操作这类秒级任务不排队。新任务类型默认进快池，确属长任务的必须显式登记，
+// 否则一个长任务就能让开关机排 10 分钟队。
+var slowTaskTypes = map[string]bool{
+	"create_vm":       true, // 建卷 + cloud-init + 可选首启
+	"delete_vm":       true, // undefine + 逐卷删除（卷多时 IO 慢）
+	"clone_vm":        true, // 全盘拷贝
+	"clone_image_vm":  true, // 镜像克隆建机
+	"cleanup_volumes": true, // 孤儿卷枚举 + 批量删
+	"image_download":  true, // 公网下载（可达数十分钟）
+	"app_install":     true, // compose 拉镜像 + 起栈
+	"ansible_run":     true, // playbook 分钟级
+}
+
+// taskTimeouts 任务级执行超时（防 executor 挂死占死 worker，见 run）。
+// 未登记类型走 defaultTaskTimeout。
+var taskTimeouts = map[string]time.Duration{
+	"image_download":  60 * time.Minute, // 公网大镜像 + 慢源站
+	"clone_vm":        30 * time.Minute, // 全盘拷贝大磁盘
+	"ansible_run":     20 * time.Minute,
+	"create_vm":       15 * time.Minute,
+	"clone_image_vm":  15 * time.Minute,
+	"delete_vm":       15 * time.Minute, // 多卷逐个删
+	"cleanup_volumes": 15 * time.Minute,
+	"app_install":     15 * time.Minute, // compose pull 不可控
+	"stop_vm":         5 * time.Minute,  // ACPI 关机 + 兜底 destroy 本应分钟内
+}
+
+// defaultTaskTimeout 未登记任务类型的缺省执行上限。
+const defaultTaskTimeout = 10 * time.Minute
 
 const (
 	// statusPending 任务等待执行。
@@ -71,6 +110,12 @@ const (
 // friendlyError 会原样透出 msgTaskPanic（不含冒号且含中文）。
 var errExecutorPanic = errors.New(msgTaskPanic)
 
+// ErrQueueBusy 队列满入队超时的哨兵错误，由 Submit 返回给 handler。
+// 旧实现此时仍返回「提交成功」，handler 照常回 202——前端拿着注定 failed 的
+// task_id 轮询才知失败（假受理）；现在 Submit 如实报错，handler 的既有 err
+// 分支直接把中文文案透给用户。
+var ErrQueueBusy = errors.New(msgQueueBusy)
+
 // ProgressFunc 上报任务进度（内部写 DB task.Progress）。
 type ProgressFunc func(pct int, msg string)
 
@@ -87,26 +132,33 @@ type ExecContext struct {
 type Executor func(ctx *ExecContext) error
 
 // Manager 异步任务队列管理器（对应 JumpServer/PVE task 队列语义）。
+// 快慢双池：秒级任务（电源操作）与分钟级任务（建删/克隆/下载）分队列分 worker，
+// 长任务排满慢池也不影响开关机的响应性。
 // Manager 生命周期与进程一致，不提供单独关闭入口（无 quit/Close，进程退出即弃）。
 type Manager struct {
 	DB        *gorm.DB
 	Virt      *virt.Virt
-	queue     chan uint // taskID 队列，worker 只读
+	queueFast chan uint // 快池 taskID 队列（秒级任务）
+	queueSlow chan uint // 慢池 taskID 队列（分钟级任务，见 slowTaskTypes）
 	executors map[string]Executor
 	mu        sync.RWMutex
 }
 
-// NewManager 创建任务管理器：virt.New() 惰性连接，起 4 个 worker goroutine。
-// worker 只读 queue，随进程一起退出，不做优雅关闭。
+// NewManager 创建任务管理器：virt.New() 惰性连接，起快慢两组 worker goroutine。
+// worker 只读各自队列，随进程一起退出，不做优雅关闭。
 func NewManager(db *gorm.DB) *Manager {
 	m := &Manager{
 		DB:        db,
 		Virt:      virt.New(),
-		queue:     make(chan uint, queueBufferSize),
+		queueFast: make(chan uint, queueBufferSize),
+		queueSlow: make(chan uint, queueBufferSize),
 		executors: map[string]Executor{},
 	}
-	for i := 0; i < workerCount; i++ {
-		go m.loop()
+	for i := 0; i < fastWorkerCount; i++ {
+		go m.loop(m.queueFast)
+	}
+	for i := 0; i < slowWorkerCount; i++ {
+		go m.loop(m.queueSlow)
 	}
 	m.sweepOrphanRunning()
 	return m
@@ -135,8 +187,8 @@ func (m *Manager) Register(taskType string, fn Executor) {
 }
 
 // Submit 提交任务：payload 序列化 JSON 存 Payload，Status=pending 入库后入队。
-// 入队有界（见 enqueue）：队列满时最多等 enqueueTimeout，超时把任务置 failed 并返回，
-// 既不为入队起无上限 goroutine，也不静默丢任务。
+// 入队有界（见 enqueue）：队列满时最多等 enqueueTimeout，超时把任务置 failed 并
+// 返回 ErrQueueBusy（不再假受理），既不为入队起无上限 goroutine，也不静默丢任务。
 func (m *Manager) Submit(
 	taskType string,
 	title string,
@@ -165,37 +217,48 @@ func (m *Manager) Submit(
 		return nil, fmt.Errorf("创建任务记录失败: %w", err)
 	}
 
-	m.enqueue(task)
+	if err := m.enqueue(task); err != nil {
+		return nil, err
+	}
 	return task, nil
 }
 
-// enqueue 有界入队：先非阻塞尝试；队列满则用单个 Timer 最多等 enqueueTimeout
-// （只 NewTimer 一次并 Stop，不在循环里反复 time.After）。等满仍入不了说明积压严重，
-// 直接把任务置 failed 并打日志——旧实现 `go func(){ m.queue <- id }()` 会随提交频率
-// 堆积无上限且永不退出的阻塞 goroutine。
+// enqueue 有界入队：按任务类型选池（见 slowTaskTypes），先非阻塞尝试；队列满则用
+// 单个 Timer 最多等 enqueueTimeout（只 NewTimer 一次并 Stop，不在循环里反复 time.After）。
+// 等满仍入不了说明积压严重：置 failed 留痕并返回 ErrQueueBusy——旧实现返回成功，
+// handler 照常回 202，前端拿着注定 failed 的 task_id 轮询才知失败（假受理）。
 //
 // 这里选择「调用方同步等待」而非「限量后台 goroutine」：等待发生在 handler 自己的
 // 请求 goroutine 上（本就存在、由连接数天然限流），goroutine 数量零增长，
 // 且能把背压如实传回客户端；代价是队列满时 Submit 最多阻塞 enqueueTimeout。
-func (m *Manager) enqueue(task *model.Task) {
+func (m *Manager) enqueue(task *model.Task) error {
+	q := m.queueFor(task.Type)
 	select {
-	case m.queue <- task.ID:
-		return
+	case q <- task.ID:
+		return nil
 	default:
 	}
 
 	timer := time.NewTimer(enqueueTimeout)
 	defer timer.Stop()
 	select {
-	case m.queue <- task.ID:
+	case q <- task.ID:
+		return nil
 	case <-timer.C:
 		log.Printf("[tasks] 入队超时（队列已满）id=%d type=%s vm=%s wait=%s",
 			task.ID, task.Type, task.VMName, enqueueTimeout)
-		// 同步回写返回给 handler 的 task，避免前端拿到 pending 却永远等不到执行
-		task.Status = statusFailed
-		task.Error = msgQueueBusy
+		// DB 记录留痕（任务列表可见失败原因），错误如实返回给 handler
 		m.markFailed(task.ID, msgQueueBusy)
+		return ErrQueueBusy
 	}
+}
+
+// queueFor 按任务类型返回目标队列（慢池见 slowTaskTypes 登记表）。
+func (m *Manager) queueFor(taskType string) chan uint {
+	if slowTaskTypes[taskType] {
+		return m.queueSlow
+	}
+	return m.queueFast
 }
 
 // Get 查询单个任务。
@@ -236,11 +299,19 @@ func (m *Manager) ListPaged(page, pageSize int, status string) ([]model.Task, in
 	return items, total, nil
 }
 
-// loop worker 主循环：从队列取 taskID 执行。queue 永不关闭，worker 随进程退出。
-func (m *Manager) loop() {
-	for id := range m.queue {
+// loop worker 主循环：从指定队列取 taskID 执行。队列永不关闭，worker 随进程退出。
+func (m *Manager) loop(q chan uint) {
+	for id := range q {
 		m.run(id)
 	}
+}
+
+// taskTimeout 返回该类型任务的执行上限（未登记走 defaultTaskTimeout）。
+func taskTimeout(taskType string) time.Duration {
+	if d, ok := taskTimeouts[taskType]; ok {
+		return d
+	}
+	return defaultTaskTimeout
 }
 
 // run 执行单个任务：DB 读 task → 置 running → 查 executors → 执行 → 置 success/failed。
@@ -297,10 +368,28 @@ func (m *Manager) run(id uint) {
 		Payload: payload,
 		Report:  m.reporter(id),
 	}
-	if err := runExecutor(fn, execCtx); err != nil {
-		// 原始错误链（含 libvirt 具体报错）只进日志，DB 只存 friendly 中文（该字段回显前端）
-		log.Printf("[tasks] 任务失败 id=%d type=%s vm=%s err=%v", id, task.Type, task.VMName, err)
-		m.markFailed(id, friendlyError(err))
+	// 执行级超时：executor 挂死（libvirt RPC 无响应 / 下载僵死 / 死循环）时，
+	// 任务永久停在 running——worker 白白少一个，四角全卡死时整个任务系统瘫痪，
+	// 且该 VM 的后续操作被 guardVMIdle 永久 409。到点置 failed 释放 worker。
+	// 被超时的 executor goroutine 无法强杀（泄漏一个），但它已无人等待，后续
+	// 任何 DB 写（Report 等）都无害，比永久占用 worker 好得多；真凶（挂住的
+	// RPC）最终自行报错时写入 done（缓冲 1），goroutine 随之回收。
+	timeout := taskTimeout(task.Type)
+	done := make(chan error, 1)
+	go func() { done <- runExecutor(fn, execCtx) }()
+	timer := time.NewTimer(timeout)
+	select {
+	case err := <-done:
+		timer.Stop()
+		if err != nil {
+			// 原始错误链（含 libvirt 具体报错）只进日志，DB 只存 friendly 中文（该字段回显前端）
+			log.Printf("[tasks] 任务失败 id=%d type=%s vm=%s err=%v", id, task.Type, task.VMName, err)
+			m.markFailed(id, friendlyError(err))
+			return
+		}
+	case <-timer.C:
+		log.Printf("[tasks] !!! 任务执行超时 id=%d type=%s vm=%s timeout=%s", id, task.Type, task.VMName, timeout)
+		m.markFailed(id, fmt.Sprintf("任务执行超时（上限 %s），已自动终止，请检查环境后重试", timeout))
 		return
 	}
 	// 成功终态：写失败同样会造僵尸任务，必须走重试 + 留痕（旧实现 _ = 静默吞掉）

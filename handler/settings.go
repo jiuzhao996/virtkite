@@ -58,7 +58,8 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 			"networks": netNames,
 		},
 		"tasks": gin.H{
-			"workers":      tasks.WorkerCount,
+			"workers_fast": tasks.WorkerCountFast,
+			"workers_slow": tasks.WorkerCountSlow,
 			"queue_buffer": tasks.QueueBufferSize,
 		},
 		"sessions": gin.H{
@@ -220,7 +221,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		}
 		updated = append(updated, "跳板命令黑名单")
 	}
-		if req.AlertNotifyURL != nil {
+	if req.AlertNotifyURL != nil {
 		if err := setting.Validate(setting.KeyAlertNotifyURL, *req.AlertNotifyURL); err != nil {
 			Fail(c, http.StatusBadRequest, err.Error())
 			return

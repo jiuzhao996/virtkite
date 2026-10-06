@@ -191,8 +191,9 @@ func TestTaskContractConstants(t *testing.T) {
 		if maxErrorLen != 500 {
 			t.Errorf("maxErrorLen 应与 tasks.error 列的 size:500 对齐：实际 %d", maxErrorLen)
 		}
-		if workerCount <= 0 {
-			t.Errorf("workerCount 必须为正，否则没有 worker 取任务：实际 %d", workerCount)
+		if fastWorkerCount <= 0 || slowWorkerCount <= 0 {
+			t.Errorf("快慢池 worker 数必须为正，否则对应池没有 worker 取任务：fast=%d slow=%d",
+				fastWorkerCount, slowWorkerCount)
 		}
 		if queueBufferSize <= 0 {
 			t.Errorf("queueBufferSize 必须为正：实际 %d", queueBufferSize)
@@ -308,16 +309,23 @@ func TestRunExecutorPassesThroughResult(t *testing.T) {
 	})
 }
 
-// TestEnqueueFastPath 覆盖队列未满时的入队（非阻塞路径）。
-// 风险点：入队失败又不改状态，前端会永远看到 pending 的僵尸任务。
-// 这里手工构造 Manager（不走 NewManager），避免起 worker 与建 libvirt/DB 连接。
+// TestEnqueueFastPath 覆盖队列未满时的入队（非阻塞路径）与快慢分池路由。
+// 风险点：类型登记错池（长任务进快池）会让电源操作排队——分池路由必须与
+// slowTaskTypes 表一致。这里手工构造 Manager（不走 NewManager），
+// 避免起 worker 与建 libvirt/DB 连接。
 func TestEnqueueFastPath(t *testing.T) {
-	m := &Manager{queue: make(chan uint, 4), executors: map[string]Executor{}}
-	task := &model.Task{ID: 101, Type: "create_vm", Status: statusPending}
+	m := &Manager{
+		queueFast: make(chan uint, 4),
+		queueSlow: make(chan uint, 4),
+		executors: map[string]Executor{},
+	}
 
+	// 慢池类型（create_vm）应落 queueSlow
+	slow := &model.Task{ID: 101, Type: "create_vm", Status: statusPending}
+	var slowErr error
 	done := make(chan struct{})
 	go func() {
-		m.enqueue(task)
+		slowErr = m.enqueue(slow)
 		close(done)
 	}()
 	select {
@@ -325,20 +333,33 @@ func TestEnqueueFastPath(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("队列未满时 enqueue 应立即返回，实际阻塞超过 2 秒")
 	}
-
+	if slowErr != nil {
+		t.Errorf("入队成功不应返回错误：实际 %v", slowErr)
+	}
 	select {
-	case got := <-m.queue:
-		if got != task.ID {
-			t.Errorf("入队的 taskID 错误：期望 %d，实际 %d", task.ID, got)
+	case got := <-m.queueSlow:
+		if got != slow.ID {
+			t.Errorf("入队的 taskID 错误：期望 %d，实际 %d", slow.ID, got)
 		}
 	default:
-		t.Fatal("任务未进入队列，worker 永远取不到它")
+		t.Fatal("慢池任务未进入 queueSlow，worker 永远取不到它")
 	}
-	if task.Status != statusPending {
-		t.Errorf("入队成功不应改状态：期望 %q，实际 %q", statusPending, task.Status)
+
+	// 快池类型（stop_vm）应落 queueFast，不占慢池
+	fast := &model.Task{ID: 102, Type: "stop_vm", Status: statusPending}
+	if err := m.enqueue(fast); err != nil {
+		t.Fatalf("快池入队失败：%v", err)
 	}
-	if task.Error != "" {
-		t.Errorf("入队成功不应写错误：实际 %q", task.Error)
+	select {
+	case got := <-m.queueFast:
+		if got != fast.ID {
+			t.Errorf("快池入队的 taskID 错误：期望 %d，实际 %d", fast.ID, got)
+		}
+	default:
+		t.Fatal("快池任务未进入 queueFast，worker 永远取不到它")
+	}
+	if len(m.queueSlow) != 0 {
+		t.Errorf("快池任务不应占用慢池：慢池实际剩 %d 个", len(m.queueSlow))
 	}
 }
 
@@ -346,15 +367,19 @@ func TestEnqueueFastPath(t *testing.T) {
 //
 // 风险点：旧实现是 `go func(){ m.queue <- id }()` —— 队列满时每次提交都留下一个
 // 永不退出的阻塞 goroutine，提交越频繁泄漏越多，最终 OOM。现在改成同步等待
-// enqueueTimeout，超时把任务置 failed 并回写返回给 handler 的 task 对象，
-// 前端立刻能看到「任务队列繁忙」而不是永久 pending。
+// enqueueTimeout，超时返回 ErrQueueBusy——Submit 如实报错，handler 的既有 err
+// 分支直接透文案，不再假受理（回 202 后前端轮询才发现注定失败）。
 //
 // 本用例刻意不接数据库：m.DB 为 nil，超时分支里的 markFailed 会在 gorm 上 panic，
 // 而 markFailed 自带 recover —— 于是同时验证了「DB 层再出意外也不能把进程带走」。
 // 代价是必须真等 enqueueTimeout（3 秒），这是本包唯一的慢用例。
 func TestEnqueueTimeoutMarksTaskFailed(t *testing.T) {
-	m := &Manager{queue: make(chan uint, 1), executors: map[string]Executor{}}
-	m.queue <- 1 // 占满队列，且没有 worker 消费
+	m := &Manager{
+		queueFast: make(chan uint, 1),
+		queueSlow: make(chan uint, 1),
+		executors: map[string]Executor{},
+	}
+	m.queueSlow <- 1 // 占满慢池（create_vm 属慢池），且没有 worker 消费
 
 	task := &model.Task{ID: 202, Type: "create_vm", Status: statusPending, VMName: "web-01"}
 
@@ -365,10 +390,11 @@ func TestEnqueueTimeoutMarksTaskFailed(t *testing.T) {
 	defer log.SetOutput(io.Discard)
 
 	start := time.Now()
+	var enqErr error
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		m.enqueue(task) // 内部 markFailed 会因 m.DB == nil 触发 panic 并自行 recover
+		enqErr = m.enqueue(task) // 内部 markFailed 会因 m.DB == nil 触发 panic 并自行 recover
 	}()
 
 	select {
@@ -384,15 +410,12 @@ func TestEnqueueTimeoutMarksTaskFailed(t *testing.T) {
 	if elapsed > enqueueTimeout+3*time.Second {
 		t.Errorf("等待时间过长：期望约 %v，实际 %v", enqueueTimeout, elapsed)
 	}
-	if task.Status != statusFailed {
-		t.Errorf("超时后任务状态错误：期望 %q，实际 %q（前端会一直显示 pending）", statusFailed, task.Status)
-	}
-	if task.Error != msgQueueBusy {
-		t.Errorf("超时后错误文案错误：期望 %q，实际 %q", msgQueueBusy, task.Error)
+	if !errors.Is(enqErr, ErrQueueBusy) {
+		t.Errorf("超时应返回 ErrQueueBusy（handler 靠它拒绝假受理）：实际 %v", enqErr)
 	}
 	// 队列里原有的任务不应被顶掉
-	if len(m.queue) != 1 {
-		t.Errorf("队列内容被破坏：期望仍有 1 个待执行任务，实际 %d 个", len(m.queue))
+	if len(m.queueSlow) != 1 {
+		t.Errorf("队列内容被破坏：期望仍有 1 个待执行任务，实际 %d 个", len(m.queueSlow))
 	}
 	// 运维可观测性：超时必须留日志，且带上 id/type/vm 便于定位积压来源
 	logged := logBuf.String()
@@ -412,7 +435,11 @@ func TestEnqueueTimeoutMarksTaskFailed(t *testing.T) {
 // 风险点：markFailed 是 panic 兜底路径的终点（run 的 defer 里也调它）。
 // 如果它自己 panic 了，worker goroutine 就直接把进程带走 —— 兜底逻辑必须自己也不出事。
 func TestMarkFailedRecoversFromNilDB(t *testing.T) {
-	m := &Manager{queue: make(chan uint, 1), executors: map[string]Executor{}} // DB 为 nil
+	m := &Manager{ // DB 为 nil
+		queueFast: make(chan uint, 1),
+		queueSlow: make(chan uint, 1),
+		executors: map[string]Executor{},
+	}
 
 	var logBuf bytes.Buffer
 	log.SetOutput(&logBuf)
@@ -437,7 +464,11 @@ func TestMarkFailedRecoversFromNilDB(t *testing.T) {
 // 少注册一个类型 = 对应功能整条链路静默失效（前端提交成功但任务永远失败），
 // 因此把任务契约约定的 6 个类型钉在测试里。
 func TestRegisterVMTasks(t *testing.T) {
-	m := &Manager{queue: make(chan uint, 1), executors: map[string]Executor{}}
+	m := &Manager{
+		queueFast: make(chan uint, 1),
+		queueSlow: make(chan uint, 1),
+		executors: map[string]Executor{},
+	}
 	RegisterVMTasks(m)
 
 	want := []string{"create_vm", "delete_vm", "clone_vm", "clone_image_vm", "stop_vm", "cleanup_volumes"}
