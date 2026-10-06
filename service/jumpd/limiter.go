@@ -5,8 +5,9 @@ import (
 	"time"
 )
 
-// limiter SSH 跳板登录失败限流器（内存实现，按来源 IP 计数）。
-// 策略与 handler/auth.go 的 loginLimiter 同构：同一 IP 在统计窗口内失败达到上限后
+// limiter SSH 跳板登录失败限流器（内存实现，按键计数——IP 与用户名两个维度
+// 各自实例化，见 authenticator：键对实例私有，互不相撞）。
+// 策略与 handler/auth.go 的 loginLimiter 同构：同一键在统计窗口内失败达到上限后
 // 锁定到窗口结束，成功登录即清零；目的同样是抬高口令爆破成本（纯内存，重启即重置）。
 // 与 handler 版的差异：时间判定抽成可注入的 now 函数，测试可精确推进窗口不靠 sleep。
 type limiter struct {
@@ -35,7 +36,7 @@ func newLimiterWithClock(window time.Duration, maxFails int, now func() time.Tim
 	}
 }
 
-// blocked 判断该 IP 是否处于锁定状态；锁定时返回剩余等待时长。
+// blocked 判断该键是否处于锁定状态；锁定时返回剩余等待时长。
 func (l *limiter) blocked(ip string) (bool, time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -74,7 +75,7 @@ func (l *limiter) fail(ip string) {
 	rec.count++
 }
 
-// success 认证成功清零该 IP 计数。
+// success 认证成功清零该键计数。
 func (l *limiter) success(ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -172,7 +172,7 @@ func Start(db *gorm.DB, enabled bool, port int, masterSecret string) {
 		log.Printf("[jumpd] 主机密钥不可用，跳板服务拒绝启动: %v", err)
 		return
 	}
-	a := &authenticator{DB: db, limiter: newLimiter(time.Minute, 5)}
+	a := newAuthenticator(db)
 	srv := &Server{DB: db, auth: a, signer: signer, masterSecret: masterSecret}
 	go srv.listenAndServe(port) // 启动横幅由 listenAndServe 在 bind 成功后打印（失败时不再误报已启动）
 }
@@ -302,7 +302,9 @@ func (s *Server) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 	s.menuLoop(user, isAdmin, clientIP, chans)
 }
 
-// rejectReadOnly 只读角色的会话层拒绝：接受通道、等 shell 请求就绪后给出中文提示并正常退出
+// rejectReadOnly 只读角色的会话层拒绝：接受通道、等 shell 请求真正到达后再给中文
+// 提示并正常退出（原实现固定 sleep 300ms 等 pty 就绪，慢网络下提示会先于终端建立
+// 而被丢弃/截断——改为事件驱动，快网络也不白等）
 func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 	select {
 	case newCh := <-chans:
@@ -315,6 +317,7 @@ func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 			return
 		}
 		defer ch.Close()
+		shellReady := make(chan struct{}, 1)
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -324,12 +327,24 @@ func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 			for req := range inReqs {
 				if req.Type == "pty-req" || req.Type == "shell" {
 					req.Reply(true, nil)
+					if req.Type == "shell" {
+						select {
+						case shellReady <- struct{}{}:
+						default:
+						}
+					}
 				} else if req.WantReply {
 					req.Reply(false, nil)
 				}
 			}
 		}()
-		time.Sleep(300 * time.Millisecond) // 等客户端完成 pty/shell 请求、终端就绪再写提示
+		// shell 请求到达 = 客户端 pty 已建立、开始读输出，此时写提示渲染才正常；
+		// 迟迟不发 shell 的非交互客户端超时收工（与 runSession 的 10s 口径一致）
+		select {
+		case <-shellReady:
+		case <-time.After(10 * time.Second):
+			return
+		}
 		io.WriteString(ch, "\r\n✗ 只读角色不支持终端登录（viewer 无资产终端权限）\r\n")
 		sendExitStatus(ch)
 	case <-time.After(30 * time.Second):

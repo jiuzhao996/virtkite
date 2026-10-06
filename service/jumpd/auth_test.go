@@ -1,6 +1,7 @@
 package jumpd
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +59,8 @@ func seedUser(t *testing.T, db *gorm.DB, username, password, role string, active
 func TestAuthenticate(t *testing.T) {
 	db := testDB(t)
 	seedUser(t, db, "stu", "goodpass", "operator", true)
-	a := &authenticator{DB: db, limiter: newLimiter(time.Minute, 5)}
+	seedUser(t, db, "mate", "goodpass", "operator", true) // 同 IP 的同学（NAT 邻居）
+	a := newAuthenticator(db)
 
 	// 正确密码 → 返回用户
 	u, msg, err := a.authenticate("10.1.0.1", "stu", "goodpass")
@@ -69,27 +71,31 @@ func TestAuthenticate(t *testing.T) {
 		t.Fatalf("返回用户字段不对: %+v", u)
 	}
 
-	// 错误密码 → 拒绝且限流计数
-	for i := 0; i < 3; i++ {
+	// 错误密码 ×5（同用户同 IP）→ 账号维度锁定；IP 维度 5<20 不锁（NAT 教室不连坐）
+	for i := 0; i < 5; i++ {
 		_, _, _ = a.authenticate("10.1.0.2", "stu", "wrongpass")
 	}
-	if locked, _ := a.limiter.blocked("10.1.0.2"); locked {
-		t.Fatalf("3 次失败不应锁定")
+	if locked, _ := a.userLimiter.blocked("stu"); !locked {
+		t.Fatalf("同账号 5 次失败应触发账号维度锁定")
 	}
-	// 再错 2 次凑满 5 → 锁定（证明每次失败都被计数）
-	for i := 0; i < 2; i++ {
-		_, _, _ = a.authenticate("10.1.0.2", "stu", "wrongpass")
+	if locked, _ := a.ipLimiter.blocked("10.1.0.2"); locked {
+		t.Fatalf("IP 维度上限 20，5 次失败不应锁全班共享的出口 IP")
 	}
-	if locked, _ := a.limiter.blocked("10.1.0.2"); !locked {
-		t.Fatalf("累计 5 次密码错误应触发限流锁定")
+	// NAT 不误伤：同 IP 的同学照常登录
+	if u, msg, err := a.authenticate("10.1.0.2", "mate", "goodpass"); err != nil || u == nil {
+		t.Fatalf("同 IP 其他用户不应被连坐: err=%v msg=%q", err, msg)
+	}
+	// 账号维度跟着人走：换 IP 也进不来（锁定态下正确密码同样拒绝）
+	if _, msg, err := a.authenticate("10.9.9.9", "stu", "goodpass"); err == nil || !strings.Contains(msg, "失败次数过多") {
+		t.Fatalf("锁定的账号换 IP 应被拒: err=%v msg=%q", err, msg)
 	}
 
-	// 用户不存在 → 拒绝且计数（5 次后锁定，证明不存在的用户名同样计爆破成本）
+	// 用户不存在 → 同样计爆破成本（账号维度锁定该假名）
 	for i := 0; i < 5; i++ {
 		_, _, _ = a.authenticate("10.1.0.3", "ghost", "whatever")
 	}
-	if locked, _ := a.limiter.blocked("10.1.0.3"); !locked {
-		t.Fatalf("用户不存在的失败应计数")
+	if locked, _ := a.userLimiter.blocked("ghost"); !locked {
+		t.Fatalf("不存在的用户名同样应计数锁定")
 	}
 
 	// 禁用账号 → 拒绝且文案明确
@@ -100,11 +106,31 @@ func TestAuthenticate(t *testing.T) {
 	}
 }
 
+// TestAuthenticateIPLock 单一来源扫号（轮换用户名让每个账号维度只计 1 次）由 IP 维度兜住：
+// 校园场景 IP 上限放宽的前提是它仍能拦住单源爆破
+func TestAuthenticateIPLock(t *testing.T) {
+	db := testDB(t)
+	seedUser(t, db, "stu", "goodpass", "operator", true)
+	a := newAuthenticator(db)
+
+	for i := 0; i < 20; i++ {
+		_, _, _ = a.authenticate("10.5.0.1", "bot"+strconv.Itoa(i), "x")
+	}
+	if locked, _ := a.ipLimiter.blocked("10.5.0.1"); !locked {
+		t.Fatalf("单源 20 次失败应触发 IP 维度锁定")
+	}
+	// IP 锁定后连正确密码也拒绝（先查锁后验密）
+	_, msg, err := a.authenticate("10.5.0.1", "stu", "goodpass")
+	if err == nil || !strings.Contains(msg, "失败次数过多") {
+		t.Fatalf("IP 锁定态应拒绝: err=%v msg=%q", err, msg)
+	}
+}
+
 func TestAuthenticateViewerPassesToSessionLayer(t *testing.T) {
 	db := testDB(t)
 	seedUser(t, db, "viewer1", "goodpass", "viewer", true)
 	seedUser(t, db, "admin1", "goodpass", "admin", true)
-	a := &authenticator{DB: db, limiter: newLimiter(time.Minute, 5)}
+	a := newAuthenticator(db)
 
 	// Ruling：SSH 密码失败无法携带自定义文案，viewer 改为认证放行、会话层拒绝
 	// （server.go rejectReadOnly），此处断言放行 + 角色白名单把 viewer 挡在会话层
@@ -118,7 +144,7 @@ func TestAuthenticateViewerPassesToSessionLayer(t *testing.T) {
 	if !roleAllowed("operator") || !roleAllowed("admin") {
 		t.Fatalf("operator/admin 应通过角色白名单")
 	}
-	if locked, _ := a.limiter.blocked("10.2.0.1"); locked {
+	if locked, _ := a.ipLimiter.blocked("10.2.0.1"); locked {
 		t.Fatalf("合法登录不应计入爆破限流")
 	}
 
@@ -130,11 +156,11 @@ func TestAuthenticateViewerPassesToSessionLayer(t *testing.T) {
 func TestAuthenticateLocked(t *testing.T) {
 	db := testDB(t)
 	seedUser(t, db, "stu", "goodpass", "operator", true)
-	l := newLimiter(time.Minute, 5)
-	for i := 0; i < 5; i++ {
+	l := newLimiter(time.Minute, 20)
+	for i := 0; i < 20; i++ {
 		l.fail("10.3.0.1")
 	}
-	a := &authenticator{DB: db, limiter: l}
+	a := &authenticator{DB: db, ipLimiter: l, userLimiter: newLimiter(time.Minute, 5)}
 
 	// 锁定态下正确密码也拒绝，且拒绝发生在密码校验之前（先查锁）
 	_, msg, err := a.authenticate("10.3.0.1", "stu", "goodpass")
