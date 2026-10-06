@@ -37,7 +37,7 @@
         <span class="card-title">我的申请</span>
       </template>
       <el-table :data="mine" v-loading="loading" stripe size="small">
-        <template #empty><el-empty description="还没有申请记录" :image-size="70" /></template>
+        <template #empty><el-empty description="还没有申请记录" :image-size="80" /></template>
         <el-table-column prop="vm_name" label="虚拟机" min-width="120" />
         <el-table-column prop="reason" label="理由" min-width="220" show-overflow-tooltip />
         <el-table-column label="时长" width="90">
@@ -74,7 +74,7 @@
         </div>
       </template>
       <el-table :data="requests" v-loading="loading" stripe size="small">
-        <template #empty><el-empty :description="statusFilter === 'pending' ? '没有待审批的申请' : '暂无记录'" :image-size="70" /></template>
+        <template #empty><el-empty :description="statusFilter === 'pending' ? '没有待审批的申请' : '暂无记录'" :image-size="80" /></template>
         <el-table-column prop="username" label="申请人" width="110" />
         <el-table-column prop="vm_name" label="虚拟机" min-width="110" />
         <el-table-column prop="reason" label="理由" min-width="220" show-overflow-tooltip />

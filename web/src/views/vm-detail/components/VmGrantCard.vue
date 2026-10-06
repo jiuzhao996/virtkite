@@ -48,7 +48,7 @@
         >授权</el-button>
       </div>
       <el-table :data="grantSubjects" size="small" border style="width: 100%" v-loading="grantsLoading">
-        <template #empty><el-empty description="暂无授权（该虚拟机当前仅管理员可见）" :image-size="70" /></template>
+        <template #empty><el-empty description="暂无授权（该虚拟机当前仅管理员可见）" :image-size="60" /></template>
         <el-table-column label="类型" width="96">
           <template #default="{ row }">
             <el-tag :type="row.subjectType === 'user' ? 'primary' : 'warning'" effect="plain" size="small">

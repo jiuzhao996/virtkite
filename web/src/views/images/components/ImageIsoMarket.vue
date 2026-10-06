@@ -48,7 +48,7 @@
         </el-card>
       </el-col>
     </el-row>
-    <el-empty v-if="!items.length && !loading" description="清单为空" />
+    <el-empty v-if="!items.length && !loading" description="清单为空" :image-size="80" />
   </div>
 </template>
 

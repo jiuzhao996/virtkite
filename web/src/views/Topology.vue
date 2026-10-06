@@ -21,7 +21,7 @@
 
       <div v-show="hasData" ref="chartRef" class="topo-chart" />
       <div v-if="!hasData" class="topo-empty">
-        <el-empty :description="emptyText">
+        <el-empty :description="emptyText" :image-size="80">
           <el-button type="primary" :loading="loading" @click="load">重新加载</el-button>
         </el-empty>
       </div>

@@ -65,7 +65,7 @@
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty description="还没有模板，点击右上角「新建模板」创建第一个">
+          <el-empty description="还没有模板，点击右上角「新建模板」创建第一个" :image-size="80">
             <el-button type="primary" plain @click="openCreate">新建模板</el-button>
           </el-empty>
         </template>

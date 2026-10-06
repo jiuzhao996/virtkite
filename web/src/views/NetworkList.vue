@@ -26,7 +26,7 @@
       </Toolbar>
 
       <!-- 网络卡片（腾讯云风格）：网络属性多（网桥/转发/网关/DHCP），少量对象时卡片比表格信息层次更好 -->
-      <el-empty v-if="!networks.length && !loading" description="暂无虚拟网络，点击「新建 NAT 网络」创建" :image-size="72" />
+      <el-empty v-if="!networks.length && !loading" description="暂无虚拟网络，点击「新建 NAT 网络」创建" :image-size="80" />
       <el-row v-else :gutter="16">
         <el-col v-for="row in networks" :key="row.name" :xs="24" :sm="12" :md="8">
         <el-card shadow="hover" class="net-card" :class="{ inactive: !row.active }">

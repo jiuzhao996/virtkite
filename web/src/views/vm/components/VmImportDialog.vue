@@ -36,7 +36,7 @@
           <el-button type="primary" :icon="Refresh" @click="open">重试扫描</el-button>
         </template>
       </el-result>
-      <el-empty v-else-if="!scanning && !unmanaged.length" description="暂无未纳管的存量 VM" />
+      <el-empty v-else-if="!scanning && !unmanaged.length" description="暂无未纳管的存量 VM" :image-size="60" />
       <el-table
         v-else
         :data="unmanaged"

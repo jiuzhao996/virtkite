@@ -6,7 +6,7 @@
     </div>
     <el-card shadow="never">
       <el-table :data="snapshots" size="small" border style="width: 100%" v-loading="snapLoading">
-        <template #empty><el-empty description="暂无快照" :image-size="70" /></template>
+        <template #empty><el-empty description="暂无快照" :image-size="60" /></template>
         <el-table-column prop="name" label="名称" min-width="160" />
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
         <el-table-column label="创建时间" min-width="170">

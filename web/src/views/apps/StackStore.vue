@@ -37,7 +37,7 @@
     <el-drawer v-model="docsDrawer" :title="'参考笔记 — ' + docsStack" size="55%">
       <div v-loading="docsLoading" class="sk-docs">
         <div v-if="docsHtml" class="markdown-body" v-html="docsHtml" />
-        <el-empty v-else-if="!docsLoading" description="笔记不可读（NOTES_DIR 未配置或路径不存在）" :image-size="72" />
+        <el-empty v-else-if="!docsLoading" description="笔记不可读（NOTES_DIR 未配置或路径不存在）" :image-size="60" />
       </div>
     </el-drawer>
   </div>
