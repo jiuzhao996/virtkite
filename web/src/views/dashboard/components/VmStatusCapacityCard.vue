@@ -10,7 +10,13 @@
     <div v-else class="donut-wrap">
       <div class="donut" :style="{ background: donutStyle }"><span class="donut-center">{{ totalVM }}<small>台</small></span></div>
       <div class="donut-legend">
-        <div v-for="item in vmStatus" :key="item.status" class="legend-item">
+        <!-- 图例整行可点：跳 VM 列表并按该状态预筛选（环图分段此前 0 可点） -->
+        <div
+          v-for="item in vmStatus" :key="item.status"
+          class="legend-item legend-clickable"
+          :title="`查看${vmStatusText(item.status)}的虚拟机`"
+          @click="goStatus(item.status)"
+        >
           <span class="dot" :style="{ background: vmStatusHex(item.status) }" />
           <span>{{ vmStatusText(item.status) }}</span>
           <b>{{ item.count }}</b>
@@ -64,6 +70,7 @@
 // 虚拟机状态环图 + 资源容量（超分视角）卡（自 Dashboard.vue 拆出，渲染输出不变）。
 // 纯展示组件：vmStatus / capacity 由 shell 统一拉取后经 props 下发。
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { InfoFilled } from '@element-plus/icons-vue'
 import { vmStatusText, vmStatusColor, vmStatusHex } from '../../../utils/format'
 
@@ -71,6 +78,13 @@ const props = defineProps({
   vmStatus: { type: Array, required: true }, // [{ status, count }]
   capacity: { type: Object, required: true } // { has_host, allocated_vcpu, ... cpu_ratio, mem_ratio }
 })
+
+const router = useRouter()
+
+// 状态图例下钻：VmList 读 query.status 预置筛选（此前环图分段完全不可点）
+function goStatus(status) {
+  router.push({ path: '/vms', query: { status } })
+}
 
 const totalVM = computed(() => props.vmStatus.reduce((a, b) => a + b.count, 0))
 
@@ -173,6 +187,20 @@ function capGB(mb) {
 .legend-item b {
   margin-left: auto;
   font-family: var(--font-mono);
+}
+/* 图例可点下钻：悬停反馈让「能点」这件事可见 */
+.legend-clickable {
+  cursor: pointer;
+  padding: 2px 4px;
+  margin: 0 -4px;
+  border-radius: var(--radius-sm, 4px);
+  transition: background var(--dur-base) var(--ease-standard);
+}
+.legend-clickable:hover {
+  background: var(--color-muted, #f5f7fa);
+}
+.legend-clickable:hover span:not(.dot) {
+  color: var(--el-color-primary);
 }
 .status-rows {
   margin-top: 16px;

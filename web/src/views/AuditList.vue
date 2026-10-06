@@ -407,13 +407,27 @@ function onRowClick(row) {
   openDetail(row)
 }
 
-// 关联跳转（包C）：vm → 虚拟机详情、user → 用户列表；对象ID 为空或其余类型不给链接
+// 关联跳转（包C）：vm → 虚拟机详情、user → 用户列表；对象ID 为空或其余类型不给链接。
+// R6 扩展：此前只有 vm / user 两类能跳，docker/image/cron/task/app/stack 全是不可点的
+// 死行——审计是天然的「跨对象索引」，这里补齐就是织网。
 const relatedLink = computed(() => {
   if (!current.value) return null
   const t = current.value.object_type
   const id = current.value.object_id
+  // 路径兜底：栈动作的 object_type 是 system，只有路径能区分
+  const p = String(current.value.detail || '').split(' · ')[0]
   if (t === 'vm' && id != null) return { text: '查看虚拟机 →', to: '/vms/' + id }
+  if (t === 'vm') return { text: '查看虚拟机列表 →', to: '/vms' }
   if (t === 'user') return { text: '查看用户列表 →', to: '/users' }
+  if (t === 'docker') return { text: '查看容器 →', to: '/containers' }
+  if (t === 'image') return { text: '查看镜像 →', to: '/images' }
+  if (t === 'cron') return { text: '查看计划任务 →', to: '/automation?tab=cron' }
+  if (t === 'app') return { text: '查看应用商店 →', to: '/apps' }
+  if (t === 'task') return { text: '查看任务中心 →', to: '/tasks' }
+  if (t === 'host') return { text: '查看宿主机 →', to: '/hosts' }
+  if (p.startsWith('/api/stacks')) return { text: '查看部署栈 →', to: '/apps?tab=stacks' }
+  if (p.startsWith('/api/networks')) return { text: '查看网络 →', to: '/networks' }
+  if (p.startsWith('/api/storage')) return { text: '查看存储 →', to: '/storage' }
   return null
 })
 

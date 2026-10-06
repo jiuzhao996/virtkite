@@ -95,7 +95,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, Upload, VideoPlay, SwitchButton, Delete, Search } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -140,7 +140,9 @@ const importScanning = ref(false)
 const runningCount = computed(() => items.value.filter((i) => i.status === 'running').length)
 
 // 筛选：关键词（名称）+ 状态（客户端即时过滤）
-const q = reactive({ keyword: '', status: '' })
+// 状态初值取自路由 query（仪表盘环图图例下钻：/vms?status=running）
+const route = useRoute()
+const q = reactive({ keyword: '', status: String(route.query.status || '') })
 const isFiltered = computed(() => !!(q.keyword.trim() || q.status))
 // 清除筛选：重置关键词与状态，回到全量列表（筛选空态的「清除筛选」按钮入口）
 function clearFilters() {

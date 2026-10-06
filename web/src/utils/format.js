@@ -189,6 +189,18 @@ export const FALLBACK_ACTION_LABELS = {
   create_network: '创建网络', update_network: '更新网络', delete_network: '删除网络',
   create_volume: '创建存储卷', delete_volume: '删除存储卷',
   'jumpd.cmd': '跳板执行命令', 'jumpd.cmd_blocked': '跳板拦截危险命令',
+  // 容器域（R1-R5 深化后新增的细分动作）
+  create_container: '创建容器', delete_container: '删除容器', start_container: '启动容器',
+  stop_container: '停止容器', restart_container: '重启容器', pause_container: '暂停容器',
+  unpause_container: '恢复容器', rename_container: '重命名容器', pull_image: '拉取镜像',
+  prune_docker: '清理 Docker 资源', prune_volume: '清理未引用卷',
+  compose_up: '构建启动编排', compose_start: '启动编排', compose_stop: '停止编排',
+  compose_restart: '重启编排', compose_down: '下线编排',
+  // 计划任务 / 部署栈
+  create_cron: '创建计划任务', update_cron: '更新计划任务', delete_cron: '删除计划任务',
+  toggle_cron: '启停计划任务', run_cron: '手动触发计划任务',
+  deploy_stack: '部署栈', upgrade_stack: '升级栈', edit_stack_file: '编辑编排文件',
+  container_healthcheck: '容器健康巡检',
   access: '访问'
 }
 

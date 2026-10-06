@@ -1,8 +1,13 @@
 <template>
   <el-card shadow="hover">
     <template #header>
-      <span class="card-title">主机资源实时大盘</span>
-      <span v-if="lastUpdate" class="update-time">更新于 {{ lastUpdate }}</span>
+      <div class="card-head-row">
+        <span class="card-title">主机资源实时大盘</span>
+        <span class="hd-spacer" />
+        <span v-if="lastUpdate" class="update-time">更新于 {{ lastUpdate }}</span>
+        <!-- 下钻入口：本卡此前 0 个可点元素 -->
+        <el-link type="primary" underline="never" @click="goMonitor">监控大盘 →</el-link>
+      </div>
     </template>
 
     <div class="host-summary">
@@ -46,8 +51,16 @@
 // - echarts 初始化 / setOption / resize / dispose 全部随组件生命周期走，
 //   组件卸载即 dispose + 摘除 window resize 监听，无实例泄漏。
 import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import echarts from '../../../utils/echarts'
 import { cssVar } from '../../../utils/format'
+
+const router = useRouter()
+
+// 下钻到监控 tab（本卡此前无任何可点元素）
+function goMonitor() {
+  router.push({ path: '/dashboard', query: { tab: 'monitor' } })
+}
 
 const props = defineProps({
   host: { type: Object, required: true }, // { cpu, memPct, memUsed, memTotal }
@@ -167,12 +180,20 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 头部行：标题 + 更新时间 + 下钻链接（原实现用 float 排版，加链接后改 flex） */
+.card-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .card-title {
   font-weight: 600;
   color: var(--color-foreground);
 }
+.hd-spacer {
+  flex: 1;
+}
 .update-time {
-  float: right;
   font-size: 0.75rem;
   color: var(--color-muted-foreground);
   font-weight: 400;

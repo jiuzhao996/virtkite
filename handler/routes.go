@@ -483,6 +483,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		dashboard.GET("/vm-status", dashboardHandler.VMStatusDistribution)
 		dashboard.GET("/host-stats", dashboardHandler.HostStats)
 		dashboard.GET("/vm-perf", dashboardHandler.VmPerf)
+		// 全站活动流（最近审计写操作摘要）：operator 可见，viewer 由组内 OperatorMiddleware 403
+		dashboard.GET("/activity", dashboardHandler.Activity)
 		// 宿主机历史曲线（Prometheus query_range，进页面即画满）
 		dashboard.GET("/host-history", historyHandler.HostHistory)
 		// 全部虚拟机历史曲线（虚拟机列表页迷你图预填）

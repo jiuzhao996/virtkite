@@ -284,6 +284,35 @@ func parseMeminfoKB(line string) uint64 {
 	return v
 }
 
+// Activity 全站活动流：最近 N 条审计记录（只含写操作——审计中间件不记 GET，天然免刷屏）。
+// 挂在 dashboard 组（OperatorMiddleware）而非放权 /api/audit：审计全量查询（筛选/导出）
+// 仍 admin 专属，活动流只是脱敏摘要（固定字段、无 IP 明细），权限面最小化。
+func (h *DashboardHandler) Activity(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	var logs []model.AuditLog
+	if err := h.DB.Order("created_at DESC").Limit(limit).Find(&logs).Error; err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	items := make([]gin.H, 0, len(logs))
+	for _, l := range logs {
+		items = append(items, gin.H{
+			"id":          l.ID,
+			"action":      l.Action,
+			"object_type": l.ObjectType,
+			"object_id":   l.ObjectID,
+			"username":    l.Username,
+			"status":      l.Status,
+			"detail":      l.Detail,
+			"created_at":  l.CreatedAt,
+		})
+	}
+	Success(c, gin.H{"items": items, "total": len(items)})
+}
+
 // VmPerf 返回各 VM 实时性能（遍历 DB，仅 running 采样 GetDomainStats）。
 func (h *DashboardHandler) VmPerf(c *gin.Context) {
 	var vms []model.VM

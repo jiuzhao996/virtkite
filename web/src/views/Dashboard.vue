@@ -64,10 +64,13 @@
           </el-col>
         </el-row>
 
-        <!-- Row 3: VM 实时性能表 -->
+        <!-- Row 3: VM 实时性能表 + 全站活动流（织网：从「发生了什么」直跳对象页） -->
         <el-row :gutter="16" class="mt">
-          <el-col :span="24">
+          <el-col :md="14">
             <VmPerfTable :items="vmPerf" />
+          </el-col>
+          <el-col :md="10">
+            <ActivityFeedCard v-if="canOperate" :active="activeTab === 'overview'" />
           </el-col>
         </el-row>
 
@@ -105,6 +108,7 @@ import StatOverviewRow from './dashboard/components/StatOverviewRow.vue'
 import HostResourceCard from './dashboard/components/HostResourceCard.vue'
 import VmStatusCapacityCard from './dashboard/components/VmStatusCapacityCard.vue'
 import VmPerfTable from './dashboard/components/VmPerfTable.vue'
+import ActivityFeedCard from './dashboard/components/ActivityFeedCard.vue'
 import AdminPanelCards from './dashboard/components/AdminPanelCards.vue'
 import { api } from '../api'
 import { useRoute } from 'vue-router'

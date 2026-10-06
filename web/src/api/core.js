@@ -147,6 +147,8 @@ export const core = {
   vmStatus: () => unwrap(http.get('/dashboard/vm-status')),
   dashboardHostStats: () => unwrap(http.get('/dashboard/host-stats')),
   vmPerf: () => unwrap(http.get('/dashboard/vm-perf')),
+  // 全站活动流（最近审计写操作摘要，operator+）
+  dashboardActivity: (limit) => unwrap(http.get('/dashboard/activity', { params: { limit } })),
   // 历史性能曲线（Prometheus query_range，进页面即画满，无需等轮询攒点）
   hostHistory: (minutes) => unwrap(http.get('/dashboard/host-history', { params: { minutes } })),
   vmHistory: (minutes) => unwrap(http.get('/dashboard/vm-history', { params: { minutes } })),

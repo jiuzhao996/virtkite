@@ -98,7 +98,9 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 			ObjectType: objectType,
 			SourceIP:   sourceIP,
 			Status:     status,
-			Detail:     "请求处理时间: " + duration.String(),
+			// Detail 带路径：全站活动流要按路径判断「跳哪个对象页」，审计列表的
+		// 可读性也依赖它（此前只有耗时，同一 action 的行长得一模一样）
+		Detail:     path + " · 耗时 " + duration.String(),
 		}
 
 		// 同步写入审计日志
@@ -177,7 +179,100 @@ func determineAction(method, path string) string {
 		}
 	}
 
+	// Docker 容器/镜像/网络/卷/compose：此前全落默认 access，审计里看不出「做了什么」，
+	// 容器章节深化后操作面大幅增加（暂停/恢复/重命名/清理/栈升级…），必须细分。
+	if strings.HasPrefix(path, "/api/docker") {
+		return dockerAction(method, path)
+	}
+
+	// 计划任务（admin 域）：执行动作本身在后台，HTTP 侧只有增删改与手动触发。
+	if strings.HasPrefix(path, "/api/crons") {
+		switch method {
+		case "POST":
+			if strings.HasSuffix(path, "/run") {
+				return "run_cron"
+			}
+			return "create_cron"
+		case "PUT":
+			if strings.HasSuffix(path, "/toggle") {
+				return "toggle_cron"
+			}
+			return "update_cron"
+		case "DELETE":
+			return "delete_cron"
+		}
+	}
+
+	// 声明式部署栈：部署/升级/编辑编排文件
+	if strings.HasPrefix(path, "/api/stacks") {
+		switch method {
+		case "POST":
+			if strings.HasSuffix(path, "/deploy") {
+				return "deploy_stack"
+			}
+			if strings.HasSuffix(path, "/upgrade") {
+				return "upgrade_stack"
+			}
+		case "PUT":
+			return "edit_stack_file"
+		}
+	}
+
 	// 默认操作
+	return "access"
+}
+
+// dockerAction Docker 域操作映射（容器动作走 :action 后缀，其余按资源与 HTTP 方法）。
+func dockerAction(method, path string) string {
+	// 容器单动作：/api/docker/containers/:id/:action
+	if strings.HasPrefix(path, "/api/docker/containers/") {
+		switch {
+		case strings.HasSuffix(path, "/start"):
+			return "start_container"
+		case strings.HasSuffix(path, "/stop"):
+			return "stop_container"
+		case strings.HasSuffix(path, "/restart"):
+			return "restart_container"
+		case strings.HasSuffix(path, "/pause"):
+			return "pause_container"
+		case strings.HasSuffix(path, "/unpause"):
+			return "unpause_container"
+		case strings.HasSuffix(path, "/rename"):
+			return "rename_container"
+		}
+	}
+	switch method {
+	case "POST":
+		switch {
+		case strings.HasSuffix(path, "/api/docker/containers"):
+			return "create_container"
+		case strings.HasSuffix(path, "/images/pull"):
+			return "pull_image"
+		case strings.HasSuffix(path, "/prune"):
+			return "prune_docker"
+		case strings.HasSuffix(path, "/volumes/prune"):
+			return "prune_volume"
+		case strings.HasSuffix(path, "/api/docker/networks"):
+			return "create_network"
+		case strings.HasSuffix(path, "/api/docker/volumes"):
+			return "create_volume"
+		case strings.HasPrefix(path, "/api/docker/compose/"):
+			// compose 项目级/服务级动作：/compose/:name/:action 或 /compose/:name/services/:svc/:action
+			seg := strings.Split(strings.TrimPrefix(path, "/api/docker/compose/"), "/")
+			return "compose_" + seg[len(seg)-1]
+		}
+	case "DELETE":
+		switch {
+		case strings.HasPrefix(path, "/api/docker/containers/"):
+			return "delete_container"
+		case strings.HasPrefix(path, "/api/docker/images/"):
+			return "delete_image"
+		case strings.HasPrefix(path, "/api/docker/networks/"):
+			return "delete_network"
+		case strings.HasPrefix(path, "/api/docker/volumes/"):
+			return "delete_volume"
+		}
+	}
 	return "access"
 }
 
