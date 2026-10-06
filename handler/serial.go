@@ -75,6 +75,23 @@ func (h *VMHandler) ConnectSerial(c *gin.Context) {
 	default:
 	}
 
+	// watchdog：串口流中途结束（域关闭 / libvirt 断连 / OpenConsole panic 兜底）
+	// 时 errCh 不会再有人读——没有它，主循环写 outW 会阻塞在无人读的无缓冲
+	// pipe 上，浏览器输入一帧就永久卡死整个 handler（连接 + goroutine 泄漏）；
+	// 它也兜住 select-default 竞态：检查瞬间错误尚未写入 errCh、随后才到的首错。
+	go func() {
+		err := <-errCh
+		if err != nil {
+			log.Printf("[serial] 串口中断 vm=%s err=%v", name, err)
+			_ = conn.WriteJSON(gin.H{"type": "error", "msg": "串口连接已中断"})
+		}
+		// 关 pipe 让两个桥接循环退出（读写返回 ErrClosedPipe），再关 WS 通知浏览器；
+		// 与主流程末尾的 Close 幂等，谁先退都成立
+		_ = outW.Close()
+		_ = inW.Close()
+		_ = conn.Close()
+	}()
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {

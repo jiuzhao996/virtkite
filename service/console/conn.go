@@ -3,6 +3,7 @@ package console
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -10,6 +11,12 @@ import (
 // ErrConnClosed 向已关闭连接写入时返回的哨兵错误。
 // 桥接 goroutine 收到该错误即应退出转发循环。
 var ErrConnClosed = errors.New("WebSocket 连接已关闭")
+
+// wsWriteTimeout 单帧写超时：对端半死（拔网线 / NAT 静默丢连接）时内核写缓冲
+// 排满后无限阻塞，且写方持有 writeMu——一个卡死的写会把所有写方和转发循环
+// 一起拖死（goroutine + 连接泄漏）。每帧写前重置 deadline，任何一帧最多挂这么久。
+// 控制台流量是交互小帧，10s 足够宽裕。
+const wsWriteTimeout = 10 * time.Second
 
 // Conn 串行化写入的 WebSocket 包装。
 //
@@ -43,6 +50,7 @@ func (c *Conn) WriteMessage(messageType int, data []byte) error {
 	if c.closed {
 		return ErrConnClosed
 	}
+	_ = c.ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 	return c.ws.WriteMessage(messageType, data)
 }
 
@@ -53,6 +61,7 @@ func (c *Conn) WriteJSON(v any) error {
 	if c.closed {
 		return ErrConnClosed
 	}
+	_ = c.ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 	return c.ws.WriteJSON(v)
 }
 
@@ -77,9 +86,13 @@ func (c *Conn) CloseWithReason(reason string) error {
 	}
 	c.closed = true
 	if reason != "" {
-		// 关闭帧发送失败不影响后续强制关闭，忽略错误
+		// 关闭帧同样受写超时保护（对端半死时不让管理员断开操作挂死）；
+		// 发送失败不影响后续强制关闭，忽略错误
+		_ = c.ws.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
 		_ = c.ws.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, reason))
 	}
+	// ws.Close 只关闭底层 fd、立即返回（默认无 SO_LINGER），持锁调用无害；
+	// 它会让所有阻塞中的 Read/Write 立即失败，正是各转发循环需要的退出信号
 	return c.ws.Close()
 }

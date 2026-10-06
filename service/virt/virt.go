@@ -64,18 +64,27 @@ func (v *Virt) Reset() {
 
 // getConn 获取可用连接，连接已断开则自动重建。
 // 每次调用都做一次廉价 RPC 探活：libvirt 连接断开（如 libvirtd 重启）时，
-// 立即 Reset 并重建连接，避免长期持有失效连接导致所有后续操作失败。
+// 立即重建连接，避免长期持有失效连接导致所有后续操作失败。
+//
+// 探活发生在锁外（Connect 已返回），失败者的重建走「锁内指针 CAS」：
+// 只有 v.con 仍是我拿到的那个 l 时才执行断开重连；并发探活失败的其它
+// goroutine 进锁时 v.con 已被换过，直接复用重建结果。否则每个失败者各自
+// Reset 一轮，正在使用连接的旁路 RPC 会被连环互踢，libvirtd 抖一下就
+// 演变成所有请求集体失败。
 func (v *Virt) getConn() (*libvirt.Libvirt, error) {
 	l, err := v.Connect()
 	if err != nil {
 		return nil, err
 	}
 	if _, err := l.ConnectGetVersion(); err != nil {
-		v.Reset()
-		l, err = v.Connect()
-		if err != nil {
-			return nil, err
+		v.mu.Lock()
+		if v.con == l {
+			_ = l.Disconnect()
+			v.con = nil
 		}
+		v.mu.Unlock()
+		// con 为空则此处建立新连接；非空说明他人已重建好，直接复用
+		return v.Connect()
 	}
 	return l, nil
 }
