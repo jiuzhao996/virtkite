@@ -61,6 +61,11 @@ func main() {
 		if config.GlobalConfig.MetricsToken == "" {
 			log.Println("⚠️ /metrics 为公开端点（Prometheus 抓取用）：建议设置 METRICS_TOKEN 开启 Bearer 认证，或用防火墙限制 :8080 的来源网段")
 		}
+		// webhook 是无鉴权写入口（伪造告警入库并触发用户通知）。与 METRICS_TOKEN 同款
+		// 只告警不阻断：未部署监控栈的实例本就用不到该端点，强阻断会误伤。
+		if config.GlobalConfig.AlertWebhookToken == "" {
+			log.Println("⚠️ ALERT_WEBHOOK_TOKEN 未配置：/api/monitor/webhook 为公开端点，任何人可注入伪造告警。部署了 Alertmanager 的实例应配置该令牌并同步到 deploy/alertmanager.yml")
+		}
 	}
 
 	// 初始化数据库

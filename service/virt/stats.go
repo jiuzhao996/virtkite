@@ -31,6 +31,10 @@ type statSample struct {
 	at        time.Time
 }
 
+// statsCacheTTL 差分基线保留时长：远大于 5s 列表轮询间隔；超过它的基线只可能来自
+// 已删除/改名的域（残留即泄漏），且真停机 10 分钟后重启损失一次差分无伤大雅。
+const statsCacheTTL = 10 * time.Minute
+
 // GetDomainStats 返回虚拟机实时性能统计
 // （对应 virsh domstats / dommemstat / domblkstat / domifstat）。
 // CPU 百分比与磁盘/网络速率基于服务端相邻两次采样的差分计算，首次采样返回 0；
@@ -105,6 +109,13 @@ func (v *Virt) GetDomainStats(name string) (*VmStats, error) {
 		netRx:     netRx,
 		netTx:     netTx,
 		at:        now,
+	}
+	// 过期清理：域删除/改名后残留的基线没有差分价值，超时即回收，防长期运行随
+	// VM 生灭无限增长（采样本身以 VM 数为量级，这里同量级扫描开销可忽略）
+	for k, s := range v.statsCache {
+		if now.Sub(s.at) > statsCacheTTL {
+			delete(v.statsCache, k)
+		}
 	}
 	v.statsMu.Unlock()
 

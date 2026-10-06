@@ -5,6 +5,7 @@ package setting
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -69,7 +70,8 @@ func NewManager(db *gorm.DB) *Manager {
 	m := &Manager{db: db, cache: map[string]string{}}
 	var rows []model.Setting
 	if err := db.Find(&rows).Error; err != nil {
-		fmt.Printf("[setting] 载入系统配置失败，全部使用默认值: %v\n", err)
+		// 与其余服务包同款 log + [包名] 前缀（fmt.Printf 不进日志文件）
+		log.Printf("[setting] 载入系统配置失败，全部使用默认值: %v", err)
 		return m
 	}
 	for _, r := range rows {
