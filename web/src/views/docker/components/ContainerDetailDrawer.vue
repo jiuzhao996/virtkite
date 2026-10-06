@@ -78,16 +78,21 @@
 
         <el-tab-pane label="日志" name="logs" lazy>
           <div v-loading="logsLoading">
+            <div v-if="logsMode === 'ws' || wsFallback" class="ls-bar">
+              <span class="ls-dot" :class="dotClass">●</span>
+              <span>{{ wsStatusText }}</span>
+            </div>
             <LogViewer
               ref="logViewerRef"
-              :text="logsText"
+              :text="logsMode === 'http' ? logsText : ''"
+              :rows="logsMode === 'ws' ? streamLines : null"
               :loading="logsLoading"
               :follow="logsFollow"
               :timestamps="logsTimestamps"
               :filename="displayName"
               @update:follow="(v) => (logsFollow = v)"
               @update:timestamps="onTsChange"
-              @refresh="fetchLogs"
+              @refresh="reloadLogs"
             />
           </div>
         </el-tab-pane>
@@ -116,6 +121,7 @@ import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { containerName, stateTag, stateText, dockerTime, shortId } from '../../../utils/docker-format'
 import { parseInspect, portText, portCopyText } from '../../../utils/docker-inspect'
+import { useLogStream } from '../../../composables/useLogStream'
 import { useChart } from '../../../composables/useChart'
 
 const emit = defineEmits(['terminal', 'changed'])
@@ -234,13 +240,25 @@ function renderLine(key, points, color) {
   })
 }
 
-// ── 日志（HTTP 源，复用 LogViewer）──
+// ── 日志（WS 实时流，失败降级 HTTP；渲染复用 LogViewer）──
 const logsText = ref('')
 const logsLoading = ref(false)
 const logsFollow = ref(false)
 const logsTimestamps = ref(false)
 const logsTail = 200
+const logsMode = ref('ws')
 const logViewerRef = ref(null)
+const { lines: streamLines, status, errorMsg, fallback: wsFallback, start: startStream, stop: stopStream, reset: resetStream } = useLogStream()
+
+const dotClass = computed(() => ({ live: 'ok', connecting: 'wait', closed: 'off', error: 'err' }[status.value] || 'off'))
+const wsStatusText = computed(() => {
+  if (wsFallback.value) return '实时流不可用，已退回轮询刷新'
+  if (status.value === 'live') return '实时流已连接'
+  if (status.value === 'connecting') return '实时流连接中…'
+  if (status.value === 'error') return errorMsg.value || '实时流错误'
+  if (status.value === 'closed') return '日志流已结束（容器停止）'
+  return '实时流未连接'
+})
 
 async function fetchLogs() {
   if (!row.value.ID) return
@@ -256,10 +274,23 @@ async function fetchLogs() {
   }
 }
 
+function reloadLogs() {
+  if (logsMode.value === 'ws') startStream(row.value.ID, { tail: logsTail, timestamps: logsTimestamps.value })
+  else fetchLogs()
+}
+
 function onTsChange(v) {
   logsTimestamps.value = v
-  fetchLogs()
+  reloadLogs()
 }
+
+// WS 重试用尽 → 切 HTTP 轮询（本抽屉内 2s 定时，切走 tab 即停）
+watch(wsFallback, (on) => {
+  if (!on) return
+  logsMode.value = 'http'
+  fetchLogs()
+  if (logsFollow.value && tab.value === 'logs') startLogTimer()
+})
 
 // 日志跟随：本组件内简单 2s 定时（抽屉关闭/切走即停）
 let logTimer = null
@@ -282,12 +313,19 @@ function stopStatsTimer() {
   if (statsTimer) { clearInterval(statsTimer); statsTimer = null }
 }
 
-// tab 切换：进入统计/日志 tab 才起对应轮询，离开即停
+// tab 切换：进入统计起轮询；进入日志起实时流（WS 模式）或首拉（HTTP 降级），离开即停
 watch(tab, (t) => {
   if (t === 'stats') { startStatsTimer(); nextTick(renderCharts) } else stopStatsTimer()
-  if (t === 'logs') { fetchLogs(); if (logsFollow.value) startLogTimer() } else stopLogTimer()
+  if (t === 'logs') {
+    if (logsMode.value === 'ws') startStream(row.value.ID, { tail: logsTail, timestamps: logsTimestamps.value })
+    else fetchLogs()
+  } else {
+    stopStream()
+    stopLogTimer()
+  }
 })
-watch(logsFollow, (on) => { if (on && tab.value === 'logs') startLogTimer(); else stopLogTimer() })
+// HTTP 降级模式下「跟随」才需要定时轮询（WS 模式本就实时，跟随仅控制自动滚动）
+watch(logsFollow, (on) => { if (on && tab.value === 'logs' && logsMode.value === 'http') startLogTimer(); else stopLogTimer() })
 
 // ── 头部快捷操作 ──
 async function act(action) {
@@ -357,9 +395,11 @@ function open(r) {
   raw.value = {}
   inspectText.value = ''
   logsText.value = ''
+  logsMode.value = 'ws'
   cpuSeries.value = []
   memSeries.value = []
   stats.value = null
+  resetStream()
   visible.value = true
   fetchInspect()
 }
@@ -367,6 +407,7 @@ function open(r) {
 function onClosed() {
   stopStatsTimer()
   stopLogTimer()
+  stopStream()
 }
 
 defineExpose({ open })
@@ -441,6 +482,22 @@ defineExpose({ open })
   text-align: center;
   color: var(--color-muted-foreground, #909399);
 }
+/* 日志流状态条（WS 实时/降级提示） */
+.ls-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 0.82rem;
+  color: var(--el-text-color-secondary, #909399);
+}
+.ls-dot {
+  font-size: 0.7rem;
+}
+.ls-dot.ok { color: #67c23a; }
+.ls-dot.wait { color: #e6a23c; }
+.ls-dot.off { color: #909399; }
+.ls-dot.err { color: #f56c6c; }
 .logs-toolbar {
   display: flex;
   align-items: center;

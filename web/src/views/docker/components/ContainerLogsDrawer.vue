@@ -1,17 +1,25 @@
 <template>
-    <!-- 容器日志抽屉：壳 + HTTP 轮询数据源 + LogViewer 展示内核（R4 将换为 WS 源，渲染层不动） -->
+    <!-- 容器日志抽屉：壳 + 数据源（WS 实时流，失败降级 HTTP 轮询）+ LogViewer 展示内核 -->
     <el-drawer v-model="logsDrawer" :title="'容器日志 — ' + logsName" size="55%">
       <div v-loading="logsLoading">
+        <!-- 流状态条：仅 WS 模式展示（HTTP 降级时提示已退回轮询） -->
+        <div v-if="mode === 'ws' || wsFallback" class="ls-bar">
+          <span class="ls-dot" :class="dotClass">●</span>
+          <span>{{ wsStatusText }}</span>
+          <el-button v-if="wsFallback" text size="small" @click="retryStream">重试实时流</el-button>
+        </div>
         <LogViewer
           ref="viewerRef"
-          :text="logsText"
+          :text="mode === 'http' ? logsText : ''"
+          :rows="mode === 'ws' ? streamLines : null"
           :loading="logsLoading"
           :follow="logsFollow"
           :timestamps="logsTimestamps"
           :filename="logsName"
-          @update:follow="(v) => (logsFollow = v)"
+          empty-text="（暂无日志输出）"
+          @update:follow="onFollowChange"
           @update:timestamps="onTimestampsChange"
-          @refresh="fetchLogs"
+          @refresh="reload"
         >
           <template #toolbar-extra>
             <el-select v-model="logsTail" class="logs-tail" size="small" @change="onTailChange">
@@ -29,14 +37,15 @@
 </template>
 
 <script setup>
-// 容器日志抽屉：tail 切换 / 2s 跟随轮询自持，经 open(row) 由容器表格行触发。
-// 展示内核（搜索/暂停/换行/下载）在 LogViewer，本组件只管取数与跟随节奏。
-import { ref, watch } from 'vue'
+// 容器日志抽屉（R4）：默认走 WS 实时流（Engine API logs follow），
+// 流不可用（建连失败/重试用尽）自动降级为既有 HTTP 轮询，保底不比改造前差。
+// 展示内核（搜索/暂停/换行/stderr 分色/下载）在 LogViewer，本组件只管数据源与跟随节奏。
+import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../../../api'
 import { errMsg } from '../../../utils/format'
 import { containerName } from '../../../utils/docker-format'
-import { useAutoRefresh } from '../../../composables/useAutoRefresh'
+import { useLogStream } from '../../../composables/useLogStream'
 import LogViewer from './LogViewer.vue'
 
 const logsDrawer = ref(false)
@@ -44,18 +53,34 @@ const logsLoading = ref(false)
 const logsText = ref('')
 const logsName = ref('')
 const logsId = ref('')
-// tail 行数（后端钳制到 [200, 2000]）；「跟随」开关：每 2s 静默重拉新日志
+// tail 行数（后端钳制到 [200, 2000]）
 const logsTail = ref(200)
 const logsFollow = ref(false)
 const logsTimestamps = ref(false)
 const viewerRef = ref(null)
 
+// ws = 实时流；http = 降级轮询
+const mode = ref('ws')
+const { lines: streamLines, status, errorMsg, fallback: wsFallback, start: startStream, stop: stopStream, reset: resetStream } = useLogStream()
+
+const dotClass = computed(() => ({ live: 'ok', connecting: 'wait', closed: 'off', error: 'err' }[status.value] || 'off'))
+const wsStatusText = computed(() => {
+  if (wsFallback.value) return '实时流不可用，已退回轮询刷新'
+  if (status.value === 'live') return '实时流已连接'
+  if (status.value === 'connecting') return '实时流连接中…'
+  if (status.value === 'error') return errorMsg.value || '实时流错误'
+  if (status.value === 'closed') return '日志流已结束（容器停止）'
+  return '实时流未连接'
+})
+
 function open(row) {
   logsId.value = row.ID
   logsName.value = containerName(row.Names)
   logsText.value = ''
+  mode.value = 'ws'
+  resetStream()
   logsDrawer.value = true
-  fetchLogs()
+  reload()
 }
 
 async function fetchLogs() {
@@ -72,40 +97,67 @@ async function fetchLogs() {
   }
 }
 
-function onTailChange() {
-  fetchLogs()
-}
-
-// 时间戳开关：带 timestamps 重拉（后端按行前置时间戳）
-function onTimestampsChange(v) {
-  logsTimestamps.value = v
-  fetchLogs()
-}
-
-// ── 跟随：定时静默重拉（不动 loading）；贴底判定与滚动由 LogViewer 负责 ──
-// 跟随轮询统一交 useAutoRefresh 托管：start/stop 由下方 logsFollow / logsDrawer 两个 watch 驱动，
-// 组件卸载自动停表。回调内的 drawer/id 守卫保留（与原实现一致）。
-const { start: startLogsTimer, stop: stopLogsTimer } = useAutoRefresh(pullLogsFollow, { intervalMs: 2000 })
-
-async function pullLogsFollow() {
-  if (!logsDrawer.value || !logsId.value) return
-  try {
-    const res = await api.dockerContainerLogs(logsId.value, logsTail.value, logsTimestamps.value)
-    logsText.value = (res.data || {}).logs || ''
-  } catch (e) {
-    // 跟随轮询失败静默（下拉手动刷新会给错误提示），不打扰阅读
+// 打开/切 tail/切时间戳：WS 模式重启流（参数变了必须重连），HTTP 模式重拉
+function reload() {
+  if (mode.value === 'ws') {
+    // tail 大于 2000 会被后端钳制，WS 端同样按 2000 上限发起
+    startStream(logsId.value, { tail: Math.min(logsTail.value, 2000), timestamps: logsTimestamps.value })
+  } else {
+    fetchLogs()
   }
 }
 
-watch(logsFollow, (on) => {
-  if (on && logsDrawer.value) startLogsTimer()
-  else stopLogsTimer()
+function onTailChange() {
+  reload()
+}
+
+function onTimestampsChange(v) {
+  logsTimestamps.value = v
+  reload()
+}
+
+// 跟随：WS 模式本就实时，跟随仅控制自动滚动（LogViewer 内部按贴底判定）；
+// HTTP 模式才需要 2s 轮询。
+function onFollowChange(v) {
+  logsFollow.value = v
+  if (mode.value === 'http') {
+    if (v && logsDrawer.value) startHttpTimer()
+    else stopHttpTimer()
+  }
+}
+
+// ── HTTP 降级模式的 2s 轮询（仅降级时启用）──
+let httpTimer = null
+function startHttpTimer() {
+  stopHttpTimer()
+  httpTimer = setInterval(() => {
+    if (logsDrawer.value && logsId.value) fetchLogs()
+  }, 2000)
+}
+function stopHttpTimer() {
+  if (httpTimer) { clearInterval(httpTimer); httpTimer = null }
+}
+
+// WS 重试用尽 → 永久切 HTTP（保留手动重试入口）
+watch(wsFallback, (on) => {
+  if (!on) return
+  mode.value = 'http'
+  fetchLogs()
+  if (logsFollow.value) startHttpTimer()
 })
 
-// 抽屉关闭即停跟随轮询（下次打开时按开关状态重启）
+function retryStream() {
+  wsFallback.value = false
+  mode.value = 'ws'
+  reload()
+}
+
+// 抽屉关闭：停流 + 停轮询
 watch(logsDrawer, (open) => {
-  if (!open) stopLogsTimer()
-  else if (logsFollow.value) startLogsTimer()
+  if (!open) {
+    stopStream()
+    stopHttpTimer()
+  }
 })
 
 defineExpose({ open })
@@ -115,4 +167,19 @@ defineExpose({ open })
 .logs-tail {
   width: 150px;
 }
+.ls-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 0.82rem;
+  color: var(--el-text-color-secondary, #909399);
+}
+.ls-dot {
+  font-size: 0.7rem;
+}
+.ls-dot.ok { color: #67c23a; }
+.ls-dot.wait { color: #e6a23c; }
+.ls-dot.off { color: #909399; }
+.ls-dot.err { color: #f56c6c; }
 </style>

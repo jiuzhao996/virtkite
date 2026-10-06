@@ -106,6 +106,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	monitorHandler := NewMonitorHandler(deps.DB, deps.AlertmanagerURL)
 	historyHandler := NewHistoryHandler(deps.DB, deps.PrometheusURL)
 	dockerHandler := NewDockerHandler()
+	containerLogsHandler := NewContainerLogsHandler()
 	appsHandler := NewAppsHandler(deps.DB, deps.Tasks)
 	vmFilesHandler := NewVMFilesHandler(deps.DB)
 	// 离线挂载守卫：启动对账清理上次进程遗留的 FUSE 挂载点，并挂上 SIGINT/SIGTERM 退出钩子
@@ -317,6 +318,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		docker.POST("/containers/:id/:action", dockerHandler.ContainerAction)
 		docker.DELETE("/containers/:id", dockerHandler.RemoveContainer)
 		docker.GET("/containers/:id/logs", dockerHandler.ContainerLogs)
+		// 容器日志实时流（R4：Engine API logs follow，WS 推送 stdout/stderr 分色）
+		docker.GET("/containers/:id/logs/ws", containerLogsHandler.Connect)
 		// 容器终端（v3.2 R2：WS ↔ Docker Engine API exec TTY 流；viewer 由组内 NonViewerMiddleware 403）
 		docker.GET("/containers/:id/terminal", containerTerminalHandler.Connect)
 		// 容器详情 / 实时统计 / 全量统计（v3.2 R1/R4）

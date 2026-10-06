@@ -12,12 +12,12 @@
       <span v-if="keyword.trim()" class="lv-count">{{ matchedCount }}/{{ totalLines }} 行</span>
       <el-checkbox v-model="wrap" size="small" title="长行自动换行">换行</el-checkbox>
       <el-checkbox :model-value="timestamps" size="small" title="显示 docker 写入时间戳" @change="(v) => $emit('update:timestamps', v)">时间戳</el-checkbox>
-      <el-checkbox :model-value="follow" size="small" title="每 2 秒自动拉取新日志，贴底时自动滚动">跟随</el-checkbox>
+      <el-checkbox :model-value="follow" size="small" title="自动拉取新日志，贴底时自动滚动">跟随</el-checkbox>
       <el-button
         size="small"
         :type="paused ? 'warning' : 'default'"
         :icon="paused ? VideoPlay : VideoPause"
-        :title="paused ? '已暂停渲染（后台仍在拉取），点击恢复并追平' : '暂停渲染（后台继续拉取）'"
+        :title="paused ? '已暂停渲染（后台仍在接收），点击恢复并追平' : '暂停渲染（后台继续接收）'"
         @click="togglePause"
       >{{ paused ? '已暂停' : '暂停' }}</el-button>
       <el-button size="small" :icon="Refresh" :loading="loading" title="立即刷新" @click="$emit('refresh')" />
@@ -30,30 +30,32 @@
       ref="preRef"
       class="lv-pre"
       :class="{ 'lv-nowrap': !wrap }"
-    ><template v-for="(segs, i) in displayLines" :key="i"><span
-      v-for="(s, j) in segs"
+    ><template v-for="(ln, i) in displayLines" :key="i"><span :class="{ 'lv-err': ln.err }"><span
+      v-for="(s, j) in ln.segs"
       :key="j"
       :class="{ 'lv-hit': s.hit }"
-    >{{ s.t }}</span>{{ '\n' }}</template><span v-if="!displayLines.length" class="lv-empty">{{ emptyText }}</span></pre>
+    >{{ s.t }}</span>{{ '\n' }}</span></template><span v-if="!displayLines.length" class="lv-empty">{{ emptyText }}</span></pre>
   </div>
 </template>
 
 <script setup>
-// 日志展示内核：与数据来源无关（HTTP 轮询 / WS 流均可喂 text），R3/R4/R5 复用同一渲染层。
+// 日志展示内核：与数据来源无关（HTTP 全量文本 / WS 行数组两种喂法），R3/R5 复用同一渲染层。
 // 只负责「渲染 + 前端过滤/高亮 + 暂停/换行/下载」，取数与跟随节奏由父级（数据源）决定。
+//
+// 两种输入：
+//   - text: String —— HTTP 轮询源（父级每次给全量文本）
+//   - rows: Array<{stream,data}> —— WS 流源（父级累积行，stderr 可单独着色）
+// rows 非空时优先于 text。
 import { ref, computed, nextTick, watch } from 'vue'
 import { Search, Refresh, Download, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import CopyButton from '../../../components/CopyButton.vue'
 
 const props = defineProps({
-  // 原始日志文本（已含全文，父级负责累积/替换）
   text: { type: String, default: '' },
+  rows: { type: Array, default: null },
   loading: { type: Boolean, default: false },
-  // 跟随开关（受控，父级据此轮询）
   follow: { type: Boolean, default: false },
-  // 时间戳开关（受控，父级据此带 timestamps 重拉）
   timestamps: { type: Boolean, default: false },
-  // 下载文件名（不含扩展名）
   filename: { type: String, default: 'container' },
   emptyText: { type: String, default: '（暂无日志输出）' }
 })
@@ -65,51 +67,56 @@ const MAX_LINES = 5000
 const preRef = ref(null)
 const keyword = ref('')
 const wrap = ref(true)
-// 暂停：冻结渲染快照（后台 text 仍在更新），恢复时一次性追平到最新
+// 暂停：冻结渲染快照（后台数据仍在更新），恢复时一次性追平到最新
 const paused = ref(false)
+const frozenRows = ref(null)
 const frozenText = ref('')
 
-const rawText = computed(() => props.text || '')
-
-// 实际参与渲染的文本（暂停时用冻结快照）
-const renderText = computed(() => (paused.value ? frozenText.value : rawText.value))
-
-const totalLines = computed(() => {
-  const t = renderText.value
-  if (!t) return 0
-  return t.split('\n').length
+// 统一内部行模型：[{stream, data}]
+const allRows = computed(() => {
+  if (props.rows && props.rows.length) return props.rows
+  const t = props.text || ''
+  if (!t) return []
+  return t.split('\n').map((l) => ({ stream: 'stdout', data: l }))
 })
 
-// 展示行：先按 MAX_LINES 截尾，再按关键词过滤并切分为「高亮/普通」片段
+// 暂停快照：冻结「当时的数据形态」，避免两种源混用时丢失 stream 信息
+function snapshot() {
+  return { rows: props.rows && props.rows.length ? props.rows.slice() : null, text: props.text || '' }
+}
+
+const renderRows = computed(() => {
+  if (!paused.value) return allRows.value
+  if (frozenRows.value) return frozenRows.value
+  return (frozenText.value || '').split('\n').map((l) => ({ stream: 'stdout', data: l }))
+})
+
+const rawText = computed(() => renderRows.value.map((r) => r.data).join('\n'))
+const totalLines = computed(() => renderRows.value.length)
+
 const displayLines = computed(() => {
-  const t = renderText.value
-  if (!t) return []
-  let lines = t.split('\n')
-  if (lines.length > MAX_LINES) lines = lines.slice(lines.length - MAX_LINES)
+  let rows = renderRows.value
+  if (rows.length > MAX_LINES) rows = rows.slice(rows.length - MAX_LINES)
   const kw = keyword.value.trim()
-  if (!kw) return lines.map((l) => [{ t: l, hit: false }])
-  const lower = kw.toLowerCase()
   const out = []
-  for (const line of lines) {
-    if (!line.toLowerCase().includes(lower)) continue
-    out.push(splitHighlight(line, lower, kw.length))
+  for (const r of rows) {
+    const line = r.data
+    if (kw && !line.toLowerCase().includes(kw.toLowerCase())) continue
+    const segs = kw ? splitHighlight(line, kw.toLowerCase(), kw.length) : [{ t: line, hit: false }]
+    out.push({ segs, err: r.stream === 'stderr' })
   }
   return out
 })
 
-// 匹配行数（与 displayLines 同口径，单独算一遍避免依赖渲染结构）
 const matchedCount = computed(() => {
   const kw = keyword.value.trim()
   if (!kw) return 0
   const lower = kw.toLowerCase()
   let n = 0
-  for (const line of renderText.value.split('\n')) {
-    if (line.toLowerCase().includes(lower)) n++
-  }
+  for (const r of renderRows.value) if (r.data.toLowerCase().includes(lower)) n++
   return n
 })
 
-// 把一行切成 [{t, hit}] 片段（大小写不敏感匹配，保留原文大小写）
 function splitHighlight(line, lowerKw, kwLen) {
   const segs = []
   let rest = line
@@ -129,10 +136,13 @@ function splitHighlight(line, lowerKw, kwLen) {
 function togglePause() {
   if (paused.value) {
     paused.value = false
+    frozenRows.value = null
     frozenText.value = ''
     nextTick(scrollBottom)
   } else {
-    frozenText.value = rawText.value
+    const snap = snapshot()
+    frozenRows.value = snap.rows
+    frozenText.value = snap.text
     paused.value = true
   }
 }
@@ -148,11 +158,11 @@ function scrollBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
-// 贴底自动滚动：pre 阶段（DOM 更新前）记录「更新前是否贴底」，post 阶段据此决定滚到底，
+// 贴底自动滚动：pre 阶段（DOM 更新前）记「更新前是否贴底」，post 阶段据此滚到底，
 // 避免新日志把内容撑高后再判定导致永不滚动；暂停时完全不打断阅读。
 let wasNearBottom = true
-watch(() => props.text, () => { wasNearBottom = nearBottom() }, { flush: 'pre' })
-watch(() => props.text, () => {
+watch(allRows, () => { wasNearBottom = nearBottom() }, { flush: 'pre' })
+watch(allRows, () => {
   if (paused.value) return
   if (wasNearBottom) nextTick(scrollBottom)
 }, { flush: 'post' })
@@ -216,6 +226,10 @@ defineExpose({ scrollToEndOnce })
   background: #ffd54f;
   color: #1b2634;
   border-radius: 2px;
+}
+/* stderr 行红色着色（Dozzle 观感：流类型一眼可辨） */
+.lv-err {
+  color: #ff9a9a;
 }
 .lv-empty {
   color: #7f9ab5;
