@@ -302,6 +302,14 @@ func validateTemplateSpec(spec *virt.CloudInitSpec) error {
 	if err := rejectControlText(spec.SSHKey, "ssh_key", 2000); err != nil {
 		return err
 	}
+	if len(spec.SSHKeys) > 10 {
+		return errors.New("ssh_keys 最多 10 个")
+	}
+	for i, k := range spec.SSHKeys {
+		if err := rejectControlText(k, fmt.Sprintf("ssh_keys[%d]", i), 2000); err != nil {
+			return err
+		}
+	}
 
 	switch spec.NetMode {
 	case "", ciNetModeDHCP, ciNetModeStatic:
@@ -356,6 +364,60 @@ func rejectControlText(val, field string, maxRunes int) error {
 	}
 	if utf8.RuneCountInString(val) > maxRunes {
 		return fmt.Errorf("%s 不能超过 %d 个字符", field, maxRunes)
+	}
+	return nil
+}
+
+// validateCloudInitText 直连建机路径（创建向导 / 镜像直建 / 设计器画布）的
+// cloud-init 底线校验：拦换行控制字符（user-data 注入面）、net_mode 白名单、
+// 静态缺参与非法 IPv4——这些输入旧版会静默产出坏 seed（netplan 解析失败=没网）
+// 或可注入 cloud-config 顶层键的 seed。不收字符集：模板入库
+// （validateTemplateSpec）的 hostname/user 字符白名单是模板侧更严策略，
+// 直连路径保持允许中文主机名（设计器节点名/向导主机名现状即如此）。
+// virt 层另有 yaml 结构化序列化兜底，这里是给前端及时、友好的 400。
+func validateCloudInitText(spec *virt.CloudInitSpec) error {
+	if err := rejectControlText(spec.Hostname, "hostname", 100); err != nil {
+		return err
+	}
+	if err := rejectControlText(spec.User, "user", 64); err != nil {
+		return err
+	}
+	if err := rejectControlText(spec.Password, "password", 128); err != nil {
+		return err
+	}
+	if err := rejectControlText(spec.SSHKey, "ssh_key", 2000); err != nil {
+		return err
+	}
+	if len(spec.SSHKeys) > 10 {
+		return errors.New("ssh_keys 最多 10 个")
+	}
+	for i, k := range spec.SSHKeys {
+		if err := rejectControlText(k, fmt.Sprintf("ssh_keys[%d]", i), 2000); err != nil {
+			return err
+		}
+	}
+	switch spec.NetMode {
+	case "", ciNetModeDHCP, ciNetModeStatic:
+	default:
+		return errors.New("net_mode 仅支持 dhcp 或 static")
+	}
+	ip, gw := strings.TrimSpace(spec.IP), strings.TrimSpace(spec.Gateway)
+	if strings.EqualFold(spec.NetMode, ciNetModeStatic) && (ip == "" || gw == "") {
+		return errors.New("静态网络模式下 ip 与 gateway 必填")
+	}
+	if ip != "" && !validIPv4(ip) {
+		return errors.New("ip 必须为合法 IPv4 地址")
+	}
+	if gw != "" && !validIPv4(gw) {
+		return errors.New("gateway 必须为合法 IPv4 地址")
+	}
+	for _, d := range spec.DNS {
+		if strings.TrimSpace(d) == "" {
+			continue
+		}
+		if !validIPv4(strings.TrimSpace(d)) {
+			return fmt.Errorf("dns 必须为合法 IPv4 地址：%s", d)
+		}
 	}
 	return nil
 }

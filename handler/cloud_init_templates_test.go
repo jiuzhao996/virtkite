@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -102,6 +103,15 @@ func TestValidateTemplateSpecFields(t *testing.T) {
 		{"user 非法字符", func(s *virt.CloudInitSpec) { s.User = "ro ot" }},
 		{"password 含换行（可注入 cloud-config 键）", func(s *virt.CloudInitSpec) { s.Password = "x\nsudo: ALL=(ALL) NOPASSWD:ALL" }},
 		{"ssh_key 含换行", func(s *virt.CloudInitSpec) { s.SSHKey = "key\nssh_authorized_keys: evil" }},
+		{"ssh_keys 切片含换行（多公钥注入面）", func(s *virt.CloudInitSpec) {
+			s.SSHKeys = []string{"ssh-rsa OK", "key\nruncmd: evil"}
+		}},
+		{"ssh_keys 超过 10 个", func(s *virt.CloudInitSpec) {
+			s.SSHKeys = make([]string, 11)
+			for i := range s.SSHKeys {
+				s.SSHKeys[i] = "ssh-rsa KEY" + strconv.Itoa(i)
+			}
+		}},
 		{"password 超 128", func(s *virt.CloudInitSpec) { s.Password = strings.Repeat("p", 129) }},
 		{"net_mode 非白名单", func(s *virt.CloudInitSpec) { s.NetMode = "pppoe" }},
 		{"static 缺 ip", func(s *virt.CloudInitSpec) { s.NetMode = "static"; s.Gateway = "192.168.122.1" }},

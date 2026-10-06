@@ -484,6 +484,11 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 		"network":      req.Network,
 	}
 	if req.CloudInit != nil {
+		// 直连建机路径同样过底线校验（此前未校验直通 virt 层；模板侧本就有校验）
+		if err := validateCloudInitText(req.CloudInit); err != nil {
+			Fail(c, http.StatusBadRequest, "cloud-init 配置不合法："+err.Error())
+			return
+		}
 		payload["cloud_init"] = req.CloudInit
 	}
 	userID, username := taskUserFromContext(c)

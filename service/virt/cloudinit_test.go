@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
 
 // ISO9660（ECMA-119）里几个用于校验的固定偏移。
@@ -261,14 +263,14 @@ func entryIdents(iso seedISO) []string {
 
 // TestGenerateSeedISOUserData 逐字节锁定 user-data 的内容。
 //
-// 风险点：user-data 是唯一决定"新机器能不能登进去"的文件，而它是 fmt.Fprintf
-// 手工拼出来的 YAML——多一个空格、少一个换行、key 拼错，cloud-init 都会整段解析失败
-// 并静默跳过（虚拟机照样起来，只是没账号）。所以这里不做"包含用户名"这种弱断言，
-// 而是整串精确比对。
+// 风险点：user-data 是唯一决定"新机器能不能登进去"的文件——多一个空格、少一个
+// 换行、key 拼错，cloud-init 都会整段解析失败并静默跳过（虚拟机照样起来，只是
+// 没账号）。所以这里不做"包含用户名"这种弱断言，而是整串精确比对。
 //
-// 同时钉死一处容易被误解的现状：用户名与密码是「与」关系
-// （cloudinit.go:42 `if cfg.User != "" && cfg.Password != ""`），
-// 只填一个等于两个都没填。详见 TODO 说明的两个用例。
+// 生成已改为 yaml.Marshal 结构化序列化（goccy）：缩进与引号由库负责，需要引号的
+// 值（纯数字口令等）会被正确包起来。user 与 password 是独立分支（原「与」关系
+// 只填其一时两个都丢，已修复）：仅密码 → 设到镜像默认用户；仅用户名 → 指定
+// 默认用户名，公钥装到该用户名下。
 func TestGenerateSeedISOUserData(t *testing.T) {
 	tests := []struct {
 		name string
@@ -284,29 +286,36 @@ func TestGenerateSeedISOUserData(t *testing.T) {
 			want: "#cloud-config\n" +
 				"user: ubuntu\n" +
 				"password: p@ss\n" +
-				"chpasswd: {expire: false}\n" +
+				"chpasswd:\n" +
+				"  expire: false\n" +
 				"ssh_pwauth: true\n" +
 				"ssh_authorized_keys:\n" +
-				"  - ssh-ed25519 AAAAC3Nz test@vmops\n" +
+				"- ssh-ed25519 AAAAC3Nz test@vmops\n" +
 				"hostname: web-01\n",
 		},
 		{
-			name: "只有用户名+密码，没有 SSH key（口令登录场景）",
+			name: "只有用户名+密码，没有 SSH key（root 口令登录场景）",
 			spec: &CloudInitSpec{Hostname: "db-01", User: "root", Password: "123456"},
 			// root 口令登录额外注入 PermitRootLogin 放开（P2B v2）：Rocky/RHEL sshd
-			// 默认 prohibit-password，只开 ssh_pwauth 时 root 仍被拒
+			// 默认 prohibit-password，只开 ssh_pwauth 时 root 仍被拒。
+			// 纯数字口令被库自动加引号（裸写会解析成整数，cloud-init 收到 float64）
 			want: "#cloud-config\n" +
 				"user: root\n" +
-				"password: 123456\n" +
-				"chpasswd: {expire: false}\n" +
+				"password: \"123456\"\n" +
+				"chpasswd:\n" +
+				"  expire: false\n" +
 				"ssh_pwauth: true\n" +
 				"write_files:\n" +
-				"  - path: /etc/ssh/sshd_config.d/40-enable-root-login.conf\n" +
-				"    content: |\n" +
-				"      PermitRootLogin yes\n" +
+				"- path: /etc/ssh/sshd_config.d/40-enable-root-login.conf\n" +
+				"  content: PermitRootLogin yes\n" +
 				"runcmd:\n" +
-				"  - [ sed, -i, 's/^#\\?PermitRootLogin.*/PermitRootLogin yes/', /etc/ssh/sshd_config ]\n" +
-				"  - [ systemctl, restart, sshd ]\n" +
+				"- - sed\n" +
+				"  - -i\n" +
+				"  - \"s/^#\\\\?PermitRootLogin.*/PermitRootLogin yes/\"\n" +
+				"  - /etc/ssh/sshd_config\n" +
+				"- - systemctl\n" +
+				"  - restart\n" +
+				"  - sshd\n" +
 				"hostname: db-01\n",
 		},
 		{
@@ -314,27 +323,27 @@ func TestGenerateSeedISOUserData(t *testing.T) {
 			spec: &CloudInitSpec{Hostname: "ci-01", SSHKey: "ssh-rsa AAAAB3Nza ci@runner"},
 			want: "#cloud-config\n" +
 				"ssh_authorized_keys:\n" +
-				"  - ssh-rsa AAAAB3Nza ci@runner\n" +
+				"- ssh-rsa AAAAB3Nza ci@runner\n" +
 				"hostname: ci-01\n",
 		},
 		{
-			name: "有用户名+SSH key，无密码：ssh_pwauth 不会被打开（符合预期）",
+			name: "有用户名+SSH key，无密码：user 独立生效，ssh_pwauth 不打开",
 			spec: &CloudInitSpec{Hostname: "ci-02", User: "ubuntu", SSHKey: "ssh-rsa KEY"},
-			// TODO(疑似缺陷): User 明明填了却没写进 user-data，key 会被装到镜像默认用户
-			//  （Ubuntu 云镜像是 ubuntu、CentOS 是 centos）名下，而不是用户指定的账号。
-			//  现状先钉住；修复方向是把 user 与 password 拆成两个独立分支。
 			want: "#cloud-config\n" +
+				"user: ubuntu\n" +
 				"ssh_authorized_keys:\n" +
-				"  - ssh-rsa KEY\n" +
+				"- ssh-rsa KEY\n" +
 				"hostname: ci-02\n",
 		},
 		{
-			name: "只填密码不填用户名：密码被静默丢弃",
+			name: "只填密码不填用户名：密码设到镜像默认用户",
 			spec: &CloudInitSpec{Hostname: "h1", Password: "onlypass"},
-			// TODO(疑似缺陷): 前端只填密码时，产出的 user-data 里既没有 password 也没有
-			//  ssh key，新建的虚拟机没有任何可登录凭据，且后端全程不报错。
-			//  期望行为应是「User 为空时取镜像默认用户 + 设置其密码」或直接在入参校验层拒绝。
-			want: "#cloud-config\nhostname: h1\n",
+			want: "#cloud-config\n" +
+				"password: onlypass\n" +
+				"chpasswd:\n" +
+				"  expire: false\n" +
+				"ssh_pwauth: true\n" +
+				"hostname: h1\n",
 		},
 		{
 			name: "零值配置：只有 #cloud-config 头与默认主机名 vmops",
@@ -352,7 +361,8 @@ func TestGenerateSeedISOUserData(t *testing.T) {
 			want: "#cloud-config\n" +
 				"user: 运维\n" +
 				"password: 口令\n" +
-				"chpasswd: {expire: false}\n" +
+				"chpasswd:\n" +
+				"  expire: false\n" +
 				"ssh_pwauth: true\n" +
 				"hostname: 测试主机\n",
 		},
@@ -426,14 +436,14 @@ func TestGenerateSeedISOMetaData(t *testing.T) {
 
 // TestGenerateSeedISONetworkConfig 锁定 network-config（netplan v2）的内容。
 //
-// 风险点：这是唯一决定"新机器有没有网"的文件，而 NetMode 的判定是一个裸字符串
-// 相等比较（cloudinit.go:55 `if cfg.NetMode == "static"`）。判定一旦不命中就静默
-// 降级成 DHCP，用户填的静态 IP 悄悄丢掉——在没有 DHCP 服务的隔离网段里，
-// 表现就是机器起来了但完全不通，而平台侧记录的却是"已按静态 IP 配置"。
-// 另外静态模式下 IP/网关是直接 Fprintf 进模板的，缺值会拼出语法上合法、
-// 语义上非法的 netplan（见对应用例的 TODO）。
+// 风险点：这是唯一决定"新机器有没有网"的文件。NetMode 判定已改为大小写不敏感
+// （原裸 == 会把 "STATIC" 静默降级成 DHCP，用户配的静态 IP 悄悄丢掉——在没有
+// DHCP 服务的隔离网段里，表现就是机器起来了但完全不通）；static 缺 IP/网关
+// 直接报错（见 TestGenerateSeedISOStaticValidation），不再拼出语法合法、语义
+// 非法的 netplan（那会让 cloud-init 网络配置整段失效，一张网卡都不通）。
 func TestGenerateSeedISONetworkConfig(t *testing.T) {
 	const dhcpWant = "version: 2\nethernets:\n  id0:\n    dhcp4: true\n"
+	const staticHead = "version: 2\nethernets:\n  id0:\n    dhcp4: false\n"
 
 	tests := []struct {
 		name string
@@ -449,50 +459,47 @@ func TestGenerateSeedISONetworkConfig(t *testing.T) {
 				NetMode: "static", IP: "192.168.100.50", Gateway: "192.168.100.1",
 				DNS: []string{"223.5.5.5", "8.8.8.8"},
 			},
-			want: "version: 2\nethernets:\n  id0:\n" +
-				"    dhcp4: false\n" +
-				"    addresses: [192.168.100.50/24]\n" +
+			want: staticHead +
+				"    addresses:\n" +
+				"    - 192.168.100.50/24\n" +
 				"    gateway4: 192.168.100.1\n" +
-				"    nameservers: {addresses: [223.5.5.5, 8.8.8.8]}\n",
+				"    nameservers:\n" +
+				"      addresses:\n" +
+				"      - 223.5.5.5\n" +
+				"      - 8.8.8.8\n",
 		},
 		{
 			name: "NetMode=static 未填 DNS：兜底 8.8.8.8",
 			spec: &CloudInitSpec{NetMode: "static", IP: "10.0.0.5", Gateway: "10.0.0.1"},
-			want: "version: 2\nethernets:\n  id0:\n" +
-				"    dhcp4: false\n" +
-				"    addresses: [10.0.0.5/24]\n" +
+			want: staticHead +
+				"    addresses:\n" +
+				"    - 10.0.0.5/24\n" +
 				"    gateway4: 10.0.0.1\n" +
-				"    nameservers: {addresses: [8.8.8.8]}\n",
+				"    nameservers:\n" +
+				"      addresses:\n" +
+				"      - 8.8.8.8\n",
 		},
 		{
 			name: "NetMode=static 但只填了一个 DNS",
 			spec: &CloudInitSpec{NetMode: "static", IP: "10.0.0.5", Gateway: "10.0.0.1", DNS: []string{"223.5.5.5"}},
-			want: "version: 2\nethernets:\n  id0:\n" +
-				"    dhcp4: false\n" +
-				"    addresses: [10.0.0.5/24]\n" +
+			want: staticHead +
+				"    addresses:\n" +
+				"    - 10.0.0.5/24\n" +
 				"    gateway4: 10.0.0.1\n" +
-				"    nameservers: {addresses: [223.5.5.5]}\n",
+				"    nameservers:\n" +
+				"      addresses:\n" +
+				"      - 223.5.5.5\n",
 		},
 		{
-			name: "NetMode=STATIC 大写：不匹配，静默降级为 DHCP",
+			name: "NetMode=STATIC 大写：大小写不敏感，仍按静态生成",
 			spec: &CloudInitSpec{NetMode: "STATIC", IP: "10.0.0.5", Gateway: "10.0.0.1"},
-			// TODO(疑似缺陷): NetMode 判定大小写敏感，"STATIC"/"Static" 都会落到 else 分支，
-			//  用户配的静态 IP 被完全丢弃且无任何错误返回。
-			//  修复方向：strings.EqualFold，或在入参校验层限定枚举值。
-			want: dhcpWant,
-		},
-		{
-			name: "NetMode=static 但 IP/网关为空：拼出非法 netplan",
-			spec: &CloudInitSpec{NetMode: "static"},
-			// TODO(疑似缺陷): 缺 IP 时拼出 "addresses: [/24]"、缺网关时拼出 "gateway4: "
-			//  （值为空），netplan 解析报错，cloud-init 的网络配置整段失效，
-			//  机器起来后一张网卡都不通。修复方向：static 模式下 IP/Gateway 必填校验，
-			//  校验不过应直接返回错误而不是生成一张坏 seed。
-			want: "version: 2\nethernets:\n  id0:\n" +
-				"    dhcp4: false\n" +
-				"    addresses: [/24]\n" +
-				"    gateway4: \n" +
-				"    nameservers: {addresses: [8.8.8.8]}\n",
+			want: staticHead +
+				"    addresses:\n" +
+				"    - 10.0.0.5/24\n" +
+				"    gateway4: 10.0.0.1\n" +
+				"    nameservers:\n" +
+				"      addresses:\n" +
+				"      - 8.8.8.8\n",
 		},
 	}
 
@@ -507,6 +514,22 @@ func TestGenerateSeedISONetworkConfig(t *testing.T) {
 				t.Errorf("network-config 内容不符\n期望:\n%s\n实际:\n%s", tt.want, got)
 			}
 		})
+	}
+}
+
+// TestGenerateSeedISOStaticValidation 静态网络缺参必须报错。
+// 原行为：static 下缺 IP 拼出 "addresses: [/24]"、缺网关拼出 "gateway4: "，
+// netplan 解析报错、cloud-init 网络配置整段失效，而创建流程一路"成功"。
+func TestGenerateSeedISOStaticValidation(t *testing.T) {
+	for name, spec := range map[string]*CloudInitSpec{
+		"static 全缺": {NetMode: "static"},
+		"只缺网关":      {NetMode: "static", IP: "10.0.0.5"},
+		"只缺 IP":     {NetMode: "static", Gateway: "10.0.0.1"},
+	} {
+		_, err := GenerateSeedISO(spec)
+		if err == nil {
+			t.Errorf("%s：期望报错（不能生成坏 seed），实际成功", name)
+		}
 	}
 }
 
@@ -565,11 +588,11 @@ func TestGenerateSeedISOWriteToDisk(t *testing.T) {
 		wantFiles := map[string]string{
 			"meta-data": "instance-id: vmops-web-01\nlocal-hostname: web-01\n",
 			"user-data": "#cloud-config\nuser: ubuntu\npassword: p@ss\n" +
-				"chpasswd: {expire: false}\nssh_pwauth: true\n" +
-				"ssh_authorized_keys:\n  - ssh-ed25519 AAAAC3Nz test@vmops\nhostname: web-01\n",
+				"chpasswd:\n  expire: false\nssh_pwauth: true\n" +
+				"ssh_authorized_keys:\n- ssh-ed25519 AAAAC3Nz test@vmops\nhostname: web-01\n",
 			"network-config": "version: 2\nethernets:\n  id0:\n    dhcp4: false\n" +
-				"    addresses: [192.168.100.50/24]\n    gateway4: 192.168.100.1\n" +
-				"    nameservers: {addresses: [223.5.5.5]}\n",
+				"    addresses:\n    - 192.168.100.50/24\n    gateway4: 192.168.100.1\n" +
+				"    nameservers:\n      addresses:\n      - 223.5.5.5\n",
 		}
 		for name, wantContent := range wantFiles {
 			if gotContent := iso.Files[name]; gotContent != wantContent {
@@ -599,96 +622,99 @@ func TestGenerateSeedISOWriteToDisk(t *testing.T) {
 	})
 }
 
-// TestGenerateSeedISOYAMLInjectionCurrentBehavior 是一个「现状固化」用例：
-// cloud-init 字段全程没有转义与校验，含换行的输入会往 user-data / meta-data
-// 里注入额外的 cloud-config 顶层键。
+// TestGenerateSeedISOYAMLInjectionNeutralized 验证 YAML 注入被结构化序列化中和。
 //
 // 风险点（本文件最高）：user-data 是 YAML，缩进与换行就是语法。CloudInitSpec
-// 的每个字段都来自 HTTP 请求体（handler/image.go 的 cloud_init），一路传到
-// cloudinit.go 用 fmt.Fprintf 拼进模板，中途没有任何过滤——
-// 主机名里塞一个换行加 "runcmd:" 就能让新建的虚拟机开机以 root 执行任意命令。
-// 对照 snapshot.go 的 xmlEscape（快照名走了转义），cloud-init 这条路径是漏的。
+// 的每个字段都来自 HTTP 请求体，主机名里塞一个换行加 "runcmd:" 曾能让新建的
+// 虚拟机开机以 root 执行任意命令（fmt.Fprintf 手拼时代，对照 snapshot.go 的
+// xmlEscape——快照名走了转义，cloud-init 这条路径是漏的）。
 //
-// 用例刻意断言"注入确实发生"而不是"注入被阻止"：这样修复（加校验或转义）时
-// 测试会立刻失败，提醒改用例并确认新行为，而不是让漏洞在无人察觉中长期存在。
-//
-// TODO(安全): 应在 virt 层对 Hostname/User/Password/SSHKey 做字符白名单校验
-//
-//	（主机名走 RFC 1123、用户名走 [a-z_][a-z0-9_-]*、SSH key 单行且以 ssh- 开头），
-//	或改用 gopkg.in/yaml.v3 序列化让库负责转义。发现于毕业设计测试阶段。
-func TestGenerateSeedISOYAMLInjectionCurrentBehavior(t *testing.T) {
-	tests := []struct {
-		name string
-		spec *CloudInitSpec
-		// wantInUserData 期望在 user-data 里出现的注入痕迹（现状）
-		wantInUserData []string
-		// wantInMetaData 期望在 meta-data 里出现的注入痕迹（现状）
-		wantInMetaData []string
-	}{
-		{
-			name: "主机名塞换行注入 runcmd（开机以 root 执行任意命令）",
-			spec: &CloudInitSpec{Hostname: "h1\nruncmd:\n  - [touch, /tmp/pwned]"},
-			wantInUserData: []string{
-				"hostname: h1\n",
-				"runcmd:\n  - [touch, /tmp/pwned]\n",
-			},
-			// 同一个主机名还会污染 meta-data，instance-id 与 local-hostname 都被撑开
-			wantInMetaData: []string{
-				"instance-id: vmops-h1\nruncmd:",
-				"local-hostname: h1\nruncmd:",
-			},
-		},
-		{
-			name: "SSH key 塞换行注入 ssh_pwauth 覆盖前面的设置",
-			spec: &CloudInitSpec{
-				Hostname: "h2", User: "u", Password: "p",
-				SSHKey: "ssh-rsa KEY\nssh_pwauth: false\ndisable_root: false",
-			},
-			wantInUserData: []string{
-				"  - ssh-rsa KEY\nssh_pwauth: false\ndisable_root: false\n",
-			},
-		},
-		{
-			name: "密码里塞换行注入 chpasswd 列表",
-			spec: &CloudInitSpec{
-				Hostname: "h3", User: "u",
-				Password: "p\nchpasswd:\n  list: |\n    root:hacked",
-			},
-			wantInUserData: []string{
-				"password: p\nchpasswd:\n  list: |\n    root:hacked\n",
-			},
-		},
-	}
+// 现在 user-data / meta-data / network-config 全部由 yaml.Marshal 序列化：
+// 含换行的值被整体包进双引号转义串，成为字段值本身而非新增顶层键——注入的
+// 文本还在（数据不丢），但永远只是惰性字符串。断言方式是把产出再 Unmarshal
+// 回来检查结构：顶层键集合精确等于预期，注入的 "runcmd" 只能以值的形式存在。
+func TestGenerateSeedISOYAMLInjectionNeutralized(t *testing.T) {
+	const evilHostname = "h1\nruncmd:\n  - [touch, /tmp/pwned]"
+	const evilKey = "ssh-rsa KEY\nssh_pwauth: false\ndisable_root: false"
+	const evilPassword = "p\nchpasswd:\n  list: |\n    root:hacked"
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data, err := GenerateSeedISO(tt.spec)
-			if err != nil {
-				// 现状不报错。若将来加了校验，这里会提示改用例。
-				t.Fatalf("现状下含换行的输入不会报错，实际报错: %v（若已加入校验请更新本用例）", err)
-			}
-			iso := parseSeedISO(t, data)
+	t.Run("主机名塞换行：runcmd 只能是 hostname 的值，不是顶层键", func(t *testing.T) {
+		iso := mustGenerate(t, &CloudInitSpec{Hostname: evilHostname})
 
-			for _, want := range tt.wantInUserData {
-				if !strings.Contains(iso.Files["user-data"], want) {
-					t.Errorf("user-data 期望包含注入片段 %q（现状行为），实际内容:\n%s",
-						want, iso.Files["user-data"])
-				}
-			}
-			for _, want := range tt.wantInMetaData {
-				if !strings.Contains(iso.Files["meta-data"], want) {
-					t.Errorf("meta-data 期望包含注入片段 %q（现状行为），实际内容:\n%s",
-						want, iso.Files["meta-data"])
-				}
-			}
-			// 注入不会破坏 ISO 骨架本身：卷标与三个文件仍在，
-			// 也就是说这类输入不会让创建流程失败，因此更不容易被发现。
-			if iso.Label != "cidata" {
-				t.Errorf("注入输入下卷标期望仍为 \"cidata\"，实际 %q", iso.Label)
-			}
-			if len(iso.Entries) != 3 {
-				t.Errorf("注入输入下根目录文件数期望仍为 3，实际 %d", len(iso.Entries))
-			}
-		})
+		var ud map[string]interface{}
+		if err := yaml.Unmarshal([]byte(iso.Files["user-data"]), &ud); err != nil {
+			t.Fatalf("user-data 应是合法 YAML（注入被中和后必须可解析）: %v", err)
+		}
+		if _, ok := ud["runcmd"]; ok {
+			t.Errorf("user-data 出现顶层 runcmd 键（注入成功），内容:\n%s", iso.Files["user-data"])
+		}
+		if got, _ := ud["hostname"].(string); got != evilHostname {
+			t.Errorf("hostname 值应原样保留完整注入串（作为惰性数据），实际 %q", got)
+		}
+
+		var md map[string]interface{}
+		if err := yaml.Unmarshal([]byte(iso.Files["meta-data"]), &md); err != nil {
+			t.Fatalf("meta-data 应是合法 YAML: %v", err)
+		}
+		if _, ok := md["runcmd"]; ok {
+			t.Errorf("meta-data 出现顶层 runcmd 键（注入成功），内容:\n%s", iso.Files["meta-data"])
+		}
+		if got, _ := md["instance-id"].(string); got != "vmops-"+evilHostname {
+			t.Errorf("instance-id 应原样保留（%q），实际 %q", "vmops-"+evilHostname, got)
+		}
+	})
+
+	t.Run("SSH key 塞换行：ssh_pwauth 不被覆盖", func(t *testing.T) {
+		iso := mustGenerate(t, &CloudInitSpec{Hostname: "h2", User: "u", Password: "p", SSHKey: evilKey})
+
+		var ud map[string]interface{}
+		if err := yaml.Unmarshal([]byte(iso.Files["user-data"]), &ud); err != nil {
+			t.Fatalf("user-data 应是合法 YAML: %v", err)
+		}
+		if v, _ := ud["ssh_pwauth"].(bool); !v {
+			t.Errorf("ssh_pwauth 应保持 true（注入串不得覆盖），实际 %v，内容:\n%s",
+				ud["ssh_pwauth"], iso.Files["user-data"])
+		}
+		keys, _ := ud["ssh_authorized_keys"].([]interface{})
+		if len(keys) != 1 || keys[0] != evilKey {
+			t.Errorf("公钥应作为单条完整字符串保留，实际 %v", keys)
+		}
+	})
+
+	t.Run("密码塞换行：chpasswd 仍是 expire 标量", func(t *testing.T) {
+		iso := mustGenerate(t, &CloudInitSpec{Hostname: "h3", User: "u", Password: evilPassword})
+
+		var ud map[string]interface{}
+		if err := yaml.Unmarshal([]byte(iso.Files["user-data"]), &ud); err != nil {
+			t.Fatalf("user-data 应是合法 YAML: %v", err)
+		}
+		chpasswd, _ := ud["chpasswd"].(map[string]interface{})
+		if chpasswd == nil {
+			t.Fatalf("chpasswd 应仍是 {expire: false} 映射（不被注入撑开），实际 %v，内容:\n%s",
+				ud["chpasswd"], iso.Files["user-data"])
+		}
+		if got, _ := ud["password"].(string); got != evilPassword {
+			t.Errorf("password 应原样保留完整注入串，实际 %q", got)
+		}
+	})
+
+	t.Run("注入不破坏 ISO 骨架：卷标与三文件仍在", func(t *testing.T) {
+		iso := mustGenerate(t, &CloudInitSpec{Hostname: evilHostname, Password: evilPassword, SSHKey: evilKey})
+		if iso.Label != "cidata" {
+			t.Errorf("注入输入下卷标期望仍为 \"cidata\"，实际 %q", iso.Label)
+		}
+		if len(iso.Entries) != 3 {
+			t.Errorf("注入输入下根目录文件数期望仍为 3，实际 %d", len(iso.Entries))
+		}
+	})
+}
+
+// mustGenerate 生成 seed ISO 并按 ECMA-119 偏移解析（注入类用例共用）。
+func mustGenerate(t *testing.T, spec *CloudInitSpec) seedISO {
+	t.Helper()
+	data, err := GenerateSeedISO(spec)
+	if err != nil {
+		t.Fatalf("生成 seed ISO 失败: %v", err)
 	}
+	return parseSeedISO(t, data)
 }

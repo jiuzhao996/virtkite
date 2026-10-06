@@ -16,16 +16,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
-	"github.com/jiuzhao/vmops/service/dockerx"
 	"github.com/jiuzhao/vmops/service/dbx"
+	"github.com/jiuzhao/vmops/service/dockerx"
 	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
@@ -34,10 +34,10 @@ import (
 
 // DesignerHandler 架构设计器处理器。
 type DesignerHandler struct {
-	Docker  *dockerx.Dockerx
-	Tasks   *tasks.Manager
-	DB      *gorm.DB
-	UserID  uint
+	Docker   *dockerx.Dockerx
+	Tasks    *tasks.Manager
+	DB       *gorm.DB
+	UserID   uint
 	Username string
 	// VMCred 凭据托管：app_install 的 use_saved 通道需要；MasterSecret 供设计器
 	// 就地加密 VM 节点的 SSH 口令（与 AppsHandler 同口径，明文不落库）
@@ -104,9 +104,9 @@ func (h *DesignerHandler) Templates(c *gin.Context) {
 		{
 			"id": "elk", "name": "日志分析平台", "desc": "ELK 单机 + 应用机采集",
 			"nodes": []dsgNode{
-			{ID: "n1", Kind: "container", Ref: "elk-single", Name: "ELK", X: 300, Y: 200},
-			{ID: "n2", Kind: "vm", Ref: "", Name: "应用机×N（装 filebeat）", X: 300, Y: 400, Note: "落地前在右侧选云镜像、规格与 SSH 口令；filebeat 属应用目录时可直接挂应用"},
-		},
+				{ID: "n1", Kind: "container", Ref: "elk-single", Name: "ELK", X: 300, Y: 200},
+				{ID: "n2", Kind: "vm", Ref: "", Name: "应用机×N（装 filebeat）", X: 300, Y: 400, Note: "落地前在右侧选云镜像、规格与 SSH 口令；filebeat 属应用目录时可直接挂应用"},
+			},
 			"links": []dsgLink{{From: "n2", To: "n1"}},
 		},
 		{
@@ -242,8 +242,8 @@ type dsgApplyState struct {
 }
 
 var (
-	dsgApplyMu    sync.Mutex
-	dsgApplyRuns  = map[string]*dsgApplyState{}
+	dsgApplyMu   sync.Mutex
+	dsgApplyRuns = map[string]*dsgApplyState{}
 )
 
 // Apply POST /api/designer/plans/:id/apply（admin）——顺序落地计划内的容器栈与
@@ -365,7 +365,7 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 				st.Steps = append(st.Steps, "跳过 "+n.Name+"（网络节点 v1 为标注性）")
 			}
 		}
-st.Status = "success"
+		st.Status = "success"
 	}(p, st)
 
 	Accepted(c, "计划应用已启动", gin.H{"id": id})
@@ -403,22 +403,23 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 	if err := h.DB.First(&host).Error; err != nil {
 		return 0, fmt.Errorf("请先登记宿主机")
 	}
+	// cloud_init 嵌套结构（vm_create executor 按此解析）：注入设计器给的
+	// SSH 用户/口令——这是 VM 节点能被 app_install SSH 到的前提。
+	// 过底线校验（换行可注入 cloud-config；节点名/口令来自画布自由输入）
+	ciSpec := &virt.CloudInitSpec{Hostname: n.Name, User: sshUser, Password: n.SSHSecret}
+	if verr := validateCloudInitText(ciSpec); verr != nil {
+		return 0, fmt.Errorf("VM 节点 %s 的 cloud-init 配置不合法: %w", n.Name, verr)
+	}
 	createPayload := map[string]interface{}{
-		"name":            n.Name,
-		"host_id":         host.ID,
-		"storage_pool":    pool,
-		"vcpu":            vcpu,
-		"memory_mb":       mem,
-		"disks":           []map[string]interface{}{{"source_image_id": img.ID, "create_gb": int(img.SizeGB)}},
-		"interfaces": []map[string]interface{}{{"type": "network", "source": "default", "model": "virtio"}},
-		"network":    "default",
-		// cloud_init 嵌套结构（vm_create executor 按此解析）：注入设计器给的
-		// SSH 用户/口令——这是 VM 节点能被 app_install SSH 到的前提
-		"cloud_init": map[string]interface{}{
-			"hostname": n.Name,
-			"user":     sshUser,
-			"password": n.SSHSecret,
-		},
+		"name":         n.Name,
+		"host_id":      host.ID,
+		"storage_pool": pool,
+		"vcpu":         vcpu,
+		"memory_mb":    mem,
+		"disks":        []map[string]interface{}{{"source_image_id": img.ID, "create_gb": int(img.SizeGB)}},
+		"interfaces":   []map[string]interface{}{{"type": "network", "source": "default", "model": "virtio"}},
+		"network":      "default",
+		"cloud_init":   ciSpec,
 	}
 	userID, username := h.taskUser()
 	if pb, perr := json.Marshal(createPayload); perr == nil {
@@ -515,13 +516,13 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 			return vmID, fmt.Errorf("SSH 口令加密失败: %w", err)
 		}
 		payload := map[string]interface{}{
-			"app_id":        appID,
-			"vm_id":         vmID,
-			"host":          vm.IP,
-			"port":          22,
-			"user":          sshUser,
-			"password_enc":  cipherB64,
-			"salt":          saltHex,
+			"app_id":       appID,
+			"vm_id":        vmID,
+			"host":         vm.IP,
+			"port":         22,
+			"user":         sshUser,
+			"password_enc": cipherB64,
+			"salt":         saltHex,
 		}
 		t, err := h.Tasks.Submit("app_install", "设计器安装 "+appID+" 到 "+n.Name, payload, userID, username, n.Name, &vmID)
 		if err != nil {

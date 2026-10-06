@@ -50,6 +50,17 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "虚拟机名称只允许字母、数字、下划线和连字符")
 		return
 	}
+	// cloud-init 底线校验（换行可注入 cloud-config 顶层键；非法 net_mode/静态缺参
+	// 会静默产出坏 seed）：body 原样透传任务前先探测把关，错误直接回给创建向导
+	var ciProbe struct {
+		CloudInit *virt.CloudInitSpec `json:"cloud_init"`
+	}
+	if err := json.Unmarshal(body, &ciProbe); err == nil && ciProbe.CloudInit != nil {
+		if verr := validateCloudInitText(ciProbe.CloudInit); verr != nil {
+			Fail(c, http.StatusBadRequest, "cloud-init 配置不合法："+verr.Error())
+			return
+		}
+	}
 	// 轻量校验宿主机存在性：未指定时确认平台已登记首台
 	if req.HostID != 0 {
 		var host model.Host
