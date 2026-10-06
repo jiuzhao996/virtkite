@@ -863,3 +863,97 @@ func TestIsGuestWriteChannel(t *testing.T) {
 		})
 	}
 }
+
+// ============================ ?token= JWT 升格 ============================
+
+// TestPromoteQueryJWT 覆盖 ?token= 里 JWT 的升格（挪进 Authorization 头 + 从 URL 抹除）。
+//
+// 风险点（P2 安全批次的核心动机）：浏览器 WebSocket 无法自定义请求头，串口/SSH 终端
+// 的 WS 升级请求只能用 ?token=<JWT> 带凭证，而 gin 自带 Logger 会把完整 query 打进
+// 访问日志——JWT 落日志 = 任何能读日志的人在有效期内冒充该用户。
+// 本用例验证四件事：合法 JWT 被挪进头并从 URL 抹除；其他 query 参数原样保留；
+// 非 JWT（metrics/webhook 的共享密钥）不动；畸形值不动（宁可留在 URL 也不能
+// 把垃圾塞进 Authorization 干扰后续认证判断）。
+func TestPromoteQueryJWT(t *testing.T) {
+	token, err := GenerateToken(&model.User{ID: 9, Username: "ws-user", Role: "operator"})
+	if err != nil {
+		t.Fatalf("准备 token 失败: %v", err)
+	}
+
+	run := func(target string, header map[string]string) *gin.Context {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		for k, v := range header {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = req
+		PromoteQueryJWT()(c)
+		return c
+	}
+
+	t.Run("合法 JWT：挪进头并从 URL 抹除", func(t *testing.T) {
+		c := run("/api/vms/1/serial?token="+token, nil)
+		if got := c.Request.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Fatalf("Authorization 头未升格：期望 Bearer <token>，实际 %q", got)
+		}
+		if raw := c.Request.URL.RawQuery; strings.Contains(raw, "token=") || strings.Contains(raw, token) {
+			t.Errorf("URL 仍含凭证（将随访问日志泄漏）：RawQuery=%q", raw)
+		}
+		if raw := c.Request.URL.RawQuery; raw != "" {
+			t.Errorf("除 token 外无其他参数，RawQuery 应为空：实际 %q", raw)
+		}
+	})
+
+	t.Run("其他 query 参数保留", func(t *testing.T) {
+		c := run("/api/vms/1/serial?token="+token+"&rows=100&follow=1", nil)
+		if got := c.Request.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Fatalf("Authorization 头未升格：实际 %q", got)
+		}
+		q := c.Request.URL.Query()
+		if q.Get("token") != "" {
+			t.Errorf("token 参数未从 URL 抹除：%q", c.Request.URL.RawQuery)
+		}
+		if q.Get("rows") != "100" || q.Get("follow") != "1" {
+			t.Errorf("无关参数被误删：%q", c.Request.URL.RawQuery)
+		}
+	})
+
+	t.Run("非 JWT 共享密钥（metrics/webhook）不动", func(t *testing.T) {
+		const sharedSecret = "prometheus-shared-token"
+		c := run("/metrics?token="+sharedSecret, nil)
+		if got := c.Request.Header.Get("Authorization"); got != "" {
+			t.Errorf("共享密钥被塞进 Authorization 头，会破坏 metrics 的校验分支：实际 %q", got)
+		}
+		if got := c.Request.URL.Query().Get("token"); got != sharedSecret {
+			t.Errorf("共享密钥被改动：实际 %q", got)
+		}
+	})
+
+	t.Run("畸形值不动", func(t *testing.T) {
+		for _, junk := range []string{"", "not-a-jwt", "a.b.c", token[:len(token)-4]} {
+			target := "/api/vms/1/serial"
+			if junk != "" {
+				target += "?token=" + junk
+			}
+			c := run(target, nil)
+			if got := c.Request.Header.Get("Authorization"); got != "" {
+				t.Errorf("垃圾值 token=%q 被塞进 Authorization：%q", junk, got)
+			}
+		}
+	})
+
+	t.Run("已有 Authorization 头：URL 里的 JWT 仍抹除但头不覆盖", func(t *testing.T) {
+		other, err := GenerateToken(&model.User{ID: 10, Username: "header-user", Role: "admin"})
+		if err != nil {
+			t.Fatalf("准备第二个 token 失败: %v", err)
+		}
+		c := run("/api/vms/1/serial?token="+token, map[string]string{"Authorization": "Bearer " + other})
+		if got := c.Request.Header.Get("Authorization"); got != "Bearer "+other {
+			t.Errorf("已有头被覆盖（头优先语义被破坏）：实际 %q", got)
+		}
+		if strings.Contains(c.Request.URL.RawQuery, token) {
+			t.Errorf("URL 里的 JWT 未抹除：%q", c.Request.URL.RawQuery)
+		}
+	})
+}

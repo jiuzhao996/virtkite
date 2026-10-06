@@ -101,7 +101,11 @@ func main() {
 	if config.GlobalConfig.ServerMode == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	r := gin.Default()
+	// 不用 gin.Default()：需要把 ?token= JWT 升格中间件插在 Logger 之前，
+	// 否则 WS 升级请求的 JWT 会随完整 query 打进访问日志（见 PromoteQueryJWT 注释）
+	r := gin.New()
+	r.Use(middleware.PromoteQueryJWT())
+	r.Use(gin.Logger(), gin.Recovery())
 	// 只信任本机回环代理（frp 客户端在宿主机本机转发云 nginx 的回源流量）：
 	// gin 默认信任所有代理，客户端伪造 X-Forwarded-For 最左值即可绕过登录限流并污染审计 IP
 	if err := r.SetTrustedProxies([]string{"127.0.0.1"}); err != nil {

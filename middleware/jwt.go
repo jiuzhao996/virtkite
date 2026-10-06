@@ -82,6 +82,36 @@ func claimsFromRequest(req *http.Request) (*Claims, error) {
 	return ParseToken(parts[1])
 }
 
+// PromoteQueryJWT 把 ?token= 里的 JWT 挪进 Authorization 头并从 URL 抹除。
+//
+// 为什么必须做：浏览器 WebSocket 无法自定义请求头，串口/SSH/容器终端的 WS 升级
+// 请求只能靠 ?token=<JWT> 携带凭证（AuthMiddleware 的兼容分支）。gin 自带 Logger
+// 会把完整 query 打进访问日志——JWT 一旦落日志，任何能读日志的人就拿到了该用户
+// 有效期内的全部权限（token 以小时计，日志保留 30 天）。
+//
+// 为什么是「挪」而不是「遮蔽」：直接抹掉会让 AuthMiddleware 的 ?token= 分支失效
+// （WS 认证断掉）；挪进标准 Authorization 头后认证链完全等价，而 URL/日志侧不再
+// 出现凭证。只挪能被 ParseToken 成功解析的值——metrics 抓取与告警 webhook 也用
+// ?token= 传共享密钥，那不是 JWT，原样保留（走它们各自的校验分支）。
+//
+// 必须注册在 gin.Logger 之前：Logger 在 c.Next() 前就把 RawQuery 捕获进局部变量，
+// 顺序反了它打印的仍是原始 URL。
+func PromoteQueryJWT() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if tok := c.Query("token"); tok != "" {
+			if _, err := ParseToken(tok); err == nil {
+				if c.GetHeader("Authorization") == "" {
+					c.Request.Header.Set("Authorization", "Bearer "+tok)
+				}
+				q := c.Request.URL.Query()
+				q.Del("token")
+				c.Request.URL.RawQuery = q.Encode()
+			}
+		}
+		c.Next()
+	}
+}
+
 // HashPassword 哈希密码
 func HashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
