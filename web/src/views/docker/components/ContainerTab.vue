@@ -193,8 +193,8 @@
       <ContainerTerminal v-if="termDrawer" :container-id="termId" />
     </el-drawer>
 
-    <!-- 容器详情抽屉（docker inspect JSON）：内聚于 ContainerInspectDrawer -->
-    <ContainerInspectDrawer ref="inspectDrawerRef" />
+    <!-- 容器详情旗舰抽屉（概要/统计/日志/JSON + 头部快捷操作）：替换旧 inspect JSON 抽屉 -->
+    <ContainerDetailDrawer ref="detailDrawerRef" @terminal="openTerminal" @changed="onDetailChanged" />
     <!-- 容器日志抽屉（tail 切换 / 跟随 / 复制 / 下载）：内聚于 ContainerLogsDrawer -->
     <ContainerLogsDrawer ref="logsDrawerRef" />
 
@@ -215,7 +215,7 @@ import { containerName, stateTag, stateText, portsText, dockerTime } from '../..
 import { useAutoRefresh } from '../../../composables/useAutoRefresh'
 import ContainerTerminal from '../../../components/ContainerTerminal.vue'
 import ContainerCreateDrawer from './ContainerCreateDrawer.vue'
-import ContainerInspectDrawer from './ContainerInspectDrawer.vue'
+import ContainerDetailDrawer from './ContainerDetailDrawer.vue'
 import ContainerLogsDrawer from './ContainerLogsDrawer.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
@@ -526,11 +526,16 @@ function openTerminal(row) {
 }
 
 // 详情 / 日志抽屉：状态与取数内聚在各自抽屉组件，这里只负责按行打开
-const inspectDrawerRef = ref(null)
+const detailDrawerRef = ref(null)
 const logsDrawerRef = ref(null)
 
 function openInspect(row) {
-  inspectDrawerRef.value.open(row)
+  detailDrawerRef.value.open(row)
+}
+
+// 详情抽屉内操作（启停/暂停/重命名/删除）后重拉列表，保持与本页一致
+async function onDetailChanged() {
+  await Promise.all([fetchContainers(), fetchStats()])
 }
 
 function openLogs(row) {

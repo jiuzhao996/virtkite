@@ -1,5 +1,5 @@
 // docker inspect 原始 JSON → 结构化视图模型（纯函数，无请求无状态）。
-// ContainerInspectDrawer（R2）与 ContainerDetailDrawer（R3）共用同一解析，避免两处漂移。
+// ContainerDetailDrawer（R3）的概要/端口/挂载区块与详情抽屉共用同一解析，避免两处漂移。
 
 // 兼容 docker inspect 的字段缺省与类型抖动：取不到一律给安全默认，绝不让渲染层炸。
 function obj(v) {
