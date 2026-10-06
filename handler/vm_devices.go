@@ -29,6 +29,13 @@ func (h *VMHandler) AttachDisk(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusBadRequest, "磁盘参数错误（需提供 source）", err)
 		return
 	}
+	// 磁盘源必须落在已登记存储池内（与镜像登记 pathInAnyPool 同一防线）：
+	// 挂任意宿主文件进 virtio 盘等于把宿主机文件读进 guest。
+	// 平台外 ISO 请先入池；确需挂宿主路径的场景走 admin 专属的 XML 整域编辑。
+	if !filepath.IsAbs(req.Disk.Source) || !pathInAnyPool(h.Virt, req.Disk.Source) {
+		Fail(c, http.StatusBadRequest, "磁盘源路径必须位于已登记的存储池目录内")
+		return
+	}
 	if req.Disk.Bus == "" {
 		req.Disk.Bus = "virtio"
 	}
@@ -305,13 +312,19 @@ func (h *VMHandler) DetachDisk(c *gin.Context) {
 		return
 	}
 
-	// 删卷：池内卷走 libvirt vol-delete；libvirt 未识别为卷（seed 等直接落盘文件）
-	// 或池外文件（显式指令）用 os 兜底删——与 tasks.execDeleteVM 的 tryDeleteVol 双保险一致。
-	if ownerPool != "" {
-		if err := h.Virt.DeleteVolume(ownerPool, filepath.Base(src)); err != nil {
-			ErrorWithMessage(c, http.StatusInternalServerError, "磁盘已分离，但删除存储卷失败", err)
-			return
-		}
+	// 删卷：池内卷走 libvirt vol-delete；libvirt 未识别为卷（seed 等直接落盘文件）时
+	// os 兜底删除也仅限池内路径。池外文件不做任何删除——AttachDisk 已强制池内校验，
+	// 池外只剩历史遗留或宿主机自身文件，显式删指令放行 os.Remove 等于把任意路径删除暴露给 API
+	// （全量审计：借 delete_volume=true 删宿主任意文件）。
+	if ownerPool == "" {
+		LogError(c, fmt.Errorf("分离磁盘后保留卷（未删，池外路径）vm=%s vol=%s", vm.Name, src))
+		resp["keep_reason"] = "卷不在任何已登记存储池内，为安全起见未删除（可登宿主机手动清理）"
+		Success(c, resp)
+		return
+	}
+	if err := h.Virt.DeleteVolume(ownerPool, filepath.Base(src)); err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "磁盘已分离，但删除存储卷失败", err)
+		return
 	}
 	if _, err := os.Stat(src); err == nil {
 		if err := os.Remove(src); err != nil && !os.IsNotExist(err) {

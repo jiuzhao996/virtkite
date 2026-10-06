@@ -281,6 +281,21 @@ func offlineTarget(c *gin.Context, vmID uint, reqPath string, needDir bool) (*of
 		Fail(c, http.StatusBadRequest, "非法路径")
 		return nil, "", false
 	}
+	// 符号链接守卫：guest 可在磁盘内预置 symlink（绝对目标经宿主内核按宿主根解析，
+	// 如 /etc/hostname -> /etc/shadow），上面的词法前缀检查在解析前做，挡不住这种逃逸。
+	// 挂载为只读（--ro）、磁盘内容不可变，先解析后访问无 TOCTOU 窗口；
+	// realpath -e 逐组件解析全部 symlink，结果必须仍落在挂载点内，否则视为逃逸拒绝。
+	resolved, err := sudoRun(15*time.Second, "realpath", "-e", clean)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, "路径不存在")
+		return nil, "", false
+	}
+	resolved = strings.TrimSpace(resolved)
+	if resolved != m.Mountpoint && !strings.HasPrefix(resolved, m.Mountpoint+"/") {
+		Fail(c, http.StatusBadRequest, "非法路径（符号链接指向挂载点外）")
+		return nil, "", false
+	}
+	clean = resolved
 	if needDir {
 		out, err := sudoRun(15*time.Second, "stat", "-c", "%F", clean)
 		if err != nil || !strings.HasPrefix(strings.TrimSpace(out), "directory") {

@@ -253,13 +253,15 @@ func (h *ImageHandler) UploadImage(c *gin.Context) {
 // 这些文件是 VM 正在引用或将被 backing 的共享盘，登记只是建目录索引，不复制不移动。
 // body: {name*, path*, os_version?, description?, is_template?}；同路径重复登记返回 409。
 // pathInAnyPool 判断绝对路径是否落在任一已登记存储池目录内（带分隔符边界）。
-func (h *ImageHandler) pathInAnyPool(path string) bool {
-	names, err := h.Virt.ListPools()
+// 包级函数：镜像登记与 AttachDisk/UpdateVMSpec 的磁盘源校验共用同一防线
+// （任意绝对路径挂进 VM 等于把宿主机文件读进 guest，全量审计已论证）。
+func pathInAnyPool(v *virt.Virt, path string) bool {
+	names, err := v.ListPools()
 	if err != nil {
 		return false
 	}
 	for _, name := range names {
-		if poolPath, err := h.Virt.GetPoolPath(name); err == nil && poolPath != "" {
+		if poolPath, err := v.GetPoolPath(name); err == nil && poolPath != "" {
 			if strings.HasPrefix(path, strings.TrimRight(poolPath, "/")+"/") {
 				return true
 			}
@@ -286,7 +288,7 @@ func (h *ImageHandler) RegisterImage(c *gin.Context) {
 		return
 	}
 	// 路径必须落在已登记存储池内（全量审计：任意绝对路径登记后可挂进 VM 读宿主机文件）
-	if !h.pathInAnyPool(req.Path) {
+	if !pathInAnyPool(h.Virt, req.Path) {
 		Fail(c, http.StatusBadRequest, "路径必须位于已登记的存储池目录内")
 		return
 	}

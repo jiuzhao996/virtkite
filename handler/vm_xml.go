@@ -80,6 +80,15 @@ func (h *VMHandler) UpdateVMSpec(c *gin.Context) {
 	spec.CloudInit = nil
 	spec.RawXML = ""
 
+	// 磁盘源逐块校验池内（与 AttachDisk 同防线，见 vm_devices.go）：
+	// 整域重 define 同样能把任意宿主文件挂进 guest，且本端点 operator 可达（/api/vms 前缀写放行）。
+	for _, d := range spec.Disks {
+		if d.Source != "" && !pathInAnyPool(h.Virt, d.Source) {
+			Fail(c, http.StatusBadRequest, "磁盘 "+d.Target+" 的源路径必须位于已登记的存储池目录内")
+			return
+		}
+	}
+
 	xmlstr, err := virt.BuildDomainXML(&spec)
 	if err != nil {
 		ErrorWithMessage(c, http.StatusBadRequest, "虚拟机配置不合法", err)

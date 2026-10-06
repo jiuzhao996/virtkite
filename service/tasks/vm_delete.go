@@ -38,9 +38,16 @@ func execCleanupVolumes(ctx *ExecContext) error {
 	if err != nil {
 		return fmt.Errorf("获取存储池 %s 信息失败: %w", pool, err)
 	}
-	// 枚举失败按空处理（与删卷守卫同一立场：守卫数据拿不全时宁可不删）
-	backing, _ := ctx.Virt.ListBackingRefs(pool)
-	disks, _ := ctx.Virt.ListAllDomainDiskSources()
+	// 守卫数据拿不全时拒绝清理（宁可不删，不可错删）：枚举失败直接让任务失败，
+	// 按空数据继续会把「未查到的引用」误判成孤儿卷，把仍被依赖的卷删掉。
+	backing, err := ctx.Virt.ListBackingRefs(pool)
+	if err != nil {
+		return fmt.Errorf("枚举 backing 引用失败，守卫数据不完整拒绝清理: %w", err)
+	}
+	disks, err := ctx.Virt.ListAllDomainDiskSources()
+	if err != nil {
+		return fmt.Errorf("枚举域磁盘清单失败，守卫数据不完整拒绝清理: %w", err)
+	}
 	var imgPaths []string
 	if err := ctx.DB.Model(&model.Image{}).Pluck("path", &imgPaths).Error; err != nil {
 		return fmt.Errorf("查询镜像库路径失败: %w", err)
@@ -153,8 +160,18 @@ func execDeleteVM(ctx *ExecContext) error {
 	if pool == "" {
 		pool = DefaultStoragePoolResolver()
 	}
+	// 守卫数据完整性标记（fail-safe）：三重守卫任一数据源获取失败即整体放弃删卷。
+	// 此前失败后按空数据继续等于守卫整体失效——最坏情况增量克隆父盘被当孤儿删掉，
+	// 所有子机磁盘立即不可读且不可恢复。守卫不可用 ⇒ 全部卷保守保留进 kept_volumes，
+	// 域与 DB 记录照常清理，残留卷留给孤儿清理任务或人工处理。
+	guardsReady := true
+
 	// 池路径前缀（用于判定卷是否属于平台托管，避免删池外文件）。
-	poolPath, _ := ctx.Virt.GetPoolPath(pool)
+	poolPath, pathErr := ctx.Virt.GetPoolPath(pool)
+	if pathErr != nil || poolPath == "" {
+		log.Printf("[tasks] 获取池路径失败（err=%v path=%q），本次保守保留全部卷 vm=%s pool=%s", pathErr, poolPath, vm.Name, pool)
+		guardsReady = false
+	}
 
 	// 守卫二的数据：平台镜像库登记的文件路径集合。
 	// 「基于云镜像创建」是直接引用不拷贝（见 execCreateVM 的 source_image_id 分支），
@@ -163,7 +180,8 @@ func execDeleteVM(ctx *ExecContext) error {
 	managedImagePaths := map[string]bool{}
 	var imgs []model.Image
 	if err := ctx.DB.Select("path").Find(&imgs).Error; err != nil {
-		log.Printf("[tasks] 读取镜像库路径失败，跳过基镜像守卫 vm=%s err=%v", vm.Name, err)
+		log.Printf("[tasks] 读取镜像库路径失败，本次保守保留全部卷 vm=%s err=%v", vm.Name, err)
+		guardsReady = false
 	}
 	for _, img := range imgs {
 		if img.Path != "" {
@@ -174,13 +192,18 @@ func execDeleteVM(ctx *ExecContext) error {
 	// 守卫三的数据：池内 qcow2 backing file 引用（父卷路径 → 依赖它的子卷）。
 	backingRefs, err := ctx.Virt.ListBackingRefs(pool)
 	if err != nil {
-		log.Printf("[tasks] 枚举 backing 引用失败，跳过父盘守卫 vm=%s pool=%s err=%v", vm.Name, pool, err)
+		log.Printf("[tasks] 枚举 backing 引用失败，本次保守保留全部卷 vm=%s pool=%s err=%v", vm.Name, pool, err)
 		backingRefs = map[string][]string{}
+		guardsReady = false
 	}
 
 	var keptVols []string
 	// shouldKeepVol 判断某个磁盘源是否必须保留，返回保留原因（空串表示可删）。
 	shouldKeepVol := func(src, volName string) string {
+		// 守卫零（fail-safe）：守卫数据源获取失败时不得删除任何卷，理由进 kept_volumes 供人工确认
+		if !guardsReady {
+			return "守卫数据不可用（池路径/镜像库/backing 引用获取失败），保守保留待人工确认"
+		}
 		// 守卫一：池外文件不属于平台托管，一律不动（如挂载的宿主机 ISO）
 		if poolPath != "" && !strings.HasPrefix(src, poolPath+"/") {
 			return "不在存储池 " + pool + " 路径下"
