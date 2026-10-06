@@ -34,8 +34,30 @@ func TestBuildRunArgs(t *testing.T) {
 		}
 	})
 
-	t.Run("最简形态只有name与image", func(t *testing.T) {
-		opts := ContainerOpts{Name: "box", Image: "busybox"}
+	t.Run("健康检查参数", func(t *testing.T) {
+		opts := ContainerOpts{
+			Name:           "web",
+			Image:          "nginx:1.27",
+			HealthCmd:      "curl -f http://localhost/",
+			HealthInterval: "30s",
+		}
+		want := []string{
+			"run", "-d", "--name", "web",
+			"nginx:1.27",
+			"--health-cmd", "curl -f http://localhost/",
+			"--health-interval", "30s",
+		}
+		if got := BuildRunArgs(opts); !reflect.DeepEqual(got, want) {
+			t.Errorf("健康检查参数不符:\ngot  %v\nwant %v", got, want)
+		}
+		// 空值不得输出 flag（与其余可选字段同一零值语义）
+		got := BuildRunArgs(ContainerOpts{Name: "box", Image: "busybox"})
+		if strings.Contains(strings.Join(got, " "), "--health") {
+			t.Errorf("空健康检查不应输出 flag: %v", got)
+		}
+	})
+
+	t.Run("最简形态只有name与image", func(t *testing.T) {		opts := ContainerOpts{Name: "box", Image: "busybox"}
 		want := []string{"run", "-d", "--name", "box", "busybox"}
 		got := BuildRunArgs(opts)
 		if !reflect.DeepEqual(got, want) {

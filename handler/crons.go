@@ -398,8 +398,25 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 		}
 		st.Params = string(b)
 		return 0, nil
+	case cron.ActionContainerHealthcheck:
+		// 归一化：只保留白名单键 notify（默认 true），屏蔽多余内容
+		notifyOn := true
+		if strings.TrimSpace(st.Params) != "" {
+			var params struct {
+				Notify *bool `json:"notify"`
+			}
+			if err := json.Unmarshal([]byte(st.Params), &params); err == nil && params.Notify != nil {
+				notifyOn = *params.Notify
+			}
+		}
+		b, merr := json.Marshal(map[string]bool{"notify": notifyOn})
+		if merr != nil {
+			return 0, errors.New("params 序列化失败")
+		}
+		st.Params = string(b)
+		return 0, nil
 	default:
-		return 0, errors.New("action 只支持 vm_snapshot（定时快照）/ db_backup（定时备份数据库）/ ansible_playbook（定时执行 playbook）")
+		return 0, errors.New("action 只支持 vm_snapshot（定时快照）/ db_backup（定时备份数据库）/ ansible_playbook（定时执行 playbook）/ container_healthcheck（容器健康巡检）")
 	}
 }
 

@@ -77,6 +77,17 @@
       <el-form-item label="启动命令">
         <el-input v-model="form.command" placeholder="留空使用镜像默认 ENTRYPOINT" clearable />
       </el-form-item>
+      <!-- 健康检查（可选）：配置后 docker 维护 State.Health，容器健康自愈（cron）据此判定 -->
+      <el-collapse class="hc-collapse">
+        <el-collapse-item title="健康检查（可选）" name="hc">
+          <el-form-item label="检测命令">
+            <el-input v-model="form.health_cmd" placeholder="如 curl -f http://localhost/ 或 exit 0" clearable />
+          </el-form-item>
+          <el-form-item label="检测间隔">
+            <el-input v-model="form.health_interval" placeholder="如 30s / 1m，留空用 docker 默认" clearable />
+          </el-form-item>
+        </el-collapse-item>
+      </el-collapse>
     </el-form>
     <template #footer>
       <el-button :disabled="creating" @click="visible = false">取消</el-button>
@@ -110,7 +121,9 @@ const form = reactive({
   volumes: [''],
   envs: [''],
   restart: 'no',
-  command: ''
+  command: '',
+  health_cmd: '',
+  health_interval: ''
 })
 
 // 重启策略四选一（对应 docker --restart）：label 为选项短文案，tip 为悬浮说明
@@ -171,6 +184,8 @@ function resetCreateForm() {
   form.envs = ['']
   form.restart = 'no'
   form.command = ''
+  form.health_cmd = ''
+  form.health_interval = ''
 }
 
 // 动态行清洗：trim + 丢弃空行，空数组交给后端按缺省处理
@@ -206,7 +221,9 @@ async function submit() {
       volumes: cleanRows(form.volumes),
       envs: cleanRows(form.envs),
       restart: form.restart,
-      command: form.command.trim()
+      command: form.command.trim(),
+      health_cmd: form.health_cmd.trim(),
+      health_interval: form.health_interval.trim()
     })
     ElMessage.success('容器已创建')
     visible.value = false

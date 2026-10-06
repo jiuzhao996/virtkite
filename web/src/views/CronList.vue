@@ -121,6 +121,7 @@
             <el-radio value="vm_snapshot">虚拟机快照</el-radio>
             <el-radio value="db_backup">数据库备份</el-radio>
             <el-radio value="ansible_playbook">Playbook 执行</el-radio>
+            <el-radio value="container_healthcheck">容器健康巡检</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.action === 'vm_snapshot'" label="目标虚拟机" required>
@@ -143,6 +144,9 @@
         </el-form-item>
         <el-form-item v-else-if="form.action === 'db_backup'" label="说明">
           <div class="field-tip">备份数据库到主机 backup 目录，按保留份数自动清理旧备份</div>
+        </el-form-item>
+        <el-form-item v-else-if="form.action === 'container_healthcheck'" label="说明">
+          <div class="field-tip">巡检所有运行中容器，unhealthy 且连续失败 ≥3 次时自动重启并通知（需容器创建时配置了健康检查）</div>
         </el-form-item>
         <el-form-item label="保留份数">
           <el-input-number v-model="form.keep" :min="1" :max="365" controls-position="right" style="width: 160px" />
@@ -450,12 +454,14 @@ async function save() {
     return ElMessage.warning('保留份数必须是 1-365 的整数')
   }
   // params 是 JSON 字符串：vm_snapshot 带 {"vm_id":N}，ansible_playbook 带
-  // {playbook, targets}，db_backup 空对象
+  // {playbook, targets}，container_healthcheck 带 {notify:true}，db_backup 空对象
   const params = form.value.action === 'vm_snapshot'
     ? JSON.stringify({ vm_id: form.value.vm_id })
     : form.value.action === 'ansible_playbook'
       ? JSON.stringify({ playbook: form.value.pb_playbook, targets: form.value.pb_targets })
-      : '{}'
+      : form.value.action === 'container_healthcheck'
+        ? JSON.stringify({ notify: true })
+        : '{}'
   const payload = {
     name: form.value.name.trim(),
     cron_expr: form.value.cron_expr.trim(),

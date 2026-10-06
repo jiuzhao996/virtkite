@@ -22,6 +22,10 @@ type ContainerOpts struct {
 	Envs    []string `json:"envs"`    // 环境变量（-e，KEY=VALUE，VALUE 可再含 =）
 	Restart string   `json:"restart"` // 重启策略（--restart，空与 no 均为 docker 默认）
 	Command string   `json:"command"` // 附加命令参数（跟在镜像名后，按空白拆分）
+	// 健康检查（R8）：空则不输出 --health-cmd / --health-interval（docker 默认无健康检查）。
+	// 有健康检查的容器，docker 会维护 State.Health，容器健康自愈（cron action）据此判定。
+	HealthCmd      string `json:"health_cmd"`      // --health-cmd（如 "curl -f http://localhost/"）
+	HealthInterval string `json:"health_interval"` // --health-interval（如 30s）
 }
 
 // containerNameRe 容器名白名单：1-64 位、字母数字开头，仅允许字母数字与 _. -
@@ -70,6 +74,12 @@ func ValidateContainerOpts(opts ContainerOpts) error {
 		}
 		if err := validateEnvEntry(e); err != nil {
 			return err
+		}
+	}
+	// health-interval 须形如 30s / 1m（Go duration 语法），拒绝空值以外的非法串
+	if opts.HealthInterval != "" {
+		if _, err := time.ParseDuration(opts.HealthInterval); err != nil {
+			return errors.New("健康检查间隔格式非法（如 30s / 1m）")
 		}
 	}
 	return nil
@@ -177,6 +187,13 @@ func BuildRunArgs(opts ContainerOpts) []string {
 	args = append(args, opts.Image)
 	if fields := strings.Fields(opts.Command); len(fields) > 0 {
 		args = append(args, fields...)
+	}
+	// 健康检查在最末（docker run 的 flag 顺序不影响语义）
+	if opts.HealthCmd != "" {
+		args = append(args, "--health-cmd", opts.HealthCmd)
+	}
+	if opts.HealthInterval != "" {
+		args = append(args, "--health-interval", opts.HealthInterval)
 	}
 	return args
 }
