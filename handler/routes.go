@@ -533,6 +533,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	{
 		taskRoutes.GET("", taskHandler.ListTasks)
 		taskRoutes.GET("/:id", taskHandler.GetTask)
+		taskRoutes.POST("/:id/cancel", taskHandler.CancelTask)
 		taskRoutes.DELETE("/:id", taskHandler.DeleteTask)
 	}
 

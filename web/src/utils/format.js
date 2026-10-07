@@ -92,7 +92,8 @@ const TASK_STATUS_TEXT = {
   pending: '等待中',
   running: '执行中',
   success: '成功',
-  failed: '失败'
+  failed: '失败',
+  cancelled: '已取消'
 }
 
 /** 任务状态文案；未知状态原样返回。 */
@@ -105,6 +106,7 @@ export function taskStatusTag(status) {
   if (status === 'success') return 'success'
   if (status === 'failed') return 'danger'
   if (status === 'running') return 'primary'
+  if (status === 'cancelled') return 'warning'
   return 'info'
 }
 

@@ -7,6 +7,7 @@
 package tasks
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,6 +96,10 @@ const (
 	statusPending = "pending"
 	// statusRunning 任务执行中。
 	statusRunning = "running"
+	// statusCancelled 任务被用户取消（AU2）：仅对响应 ctx 的 executor 立即生效
+	//（ansible 子进程被 kill）；不响应 ctx 的（libvirt RPC）底层操作可能仍在
+	// 后台跑完，但任务状态以取消为准，不再回写其它终态。
+	statusCancelled = "cancelled"
 	// statusSuccess 任务执行成功。
 	statusSuccess = "success"
 	// statusFailed 任务执行失败。
@@ -128,6 +133,9 @@ type ExecContext struct {
 	Task    *model.Task            // DB 记录（worker 内更新 Status/Progress/Result/Error）
 	Payload map[string]interface{} // task.Payload 反序列化
 	Report  ProgressFunc           // 上报进度（内部写 DB task.Progress）
+	// Ctx 取消信号（AU2）：用户取消时触发；不响应它的 executor 也能跑完，
+	// 但任务状态以 cancelled 为准。nil 时按 context.Background() 使用。
+	Ctx context.Context
 }
 
 // Executor 任务执行函数：返回 nil=成功（可写 ctx.Task.Result），error=失败（中文友好，写 Task.Error）。
@@ -144,6 +152,8 @@ type Manager struct {
 	queueSlow chan uint // 慢池 taskID 队列（分钟级任务，见 slowTaskTypes）
 	executors map[string]Executor
 	mu        sync.RWMutex
+	// cancels 运行中任务的取消函数表（taskID → context.CancelFunc），AU2 用户取消。
+	cancels sync.Map
 }
 
 // NewManager 创建任务管理器：virt.New() 惰性连接，起快慢两组 worker goroutine。
@@ -263,6 +273,37 @@ func (m *Manager) queueFor(taskType string) chan uint {
 	return m.queueFast
 }
 
+// Cancel 用户取消运行中的任务（AU2）。cancelled=false 表示不在运行态（幂等，不算错误）。
+func (m *Manager) Cancel(id uint) (cancelled bool, err error) {
+	var task model.Task
+	if err := m.DB.First(&task, id).Error; err != nil {
+		return false, err
+	}
+	if task.Status != statusRunning {
+		return false, nil
+	}
+	m.updateTaskFields(id, map[string]interface{}{
+		"status": statusCancelled,
+		"error":  "已被用户取消",
+	}, "用户取消")
+	if c, ok := m.cancels.Load(id); ok {
+		if cf, ok2 := c.(context.CancelFunc); ok2 {
+			cf()
+		}
+	}
+	log.Printf("[tasks] 任务已取消 id=%d type=%s", id, task.Type)
+	return true, nil
+}
+
+// isCancelled 任务当前是否已被用户取消（终态回写防覆盖用）。
+func (m *Manager) isCancelled(id uint) bool {
+	var status string
+	if err := m.DB.Model(&model.Task{}).Where("id = ?", id).Pluck("status", &status).Error; err != nil {
+		return false
+	}
+	return status == statusCancelled
+}
+
 // Get 查询单个任务。
 func (m *Manager) Get(id uint) (*model.Task, error) {
 	var task model.Task
@@ -363,12 +404,17 @@ func (m *Manager) run(id uint) {
 		}
 	}
 
+	// 用户取消（AU2）：ctx 传入 executor；Cancel 置状态后触发 CancelFunc
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancels.Store(id, cancel)
+	defer m.cancels.Delete(id)
 	execCtx := &ExecContext{
 		DB:      m.DB,
 		Virt:    m.Virt,
 		Task:    &task,
 		Payload: payload,
 		Report:  m.reporter(id),
+		Ctx:     ctx,
 	}
 	// 执行级超时：executor 挂死（libvirt RPC 无响应 / 下载僵死 / 死循环）时，
 	// 任务永久停在 running——worker 白白少一个，四角全卡死时整个任务系统瘫痪，
@@ -383,6 +429,10 @@ func (m *Manager) run(id uint) {
 	select {
 	case err := <-done:
 		timer.Stop()
+		if m.isCancelled(id) {
+			// 用户已取消：状态以取消为准，executor 的失败回写不覆盖
+			return
+		}
 		if err != nil {
 			// 原始错误链（含 libvirt 具体报错）只进日志，DB 只存 friendly 中文（该字段回显前端）
 			log.Printf("[tasks] 任务失败 id=%d type=%s vm=%s err=%v", id, task.Type, task.VMName, err)
@@ -401,11 +451,17 @@ func (m *Manager) run(id uint) {
 			return
 		}
 	case <-timer.C:
+		if m.isCancelled(id) {
+			return
+		}
 		log.Printf("[tasks] !!! 任务执行超时 id=%d type=%s vm=%s timeout=%s", id, task.Type, task.VMName, timeout)
 		m.markFailed(id, fmt.Sprintf("任务执行超时（上限 %s），已自动终止，请检查环境后重试", timeout))
 		return
 	}
 	// 成功终态：写失败同样会造僵尸任务，必须走重试 + 留痕（旧实现 _ = 静默吞掉）
+	if m.isCancelled(id) {
+		return
+	}
 	m.updateTaskFields(id, map[string]interface{}{
 		"status":   statusSuccess,
 		"progress": 100,

@@ -73,16 +73,22 @@
         <el-table-column prop="created_at" label="创建时间" width="170">
           <template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" size="small" @click.stop="openDetail(row)">详情</el-button>
+            <el-button
+              v-if="row.status === 'running'"
+              text type="warning" size="small"
+              :loading="cancellingId === row.id"
+              @click.stop="cancelTask(row)"
+            >取消</el-button>
             <el-button
               v-if="isAdmin"
               text
               type="danger"
               size="small"
-              :disabled="row.status !== 'success' && row.status !== 'failed'"
-              :title="row.status === 'success' || row.status === 'failed' ? '' : '任务未结束，暂不能删除'"
+              :disabled="!isFinal(row.status)"
+              :title="isFinal(row.status) ? '' : '任务未结束，暂不能删除'"
               @click.stop="remove(row)"
             >删除</el-button>
           </template>
@@ -275,6 +281,29 @@ function taskTypeLabel(type) {
 // ==================== 详情抽屉：时间线 / 结构化 result / 脱敏（包A）====================
 
 const detailDrawer = ref(false)
+const cancellingId = ref(null)
+// 终态判断（cancelled 后也算终态，可删除）
+function isFinal(status) {
+  return status === 'success' || status === 'failed' || status === 'cancelled'
+}
+async function cancelTask(row) {
+  try {
+    await ElMessageBox.confirm(`取消任务「${row.title || row.id}」？正在执行的远程操作将被中止。`, '取消任务', { type: 'warning', confirmButtonText: '取消任务' })
+  } catch (e) {
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))
+    return
+  }
+  cancellingId.value = row.id
+  try {
+    await api.cancelTask(row.id)
+    ElMessage.success('已发出取消')
+    await load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '取消失败'))
+  } finally {
+    cancellingId.value = null
+  }
+}
 const detail = ref(null)
 
 // result / payload 都是 JSON 字符串，解析失败按无数据处理（与原 detailParsed 行为一致）

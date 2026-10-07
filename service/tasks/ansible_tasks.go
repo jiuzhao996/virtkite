@@ -242,7 +242,12 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		dirty = true
 		mu.Unlock()
 	}
-	recap, err := eng.Run(context.Background(), runOpts)
+	// AU2 取消：ctx 来自 Manager（用户取消时子进程被 kill，Run 返回 ctx.Canceled）
+	runCtx := ctx.Ctx
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
+	recap, err := eng.Run(runCtx, runOpts)
 	close(stopFlusher)
 	flush()
 	if err != nil {

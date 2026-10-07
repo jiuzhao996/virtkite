@@ -170,6 +170,7 @@ export const core = {
   getTask: (id) => unwrap(http.get('/tasks/' + id)),
   listTasks: (params) => unwrap(http.get('/tasks', { params })),
   deleteTask: (id) => unwrap(http.delete('/tasks/' + id)),
+  cancelTask: (id) => unwrap(http.post(`/tasks/${id}/cancel`)),
 
   // 控制台会话（谁连了哪台 VM、可强制断开 SSH/串口）
   listSessions: (params) => unwrap(http.get('/sessions', { params })),

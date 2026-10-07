@@ -63,6 +63,26 @@ func (h *TaskHandler) GetTask(c *gin.Context) {
 	Success(c, task)
 }
 
+// CancelTask POST /api/tasks/:id/cancel —— 用户取消运行中的任务（AU2）。
+// 仅 running 可取消；不响应 ctx 的 executor（libvirt 类）底层操作可能继续跑完，
+// 但任务状态以取消为准。幂等：非 running 返回「不在运行中」不算错误。
+func (h *TaskHandler) CancelTask(c *gin.Context) {
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
+	cancelled, err := h.Tasks.Cancel(id)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "任务不存在", err)
+		return
+	}
+	if !cancelled {
+		Fail(c, http.StatusConflict, "任务不在运行中，无法取消")
+		return
+	}
+	Success(c, gin.H{"message": "已取消", "id": id})
+}
+
 // DeleteTask 删除任务 DELETE /api/tasks/:id，仅 finished（success/failed）可删。
 func (h *TaskHandler) DeleteTask(c *gin.Context) {
 	if h.Tasks == nil {

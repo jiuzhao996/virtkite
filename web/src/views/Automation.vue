@@ -118,8 +118,14 @@
               </template>
             </el-table-column>
             <el-table-column prop="created_at" label="提交时间" width="180" />
-            <el-table-column label="操作" width="150" fixed="right">
+            <el-table-column label="操作" width="210" fixed="right">
               <template #default="{ row }">
+                <el-button
+                  v-if="row.status === 'running'"
+                  text size="small" type="warning"
+                  :loading="cancellingId === row.id"
+                  @click.stop="cancelHistoryTask(row)"
+                >取消</el-button>
                 <el-button text size="small" type="primary" @click.stop="viewHistoryTask(row)">输出</el-button>
                 <!-- 出口：跳到任务中心看该任务的完整时间线与结构化结果 -->
                 <el-button text size="small" @click.stop="goTaskCenter(row)">任务中心 →</el-button>
@@ -315,8 +321,8 @@ const histLoading = ref(false)
 const runnableVMs = computed(() => vms.value.filter((v) => v.status === 'running' && v.ip))
 const isRunning = computed(() => runTask.value?.status === 'running' || runTask.value?.status === 'pending')
 
-const statusTag = (s) => ({ running: 'warning', success: 'success', failed: 'danger' }[s] || 'info')
-const statusLabel = (s) => ({ running: '执行中', pending: '排队中', success: '成功', failed: '失败' }[s] || s)
+const statusTag = (s) => ({ running: 'warning', success: 'success', failed: 'danger', cancelled: 'info' }[s] || 'info')
+const statusLabel = (s) => ({ running: '执行中', pending: '排队中', success: '成功', failed: '失败', cancelled: '已取消' }[s] || s)
 
 // 输出文本：终态 JSON（output/replay recap）；失败显示 error；中间态纯文本
 const logText = computed(() => {
@@ -447,6 +453,27 @@ async function removeGroup(g) {
     loadHostGroups()
   } catch (e) {
     ElMessage.error(errMsg(e, '删除失败'))
+  }
+}
+
+// 取消执行中的任务（AU2）
+const cancellingId = ref(null)
+async function cancelHistoryTask(row) {
+  try {
+    await ElMessageBox.confirm(`取消任务「${row.title}」？正在执行的 ansible 进程将被中止。`, '取消任务', { type: 'warning', confirmButtonText: '取消任务' })
+  } catch (e) {
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))
+    return
+  }
+  cancellingId.value = row.id
+  try {
+    await api.cancelTask(row.id)
+    ElMessage.success('已发出取消')
+    loadHistory()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '取消失败'))
+  } finally {
+    cancellingId.value = null
   }
 }
 
