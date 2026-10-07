@@ -45,6 +45,9 @@ type cronTaskItem struct {
 	model.ScheduledTask
 	NextRun    *time.Time    `json:"next_run"` // 表达式非法或 366 天内无匹配（如 2 月 31 日）时为 null
 	RecentRuns []cronRunItem `json:"recent_runs"`
+	// Stale 死开关命中：预期执行时刻已过宽限期仍无执行记录（调度器可能未运行）
+	Stale    bool       `json:"stale"`
+	StaleDue *time.Time `json:"stale_due,omitempty"`
 }
 
 // cronRunItem 执行历史条目（列表内嵌精简版；完整历史走 GET /api/crons/:id/runs）。
@@ -63,6 +66,10 @@ type cronTaskReq struct {
 	Params   *string `json:"params"`
 	Enabled  *bool   `json:"enabled"`
 	Keep     *int    `json:"keep"` // 保留最近 N 份产物（快照/备份），1-365
+	// 死开关宽限（分钟，0=关闭，上限 1440）与失败重试（次数 0-3、间隔秒 1-120）
+	GraceMinutes  *int `json:"grace_minutes"`
+	RetryCount    *int `json:"retry_count"`
+	RetryInterval *int `json:"retry_interval"`
 }
 
 // List GET /api/crons：全部任务 + 每条的下次执行时间预览 + 最近 3 条执行记录。
@@ -72,10 +79,20 @@ func (h *CronsHandler) List(c *gin.Context) {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
+	// 死开关命中集合（调度器可能为 nil：测试或未注入时跳过标记）
+	var stale map[uint]cron.StaleInfo
+	if h.Scheduler != nil {
+		stale = h.Scheduler.StaleTasks()
+	}
 	items := make([]cronTaskItem, 0, len(tasks))
 	now := time.Now()
 	for _, st := range tasks {
 		item := cronTaskItem{ScheduledTask: st, RecentRuns: []cronRunItem{}}
+		if info, ok := stale[st.ID]; ok {
+			item.Stale = true
+			due := info.Due
+			item.StaleDue = &due
+		}
 		if spec, err := cron.ParseCron(st.CronExpr); err == nil {
 			if next := cron.Next(spec, now); !next.IsZero() {
 				item.NextRun = &next
@@ -183,7 +200,7 @@ func (h *CronsHandler) Create(c *gin.Context) {
 		return
 	}
 	// 未显式给 enabled 时默认启用；未给 keep 时取保留份数默认值（7）
-	st := model.ScheduledTask{Enabled: true, Keep: cron.DefaultKeep}
+	st := model.ScheduledTask{Enabled: true, Keep: cron.DefaultKeep, GraceMinutes: cron.DefaultGrace, RetryInterval: cron.DefaultRetryInterval}
 	if err := applyCronReq(&st, req); err != nil {
 		Fail(c, http.StatusBadRequest, err.Error()) // 校验错误为固定中文文案，可直接回显
 		return
@@ -193,7 +210,7 @@ func (h *CronsHandler) Create(c *gin.Context) {
 	}
 	// Select 强制写入全部列：Enabled 的 gorm default:true 会让零值 false 被 INSERT 省略，
 	// 显式列出字段才能落库「创建即停用」的语义（Keep 已显式赋默认值，一并列入）
-	if err := h.DB.Select("Name", "CronExpr", "Action", "Params", "Enabled", "Keep").Create(&st).Error; err != nil {
+	if err := h.DB.Select("Name", "CronExpr", "Action", "Params", "Enabled", "Keep", "GraceMinutes", "RetryCount", "RetryInterval").Create(&st).Error; err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
@@ -309,12 +326,28 @@ func applyCronReq(st *model.ScheduledTask, req cronTaskReq) error {
 	if req.Enabled != nil {
 		st.Enabled = *req.Enabled
 	}
+	if req.GraceMinutes != nil {
+		st.GraceMinutes = *req.GraceMinutes
+	}
+	if req.RetryCount != nil {
+		st.RetryCount = *req.RetryCount
+	}
+	if req.RetryInterval != nil {
+		st.RetryInterval = *req.RetryInterval
+	}
 	if req.Keep != nil {
 		st.Keep = *req.Keep
 	} else if st.Keep <= 0 {
 		// 未显式给出且存量值非法（历史行零值）时兜底默认值，避免「只改名字」被
 		// validateCronTask 的范围校验误拒
 		st.Keep = cron.DefaultKeep
+	}
+	// 重试间隔与死开关宽限的存量零值兜底（RetryInterval 校验下限为 1，零值会被拒）
+	if st.RetryInterval <= 0 {
+		st.RetryInterval = cron.DefaultRetryInterval
+	}
+	if st.GraceMinutes < 0 {
+		st.GraceMinutes = cron.DefaultGrace
 	}
 	_, err := validateCronTask(st)
 	return err
@@ -336,6 +369,16 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 	// 保留份数：1-365 份（未显式给值时 applyCronReq 已兜底默认值，0/负数到此即为非法入参）
 	if st.Keep < 1 || st.Keep > 365 {
 		return 0, fmt.Errorf("keep（保留份数）必须在 1-365 之间，当前为 %d", st.Keep)
+	}
+	// 死开关宽限：0=关闭；上限 1440（一天），超出按非法入参拒绝，避免逐分钟回看退化成大循环
+	if st.GraceMinutes < 0 || st.GraceMinutes > 1440 {
+		return 0, fmt.Errorf("grace_minutes（死开关宽限分钟）必须在 0-1440 之间，当前为 %d（0 表示关闭）", st.GraceMinutes)
+	}
+	if st.RetryCount < 0 || st.RetryCount > 3 {
+		return 0, fmt.Errorf("retry_count（失败重试次数）必须在 0-3 之间，当前为 %d", st.RetryCount)
+	}
+	if st.RetryInterval < 1 || st.RetryInterval > 120 {
+		return 0, fmt.Errorf("retry_interval（重试间隔秒）必须在 1-120 之间，当前为 %d", st.RetryInterval)
 	}
 	spec, err := cron.ParseCron(st.CronExpr)
 	if err != nil {

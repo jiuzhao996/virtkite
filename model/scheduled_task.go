@@ -13,6 +13,13 @@ type ScheduledTask struct {
 	Enabled   bool       `gorm:"default:true" json:"enabled"`       // 启停开关（关闭后调度器跳过）
 	Keep      int        `gorm:"default:7" json:"keep"`             // 保留最近 N 份产物：vm_snapshot=cron- 前缀快照数 / db_backup=备份文件数；<=0 视为 7
 	LastRun   *time.Time `json:"last_run"`                          // 最近一次执行时间（含手动触发；nil=从未执行）
+	// 死开关（dead man's switch）：最近一次预期执行时刻过了宽限期仍无执行记录即告警。
+	// <=0 或 >1440 表示关闭；典型值 30（半小时）。
+	GraceMinutes int `gorm:"default:30" json:"grace_minutes"`
+	// 失败自动重试：次数（0=不重试，上限 3）与间隔秒数（上限 120）。
+	// 注意：重试在 execute 持锁期间 sleep，会推迟其它任务的执行（单机小任务量下可接受）。
+	RetryCount    int `gorm:"default:0" json:"retry_count"`
+	RetryInterval int `gorm:"default:60" json:"retry_interval"`
 	RunCount  int        `gorm:"default:0" json:"run_count"`        // 累计执行次数（成功失败都计）
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`

@@ -71,12 +71,25 @@ const (
 	maxRunOutput = 2000
 	// notifyErrLimit 失败通知消息里错误摘要的最大字符数。
 	notifyErrLimit = 200
+	// maxRetryCount / maxRetryIntervalSec 失败自动重试的上限（次数与间隔秒）。
+	maxRetryCount       = 3
+	maxRetryIntervalSec = 120
+	// maxGraceMinutes 死开关宽限期的上限（分钟）；超过视为关闭，防逐分钟回看退化成大循环。
+	maxGraceMinutes = 1440
+	// maxRunAge 超过此时长仍未回写结束状态的 running 行视为孤儿（进程崩溃残留）。
+	maxRunAge = 2 * time.Hour
 )
 
 // DefaultKeep 保留份数默认值：任务未配置 Keep（<=0，含历史行零值）时的兜底，
 // 与 model.ScheduledTask.Keep 的 gorm default:7 一致。导出供 handler 创建任务时
 // 取同一默认值，避免两处硬编码漂移。
 const DefaultKeep = 7
+
+// DefaultGrace 死开关宽限期默认值（分钟），与 model.ScheduledTask.GraceMinutes 的 gorm default:30 一致。
+const DefaultGrace = 30
+
+// DefaultRetryInterval 失败重试间隔默认值（秒），与 model 的 gorm default:60 一致。
+const DefaultRetryInterval = 60
 
 // NotifyURL 计划任务失败通知的 webhook 地址（飞书/钉钉等自定义机器人的 incoming 地址，
 // 报文格式由 service/notify 按 URL 域名自动分派）。由 main 启动时注入（如环境变量
@@ -291,6 +304,10 @@ type Scheduler struct {
 	// 命中同一任务，mysqldump / 打快照不重入。ansible_playbook 转异步任务后本函数
 	// 只做轮询等待（分钟级），同样占用此锁——并发到达的另一个任务会排队。
 	execMu sync.Mutex
+
+	// staleAlerted 死开关通知去重：任务 id → 已告警的预期时刻（同一预期时刻只推一次）。
+	alertMu      sync.Mutex
+	staleAlerted map[uint]time.Time
 }
 
 // Start 启动调度循环（内部自起 goroutine，无需再 go 一层）。
@@ -325,8 +342,10 @@ func (s *Scheduler) safeTick(now time.Time) {
 	s.tick(now)
 }
 
-// tick 执行一轮调度扫描：取所有启用任务，表达式命中当前整分即执行。
+// tick 执行一轮调度扫描：取所有启用任务，表达式命中当前整分即执行；末尾跑死开关巡检。
 func (s *Scheduler) tick(now time.Time) {
+	s.sweepOrphanRuns()
+
 	var tasks []model.ScheduledTask
 	if err := s.DB.Where("enabled = ?", true).Find(&tasks).Error; err != nil {
 		log.Printf("[cron] 查询计划任务失败: %v", err)
@@ -342,21 +361,42 @@ func (s *Scheduler) tick(now time.Time) {
 		if !Match(spec, now) {
 			continue
 		}
-		if err := s.execute(st); err != nil {
+		// 定时触发走防叠跑：上一轮未结束时本轮跳过而非排队
+		if err := s.execute(st, true); err != nil {
 			log.Printf("[cron] 计划任务执行失败 id=%d(%s) action=%s: %v", st.ID, st.Name, st.Action, err)
 		}
 	}
+
+	// 死开关：预期已过宽限期却无执行记录的任务，推送一次告警
+	s.watchdog(s.StaleTasks())
 }
 
 // ExecuteNow 立即执行一次计划任务（handler 的手动触发入口），与定时执行共用 execute。
 func (s *Scheduler) ExecuteNow(st model.ScheduledTask) error {
-	return s.execute(st)
+	// 手动触发不跳过：是显式的用户意图，即便有在跑的任务也排队等待（execMu 串行）
+	return s.execute(st, false)
 }
 
 // execute 执行单个任务：更新执行统计（LastRun/RunCount），写执行历史（cron_runs：
-// 开始插一行 running、结束回写 status/output 摘要），失败时经 NotifyURL 推送通知。
+// 开始插一行 running、结束回写 status/output 摘要），失败时按配置重试，最终失败经 NotifyURL 推送通知。
 // 执行全程持锁（见 execMu）；统计/历史写失败只记日志不阻断——下次执行仍会正常累计。
-func (s *Scheduler) execute(st model.ScheduledTask) error {
+// skipIfRunning=true（定时触发）时，上一轮未结束则跳过本轮而非排队。
+func (s *Scheduler) execute(st model.ScheduledTask, skipIfRunning bool) error {
+	// 防叠跑：存在未回写结束的 running 行即跳过。检查在取锁前做——排队到这里的上一轮已结束，不会误判；
+	// 崩溃残留的孤儿行由 sweepOrphanRuns 在超 maxRunAge 后标记 failed，不会永久阻塞。
+	if skipIfRunning && s.hasRunningRun(st.ID) {
+		log.Printf("[cron] 任务 %d(%s) 上一轮尚未结束，本轮跳过", st.ID, st.Name)
+		finishedAt := time.Now()
+		skipped := model.CronRun{
+			TaskID: st.ID, TaskName: st.Name, StartedAt: finishedAt, FinishedAt: &finishedAt,
+			Status: model.CronRunStatusSkipped, Attempt: 1, Output: "上一轮执行尚未结束，本轮跳过",
+		}
+		if cerr := s.DB.Create(&skipped).Error; cerr != nil {
+			log.Printf("[cron] 写跳过记录失败 id=%d: %v", st.ID, cerr)
+		}
+		return nil
+	}
+
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
 
@@ -368,26 +408,25 @@ func (s *Scheduler) execute(st model.ScheduledTask) error {
 		TaskName:  st.Name,
 		StartedAt: time.Now(),
 		Status:    model.CronRunStatusRunning,
+		Attempt:   1,
 	}
 	if cerr := s.DB.Create(&run).Error; cerr != nil {
 		log.Printf("[cron] 写执行历史（开始）失败 id=%d: %v", st.ID, cerr)
 	}
 
+	// 失败自动重试：次数/间隔均有上限（见常量）。重试期间持锁，会推迟其它任务（单机小任务量下可接受）。
+	attempts := 1 + clampInt(st.RetryCount, 0, maxRetryCount)
 	var summary string
 	var err error
-	switch st.Action {
-	case ActionVMSnapshot:
-		summary, err = s.runVMSnapshot(st)
-	case ActionDBBackup:
-		summary, err = s.runDBBackup(st)
-	case ActionAnsiblePlaybook:
-		summary, err = s.runAnsiblePlaybook(st)
-	case ActionContainerHealthcheck:
-		summary, err = s.runContainerHealthcheck(st)
-	case ActionImageVersionCheck:
-		summary, err = s.runImageVersionCheck(st)
-	default:
-		err = fmt.Errorf("未知动作类型 %q", st.Action)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		run.Attempt = attempt
+		summary, err = s.runAction(st)
+		if err == nil || attempt == attempts {
+			break
+		}
+		interval := clampInt(st.RetryInterval, 1, maxRetryIntervalSec)
+		log.Printf("[cron] 任务 %d(%s) 第 %d 次失败，%d 秒后重试: %v", st.ID, st.Name, attempt, interval, err)
+		time.Sleep(time.Duration(interval) * time.Second)
 	}
 
 	finishedAt := time.Now()
@@ -962,5 +1001,168 @@ func notifyFailure(taskName, errMsg string) {
 			return
 		}
 		log.Printf("[cron] 失败通知已推送 task=%s", taskName)
+	}()
+}
+
+
+// runAction 按动作类型分发执行，返回摘要与错误。
+func (s *Scheduler) runAction(st model.ScheduledTask) (string, error) {
+	switch st.Action {
+	case ActionVMSnapshot:
+		return s.runVMSnapshot(st)
+	case ActionDBBackup:
+		return s.runDBBackup(st)
+	case ActionAnsiblePlaybook:
+		return s.runAnsiblePlaybook(st)
+	case ActionContainerHealthcheck:
+		return s.runContainerHealthcheck(st)
+	case ActionImageVersionCheck:
+		return s.runImageVersionCheck(st)
+	default:
+		return "", fmt.Errorf("未知动作类型 %q", st.Action)
+	}
+}
+
+// clampInt 把 v 夹到 [lo, hi]。
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// hasRunningRun 该任务是否存在未回写结束状态的 running 行（超 maxRunAge 的孤儿行不算，避免永久阻塞）。
+// 查询失败按「无并发」处理——宁可执行也不误跳过。
+func (s *Scheduler) hasRunningRun(taskID uint) bool {
+	var n int64
+	cutoff := time.Now().Add(-maxRunAge)
+	if err := s.DB.Model(&model.CronRun{}).
+		Where("task_id = ? AND status = ? AND finished_at IS NULL AND started_at > ?",
+			taskID, model.CronRunStatusRunning, cutoff).Count(&n).Error; err != nil {
+		return false
+	}
+	return n > 0
+}
+
+// sweepOrphanRuns 把超过 maxRunAge 仍未回写结束状态的 running 行扫成 failed。
+// 进程崩溃/被 kill 时正在执行的行会残留，不清理会永久阻塞该任务的防叠跑判定。
+func (s *Scheduler) sweepOrphanRuns() {
+	cutoff := time.Now().Add(-maxRunAge)
+	res := s.DB.Model(&model.CronRun{}).
+		Where("status = ? AND finished_at IS NULL AND started_at < ?", model.CronRunStatusRunning, cutoff).
+		Updates(map[string]interface{}{
+			"status":      model.CronRunStatusFailed,
+			"finished_at": time.Now(),
+			"output":      "执行中断（进程重启或崩溃），未回写结束状态",
+		})
+	if res.Error != nil {
+		log.Printf("[cron] 清理残留执行记录失败: %v", res.Error)
+	} else if res.RowsAffected > 0 {
+		log.Printf("[cron] 已把 %d 条残留 running 执行记录标记为 failed", res.RowsAffected)
+	}
+}
+
+// lastDue 返回 <= now 的最近一次表达式命中时刻（从当前整分逐分钟回看 graceMin+1 分钟，
+// 覆盖「预期点已被宽限期跨过」的场景）；窗口内无命中返回零值。
+func lastDue(spec *Spec, now time.Time, graceMin int) time.Time {
+	for i := 0; i <= graceMin+1; i++ {
+		t := minuteFloor(now).Add(-time.Duration(i) * time.Minute)
+		if Match(spec, t) {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// StaleInfo 死开关命中信息。
+type StaleInfo struct {
+	Name string
+	Due  time.Time
+}
+
+// StaleTasks 返回「最近一次预期执行时刻已过宽限期、却无对应执行记录」的启用任务（键为任务 ID）。
+// grace<=0 或 >maxGraceMinutes 视为关闭死开关。供调度器 tick 告警与 handler 列表标记共用。
+func (s *Scheduler) StaleTasks() map[uint]StaleInfo {
+	out := map[uint]StaleInfo{}
+	var tasks []model.ScheduledTask
+	if err := s.DB.Where("enabled = ?", true).Find(&tasks).Error; err != nil {
+		return out
+	}
+	now := time.Now()
+	for _, st := range tasks {
+		if st.GraceMinutes <= 0 || st.GraceMinutes > maxGraceMinutes {
+			continue
+		}
+		spec, err := ParseCron(st.CronExpr)
+		if err != nil {
+			continue
+		}
+		grace := time.Duration(st.GraceMinutes) * time.Minute
+		due := lastDue(spec, now, st.GraceMinutes)
+		if due.IsZero() {
+			continue // 回看窗口内无预期时刻：周期长于宽限期，暂不判定
+		}
+		if !st.CreatedAt.Before(due) {
+			continue // 预期时刻早于任务创建（首个周期），不算漏跑
+		}
+		if now.Before(due.Add(grace)) {
+			continue // 仍在宽限期内
+		}
+		var n int64
+		if err := s.DB.Model(&model.CronRun{}).
+			Where("task_id = ? AND started_at >= ?", st.ID, due).Count(&n).Error; err != nil {
+			continue
+		}
+		if n == 0 {
+			out[st.ID] = StaleInfo{Name: st.Name, Due: due}
+		}
+	}
+	return out
+}
+
+// watchdog 死开关巡检：对「预期已过宽限期仍未跑」的任务推送一次通知（同一预期时刻只推一次）。
+func (s *Scheduler) watchdog(stale map[uint]StaleInfo) {
+	if len(stale) == 0 {
+		return
+	}
+	for id, info := range stale {
+		s.alertMu.Lock()
+		if s.staleAlerted == nil {
+			s.staleAlerted = map[uint]time.Time{}
+		}
+		last, seen := s.staleAlerted[id]
+		dup := seen && last.Equal(info.Due)
+		if !dup {
+			s.staleAlerted[id] = info.Due
+		}
+		s.alertMu.Unlock()
+		if dup {
+			continue
+		}
+		log.Printf("[cron] 死开关命中 id=%d name=%s 预期时刻=%s 未执行", id, info.Name, info.Due.Format(time.DateTime))
+		notifyStale(info.Name, info.Due)
+	}
+}
+
+// notifyStale 死开关告警推送（经 NotifyURL；为空则不推）。
+func notifyStale(taskName string, due time.Time) {
+	url := NotifyURL
+	if url == "" {
+		return
+	}
+	text := fmt.Sprintf("[鸢航VirtKite] 计划任务未按时执行: %s（预期 %s，已超过宽限期仍无执行记录，请检查调度器）",
+		taskName, due.Format("2006-01-02 15:04:05"))
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[cron] 死开关通知协程 panic task=%s: %v\n%s", taskName, r, debug.Stack())
+			}
+		}()
+		if err := notify.SendText(url, text); err != nil {
+			log.Printf("[cron] 死开关通知推送失败 task=%s: %v", taskName, err)
+		}
 	}()
 }

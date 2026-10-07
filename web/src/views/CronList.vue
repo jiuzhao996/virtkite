@@ -60,10 +60,14 @@
             <span class="mono">{{ row.last_run ? fmtDateTime(row.last_run) : '从未执行' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="最近执行" width="96" align="center">
+        <el-table-column label="最近执行" width="110" align="center">
           <template #default="{ row }">
+            <!-- 死开关命中优先展示（预期已过宽限期仍无执行记录，说明调度器可能没运行） -->
+            <el-tooltip v-if="row.stale" :content="staleTip(row)" placement="top">
+              <el-tag type="danger" effect="dark" size="small">超时未跑</el-tag>
+            </el-tooltip>
             <!-- 列表接口内嵌 recent_runs（最近 3 条、倒序），首条即最近一次 -->
-            <el-tooltip v-if="latestRun(row)" :content="latestRunTip(row)" placement="top">
+            <el-tooltip v-else-if="latestRun(row)" :content="latestRunTip(row)" placement="top">
               <el-tag :type="runStatusTag(latestRun(row).status)" effect="light" size="small">
                 {{ runStatusText(latestRun(row).status) }}
               </el-tag>
@@ -155,6 +159,17 @@
         <el-form-item label="保留份数">
           <el-input-number v-model="form.keep" :min="1" :max="365" controls-position="right" style="width: 160px" />
           <div class="field-tip">快照 / 备份只保留最近 N 份，超出后自动清理最旧的</div>
+        </el-form-item>
+        <el-form-item label="死开关宽限">
+          <el-input-number v-model="form.grace_minutes" :min="0" :max="1440" controls-position="right" style="width: 160px" />
+          <div class="field-tip">超过预期执行时刻 N 分钟仍无执行记录即告警（0 表示关闭）</div>
+        </el-form-item>
+        <el-form-item label="失败重试">
+          <el-input-number v-model="form.retry_count" :min="0" :max="3" controls-position="right" style="width: 120px" />
+          <span class="retry-sep">次，间隔</span>
+          <el-input-number v-model="form.retry_interval" :min="1" :max="120" controls-position="right" style="width: 120px" />
+          <span class="retry-sep">秒</span>
+          <div class="field-tip">执行失败后自动重试（0 次表示不重试）</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" active-text="启用" inactive-text="停用" />
@@ -249,10 +264,16 @@ function actionTag(a) {
 
 // 执行状态 → 中文 / tag 颜色（success 绿 / failed 红 / running 蓝）
 function runStatusText(s) {
-  return { success: '成功', failed: '失败', running: '执行中' }[s] || s || '未知'
+  return { success: '成功', failed: '失败', running: '执行中', skipped: '跳过' }[s] || s || '未知'
 }
 function runStatusTag(s) {
-  return { success: 'success', failed: 'danger', running: 'primary' }[s] || 'info'
+  return { success: 'success', failed: 'danger', running: 'primary', skipped: 'warning' }[s] || 'info'
+}
+
+// 死开关提示：预期时刻 + 处置建议
+function staleTip(row) {
+  const due = row.stale_due ? fmtDateTime(row.stale_due) : '预期时刻'
+  return `预期 ${due} 执行，已过宽限期仍无执行记录——请检查调度器是否在运行`
 }
 
 // 最近一次执行记录（recent_runs 倒序，首条最新）
@@ -357,7 +378,9 @@ const PRESETS = [
 
 // keep：保留份数（快照/备份只留最近 N 份），后端校验 1-365，默认 7
 const DEFAULT_KEEP = 7
-const form = ref({ name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, keep: DEFAULT_KEEP, enabled: true })
+const DEFAULT_GRACE = 30
+const DEFAULT_RETRY_INTERVAL = 60
+const form = ref({ name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, keep: DEFAULT_KEEP, grace_minutes: DEFAULT_GRACE, retry_count: 0, retry_interval: DEFAULT_RETRY_INTERVAL, enabled: true })
 
 // ===== cron 表达式「下次执行」预览 =====
 // 契约：GET /crons/preview?expr=<表达式> → data.next = 最多 5 个「YYYY-MM-DD HH:mm:ss」字符串；
@@ -411,7 +434,7 @@ function applyPreset(expr) {
 function openCreate() {
   editingId.value = null
   preset.value = ''
-  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, pb_playbook: '', pb_targets: [], keep: DEFAULT_KEEP, enabled: true }
+  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, pb_playbook: '', pb_targets: [], keep: DEFAULT_KEEP, grace_minutes: DEFAULT_GRACE, retry_count: 0, retry_interval: DEFAULT_RETRY_INTERVAL, enabled: true }
   dialog.value = true
   if (vms.value.length === 0) loadVMs()
   if (playbooks.value.length === 0) loadPlaybooks()
@@ -437,6 +460,9 @@ function openEdit(row) {
     pb_playbook: pbParams.playbook,
     pb_targets: pbParams.targets,
     keep: Number(row.keep) || DEFAULT_KEEP,
+    grace_minutes: row.grace_minutes == null ? DEFAULT_GRACE : Number(row.grace_minutes),
+    retry_count: Number(row.retry_count) || 0,
+    retry_interval: Number(row.retry_interval) || DEFAULT_RETRY_INTERVAL,
     enabled: !!row.enabled
   }
   dialog.value = true
@@ -472,6 +498,9 @@ async function save() {
     action: form.value.action,
     params,
     keep: form.value.keep,
+    grace_minutes: form.value.grace_minutes,
+    retry_count: form.value.retry_count,
+    retry_interval: form.value.retry_interval,
     enabled: form.value.enabled
   }
   saving.value = true
@@ -618,6 +647,11 @@ onUnmounted(() => {
 }
 .cron-preview-invalid {
   color: var(--el-color-danger);
+}
+.retry-sep {
+  margin: 0 6px;
+  color: var(--color-muted-foreground);
+  font-size: 0.85rem;
 }
 .field-tip {
   font-size: 0.78rem;

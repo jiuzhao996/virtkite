@@ -11,16 +11,20 @@ type CronRun struct {
 	TaskName   string     `gorm:"size:100" json:"task_name"`   // 任务名快照（任务删除后历史仍可读）
 	StartedAt  time.Time  `json:"started_at"`                  // 执行开始时间
 	FinishedAt *time.Time `json:"finished_at"`                 // 结束时间（nil=执行中，或进程中断未回写）
-	Status     string     `gorm:"size:20;index" json:"status"` // running / success / failed（常量见下）
+	Status     string     `gorm:"size:20;index" json:"status"` // running / success / failed / skipped（常量见下）
+	Attempt    int        `gorm:"default:1" json:"attempt"`    // 第几次尝试（失败重试递增，1=首次）
 	Output     string     `gorm:"type:text" json:"output"`     // 结果摘要：成功为成果描述、失败为错误摘要（≤2000 字符，超出截断）
 }
 
-// CronRun 状态常量（只允许这三个取值，写状态一律用常量不用字面量）。
-// running 行残留说明执行中断（进程重启/崩溃），没有对应的结束回写。
+// CronRun 状态常量（写状态一律用常量不用字面量）。
+// running 行残留说明执行中断（进程重启/崩溃），没有对应的结束回写——
+// 调度器启动时会把超过阈值的残留 running 行扫成 failed（见 service/cron 的 sweepOrphanRuns）。
 const (
 	CronRunStatusRunning = "running"
 	CronRunStatusSuccess = "success"
 	CronRunStatusFailed  = "failed"
+	// CronRunStatusSkipped 本轮被跳过：上一轮尚未结束（防叠跑），不排队直接跳过。
+	CronRunStatusSkipped = "skipped"
 )
 
 // TableName 指定表名
