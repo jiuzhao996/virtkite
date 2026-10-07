@@ -147,15 +147,25 @@ func main() {
 	r.Use(middleware.AuditMiddleware(db))
 
 	// 静态文件服务：按候选目录依次探测前端产物，第一个存在 index.html 的胜出。
-	// 用 os.ReadFile + c.Data 返回 index.html，规避 gin 对含 .html 路径的 301 目录索引重定向怪癖。
+	// index.html 只用于判断目录是否命中，内容每次请求现读——见下方 serveIndex 说明。
 	webDir, indexBytes := locateWebRoot()
 
 	if indexBytes != nil {
+		indexPath := filepath.Join(webDir, "index.html")
 		serveIndex := func(c *gin.Context) {
-			// index.html 必须禁缓存：内存中的 index 引用带 hash 的 assets（可长期缓存），
-			// 但 index 本身若被浏览器缓存，前端更新后会加载旧 chunk 出现"改了没生效/功能缺失"假象
+			// index.html 必须禁缓存：它引用带 hash 的 assets（可长期缓存），
+			// 但 index 本身若被浏览器缓存，前端更新后会加载旧 chunk 出现"改了没生效/功能缺失"假象。
+			//
+			// 同时也必须每次现读、不能启动时读进内存固化：重新构建后磁盘上的 chunk 换成
+			// 新 hash，旧文件已被删除；内存里的旧 index 仍指向旧文件名，请求落到 NoRoute
+			// 被兜底成 200+text/html，浏览器按 MIME 拒绝执行模块脚本 → 整页白屏。
+			// 改前端因此不必重启后端（读取失败才回退到启动时那份）。
+			data := indexBytes
+			if fresh, err := os.ReadFile(indexPath); err == nil && len(fresh) > 0 {
+				data = fresh
+			}
 			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-			c.Data(http.StatusOK, "text/html; charset=utf-8", indexBytes)
+			c.Data(http.StatusOK, "text/html; charset=utf-8", data)
 		}
 		r.GET("/", serveIndex)
 		// NoRoute 兜底只应服务 SPA 前端路由；/api/* 未知路径必须 JSON 404——
