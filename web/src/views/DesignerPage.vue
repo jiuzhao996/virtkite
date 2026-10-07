@@ -41,6 +41,7 @@
             <el-button size="small" :icon="DocumentChecked" @click="savePlan">保存</el-button>
             <el-button size="small" :icon="Download" @click="exportYaml">导出 YAML</el-button>
             <el-button size="small" :icon="Aim" @click="zoomFit">适应画布</el-button>
+            <el-button size="small" :icon="Grid" @click="autoLayout" title="按 网络→虚拟机→容器栈 分层重排">一键整理</el-button>
             <el-button size="small" :icon="Connection" :loading="liveLoading" @click="loadLiveStatus">刷新状态</el-button>
             <el-button size="small" :icon="Import" :loading="importing" @click="importFromReality">从现状导入</el-button>
             <el-button type="primary" size="small" :icon="VideoPlay" :loading="applying" @click="applyPlan">一键落地</el-button>
@@ -193,6 +194,15 @@ import { MiniMap } from '@antv/x6-plugin-minimap'
 import { Dnd } from '@antv/x6-plugin-dnd'
 
 const templates = ref([])
+const libvirtNets = ref([])   // 平台真实网络（net 物料动态化）
+async function loadLibvirtNets() {
+  try {
+    const res = await api.listNetworks()
+    libvirtNets.value = (res.data && res.data.items) || []
+  } catch {
+    // 物料是增强入口，失败静默（仍有自定义网段占位）
+  }
+}
 const router = useRouter()
 const stacks = ref([])
 const plans = ref([])
@@ -245,7 +255,15 @@ const applyStatusText = computed(() => ({ running: '应用中…', success: '✓
 const paletteGroups = computed(() => [
   { kind: 'container', title: '容器栈', color: KIND_COLOR.container, items: stacks.value.map((s) => ({ ref: s.id, label: s.id })) },
   { kind: 'vm', title: '虚拟机（云镜像）', color: KIND_COLOR.vm, items: cloudImages.value.map((i) => ({ ref: String(i.id), label: i.name })) },
-  { kind: 'net', title: '网络（标注）', color: KIND_COLOR.net, items: [{ ref: '10.0.0.0/24', label: '网段' }] },
+  {
+    kind: 'net', title: '网络', color: KIND_COLOR.net,
+    // 物料来自平台真实 libvirt 网络（拖入即真实网络名，落地时同名跳过/缺省按默认 NAT 建）；
+    // 网段占位项保留——纯设计态草稿也要能画
+    items: [
+      ...libvirtNets.value.map((n) => ({ ref: n.name, label: n.name + (n.gateway ? '' : '') })),
+      { ref: '10.0.0.0/24', label: '＋自定义网段' },
+    ],
+  },
 ])
 
 // ── X6 节点外观：body/label/sub 三段自定义 markup，四个边缘连接点（hover 显现）──
@@ -659,6 +677,37 @@ function highlightDiff() {
   }
 }
 
+// 一键整理（AD2）：按 net → vm → container 分层网格重排（手写分层，不引布局库）。
+// 只动位置不动数据/连线；同层每行 4 个，层间距留出连线走廊。
+function autoLayout() {
+  if (!graph) return
+  const nodes = graph.getNodes()
+  if (!nodes.length) return
+  const layerOf = { net: 0, vm: 1, container: 2 }
+  const sizeOf = { net: [92, 62], vm: [128, 46], container: [128, 46] }
+  const byLayer = [[], [], []]
+  for (const n of nodes) {
+    const d = n.getData() || {}
+    byLayer[layerOf[d.kind] ?? 1].push(n)
+  }
+  let y = 40
+  for (const layer of byLayer) {
+    if (!layer.length) continue
+    const kind = (layer[0].getData() || {}).kind
+    const [w, h] = sizeOf[kind] || [128, 46]
+    const cols = Math.min(4, layer.length)
+    layer.forEach((n, i) => {
+      const col = i % cols
+      const row = Math.floor(i / cols)
+      n.position(60 + col * (w + 56), y + row * (h + 48))
+    })
+    y += Math.ceil(layer.length / cols) * (h + 48) + 72
+  }
+  graph.centerContent()
+  touchGraph()
+  ElMessage.success('已按 网络 → 虚拟机 → 容器栈 分层整理')
+}
+
 function zoomFit() {
   graph?.zoomToFit({ padding: 40, maxScale: 1 })
 }
@@ -733,7 +782,7 @@ async function loadPlans() {
 
 onMounted(async () => {
   // vmOptions 一次带回云镜像+存储池（与创建向导同源）；apps 为应用安装目录
-  const [t, s, opt, appsRes] = await Promise.all([api.designerTemplates(), api.listStacks(), api.vmOptions(), api.listApps()])
+  const [t, s, opt, appsRes] = await Promise.all([api.designerTemplates(), api.listStacks(), api.vmOptions(), api.listApps(), loadLibvirtNets()])
   templates.value = (t.data && t.data.items) || []
   stacks.value = (s.data && s.data.items) || []
   const d = opt.data || {}
