@@ -67,8 +67,10 @@ const (
 	maxLookaheadDays = 366
 	// snapshotPrefix 定时快照的命名前缀；保留份数清理只针对该前缀，手工快照不受影响。
 	snapshotPrefix = "cron-"
-	// maxRunOutput cron_runs.output 摘要的最大字符数（超出截断，与 model.CronRun 注释一致）。
+	// maxRunOutput 失败时 cron_runs.output 保存的最大字符数（失败要留全量便于排障）。
 	maxRunOutput = 2000
+	// maxRunSummary 成功时 output 保存的最大字符数（成功只留摘要，防历史表膨胀）。
+	maxRunSummary = 400
 	// notifyErrLimit 失败通知消息里错误摘要的最大字符数。
 	notifyErrLimit = 200
 	// maxRetryCount / maxRetryIntervalSec 失败自动重试的上限（次数与间隔秒）。
@@ -436,7 +438,7 @@ func (s *Scheduler) execute(st model.ScheduledTask, skipIfRunning bool) error {
 		run.Output = truncateRunes(err.Error(), maxRunOutput)
 	} else {
 		run.Status = model.CronRunStatusSuccess
-		run.Output = truncateRunes(summary, maxRunOutput)
+		run.Output = truncateRunes(summary, maxRunSummary)
 	}
 	// 初始 Create 失败时 run.ID 为 0，Save 会退化成重新 INSERT 半截记录，故跳过
 	if run.ID != 0 {

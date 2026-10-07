@@ -417,6 +417,10 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		crons.POST("", cronsHandler.Create)
 		// 表达式下次执行预览（静态路由与 /:id 同级，gin 静态优先，与 vms/options 同款）
 		crons.GET("/preview", cronsHandler.Preview)
+		// 内置任务模板（只读，前端「从模板新建」用）
+		crons.GET("/templates", cronsHandler.Templates)
+		// 复制任务为副本（默认停用）
+		crons.POST("/:id/duplicate", cronsHandler.Duplicate)
 		crons.PUT("/:id", cronsHandler.Update)
 		crons.DELETE("/:id", cronsHandler.Delete)
 		crons.POST("/:id/toggle", cronsHandler.Toggle)

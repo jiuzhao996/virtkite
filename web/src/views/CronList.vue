@@ -22,6 +22,20 @@
           </el-select>
         </template>
         <template #right>
+          <el-dropdown trigger="click" @command="applyTemplate">
+            <el-button :icon="MagicStick">从模板新建</el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-for="t in templates" :key="t.key" :command="t">
+                  <div class="tpl-item">
+                    <b>{{ t.name }}</b>
+                    <span class="tpl-desc">{{ t.desc }}</span>
+                  </div>
+                </el-dropdown-item>
+                <el-dropdown-item v-if="!templates.length" disabled>模板加载中…</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button type="primary" :icon="Plus" @click="openCreate">新建任务</el-button>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
         </template>
@@ -81,7 +95,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="run_count" label="次数" width="70" align="center" />
-        <el-table-column label="操作" width="270" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button
               text
@@ -93,6 +107,7 @@
               @click="runNow(row)"
             >立即运行</el-button>
             <el-button size="small" text type="primary" @click="openHistory(row)">历史</el-button>
+            <el-button size="small" text type="primary" @click="duplicate(row)">复制</el-button>
             <el-button size="small" text type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" text type="danger" @click="remove(row)">删除</el-button>
           </template>
@@ -182,7 +197,17 @@
     </el-dialog>
 
     <!-- 执行历史抽屉（50% 宽）：GET /crons/:id/runs 分页倒序 -->
-    <el-drawer v-model="drawerVisible" :title="drawerTitle" size="50%">
+    <el-drawer v-model="drawerVisible" size="50%">
+      <template #header>
+        <div class="runs-head">
+          <span class="runs-title">{{ drawerTitle }}</span>
+          <el-button
+            size="small" type="primary" :icon="VideoPlay"
+            :loading="runningId === (drawerTask && drawerTask.id)"
+            @click="rerunCurrent"
+          >再跑一次</el-button>
+        </div>
+      </template>
       <el-table v-loading="runsLoading" :data="runs" stripe size="small">
         <template #empty>
           <el-empty description="该任务还没有执行记录" :image-size="80" />
@@ -199,7 +224,13 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="结果摘要" min-width="240" show-overflow-tooltip>
+        <el-table-column label="耗时" width="90" align="center">
+          <template #default="{ row }"><span class="mono">{{ runDuration(row) }}</span></template>
+        </el-table-column>
+        <el-table-column label="尝试" width="60" align="center">
+          <template #default="{ row }">{{ row.attempt || 1 }}</template>
+        </el-table-column>
+        <el-table-column label="结果摘要" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">{{ row.output || '—' }}</template>
         </el-table-column>
       </el-table>
@@ -219,7 +250,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh } from '@element-plus/icons-vue'
+import { Plus, Refresh, VideoPlay, MagicStick } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, isCancel, fmtDateTime, vmStatusText } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
@@ -556,6 +587,69 @@ async function runNow(row) {
 }
 
 // ===== 执行历史抽屉 =====
+// 内置模板（从模板新建）：挂载时拉一次，只读
+const templates = ref([])
+async function loadTemplates() {
+  try {
+    const res = await api.cronTemplates()
+    templates.value = (res && res.data && res.data.items) || []
+  } catch (e) {
+    // 模板是可选便捷入口，失败静默（仍可手动新建）
+  }
+}
+
+// 用模板填充新建表单（模板都需要目标 vm/playbook 时留空待选）
+function applyTemplate(t) {
+  editingId.value = null
+  preset.value = ''
+  form.value = {
+    name: t.name,
+    cron_expr: t.cron_expr,
+    action: t.action,
+    vm_id: null,
+    pb_playbook: '',
+    pb_targets: [],
+    keep: Number(t.keep) || DEFAULT_KEEP,
+    grace_minutes: t.grace_minutes == null ? DEFAULT_GRACE : Number(t.grace_minutes),
+    retry_count: Number(t.retry_count) || 0,
+    retry_interval: Number(t.retry_interval) || DEFAULT_RETRY_INTERVAL,
+    enabled: true
+  }
+  dialog.value = true
+  if (vms.value.length === 0) loadVMs()
+  if (playbooks.value.length === 0) loadPlaybooks()
+}
+
+// 复制任务（后端默认把副本置为停用，避免与原任务同时跑）
+async function duplicate(row) {
+  try {
+    await api.cronDuplicate(row.id)
+    ElMessage.success('已复制任务（默认停用，请确认后启用）')
+    await load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '复制失败'))
+  }
+}
+
+// 执行耗时：由 started_at / finished_at 计算（进行中显示 —）
+function runDuration(row) {
+  if (!row.finished_at) return '—'
+  const ms = new Date(row.finished_at) - new Date(row.started_at)
+  if (!isFinite(ms) || ms < 0) return '—'
+  if (ms < 1000) return ms + ' ms'
+  const s = Math.round(ms / 1000)
+  if (s < 60) return s + ' 秒'
+  return Math.floor(s / 60) + ' 分' + (s % 60) + ' 秒'
+}
+
+// 再从历史抽屉触发一次执行
+async function rerunCurrent() {
+  const t = drawerTask.value
+  if (!t) return
+  await runNow(t)
+  if (loadRuns) await loadRuns()
+}
+
 const drawerVisible = ref(false)
 const drawerTask = ref(null)
 const runs = ref([])
@@ -620,6 +714,7 @@ async function remove(row) {
 }
 
 onMounted(() => {
+  loadTemplates()
   load()
   // 参数列要把 vm_id 翻译成虚拟机名，列表数据里没有，进页面就拉一份
   loadVMs()
@@ -647,6 +742,25 @@ onUnmounted(() => {
 }
 .cron-preview-invalid {
   color: var(--el-color-danger);
+}
+.runs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.runs-title {
+  font-weight: 600;
+}
+.tpl-item {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+  padding: 2px 0;
+}
+.tpl-desc {
+  font-size: 0.76rem;
+  color: var(--color-muted-foreground);
 }
 .retry-sep {
   margin: 0 6px;

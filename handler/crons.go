@@ -153,6 +153,70 @@ func (h *CronsHandler) recentRuns(taskID uint, limit int) []cronRunItem {
 	return items
 }
 
+// cronTemplate 内置任务模板（出厂预设，前端「从模板新建」一键填充表单）。
+// 需要目标（vm_id / playbook）的动作不放模板——无法预设，只能现选。
+type cronTemplate struct {
+	Key           string `json:"key"`
+	Name          string `json:"name"`
+	Desc          string `json:"desc"`
+	Action        string `json:"action"`
+	CronExpr      string `json:"cron_expr"`
+	Params        string `json:"params"`
+	Keep          int    `json:"keep"`
+	GraceMinutes  int    `json:"grace_minutes"`
+	RetryCount    int    `json:"retry_count"`
+	RetryInterval int    `json:"retry_interval"`
+}
+
+// cronTemplates 出厂模板清单（顺序即前端展示顺序）。
+var cronTemplates = []cronTemplate{
+	{Key: "daily-db-backup", Name: "每日数据库备份", Desc: "每天 03:00 备份数据库，保留最近 7 份",
+		Action: cron.ActionDBBackup, CronExpr: "0 3 * * *", Params: "{}", Keep: 7, GraceMinutes: 30, RetryInterval: 60},
+	{Key: "hourly-healthcheck", Name: "每小时容器健康巡检", Desc: "每小时巡检容器健康，unhealthy 自动重启并通知",
+		Action: cron.ActionContainerHealthcheck, CronExpr: "0 * * * *", Params: `{"notify":true}`, Keep: 7, GraceMinutes: 15, RetryInterval: 60},
+	{Key: "daily-image-check", Name: "每日镜像版本巡检", Desc: "每天 08:00 检查本地镜像是否有新版可更新",
+		Action: cron.ActionImageVersionCheck, CronExpr: "0 8 * * *", Params: "{}", Keep: 7, GraceMinutes: 60, RetryInterval: 60},
+}
+
+// Templates GET /api/crons/templates：内置任务模板（只读）。
+func (h *CronsHandler) Templates(c *gin.Context) {
+	Success(c, gin.H{"items": cronTemplates})
+}
+
+// Duplicate POST /api/crons/:id/duplicate：复制任务为副本。
+// 副本默认停用——先改好配置再启用，避免与原任务同时跑出重复产物。
+func (h *CronsHandler) Duplicate(c *gin.Context) {
+	id, ok := paramID(c, "id")
+	if !ok {
+		return
+	}
+	var src model.ScheduledTask
+	if err := h.DB.First(&src, id).Error; err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "计划任务不存在", err)
+		return
+	}
+	dup := src
+	dup.ID = 0
+	dup.Name = truncateNameRunes(src.Name, 90) + " 副本"
+	dup.Enabled = false
+	dup.LastRun = nil
+	dup.RunCount = 0
+	if err := h.DB.Select("Name", "CronExpr", "Action", "Params", "Enabled", "Keep", "GraceMinutes", "RetryCount", "RetryInterval").Create(&dup).Error; err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Created(c, "已复制任务（默认停用，请确认后启用）", dup)
+}
+
+// truncateNameRunes 按 rune 截断名称（给「 副本」后缀留位，避免超出 100 字符上限）。
+func truncateNameRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
+}
+
 // ListRuns GET /api/crons/:id/runs?page=&page_size=：分页返回该任务的执行历史（倒序）。
 // page 从 1 起，page_size 默认 20、上限 100，兼容 limit 参数（语义等价 page_size）。
 // 返回 {total, page, page_size, items}，total 为该任务执行记录的真实总数。

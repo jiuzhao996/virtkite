@@ -6,6 +6,9 @@ export const ops = {
   // 计划任务（cron 五字段表达式，平台侧整分调度）
   cronList: () => unwrap(http.get('/crons')),
   cronPreview: (expr) => unwrap(http.get('/crons/preview', { params: { expr } })),
+  // 内置任务模板（只读）与复制任务
+  cronTemplates: () => unwrap(http.get('/crons/templates')),
+  cronDuplicate: (id) => unwrap(http.post(`/crons/${id}/duplicate`)),
   cronCreate: (payload) => unwrap(http.post('/crons', payload)),
   cronUpdate: (id, payload) => unwrap(http.put('/crons/' + id, payload)),
   cronToggle: (id) => unwrap(http.post(`/crons/${id}/toggle`)),
