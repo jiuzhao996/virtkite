@@ -304,6 +304,12 @@ onBeforeUnmount(() => {
 }
 .topo-canvas-wrap {
   position: relative;
+  /* 高度锁在外层，overflow:hidden 兜底裁切（与设计器 .ds-canvas 同款）：
+     X6 autoResize 会把「撑大的尺寸」内联回写到自己容器上，若容器的尺寸参与父布局，
+     父元素跟着长高、传感器再读到更大的尺寸，循环把页面拉到十几万 px。内层用
+     absolute + inset:0 彻底脱离父布局即断开该反馈环。 */
+  height: calc(100vh - 260px);
+  min-height: 420px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md, 8px);
   background:
@@ -312,9 +318,8 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .topo-canvas {
-  width: 100%;
-  height: calc(100vh - 260px);
-  min-height: 420px;
+  position: absolute;
+  inset: 0;
 }
 .topo-empty {
   position: absolute;
