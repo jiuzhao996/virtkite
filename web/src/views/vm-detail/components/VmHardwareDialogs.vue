@@ -18,6 +18,23 @@
           <el-option v-for="d in ['qcow2', 'raw', 'iso']" :key="d" :label="d" :value="d" />
         </el-select>
       </el-form-item>
+      <el-form-item label="从池选择">
+        <!-- 卷选择器（幽灵盘防线）：手填路径极易写出不存在的文件——关机域写 XML 时
+             libvirt 不校验，直到开机才炸且报错与加盘操作脱节。选卷时自动填路径 -->
+        <el-select
+          v-model="pickedVolume"
+          filterable clearable
+          placeholder="选择存储池中的已有卷（自动填下方路径）"
+          style="width: 100%"
+          :loading="volumeLoading"
+          @change="onPickVolume"
+        >
+          <el-option
+            v-for="v in volumeOptions" :key="v.path"
+            :label="`${v.pool}/${v.name}（${fmtCap(v.capacity_gb)}）`" :value="v.path"
+          />
+        </el-select>
+      </el-form-item>
       <el-form-item label="源路径" prop="source">
         <el-input v-model="diskForm.source" placeholder="/var/lib/libvirt/images/xxx.qcow2" />
       </el-form-item>
@@ -102,6 +119,33 @@ const diskFormRef = ref(null)
 const diskForm = reactive({ device: 'disk', bus: 'virtio', driver: 'qcow2', source: '', read_only: false })
 const diskSaving = ref(false)
 
+// 存储池卷清单（卷选择器数据源）：取 volume-graph 的去幻影节点——它已聚合全部
+// 激活池的卷（含路径与容量），无需再逐池调用
+const pickedVolume = ref('')
+const volumeOptions = ref([])
+const volumeLoading = ref(false)
+async function loadVolumeOptions() {
+  volumeLoading.value = true
+  try {
+    const res = await api.volumeGraph()
+    const nodes = (res.data && res.data.nodes) || []
+    volumeOptions.value = nodes
+      .filter((n) => !n.phantom && n.path)
+      .map((n) => ({ path: n.path, name: n.name, pool: n.pool, capacity_gb: n.capacity_gb }))
+  } catch (e) {
+    volumeOptions.value = []
+  } finally {
+    volumeLoading.value = false
+  }
+}
+function onPickVolume(path) {
+  if (path) diskForm.source = path
+}
+function fmtCap(gb) {
+  const n = Number(gb) || 0
+  return n >= 100 ? Math.round(n) + ' GB' : (n >= 1 ? n.toFixed(1) + ' GB' : Math.round(n * 1024) + ' MB')
+}
+
 const diskRules = {
   source: [{ required: true, message: '请输入磁盘路径', trigger: 'blur' }]
 }
@@ -112,6 +156,8 @@ function openDiskDialog() {
   diskForm.driver = 'qcow2'
   diskForm.source = ''
   diskForm.read_only = false
+  pickedVolume.value = ''
+  loadVolumeOptions()
   if (diskFormRef.value) diskFormRef.value.clearValidate()
   diskDialog.value = true
 }

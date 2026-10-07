@@ -39,6 +39,8 @@ export const core = {
   setMemory: (id, memory_mb) => unwrap(http.put('/vms/' + id + '/memory', { memory_mb })),
   setAutostart: (id, enabled) => unwrap(http.put('/vms/' + id + '/autostart', { enabled })),
   attachDisk: (id, disk) => unwrap(http.post('/vms/' + id + '/devices/disks', { disk })),
+  // 域定义健康检查：磁盘源文件缺失（幽灵盘）会让 libvirt 拒绝启动整个域
+  domainHealth: (id) => unwrap(http.get('/vms/' + id + '/domain-health')),
   // 分离磁盘：deleteVolume=true 时附带 query delete_volume，请求后端同时删除存储卷；
   // 不传（undefined）时 axios 自动省略该参数，保持旧的「仅分离」语义（后端契约：{ vm, target, volume_deleted, keep_reason }）
   detachDisk: (id, target, deleteVolume) => unwrap(http.delete('/vms/' + id + '/devices/disks/' + target, { params: { delete_volume: deleteVolume } })),

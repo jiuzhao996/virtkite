@@ -211,6 +211,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.POST("/:id/devices/disks", vmHandler.AttachDisk)
 		vms.POST("/:id/devices/disks/quick", vmHandler.QuickAttachDisk)
 		vms.DELETE("/:id/devices/disks/:target", vmHandler.DetachDisk)
+		// 域定义健康检查（幽灵盘等）：磁盘源文件缺失会让 libvirt 拒绝启动整个域
+		vms.GET("/:id/domain-health", vmHandler.DomainHealth)
 		vms.POST("/:id/devices/interfaces", vmHandler.AttachInterface)
 		vms.DELETE("/:id/devices/interfaces/:mac", vmHandler.DetachInterface)
 		vms.POST("/:id/devices/standard", vmHandler.EnsureStandardDevices)

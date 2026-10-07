@@ -46,6 +46,14 @@ func (h *VMHandler) AttachDisk(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "磁盘源路径必须位于已登记的存储池目录内")
 		return
 	}
+	// 源文件必须真实存在：对关机域写 XML 时 libvirt 不做文件可访问性检查，幽灵路径会
+	// 污染域定义，直到很久之后开机才炸（「无法访问存储文件」+ uid/gid 原文，与加盘操作
+	// 完全脱节，极难排查）。此处拦一道，代价最小的位置。
+	if _, serr := os.Stat(req.Disk.Source); serr != nil {
+		Fail(c, http.StatusBadRequest, "磁盘文件不存在："+req.Disk.Source+
+			"；要新建磁盘请用「一键添加数据盘」（自动建卷并挂载），或先在存储页创建卷")
+		return
+	}
 	if req.Disk.Bus == "" {
 		req.Disk.Bus = "virtio"
 	}
@@ -66,6 +74,61 @@ func (h *VMHandler) AttachDisk(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"vm": vm.Name, "disk": req.Disk})
+}
+
+// missingDiskSources 从域配置里挑出源文件不存在的磁盘（幽灵盘）。
+// 返回条目与「是否存在致命项」——光驱 ISO 缺失不影响开机，单独标 fatal=false。
+func missingDiskSources(spec *virt.DomainSpec) ([]gin.H, bool) {
+	missing := []gin.H{}
+	fatal := false
+	if spec == nil {
+		return missing, false
+	}
+	for _, d := range spec.Disks {
+		if d.Source == "" {
+			continue
+		}
+		if _, serr := os.Stat(d.Source); serr != nil {
+			isFatal := d.Device == "disk"
+			if isFatal {
+				fatal = true
+			}
+			missing = append(missing, gin.H{
+				"target": d.Target,
+				"source": d.Source,
+				"device": d.Device,
+				"fatal":  isFatal,
+			})
+		}
+	}
+	return missing, fatal
+}
+
+// DomainHealth GET /api/vms/:id/domain-health —— 域定义健康检查。
+// 目前只查一类问题：磁盘源文件不存在（幽灵盘）。它会让 libvirt 拒绝启动整个域，
+// 而报错只出现在开机时刻、文案是「无法访问存储文件 + uid/gid」，与当初的加盘操作
+// 完全脱节。此端点把该问题提前暴露在虚拟机详情页，并给出一键摘除的落点。
+func (h *VMHandler) DomainHealth(c *gin.Context) {
+	vm, ok := h.findVM(c)
+	if !ok {
+		return
+	}
+	spec, err := h.Virt.GetDomainSpec(vm.Name)
+	if err != nil {
+		// 域不存在（已删除/名字漂移）不是「不健康」，如实返回空结果而非 500
+		Success(c, gin.H{"vm": vm.Name, "ok": true, "checked": false, "missing_disks": []gin.H{}})
+		return
+	}
+	missing, fatal := missingDiskSources(spec)
+	msg := ""
+	if fatal {
+		msg = "存在文件缺失的数据盘，虚拟机将无法开机（libvirt 会拒绝启动整个域），请摘除该磁盘或补齐文件"
+	}
+	Success(c, gin.H{
+		"vm": vm.Name, "ok": !fatal, "checked": true,
+		"missing_disks": missing,
+		"message":       msg,
+	})
 }
 
 // QuickAttachDisk 一键添加数据盘：在存储池创建 qcow2 卷并挂载到虚拟机（对应

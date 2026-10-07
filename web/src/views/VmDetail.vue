@@ -31,6 +31,32 @@
       </div>
     </div>
 
+    <!-- 域定义健康检查：磁盘源文件缺失（幽灵盘）会让 libvirt 拒绝启动整个域，而报错
+         只在开机时出现、文案是「无法访问存储文件 + uid/gid」，与当初的加盘操作完全脱节 -->
+    <el-alert
+      v-if="health && health.checked && !health.ok"
+      type="error"
+      :closable="false"
+      show-icon
+      class="health-alert"
+    >
+      <template #title>
+        域定义异常：{{ health.missing_disks.filter((d) => d.fatal).length }} 块磁盘的文件不存在，虚拟机无法开机
+      </template>
+      <div v-for="d in health.missing_disks" :key="d.target" class="health-row">
+        <span class="mono health-src">{{ d.target }} → {{ d.source }}</span>
+        <span v-if="!d.fatal" class="health-note">光驱介质缺失，不影响开机</span>
+        <el-button
+          size="small" type="danger" plain
+          :loading="busy === 'detach-' + d.target"
+          @click="detachBrokenDisk(d)"
+        >摘除该磁盘</el-button>
+      </div>
+      <div class="health-tip">
+        摘除只从域定义移除该磁盘条目，不动任何文件；若文件仍需要，可先补齐文件再开机。
+      </div>
+    </el-alert>
+
     <el-container class="body">
       <!-- 左侧导航 -->
       <el-aside width="216px" class="side">
@@ -287,6 +313,39 @@ function onMenuSelect(index) {
 }
 
 /* ---------- 数据加载 ---------- */
+// 域定义健康检查（幽灵盘）：随详情一起拉，失败静默（这是增强提示，不该挡住页面）
+const health = ref(null)
+async function loadHealth() {
+  try {
+    const res = await api.domainHealth(id)
+    health.value = res.data || null
+  } catch (e) {
+    health.value = null
+  }
+}
+// 摘除失效磁盘：只从域定义移除条目（deleteVolume=false），不动文件
+async function detachBrokenDisk(d) {
+  try {
+    await ElMessageBox.confirm(
+      `摘除磁盘 ${d.target}（${d.source}）？仅从域定义移除该条目，不会删除任何文件。`,
+      '摘除失效磁盘',
+      { type: 'warning', confirmButtonText: '摘除', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch (e) {
+    return
+  }
+  busy.value = 'detach-' + d.target
+  try {
+    await api.detachDisk(id, d.target, false)
+    ElMessage.success('已摘除，现在可以开机了')
+    await Promise.all([loadSpec(), loadHealth()])
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '摘除失败'))
+  } finally {
+    busy.value = ''
+  }
+}
+
 async function loadSpec() {
   loading.value = true
   try {
@@ -430,6 +489,8 @@ async function saveXML() {
 onMounted(async () => {
   // 快照列表由 VmSnapshotCard 自挂载拉取（与 loadSpec 并发，等价原 Promise.all 两路）
   await loadSpec()
+  // 与 XML 拉取并发：健康检查失败静默，不拖慢首屏
+  loadHealth()
   await loadXML()
   // Prometheus 预填历史曲线：保持在 loadXML 之后触发（原顺序），fire-and-forget 同原
   perfCardRef.value?.prefill()
@@ -446,6 +507,30 @@ onMounted(async () => {
 }
 
 /* 顶部工具栏 */
+/* 域定义健康检查横幅（幽灵盘）：磁盘文件缺失时置顶告警并提供摘除入口 */
+.health-alert {
+  margin: 8px 0 0;
+}
+.health-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.health-src {
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+.health-note {
+  font-size: 0.78rem;
+  color: var(--el-color-info);
+}
+.health-tip {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  opacity: 0.85;
+}
 .toolbar {
   display: flex;
   align-items: center;
