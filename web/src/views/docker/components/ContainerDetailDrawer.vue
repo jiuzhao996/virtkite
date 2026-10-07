@@ -1,7 +1,7 @@
 <template>
     <!-- 容器详情旗舰抽屉（Portainer 式多 tab）：概要 / 统计 / 日志 / 原始 JSON；
          头部为行内快捷操作组，终端仍走父级既有 termDrawer（xterm 生命周期不进 tab 体系） -->
-    <el-drawer v-model="visible" :title="''" size="65%" :close-on-click-modal="false" @closed="onClosed">
+    <el-drawer v-model="visible" :title="''" size="65%" class="cd-drawer" :close-on-click-modal="false" @closed="onClosed">
       <template #header>
         <div class="cd-head">
           <span class="cd-name mono" :title="row.Names">{{ displayName }}</span>
@@ -76,7 +76,7 @@
           </template>
         </el-tab-pane>
 
-        <el-tab-pane label="日志" name="logs" lazy>
+        <el-tab-pane label="日志" name="logs" lazy class="pane-logs">
           <div v-loading="logsLoading">
             <div v-if="logsMode === 'ws' || wsFallback" class="ls-bar">
               <span class="ls-dot" :class="dotClass">●</span>
@@ -260,6 +260,15 @@ const wsStatusText = computed(() => {
   return '实时流未连接'
 })
 
+// 打开/刷新时兜底贴底:多次幂等滚动,覆盖 WS 首批行晚于 DOM 稳定到达的各种时序
+function stickLogsBottom() {
+  const v = logViewerRef.value
+  if (!v) return
+  v.scrollToEndOnce()
+  setTimeout(() => v.scrollToEndOnce(), 250)
+  setTimeout(() => v.scrollToEndOnce(), 700)
+}
+
 async function fetchLogs() {
   if (!row.value.ID) return
   logsLoading.value = true
@@ -277,6 +286,7 @@ async function fetchLogs() {
 function reloadLogs() {
   if (logsMode.value === 'ws') startStream(row.value.ID, { tail: logsTail, timestamps: logsTimestamps.value })
   else fetchLogs()
+  stickLogsBottom()
 }
 
 function onTsChange(v) {
@@ -319,6 +329,7 @@ watch(tab, (t) => {
   if (t === 'logs') {
     if (logsMode.value === 'ws') startStream(row.value.ID, { tail: logsTail, timestamps: logsTimestamps.value })
     else fetchLogs()
+    stickLogsBottom()
   } else {
     stopStream()
     stopLogTimer()
@@ -414,6 +425,46 @@ function onClosed() {
 
 defineExpose({ open })
 </script>
+
+<style>
+/* 详情抽屉布局:外层 body 锁死不滚(双滚动容器会让「贴底」滚错对象),
+   tabs 拉伸填满,日志 pane 内 .lv-pre 成为唯一滚动容器(flex 吃剩余高度)。 */
+.cd-drawer .el-drawer__body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cd-drawer .el-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cd-drawer .el-tabs__content {
+  flex: 1;
+  min-height: 0;
+}
+.cd-drawer .el-tab-pane {
+  height: 100%;
+  overflow: auto;
+}
+.cd-drawer .el-tab-pane.pane-logs {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.cd-drawer .pane-logs .lv {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cd-drawer .pane-logs .lv-pre {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+</style>
 
 <style scoped>
 .cd-head {
