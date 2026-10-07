@@ -53,33 +53,30 @@
         </div>
         <div class="ct-card-meta ct-card-time mono">{{ dockerTime(row.CreatedAt || row.Created) }}</div>
         <div class="ct-card-actions" @click.stop>
+          <!-- 按状态三选一的主键：running 停止 / paused 恢复 / 其余启动；
+               日志/暂停/重启等全走详情抽屉（整卡点击），卡面只保最高频操作 -->
           <el-button
-            v-if="row.State !== 'running' && row.State !== 'paused'"
-            size="small" :icon="VideoPlay"
-            :loading="actingKey === row.ID + ':start'"
-            :disabled="!!actingKey && actingKey !== row.ID + ':start'"
-            @click="containerAction(row, 'start')"
-          >启动</el-button>
-          <el-button
-            v-else
+            v-if="row.State === 'running'"
             size="small" :icon="VideoPause"
             :loading="actingKey === row.ID + ':stop'"
             :disabled="!!actingKey && actingKey !== row.ID + ':stop'"
             @click="containerAction(row, 'stop')"
           >停止</el-button>
+          <el-button
+            v-else-if="row.State === 'paused'"
+            size="small" type="success" plain :icon="VideoPlay"
+            :loading="actingKey === row.ID + ':unpause'"
+            :disabled="!!actingKey && actingKey !== row.ID + ':unpause'"
+            @click="containerAction(row, 'unpause')"
+          >恢复</el-button>
+          <el-button
+            v-else
+            size="small" type="success" plain :icon="VideoPlay"
+            :loading="actingKey === row.ID + ':start'"
+            :disabled="!!actingKey && actingKey !== row.ID + ':start'"
+            @click="containerAction(row, 'start')"
+          >启动</el-button>
           <el-button size="small" :icon="Monitor" :disabled="row.State !== 'running'" @click="openTerminal(row)">终端</el-button>
-          <!-- 日志/重启/暂停恢复收进「更多」下拉：主行 4 元素保单行（5 钮实测在 305px 卡宽差 13px 换行） -->
-          <el-dropdown trigger="click" @command="(cmd) => cardMore(row, cmd)">
-            <el-button size="small" class="ct-card-more" :icon="MoreFilled" />
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="logs">日志</el-dropdown-item>
-                <el-dropdown-item v-if="row.State === 'running'" command="pause">暂停</el-dropdown-item>
-                <el-dropdown-item v-else-if="row.State === 'paused'" command="unpause">恢复</el-dropdown-item>
-                <el-dropdown-item command="restart" :disabled="row.State !== 'running'">重启</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
           <el-tooltip :content="'删除 ' + containerName(row.Names)" placement="top">
             <el-button
               size="small" type="danger" plain :icon="Delete"
@@ -98,9 +95,6 @@
 
     <!-- 容器详情旗舰抽屉（概要/统计/日志/JSON + 头部快捷操作）：替换旧 inspect JSON 抽屉 -->
     <ContainerDetailDrawer ref="detailDrawerRef" @terminal="openTerminal" @changed="onDetailChanged" />
-    <!-- 容器日志抽屉（tail 切换 / 跟随 / 复制 / 下载）：内聚于 ContainerLogsDrawer -->
-    <ContainerLogsDrawer ref="logsDrawerRef" />
-
     <!-- 创建容器抽屉：抽为独立组件，容器页与镜像页「从镜像运行」共用同一表单 -->
     <ContainerCreateDrawer ref="createDrawerRef" @created="onCreated" />
 </template>
@@ -111,7 +105,7 @@
 // KeepAlive 下 onUnmounted 不触发，故用 onActivated/onDeactivated 显式启停轮询（防切走后后台空转）。
 import { ref, computed, inject, onMounted, onActivated, onDeactivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Plus, Delete, VideoPlay, VideoPause, Monitor, MoreFilled } from '@element-plus/icons-vue'
+import { Search, Plus, Delete, VideoPlay, VideoPause, Monitor } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { containerName, stateTag, stateText, portsText, dockerTime } from '../../../utils/docker-format'
@@ -119,7 +113,6 @@ import { useAutoRefresh } from '../../../composables/useAutoRefresh'
 import ContainerTerminal from '../../../components/ContainerTerminal.vue'
 import ContainerCreateDrawer from './ContainerCreateDrawer.vue'
 import ContainerDetailDrawer from './ContainerDetailDrawer.vue'
-import ContainerLogsDrawer from './ContainerLogsDrawer.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')
@@ -286,13 +279,6 @@ function toggleCardSelect(row) {
   if (idx > -1) selection.value.splice(idx, 1)
   else selection.value.push(row)
 }
-// 卡片「更多」下拉：日志 / 暂停恢复 / 重启（详情走整卡点击）
-function cardMore(row, cmd) {
-  if (cmd === 'logs') return openLogs(row)
-  if (cmd === 'pause') return containerAction(row, 'pause')
-  if (cmd === 'unpause') return containerAction(row, 'unpause')
-  if (cmd === 'restart') return containerAction(row, 'restart')
-}
 const bulkLoading = ref(false)
 
 const bulkStartable = computed(() => selection.value.some((r) => r.State !== 'running'))
@@ -425,9 +411,8 @@ function openTerminal(row) {
   termDrawer.value = true
 }
 
-// 详情 / 日志抽屉：状态与取数内聚在各自抽屉组件，这里只负责按行打开
+// 详情抽屉：状态与取数内聚在组件内，这里只负责按卡片打开
 const detailDrawerRef = ref(null)
-const logsDrawerRef = ref(null)
 
 function openDetail(row) {
   detailDrawerRef.value.open(row)
@@ -437,10 +422,6 @@ function openDetail(row) {
 async function onDetailChanged() {
   await fetchContainers()
   loadStatsSilent()
-}
-
-function openLogs(row) {
-  logsDrawerRef.value.open(row)
 }
 
 // ═══════════════ 创建容器（独立抽屉组件）═══════════════
@@ -582,10 +563,6 @@ defineExpose({ refresh })
 /* 删除钮右对齐独立：危险动作与常规操作分离（与 vm-actions 同款约定） */
 .ct-card-del {
   margin-left: auto;
-}
-/* 「更多」钮轻量化：icon-only 幽灵钮 */
-.ct-card-more {
-  padding: 5px 7px;
 }
 </style>
 
