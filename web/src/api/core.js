@@ -101,6 +101,8 @@ export const core = {
   networkFlows: () => unwrap(http.get('/networks/flows')),
   // 全局网络拓扑（N1：宿主机 → 桥/虚拟网络 → VM/容器）
   networkTopology: () => unwrap(http.get('/networks/topology')),
+  // IP 地址分配一览（N2b）
+  networkIpam: () => unwrap(http.get('/networks/ipam')),
   // 网络详情：{network: NetworkInfo, members: [{vm,mac,ip,state,model}]}
   getNetwork: (name) => unwrap(http.get('/networks/' + encodeURIComponent(name))),
   createNetwork: (payload) => unwrap(http.post('/networks', payload)),

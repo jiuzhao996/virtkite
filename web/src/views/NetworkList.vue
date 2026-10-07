@@ -10,6 +10,9 @@
       <el-tab-pane label="拓扑图" name="topology">
         <NetworkTopology @open-network="onOpenNetwork" />
       </el-tab-pane>
+      <el-tab-pane label="IP 分配" name="ipam" lazy>
+        <IpamView />
+      </el-tab-pane>
       <el-tab-pane label="通信流量" name="flow" lazy>
         <FlowView />
       </el-tab-pane>
@@ -124,6 +127,7 @@ import DockerGate from '../components/DockerGate.vue'
 import NetworkTab from './docker/components/NetworkTab.vue'
 import FlowView from './network/FlowView.vue'
 import NetworkTopology from './network/NetworkTopology.vue'
+import IpamView from './network/IpamView.vue'
 import NetworkDetailDrawer from './network/NetworkDetailDrawer.vue'
 
 const { isAdmin, canOperate } = useAuth()

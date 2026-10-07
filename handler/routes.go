@@ -101,6 +101,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	networkHandler := NewNetworkHandler()
 	networkFlowHandler := NewNetworkFlowHandler()
 	networkTopologyHandler := NewNetworkTopologyHandler()
+	networkIPAMHandler := NewNetworkIPAMHandler()
 	// 与 RegisterPublic 内解析 handler 共用 deps.VNCTokens（同一实例是 VNC 链路存活的前提）
 	vncHandler := NewVNCHandler(deps.DB, deps.Sessions, deps.VNCTokens)
 	terminalHandler := NewTerminalHandler(deps.DB, deps.Sessions)
@@ -285,6 +286,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		networks.GET("/flows", networkFlowHandler.Flows)
 		// 全局网络拓扑（N1：宿主机 → 桥/虚拟网络 → VM/容器 三层关系图）
 		networks.GET("/topology", networkTopologyHandler.Topology)
+		// IP 地址分配一览（N2b：各网段已用/可用 IP 与归属）
+		networks.GET("/ipam", networkIPAMHandler.IPAM)
 		networks.GET("/:name", networkHandler.GetNetwork)
 		networks.POST("", networkHandler.CreateNetwork)
 		networks.PUT("/:name/autostart", networkHandler.SetNetworkAutostart)
