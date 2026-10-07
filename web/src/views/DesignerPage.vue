@@ -45,6 +45,7 @@
             <el-button size="small" :icon="Grid" @click="autoLayout" title="按 网络→虚拟机→容器栈 分层重排">一键整理</el-button>
             <el-button size="small" :icon="Connection" :loading="liveLoading" @click="loadLiveStatus">刷新状态</el-button>
             <el-button size="small" :icon="Import" :loading="importing" @click="importFromReality">从现状导入</el-button>
+            <el-button size="small" :icon="Warning" :loading="driftLoading" @click="checkDrift" title="对比最近落地快照与平台现实">漂移检查</el-button>
             <el-button type="primary" size="small" :icon="VideoPlay" :loading="applying" @click="applyPlan">一键落地</el-button>
             <span class="ds-tip">拖节点编排 · 边缘拉线连线 · 框选 · Ctrl+Z 撤销 · Delete 删除</span>
           </div>
@@ -57,6 +58,20 @@
           <div ref="canvasRef" class="ds-canvas-inner"></div>
           <div ref="minimapRef" class="ds-minimap"></div>
         </div>
+        <div v-if="driftResult" class="ds-drift" :class="driftResult.drifted ? 'warn' : 'ok'">
+          <b>漂移检查</b>
+          <span v-if="!driftResult.has_snap">尚无快照——成功落地一次后才有对比基准</span>
+          <span v-else-if="!driftResult.drifted">与现实一致（{{ driftResult.checked_at ? '刚刚' : '' }}）</span>
+          <span v-else>发现 {{ driftResult.items.length }} 处漂移</span>
+          <div v-for="(it, i) in driftResult.items" :key="i" class="ds-drift-item mono">
+            [{{ it.kind }}] {{ it.node }} — {{ it.detail }}
+          </div>
+          <div v-if="driftResult.drifted" class="ds-drift-actions">
+            <el-button size="small" type="primary" @click="applyPlan">收敛回计划（重新落地）</el-button>
+            <el-button size="small" @click="importFromReality">接纳实况（按现状重画）</el-button>
+          </div>
+        </div>
+
         <div v-if="applyStatus" class="ds-apply" :class="applyStatus.status">
           <b>{{ applyStatusText }}</b>
           <div v-for="(s, i) in applyStatus.steps" :key="i" class="ds-step mono">{{ s }}</div>
@@ -713,6 +728,37 @@ function zoomFit() {
   graph?.zoomToFit({ padding: 40, maxScale: 1 })
 }
 
+// 漂移检查（DE2）：对比最近落地快照与平台现实，缺资源的节点头部描橙
+const driftLoading = ref(false)
+const driftResult = ref(null)
+async function checkDrift() {
+  const p = planPayload()
+  driftLoading.value = true
+  try {
+    await api.saveDesignerPlan(p)
+    const res = await api.designerDrift(p.id)
+    driftResult.value = res.data || {}
+    applyDriftPaint()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '漂移检查失败'))
+  } finally {
+    driftLoading.value = false
+  }
+}
+// 橙色：快照里有、现实已无（画布节点描边）；extra 类现实有快照无——画布上不存在该节点，只进清单
+function applyDriftPaint() {
+  if (!graph) return
+  const items = (driftResult.value && driftResult.value.items) || []
+  const missing = new Set(items.filter((i) => i.kind === 'missing').map((i) => i.node))
+  for (const node of graph.getNodes()) {
+    const d = node.getData() || {}
+    const name = d.kind === 'container' ? d.ref : d.name
+    if (missing.has(name)) {
+      node.attr('body/stroke', '#e6a23c', { silent: true })
+    }
+  }
+}
+
 // 画布 → Ansible（DE1）：后端生成 inventory/site.yml 并把 site 落进 playbook 库
 const exportingAnsible = ref(false)
 async function exportAnsible() {
@@ -911,6 +957,31 @@ onUnmounted(() => {
   height: 520px; /* 窄屏堆叠布局兜底高；桌面端由上方 media 覆盖为 flex 撑满 */
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--el-bg-color); overflow: hidden;
+}
+.ds-drift {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  border: 1px solid var(--color-border);
+}
+.ds-drift.ok {
+  background: #f0f9f2;
+  border-color: #b7e0c4;
+}
+.ds-drift.warn {
+  background: #fff8e6;
+  border-color: #f0d9a0;
+}
+.ds-drift-item {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: var(--color-muted-foreground);
+}
+.ds-drift-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
 }
 .ds-export-pre {
   max-height: 420px;

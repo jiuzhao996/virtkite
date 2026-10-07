@@ -42,6 +42,8 @@ const (
 	ActionAnsiblePlaybook     = "ansible_playbook"     // 定时执行 playbook（P4-S3：调度×引擎缝合）
 	ActionContainerHealthcheck = "container_healthcheck" // 容器健康巡检：unhealthy 自动重启（R8）
 	ActionImageVersionCheck    = "image_version_check"   // 镜像版本巡检：outdated 时通知（R9）
+	// ActionDesignerDrift 设计器漂移巡检（DE2）：快照 vs 现实，差异进 cron_runs + 通知
+	ActionDesignerDrift = "designer_drift_check"
 )
 
 // AnsiblePlaybookMaxWait 定时 playbook 执行的兜底等待：转任务异步跑，这里轮询终态。
@@ -305,6 +307,11 @@ type Scheduler struct {
 	// 「什么时候跑」，执行细节（凭据/inventory/RECAP）全在 ansible_run 任务管线。
 	// 注入接口而非具体类型会更好测，但当前只有这一种出口，先收口在 tasks.Manager。
 	TaskMgr *tasks.Manager
+
+	// DriftCheck 设计器漂移巡检回调（DE2）由 handler 侧注入（快照读取与平台现实
+	// 扫描都在 handler：反向 import 会成环，与 NotifyURL 注入同款解法）。
+	// 返回：已检查计划数、漂移计划数、人读摘要（进 cron_runs）。
+	DriftCheck func() (checked int, drifted int, summary string)
 
 	// execMu 串行化执行：定时 tick 与 handler 的手动触发（ExecuteNow）可能并发
 	// 命中同一任务，mysqldump / 打快照不重入。ansible_playbook 转异步任务后本函数
@@ -752,6 +759,38 @@ func (s *Scheduler) runImageVersionCheck(st model.ScheduledTask) (string, error)
 	return summary, nil
 }
 
+// runDesignerDrift 设计器漂移巡检（DE2）：调注入的对比回调，有漂移则通知并进摘要。
+// 回调未注入（非 routes 装配路径，如单测）时如实报错，不静默成功。
+func (s *Scheduler) runDesignerDrift(st model.ScheduledTask) (string, error) {
+	if s.DriftCheck == nil {
+		return "", fmt.Errorf("漂移巡检未接入（DriftCheck 回调未注入）")
+	}
+	checked, drifted, summary := s.DriftCheck()
+	if drifted > 0 {
+		notifyDrift(summary)
+	}
+	return fmt.Sprintf("已检查 %d 个计划，漂移 %d 个\n%s", checked, drifted, summary), nil
+}
+
+// notifyDrift 漂移告警推送（经 NotifyURL；为空则不推）。
+func notifyDrift(summary string) {
+	url := NotifyURL
+	if url == "" {
+		return
+	}
+	text := "[鸢航VirtKite] 架构漂移告警\n" + truncateRunes(summary, notifyErrLimit*4)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[cron] 漂移通知协程 panic: %v\n%s", r, debug.Stack())
+			}
+		}()
+		if err := notify.SendText(url, text); err != nil {
+			log.Printf("[cron] 漂移通知推送失败: %v", err)
+		}
+	}()
+}
+
 // notifyVersion 镜像更新通知（经 NotifyURL 推送；为空则不推）。
 func notifyVersion(summary string) {
 	url := NotifyURL
@@ -1081,6 +1120,8 @@ func (s *Scheduler) runAction(st model.ScheduledTask) (string, error) {
 		return s.runContainerHealthcheck(st)
 	case ActionImageVersionCheck:
 		return s.runImageVersionCheck(st)
+	case ActionDesignerDrift:
+		return s.runDesignerDrift(st)
 	default:
 		return "", fmt.Errorf("未知动作类型 %q", st.Action)
 	}

@@ -580,8 +580,11 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 	case cron.ActionImageVersionCheck:
 		st.Params = "{}" // 无参数
 		return 0, nil
+	case cron.ActionDesignerDrift:
+		st.Params = "{}" // 无参数：巡检全部有快照的计划
+		return 0, nil
 	default:
-		return 0, errors.New("action 只支持 vm_snapshot（定时快照）/ db_backup（定时备份数据库）/ ansible_playbook（定时执行 playbook）/ container_healthcheck（容器健康巡检）/ image_version_check（镜像版本巡检）")
+		return 0, errors.New("action 只支持 vm_snapshot（定时快照）/ db_backup（定时备份数据库）/ ansible_playbook（定时执行 playbook）/ container_healthcheck（容器健康巡检）/ image_version_check（镜像版本巡检）/ designer_drift_check（架构漂移巡检）")
 	}
 }
 

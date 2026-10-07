@@ -150,6 +150,7 @@
             <el-radio value="ansible_playbook">Playbook 执行</el-radio>
             <el-radio value="container_healthcheck">容器健康巡检</el-radio>
             <el-radio value="image_version_check">镜像版本巡检</el-radio>
+            <el-radio value="designer_drift_check">架构漂移巡检</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.action === 'vm_snapshot'" label="目标虚拟机" required>
@@ -183,6 +184,9 @@
         </el-form-item>
         <el-form-item v-else-if="form.action === 'image_version_check'" label="说明">
           <div class="field-tip">对比本地镜像与远端仓库 digest，有更新时推送镜像名列表（远端查询秒级，需外网可达）</div>
+        </el-form-item>
+        <el-form-item v-else-if="form.action === 'designer_drift_check'" label="说明">
+          <div class="field-tip">巡检全部「已成功落地过」的设计器计划：对比落地快照与平台现实（虚拟机/容器栈/网络），有漂移时推送明细。无快照的计划自动跳过</div>
         </el-form-item>
         <el-form-item label="保留份数">
           <el-input-number v-model="form.keep" :min="1" :max="365" controls-position="right" style="width: 160px" />

@@ -233,6 +233,180 @@ func (h *DesignerHandler) ExportYAML(c *gin.Context) {
 	c.Data(http.StatusOK, "text/yaml; charset=utf-8", b)
 }
 
+// ── 快照与漂移（DE2）────────────────────────────────────
+
+// snapshotDir 快照目录：data/designer/snapshots/。<plan>.latest.json 是漂移对比
+// 基准（落地成功覆盖写）；<plan>-<unixts>.json 为历史存档（不可变，保留追溯）。
+func snapshotDir() string { return filepath.Join("data", "designer", "snapshots") }
+
+// saveSnapshot 落地成功后存快照：latest（对比基准）+ 带时间戳历史档。
+func (h *DesignerHandler) saveSnapshot(p dsgPlan) {
+	raw, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(snapshotDir(), 0o755)
+	ts := time.Now().Unix()
+	_ = os.WriteFile(filepath.Join(snapshotDir(), fmt.Sprintf("%s-%d.json", p.ID, ts)), raw, 0o644)
+	_ = os.WriteFile(filepath.Join(snapshotDir(), p.ID+".latest.json"), raw, 0o644)
+}
+
+// loadLatestSnapshot 读某计划的最近快照；无快照返回 nil。
+func loadLatestSnapshot(planID string) *dsgPlan {
+	raw, err := os.ReadFile(filepath.Join(snapshotDir(), planID+".latest.json"))
+	if err != nil {
+		return nil
+	}
+	var p dsgPlan
+	if json.Unmarshal(raw, &p) != nil {
+		return nil
+	}
+	return &p
+}
+
+// DriftItem 单条漂移：计划里有现实没有=missing（收敛=落地）；现实有计划没有=
+// extra（接纳=导入或拆除）；规格/状态不符=mismatch。
+type DriftItem struct {
+	Kind   string `json:"kind"`             // missing | extra | mismatch
+	Node   string `json:"node"`             // 节点名
+	Detail string `json:"detail"`           // 人读描述
+}
+
+// DriftResult 一个计划的漂移对比结果。
+type DriftResult struct {
+	PlanID    string      `json:"plan_id"`
+	HasSnap   bool        `json:"has_snap"`   // false=从未落地，无从谈漂移
+	Drifted   bool        `json:"drifted"`
+	Items     []DriftItem `json:"items"`
+	CheckedAt time.Time   `json:"checked_at"`
+}
+
+// ComputeDrift 对比「最近快照」与「平台现实」。现实来自 DB 的 VM 名单与已部署栈
+// （与从现状导入同一套口径）；libvirt 网络经 Virt 列举。h.DB/h.Virt 为空时按空现实处理。
+func (h *DesignerHandler) ComputeDrift(planID string) DriftResult {
+	res := DriftResult{PlanID: planID, HasSnap: false, Items: []DriftItem{}, CheckedAt: time.Now()}
+	snap := loadLatestSnapshot(planID)
+	if snap == nil {
+		return res
+	}
+	res.HasSnap = true
+
+	// 现实集合
+	realVMs := map[string]bool{}
+	realStacks := map[string]bool{}
+	if h.DB != nil {
+		var vms []model.VM
+		if err := h.DB.Find(&vms).Error; err == nil {
+			for _, v := range vms {
+				realVMs[v.Name] = true
+			}
+		}
+	}
+	// 已部署栈以 compose 项目为准（与栈页「已部署」同口径）
+	if h.Docker != nil {
+		if projects, err := h.Docker.ComposeList(); err == nil {
+			for _, pr := range projects {
+				realStacks[pr.Name] = true
+			}
+		}
+	}
+	realNets := map[string]bool{}
+	if h.Virt != nil {
+		if nets, err := h.Virt.ListNetworks(); err == nil {
+			for _, n := range nets {
+				realNets[n.Name] = true
+			}
+		}
+	}
+
+	for _, n := range snap.Nodes {
+		switch n.Kind {
+		case "vm":
+			if !realVMs[n.Name] {
+				res.Items = append(res.Items, DriftItem{Kind: "missing", Node: n.Name, Detail: "快照中的虚拟机已不存在（被删除？）"})
+			}
+		case "container":
+			if !realStacks[n.Ref] {
+				res.Items = append(res.Items, DriftItem{Kind: "missing", Node: n.Ref, Detail: "快照中的容器栈未在部署表（已下线？）"})
+			}
+		case "net":
+			if !realNets[n.Name] {
+				res.Items = append(res.Items, DriftItem{Kind: "missing", Node: n.Name, Detail: "快照中的网络不存在（被 undefine？）"})
+			}
+		}
+	}
+	// extra：现实有、快照没有（只报 VM/栈，网络是平台底座噪音大不报）
+	snapVMs := map[string]bool{}
+	snapStacks := map[string]bool{}
+	for _, n := range snap.Nodes {
+		if n.Kind == "vm" {
+			snapVMs[n.Name] = true
+		}
+		if n.Kind == "container" {
+			snapStacks[n.Ref] = true
+		}
+	}
+	for name := range realVMs {
+		if !snapVMs[name] {
+			res.Items = append(res.Items, DriftItem{Kind: "extra", Node: name, Detail: "现实中存在但快照没有的虚拟机"})
+		}
+	}
+	for id := range realStacks {
+		if !snapStacks[id] {
+			res.Items = append(res.Items, DriftItem{Kind: "extra", Node: id, Detail: "现实中存在但快照没有的容器栈"})
+		}
+	}
+	res.Drifted = len(res.Items) > 0
+	return res
+}
+
+// DriftSummary 遍历全部快照逐计划对比，汇总给人读摘要（DE2 的 cron 巡检入口）。
+// 只巡检有 latest 快照的计划（从未落地谈不上漂移）。
+func (h *DesignerHandler) DriftSummary() (checked int, drifted int, summary string) {
+	entries, err := os.ReadDir(snapshotDir())
+	if err != nil {
+		return 0, 0, "（暂无快照：还没有成功落地过任何计划）"
+	}
+	ids := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasSuffix(name, ".latest.json") {
+			ids[strings.TrimSuffix(name, ".latest.json")] = true
+		}
+	}
+	var b strings.Builder
+	for id := range ids {
+		checked++
+		d := h.ComputeDrift(id)
+		if !d.Drifted {
+			continue
+		}
+		drifted++
+		b.WriteString("计划 " + id + "：" + strconv.Itoa(len(d.Items)) + " 处漂移\n")
+		for i, it := range d.Items {
+			if i >= 5 {
+				b.WriteString("  …（其余 " + strconv.Itoa(len(d.Items)-5) + " 处省略）\n")
+				break
+			}
+			b.WriteString("  - [" + it.Kind + "] " + it.Node + "：" + it.Detail + "\n")
+		}
+	}
+	if drifted == 0 {
+		return checked, 0, "全部 " + strconv.Itoa(checked) + " 个已落地计划与现实一致"
+	}
+	return checked, drifted, b.String()
+}
+
+// Drift GET /api/designer/plans/:id/drift——计划与现实的漂移对比（DE2）。
+func (h *DesignerHandler) Drift(c *gin.Context) {
+	id := c.Param("id")
+	if !dsgIDRe.MatchString(id) {
+		Fail(c, http.StatusBadRequest, "计划 ID 非法")
+		return
+	}
+	Success(c, h.ComputeDrift(id))
+}
+
 // ExportAnsible GET /api/designer/plans/:id/export-ansible（DE1）——画布 → Ansible：
 // 按网络连线生成 inventory（组=网络名），生成 site.yml 骨架（每 VM 一个 play，
 // 引用的 playbook 以注释列出）。site.yml 直接落 data/ansible/playbooks/（playbook
@@ -543,6 +717,9 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 			}
 		}
 		st.Status = "success"
+		// DE2：落地成功即存不可变快照——漂移检测的 intended 基准（InfraHub 心智：
+		// 计划即分支，落地即打 tag）。快照与活计划分开存，手改画布不影响基准。
+		h.saveSnapshot(p)
 	}(p, st)
 
 	Accepted(c, "计划应用已启动", gin.H{"id": id})
