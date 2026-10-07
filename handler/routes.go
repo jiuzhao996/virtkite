@@ -333,6 +333,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		docker.POST("/prune", dockerHandler.Prune)
 		// 网络与卷管理（v3.2 R9/R10）
 		docker.GET("/networks", dockerHandler.ListNetworks)
+		docker.GET("/networks/:name", dockerHandler.NetworkDetail)
 		docker.POST("/networks", dockerHandler.CreateNetwork)
 		docker.DELETE("/networks/:name", dockerHandler.RemoveNetwork)
 		docker.GET("/volumes", dockerHandler.ListVolumes)

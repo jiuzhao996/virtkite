@@ -35,6 +35,8 @@ export const docker = {
 
   // 网络
   dockerNetworks: () => unwrap(http.get('/docker/networks')),
+  // 单个网络详情（网段 + 挂接容器）
+  dockerNetworkDetail: (name) => unwrap(http.get('/docker/networks/' + encodeURIComponent(name))),
   dockerCreateNetwork: (payload) => unwrap(http.post('/docker/networks', payload)),
   dockerDeleteNetwork: (name) => unwrap(http.delete('/docker/networks/' + encodeURIComponent(name))),
 

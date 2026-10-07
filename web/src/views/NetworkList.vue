@@ -63,6 +63,7 @@
             <div class="nc-row wide"><span class="nc-label">DHCP 范围</span><span class="mono">{{ row.dhcp_start && row.dhcp_end ? row.dhcp_start + ' - ' + row.dhcp_end : '—' }}</span></div>
           </div>
           <div class="nc-actions">
+            <el-button size="small" text type="primary" @click="openDetail(row)">详情</el-button>
             <!-- 启动/停止状态切换钮：运行中显「停止」，停止态显「启动」；
                  请求进行中 :loading 禁用，防连点重复提交（ui-ux-pro-max §2 loading-buttons） -->
             <el-button
@@ -86,6 +87,9 @@
         </DockerGate>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 虚拟网络详情抽屉（概要 + 成员表 + XML）-->
+    <NetworkDetailDrawer ref="netDetailRef" @open-topology="activeTab = 'topology'" />
 
     <!-- 新建 NAT 网络 -->
     <el-dialog :close-on-click-modal="false" v-model="createDialog" title="新建 NAT 网络" width="460px">
@@ -120,11 +124,13 @@ import DockerGate from '../components/DockerGate.vue'
 import NetworkTab from './docker/components/NetworkTab.vue'
 import FlowView from './network/FlowView.vue'
 import NetworkTopology from './network/NetworkTopology.vue'
+import NetworkDetailDrawer from './network/NetworkDetailDrawer.vue'
 
 const { isAdmin, canOperate } = useAuth()
 // 默认落在拓扑图（N1：一眼看清网络如何通信），通信流量/列表 tab 备查
 const activeTab = ref('topology')
 const dockerNetRef = ref(null)
+const netDetailRef = ref(null)
 
 const networks = ref([])
 const loading = ref(false)
@@ -155,6 +161,10 @@ async function load() {
 // 拓扑图里点网络节点 → 切到对应管理列表 tab
 function onOpenNetwork({ kind }) {
   activeTab.value = kind === 'docker_net' ? 'docker' : 'libvirt'
+}
+
+function openDetail(row) {
+  netDetailRef.value.open(row.name)
 }
 
 function openCreate() {

@@ -3,10 +3,21 @@ package handler
 import (
 	"net"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/service/virt"
 )
+
+// NetworkMember 挂在该网络上的虚拟机网卡（详情抽屉成员表）。
+type NetworkMember struct {
+	VM    string `json:"vm"`
+	MAC   string `json:"mac"`
+	IP    string `json:"ip"`
+	State string `json:"state"`
+	Model string `json:"model"`
+}
 
 // validIPv4 校验是否为合法的点分十进制 IPv4 地址（网关将写入 libvirt <ip address>）。
 // 额外要求规范写法（ip.String() 与输入一致），借此排除 IPv6 与 ::ffff:1.2.3.4 之类映射写法；
@@ -40,7 +51,7 @@ func (h *NetworkHandler) ListNetworks(c *gin.Context) {
 	})
 }
 
-// GetNetwork 网络详情（含 XML）
+// GetNetwork 网络详情（含 XML + 成员表）。成员=挂在该网络上的虚拟机网卡，IP 尽力由 DHCP 租约补齐。
 func (h *NetworkHandler) GetNetwork(c *gin.Context) {
 	name := c.Param("name")
 	info, err := h.Virt.GetNetwork(name)
@@ -49,7 +60,39 @@ func (h *NetworkHandler) GetNetwork(c *gin.Context) {
 		return
 	}
 
-	Success(c, info)
+	// subnet：libvirt 的 cidr 字段实为 netmask，这里换算成真正网段便于展示（与拓扑端点同源函数）
+	Success(c, gin.H{"network": info, "members": h.networkMembers(info), "subnet": netCIDR(info.Gateway, info.CIDR)})
+}
+
+// networkMembers 枚举挂在该网络上的虚拟机网卡（含关机域），并按 MAC 补 DHCP 租约 IP。
+// 匹配条件：网卡 source == 网络名；或 source == 该网络网桥（bridge 直连域）。
+func (h *NetworkHandler) networkMembers(info *virt.NetworkInfo) []NetworkMember {
+	members := []NetworkMember{}
+	doms, err := h.Virt.ListAllDomainNetworks()
+	if err != nil {
+		return members
+	}
+	leaseByMAC := map[string]string{}
+	if leases, lerr := h.Virt.ListDHCPLeases(); lerr == nil {
+		for _, l := range leases {
+			if l.MAC != "" {
+				leaseByMAC[strings.ToLower(l.MAC)] = l.IP
+			}
+		}
+	}
+	for _, d := range doms {
+		for _, ifc := range d.Interfaces {
+			if ifc.Source != info.Name && (info.Bridge == "" || ifc.Source != info.Bridge) {
+				continue
+			}
+			members = append(members, NetworkMember{
+				VM: d.Name, MAC: ifc.MAC, IP: leaseByMAC[strings.ToLower(ifc.MAC)],
+				State: d.State, Model: ifc.Model,
+			})
+		}
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].VM < members[j].VM })
+	return members
 }
 
 // CreateNetwork 创建 NAT 网络

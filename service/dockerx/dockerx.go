@@ -735,6 +735,27 @@ func (d *Dockerx) NetworkTopology() ([]NetworkTopo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("检查网络失败: %w", err)
 	}
+	return parseNetworkTopo(raw)
+}
+
+// NetworkDetail 单个 docker 网络详情（网段 + 挂接容器）。
+func (d *Dockerx) NetworkDetail(name string) (*NetworkTopo, error) {
+	raw, err := run("network", "inspect", name)
+	if err != nil {
+		return nil, fmt.Errorf("检查网络失败: %w", err)
+	}
+	arr, err := parseNetworkTopo(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(arr) == 0 {
+		return nil, fmt.Errorf("网络不存在: %s", name)
+	}
+	return &arr[0], nil
+}
+
+// parseNetworkTopo 解析 `docker network inspect` 的 JSON 输出（单网络或多网络数组）。
+func parseNetworkTopo(raw string) ([]NetworkTopo, error) {
 	var arr []struct {
 		Name   string `json:"Name"`
 		Driver string `json:"Driver"`

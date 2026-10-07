@@ -258,7 +258,11 @@ const diskMenuItems = computed(() =>
 )
 const nicMenuItems = computed(() =>
   (spec.value && spec.value.interfaces
-    ? spec.value.interfaces.map((n, i) => ({ index: `nic-${i}`, label: `eth${i + 1} ${n.mac || ''}`.trim() }))
+    ? spec.value.interfaces.map((n, i) => ({
+        index: `nic-${i}`,
+        // 菜单标签带所属网络，左侧一栏即可看清每块网卡挂在哪个网络
+        label: `eth${i + 1}${n.source ? ' · ' + n.source : ''}`
+      }))
     : [])
 )
 const activeMenu = computed(() => {

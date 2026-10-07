@@ -350,6 +350,20 @@ var dockerNetworkDrivers = map[string]bool{
 	"bridge": true, "overlay": true, "macvlan": true, "ipvlan": true, "host": true, "none": true,
 }
 
+// NetworkDetail GET /api/docker/networks/:name —— 单个 docker 网络详情（网段 + 挂接容器）。
+func (h *DockerHandler) NetworkDetail(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	name := c.Param("name")
+	detail, err := h.Docker.NetworkDetail(name)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusNotFound, "获取网络详情失败", err)
+		return
+	}
+	Success(c, detail)
+}
+
 // ListNetworks GET /api/docker/networks
 func (h *DockerHandler) ListNetworks(c *gin.Context) {
 	if !h.dockerAvailable(c) {

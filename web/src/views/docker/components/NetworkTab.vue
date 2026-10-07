@@ -19,11 +19,15 @@
           <div class="dn-row"><span class="dn-label">创建时间</span><span class="mono">{{ dockerTime(row.CreatedAt) }}</span></div>
         </div>
         <div class="dn-actions">
+          <el-button size="small" text type="primary" @click="openDetail(row)">详情</el-button>
           <!-- bridge/host/none 等内置网络是 docker 底座，前后端双重禁删，按钮置灰 -->
           <el-button size="small" text type="danger" :disabled="isBuiltinNetwork(row.Name)" @click="removeNetwork(row)">删除</el-button>
         </div>
       </el-card>
     </div>
+
+    <!-- Docker 网络详情抽屉（概要 + 已连接容器）-->
+    <DockerNetworkDrawer ref="detailRef" />
 
     <!-- 创建网络对话框 -->
     <el-dialog v-model="networkDialog" title="创建网络" width="520px" :close-on-click-modal="false">
@@ -58,12 +62,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { dockerTime } from '../../../utils/docker-format'
+import DockerNetworkDrawer from './DockerNetworkDrawer.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')
 
 const networks = ref([])
 const loading = ref(false)
+const detailRef = ref(null)
 
 // 首次挂载 / 壳刷新按钮 / 操作成功后 共用的重拉入口
 async function refresh() {
@@ -89,6 +95,10 @@ const BUILTIN_NETWORKS = ['bridge', 'host', 'none', 'docker_gwbridge']
 
 function isBuiltinNetwork(name) {
   return BUILTIN_NETWORKS.includes(name)
+}
+
+function openDetail(row) {
+  detailRef.value.open(row.Name)
 }
 
 async function removeNetwork(row) {
