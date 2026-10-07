@@ -7,6 +7,7 @@ package handler
 
 import (
 	"encoding/json"
+	"github.com/jiuzhao/vmops/service/tasks"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -158,6 +159,17 @@ func (h *VMHandler) CloneVM(c *gin.Context) {
 
 // DeleteVM 删除虚拟机（异步：Submit delete_vm，后台执行 undefine + 卷清理 + 软删除）。
 // HTTP 202 返回 {task_id}，前端轮询 GET /api/tasks/:id。
+// DeletePreview GET /api/vms/:id/delete-preview（A 批次）——删除前亮家底：
+// 哪些盘会被物理删除（含容量）、哪些盘因守卫保留及原因、几个快照会被一并丢弃。
+// 与真删共用 tasks.VolumeGuard 判定，预览与执行不会说两套话。
+func (h *VMHandler) DeletePreview(c *gin.Context) {
+	vm, ok := h.findVM(c)
+	if !ok {
+		return
+	}
+	Success(c, tasks.BuildDeletePreview(h.DB, h.Virt, vm))
+}
+
 func (h *VMHandler) DeleteVM(c *gin.Context) {
 	if !h.submitTaskGuard(c) {
 		return

@@ -483,3 +483,21 @@ button,
     white-space: nowrap;
   }
 }
+
+/* 删除预检清单（A）：ElMessageBox 挂 body，样式须全局 */
+.dp-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+.dp-list li { margin-bottom: 2px; }
+.dp-head { margin: 0 0 2px; font-size: 0.85rem; }
+.dp-tail { margin: 10px 0 0; font-size: 0.85rem; }
+.dp-mono {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+.dp-keep { color: var(--el-color-success); }
+.dp-warn { color: var(--el-color-warning); }

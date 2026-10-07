@@ -105,6 +105,7 @@ import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { nowClock, isCancel } from '../utils/format'
+import { deletePreviewBulkHtml } from '../utils/vm-delete-preview'
 import VmCard from './vm/components/VmCard.vue'
 import VmStatusBar from './vm/components/VmStatusBar.vue'
 import VmImportDialog from './vm/components/VmImportDialog.vue'
@@ -279,11 +280,23 @@ async function bulkAction(type) {
   }
   const label = { start: '批量开机', stop: '批量关机', delete: '批量删除' }[type]
   if (type === 'delete') {
+    // A 批次：逐台拉删除预检并聚合（磁盘/快照/保留卷），预检失败退回旧文案
+    let bulkHtml = ''
+    try {
+      const previews = await Promise.all(
+        rows.map((r) => api.deleteVMPreview(r.id).then((res) => ({ name: r.name, pv: res.data })).catch(() => null))
+      )
+      bulkHtml = deletePreviewBulkHtml(previews.filter(Boolean))
+    } catch (e) {
+      bulkHtml = ''
+    }
+    const head = '<p class="dp-head">此操作不可撤销。将被删除：</p>'
+    const tail = `<p class="dp-tail">确定删除选中的 ${rows.length} 台虚拟机（${rows.map((r) => r.name).join('、')}）？</p>`
     try {
       await ElMessageBox.confirm(
-        `此操作不可撤销。确定删除选中的 ${rows.length} 台虚拟机（${rows.map((r) => r.name).join('、')}）？`,
+        bulkHtml ? head + bulkHtml + tail : `此操作不可撤销。确定删除选中的 ${rows.length} 台虚拟机（${rows.map((r) => r.name).join('、')}）？`,
         '确认批量删除',
-        { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+        { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger', dangerouslyUseHTMLString: !!bulkHtml }
       )
     } catch (e) {
       return

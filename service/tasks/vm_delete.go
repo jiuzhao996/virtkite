@@ -166,64 +166,15 @@ func execDeleteVM(ctx *ExecContext) error {
 	if pool == "" {
 		pool = DefaultStoragePoolResolver()
 	}
-	// 守卫数据完整性标记（fail-safe）：三重守卫任一数据源获取失败即整体放弃删卷。
-	// 此前失败后按空数据继续等于守卫整体失效——最坏情况增量克隆父盘被当孤儿删掉，
-	// 所有子机磁盘立即不可读且不可恢复。守卫不可用 ⇒ 全部卷保守保留进 kept_volumes，
-	// 域与 DB 记录照常清理，残留卷留给孤儿清理任务或人工处理。
-	guardsReady := true
-
-	// 池路径前缀（用于判定卷是否属于平台托管，避免删池外文件）。
-	poolPath, pathErr := ctx.Virt.GetPoolPath(pool)
-	if pathErr != nil || poolPath == "" {
-		log.Printf("[tasks] 获取池路径失败（err=%v path=%q），本次保守保留全部卷 vm=%s pool=%s", pathErr, poolPath, vm.Name, pool)
-		guardsReady = false
-	}
-
-	// 守卫二的数据：平台镜像库登记的文件路径集合。
-	// 「基于云镜像创建」是直接引用不拷贝（见 execCreateVM 的 source_image_id 分支），
-	// 若镜像与 VM 同池，按池路径判定会把基镜像本体当成该 VM 的盘删掉，
-	// 而 images 表记录仍在 —— 留下悬挂记录且其他引用它的 VM 一并损坏。
-	managedImagePaths := map[string]bool{}
-	var imgs []model.Image
-	if err := ctx.DB.Select("path").Find(&imgs).Error; err != nil {
-		log.Printf("[tasks] 读取镜像库路径失败，本次保守保留全部卷 vm=%s err=%v", vm.Name, err)
-		guardsReady = false
-	}
-	for _, img := range imgs {
-		if img.Path != "" {
-			managedImagePaths[img.Path] = true
-		}
-	}
-
-	// 守卫三的数据：池内 qcow2 backing file 引用（父卷路径 → 依赖它的子卷）。
-	backingRefs, err := ctx.Virt.ListBackingRefs(pool)
-	if err != nil {
-		log.Printf("[tasks] 枚举 backing 引用失败，本次保守保留全部卷 vm=%s pool=%s err=%v", vm.Name, pool, err)
-		backingRefs = map[string][]string{}
-		guardsReady = false
-	}
+	// 守卫数据与判定统一走 VolumeGuard（与删除预检 BuildDeletePreview 同一套真相，
+	// 避免「预览说保留、真删却删了」的漂移）
+	guard := NewVolumeGuard(ctx.DB, ctx.Virt, pool)
+	poolPath := guard.PoolPath
 
 	var keptVols []string
 	// shouldKeepVol 判断某个磁盘源是否必须保留，返回保留原因（空串表示可删）。
 	shouldKeepVol := func(src, volName string) string {
-		// 守卫零（fail-safe）：守卫数据源获取失败时不得删除任何卷，理由进 kept_volumes 供人工确认
-		if !guardsReady {
-			return "守卫数据不可用（池路径/镜像库/backing 引用获取失败），保守保留待人工确认"
-		}
-		// 守卫一：池外文件不属于平台托管，一律不动（如挂载的宿主机 ISO）
-		if poolPath != "" && !strings.HasPrefix(src, poolPath+"/") {
-			return "不在存储池 " + pool + " 路径下"
-		}
-		// 守卫二：镜像库登记的共享基镜像
-		if managedImagePaths[src] {
-			return "是镜像库登记的共享基镜像"
-		}
-		// 守卫三：仍被子卷当作 qcow2 backing file（增量克隆父盘）
-		if children := backingRefs[src]; len(children) > 0 {
-			return fmt.Sprintf("是增量克隆父盘，仍被 %d 个子卷依赖（%s）",
-				len(children), strings.Join(children, "、"))
-		}
-		return ""
+		return guard.KeepReason(src)
 	}
 
 	seen := map[string]bool{}

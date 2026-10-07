@@ -219,6 +219,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.POST("/:id/start", vmHandler.StartVM)
 		vms.POST("/:id/stop", vmHandler.StopVM)
 		vms.POST("/:id/restart", vmHandler.RestartVM)
+		// 删除预检（A）：删前亮家底（磁盘去向/快照数/守卫保留）
+		vms.GET("/:id/delete-preview", vmHandler.DeletePreview)
 		vms.DELETE("/:id", vmHandler.DeleteVM)
 		vms.GET("/:id/snapshots", vmHandler.ListSnapshots)
 		vms.POST("/:id/snapshots", vmHandler.CreateSnapshot)

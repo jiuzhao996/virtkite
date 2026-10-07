@@ -203,6 +203,7 @@ import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
 import { vmStatusText, vmStatusTag, isCancel, fmtDateTime } from '../utils/format'
+import { deletePreviewHtml } from '../utils/vm-delete-preview'
 import VmPerfCard from './vm-detail/components/VmPerfCard.vue'
 import GuestMetricsCard from './vm-detail/components/GuestMetricsCard.vue'
 import VmHardwarePanels from './vm-detail/components/VmHardwarePanels.vue'
@@ -329,12 +330,23 @@ async function act(type) {
 
 async function doDelete() {
   if (!vm.value) return
+  // A 批次：删前先拉预检，把「磁盘/快照会怎样」摊在确认框里；预检失败不阻断（退回纯名称确认）
+  let previewHtml = ''
   try {
-    await ElMessageBox.prompt('此操作不可撤销。请输入虚拟机名称「' + vm.value.name + '」以确认删除：', '确认删除', {
+    const res = await api.deleteVMPreview(id)
+    previewHtml = deletePreviewHtml(res.data)
+  } catch (e) {
+    previewHtml = ''
+  }
+  const head = '<p class="dp-head">此操作不可撤销。将被删除：</p>'
+  const tail = '<p class="dp-tail">请输入虚拟机名称「' + vm.value.name + '」以确认删除：</p>'
+  try {
+    await ElMessageBox.prompt(previewHtml ? head + previewHtml + tail : '此操作不可撤销。请输入虚拟机名称「' + vm.value.name + '」以确认删除：', '确认删除', {
       type: 'warning',
       confirmButtonText: '确认删除',
       cancelButtonText: '取消',
       confirmButtonClass: 'el-button--danger',
+      dangerouslyUseHTMLString: !!previewHtml,
       inputPlaceholder: vm.value.name,
       inputValidator: (v) => (v && v.trim() === vm.value.name) || '请输入正确的虚拟机名称'
     })

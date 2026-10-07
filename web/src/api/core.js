@@ -26,6 +26,8 @@ export const core = {
   stopVM: (id) => unwrap(http.post('/vms/' + id + '/stop')),
   restartVM: (id) => unwrap(http.post('/vms/' + id + '/restart')),
   deleteVM: (id) => unwrap(http.delete('/vms/' + id)),
+  // 删除预检（A）：删前亮家底（磁盘去向/快照/守卫保留）
+  deleteVMPreview: (id) => unwrap(http.get('/vms/' + id + '/delete-preview')),
 
   // 虚拟机 - 配置模型 / 硬件管理 / 动作（virt-manager 对齐）
   getVMSpec: (id) => unwrap(http.get('/vms/' + id + '/spec')),
