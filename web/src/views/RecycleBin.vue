@@ -84,7 +84,7 @@
         </el-table-column>
         <el-table-column label="可恢复性" width="110">
           <template #header>
-            <el-tooltip content="域与磁盘都在 = 原样恢复；仅磁盘在 = 重建精简定义；都不在 = 只能恢复记录" placement="top">
+            <el-tooltip content="域与磁盘都在 = 原样恢复；仅域残留 = 直接可开；仅磁盘在且有删除时存档 = 精确重建（多盘/固件/网卡全还原）；仅磁盘在无存档 = 精简重建；都不在 = 只能恢复记录" placement="top">
               <span class="col-help">
                 可恢复性
                 <el-icon><QuestionFilled /></el-icon>
@@ -152,6 +152,11 @@
           <el-descriptions-item label="可恢复性">
             <el-tag :type="restoreLevel(detail).type" effect="light" size="small">{{ restoreLevel(detail).text }}</el-tag>
           </el-descriptions-item>
+          <el-descriptions-item label="域定义存档">
+            {{ detail.has_archive
+              ? '有（删除时留存了完整域定义，恢复可精确重建：多盘/固件/光驱/原网络配置全还原）'
+              : '无（恢复只能按记录精简重建：单系统盘 + 默认 NAT 网卡）' }}
+          </el-descriptions-item>
         </el-descriptions>
         <div class="rb-note">
           恢复的边界：域与磁盘都在 → 原样恢复；仅域残留 → 直接可开；仅磁盘在 → 重建精简定义
@@ -194,11 +199,12 @@ async function load() {
 // ===== 恢复（POST /vms-recycle/:id/restore）=====
 const actingId = ref(null)
 
-// 可恢复性分级（C）：域与磁盘的四种组合对应三种结果
+// 可恢复性分级（C+B）：域/磁盘/存档三者组合决定恢复结果
 function restoreLevel(row) {
   if (row.domain_exists && row.disk_exists) return { text: '原样恢复', type: 'success' }
   if (row.domain_exists) return { text: '域残留可开', type: 'success' }
-  if (row.disk_exists) return { text: '重建精简', type: 'warning' }
+  if (row.disk_exists && row.has_archive) return { text: '精确重建', type: 'success' }
+  if (row.disk_exists) return { text: '精简重建', type: 'warning' }
   return { text: '仅恢复记录', type: 'danger' }
 }
 

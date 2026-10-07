@@ -133,11 +133,24 @@ func execDeleteVM(ctx *ExecContext) error {
 	// 1. 先取完整磁盘清单（含多盘/克隆卷/seed 盘），再删除域定义
 	//    （spec 解析失败不阻断删除，域仍按既有流程清理）。
 	var diskSources []string
+	specXML := ""
 	if spec, err := ctx.Virt.GetDomainSpec(vm.Name); err == nil && spec != nil {
+		specXML = spec.RawXML
 		for _, d := range spec.Disks {
 			if d.Source != "" {
 				diskSources = append(diskSources, d.Source)
 			}
+		}
+	}
+
+	// 1.5 存档域定义原文（B）：undefine 前留下 dumpxml，回收站恢复才能「精确重建」
+	// （多盘/固件/光驱/原网络配置全还原），否则只能按命名约定猜出单盘精简定义。
+	// 存档失败不阻断删除（删除本身仍要成功），只留痕——恢复会退回精简重建。
+	// 域本就不存在（二次删除）时 specXML 为空，保留旧档案不覆盖。
+	if specXML != "" {
+		if err := ctx.DB.Model(&model.VM{}).Where("id = ?", vm.ID).
+			Update("domain_xml", specXML).Error; err != nil {
+			log.Printf("[tasks] 域定义存档失败 vm=%s err=%v（该机恢复将退回精简重建）", vm.Name, err)
 		}
 	}
 

@@ -20,26 +20,30 @@ const (
 
 // VM 虚拟机模型
 type VM struct {
-	ID          uint           `gorm:"primaryKey" json:"id"`
-	UUID        string         `gorm:"size:36;uniqueIndex" json:"uuid"`
-	Name        string         `gorm:"size:100;not null" json:"name"`
-	HostID      uint           `gorm:"not null;index" json:"host_id"`
-	StoragePool string         `gorm:"size:100;default:vmops" json:"storage_pool"`
-	VCPU        int            `gorm:"default:1" json:"vcpu"`
-	MemoryMB    int            `gorm:"default:1024" json:"memory_mb"`
-	DiskGB      int            `gorm:"default:20" json:"disk_gb"`
-	IP          string         `gorm:"size:45" json:"ip"`
-	MACAddress  string         `gorm:"size:17" json:"mac_address"`
-	Status      string         `gorm:"size:20;default:shut off" json:"status"` // gorm tag 内不能引用常量，此处字面量必须与 VMStatusShutOff 同步
-	OSType      string         `gorm:"size:50" json:"os_type"`
-	Description string         `gorm:"type:text" json:"description"`
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	UUID        string `gorm:"size:36;uniqueIndex" json:"uuid"`
+	Name        string `gorm:"size:100;not null" json:"name"`
+	HostID      uint   `gorm:"not null;index" json:"host_id"`
+	StoragePool string `gorm:"size:100;default:vmops" json:"storage_pool"`
+	VCPU        int    `gorm:"default:1" json:"vcpu"`
+	MemoryMB    int    `gorm:"default:1024" json:"memory_mb"`
+	DiskGB      int    `gorm:"default:20" json:"disk_gb"`
+	IP          string `gorm:"size:45" json:"ip"`
+	MACAddress  string `gorm:"size:17" json:"mac_address"`
+	Status      string `gorm:"size:20;default:shut off" json:"status"` // gorm tag 内不能引用常量，此处字面量必须与 VMStatusShutOff 同步
+	OSType      string `gorm:"size:50" json:"os_type"`
+	Description string `gorm:"type:text" json:"description"`
+	// DomainXML 删除时存档的域定义原文（dumpxml），供回收站恢复做「精确重建」。
+	// 不存档就只能按建卷命名约定猜出单盘+默认网卡的精简定义——多盘/UEFI/光驱/
+	// 原网络配置全部丢失。json:"-" 避免列表接口被几 KB 的 XML 撑大。
+	DomainXML string `gorm:"type:text" json:"-"`
 	// AnsibleReady 平台公钥已注入该 VM（cloud-init 建机直通或分发动作补注）——
 	// ansible 对它走私钥免密通道，inventory 不再瞬时承载口令文件（P4-S4）
 	AnsibleReady bool           `gorm:"default:false" json:"ansible_ready"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
-	Host        Host           `gorm:"foreignKey:HostID" json:"host,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	Host         Host           `gorm:"foreignKey:HostID" json:"host,omitempty"`
 }
 
 // TableName 指定表名

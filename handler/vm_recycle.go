@@ -51,6 +51,9 @@ type deletedVMItem struct {
 	// 系统盘是否仍在池中（C 批次）：域不在+盘不在 = 恢复只能捞回一条空记录
 	DiskExists bool   `json:"disk_exists"`
 	DiskVolume string `json:"disk_volume,omitempty"` // 系统盘卷名（存在时）
+	// 是否留有删除时的域定义存档（B 批次）：有存档才能「精确重建」
+	// （多盘/固件/光驱/原网络配置全还原），否则只能精简重建
+	HasArchive bool `json:"has_archive"`
 }
 
 // ListDeleted 回收站列表（admin）。GET /api/vms-recycle
@@ -80,6 +83,7 @@ func (h *VMRecycleHandler) ListDeleted(c *gin.Context) {
 			DeletedAt:    vm.DeletedAt,
 			DomainExists: err == nil,
 			DiskExists:   diskPath != "",
+			HasArchive:   strings.TrimSpace(vm.DomainXML) != "",
 		}
 		if diskPath != "" {
 			item.DiskVolume = filepath.Base(diskPath)
@@ -170,10 +174,12 @@ func (h *VMRecycleHandler) Restore(c *gin.Context) {
 		return
 	}
 
-	// 域已不存在（删除时已 undefine）：系统盘卷还在则按 DB 记录重建精简定义并 define，
-	// 让「恢复」对得起语义；任何失败降级为仅恢复记录，不阻断恢复本身。
-	if err := h.redefineRestoredVM(vm); err != nil {
-		LogError(c, err)
+	// 域已不存在（删除时已 undefine）：优先按删除时留存的域定义存档精确重建（B），
+	// 无存档或存档重建失败时退回按 DB 记录精简重建；任何失败降级为仅恢复记录，
+	// 不阻断恢复本身。
+	outcome, rerr := h.redefineRestoredVM(vm)
+	if rerr != nil {
+		LogError(c, rerr)
 		Success(c, gin.H{
 			"restored":       true,
 			"domain_defined": false,
@@ -184,11 +190,20 @@ func (h *VMRecycleHandler) Restore(c *gin.Context) {
 	if err := h.DB.Model(&vm).Update("status", model.VMStatusShutOff).Error; err != nil {
 		LogError(c, err)
 	}
+	msg := "已恢复并重新定义虚拟机（按删除时的域定义存档精确重建，配置与删除前一致）"
+	switch outcome.Mode {
+	case "exact_missing":
+		msg = fmt.Sprintf("已恢复并重新定义虚拟机（按存档重建），但以下磁盘文件已不存在：%s —— 开机前请补齐或移除该磁盘",
+			strings.Join(outcome.Missing, "、"))
+	case "minimal":
+		msg = "已恢复并重新定义虚拟机（无删除时存档，按数据库记录重建精简定义：单系统盘 + 默认 NAT 网卡，多盘需在磁盘管理手动挂回）"
+	}
 	Success(c, gin.H{
 		"restored":       true,
 		"domain_defined": true,
 		"status":         model.VMStatusShutOff,
-		"message":        "已恢复并重新定义虚拟机（原域已删除，按数据库记录重建精简定义，可直接开机）",
+		"restore_mode":   outcome.Mode,
+		"message":        msg,
 	})
 }
 
@@ -245,16 +260,58 @@ func probeSystemDisk(poolPath, vmName string) (string, bool) {
 	return "", false
 }
 
-// redefineRestoredVM 恢复场景下按 DB 行重建精简域定义并 define（对应 virsh define）。
-// 仅在系统盘卷仍存在时才有意义——删除时卷可能被 shouldKeepVol 守卫保留，或 VM 走的
-// 「恢复过的域已不存在」路径本就没删卷。
-// DB 未存磁盘清单/机器类型/网卡列表等配置，重建为精简定义：单系统盘（按建卷命名约定探测，
-// 与 execDeleteVM 的兜底同一套）+ 默认 NAT 网络单网卡（MAC 用登记值）；多盘 VM 恢复后
-// 其余盘仍留在池中，可在磁盘管理手动挂回。
-func (h *VMRecycleHandler) redefineRestoredVM(vm model.VM) error {
+// restoreOutcome 恢复重建的结果方式（B）：决定回给前端的文案与提示强度。
+type restoreOutcome struct {
+	Mode    string   // exact=按存档精确重建 / exact_missing=按存档重建但部分磁盘文件缺失 / minimal=无存档，精简重建
+	Missing []string // 存档引用但文件已不存在的磁盘（仅 exact_missing）
+}
+
+// missingDiskFiles 从存档 XML 里找出「引用的磁盘文件已不存在」的路径（B）。
+// 只统计 device=disk 的真实数据盘：光驱/软驱的 ISO 缺失不影响开机，不算缺失。
+func missingDiskFiles(xmlText string) []string {
+	spec, err := virt.ParseDomainXML(xmlText)
+	if err != nil || spec == nil {
+		return nil
+	}
+	missing := []string{}
+	for _, d := range spec.Disks {
+		if d.Device != "disk" || d.Source == "" {
+			continue
+		}
+		if _, err := os.Stat(d.Source); err != nil {
+			missing = append(missing, d.Source)
+		}
+	}
+	return missing
+}
+
+// redefineRestoredVM 恢复场景下重建域定义并 define（对应 virsh define）。
+// 两条路径（B）：
+//  1. exact —— 删除时留存了域定义存档（VM.DomainXML）时原样 define 回去，
+//     多盘/固件/光驱/原网络配置全部还原；存档引用但已丢失的磁盘单独列出告知。
+//  2. minimal —— 无存档（老数据）或存档重建失败时，退回按 DB 记录重建精简定义：
+//     单系统盘（按建卷命名约定探测，与 execDeleteVM 兜底同一套）+ 默认 NAT 单网卡；
+//     多盘 VM 其余盘仍在池中，可在磁盘管理手动挂回。
+func (h *VMRecycleHandler) redefineRestoredVM(vm model.VM) (restoreOutcome, error) {
+	// 路径一：按存档精确重建
+	if strings.TrimSpace(vm.DomainXML) != "" {
+		missing := missingDiskFiles(vm.DomainXML)
+		if derr := h.Virt.DefineDomain(vm.DomainXML); derr == nil {
+			if len(missing) > 0 {
+				log.Printf("[recycle] 按存档重建成功但有磁盘缺失 vm=%s missing=%v", vm.Name, missing)
+				return restoreOutcome{Mode: "exact_missing", Missing: missing}, nil
+			}
+			return restoreOutcome{Mode: "exact"}, nil
+		} else {
+			// 存档可能来自旧版本/已被手工改动；退回精简重建而不是让恢复失败
+			log.Printf("[recycle] 按域定义存档重建失败，退回精简重建 vm=%s err=%v", vm.Name, derr)
+		}
+	}
+
+	// 路径二：精简重建（原逻辑）
 	diskPath, diskPool := h.systemDiskPath(vm)
 	if diskPath == "" {
-		return fmt.Errorf("未找到 %s 的系统盘卷（记录池位 %q 及各池均未命中），无法重建定义", vm.Name, vm.StoragePool)
+		return restoreOutcome{}, fmt.Errorf("未找到 %s 的系统盘卷（记录池位 %q 及各池均未命中），无法重建定义", vm.Name, vm.StoragePool)
 	}
 	if vm.StoragePool != "" && diskPool != vm.StoragePool {
 		// 盘位漂移留痕：能恢复（按绝对路径重建），但记录与实际不符值得知道
@@ -288,7 +345,7 @@ func (h *VMRecycleHandler) redefineRestoredVM(vm model.VM) error {
 		// DB 未登记 MAC 时重新生成，避免 DB 记录与 libvirt 实际不一致
 		m, merr := virt.RandomMAC()
 		if merr != nil {
-			return fmt.Errorf("生成网卡 MAC 失败: %w", merr)
+			return restoreOutcome{}, fmt.Errorf("生成网卡 MAC 失败: %w", merr)
 		}
 		mac = m
 		if err := h.DB.Model(&vm).Update("mac_address", mac).Error; err != nil {
@@ -302,12 +359,12 @@ func (h *VMRecycleHandler) redefineRestoredVM(vm model.VM) error {
 
 	xmlstr, err := virt.BuildDomainXML(spec)
 	if err != nil {
-		return fmt.Errorf("重建虚拟机 %s 配置失败: %w", vm.Name, err)
+		return restoreOutcome{}, fmt.Errorf("重建虚拟机 %s 配置失败: %w", vm.Name, err)
 	}
 	if err := h.Virt.DefineDomain(xmlstr); err != nil {
-		return fmt.Errorf("重新定义虚拟机 %s 失败: %w", vm.Name, err)
+		return restoreOutcome{}, fmt.Errorf("重新定义虚拟机 %s 失败: %w", vm.Name, err)
 	}
-	return nil
+	return restoreOutcome{Mode: "minimal"}, nil
 }
 
 // Purge 彻底清除回收站虚拟机（admin）。DELETE /api/vms-recycle/:id/purge?purge_volumes=true
