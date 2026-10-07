@@ -452,6 +452,13 @@ defineExpose({ open })
   display: flex;
   flex-direction: column;
 }
+.cd-drawer .pane-logs > div {
+  /* v-loading 包装层也必须进拉伸链,否则链条在此断裂:pre 按内容撑高、底部被 pane 裁掉 */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .cd-drawer .pane-logs .lv {
   flex: 1;
   min-height: 0;
