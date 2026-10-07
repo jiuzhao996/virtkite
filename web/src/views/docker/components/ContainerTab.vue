@@ -19,12 +19,6 @@
         <el-switch v-model="autoRefresh" />
         <span class="ct-auto-label">自动刷新</span>
       </div>
-      <!-- 视图切换（用户拍板：容器做成虚拟机列表同款卡片）：卡片默认，表格可切回；
-           偏好记忆到 localStorage -->
-      <el-radio-group v-model="viewMode" size="small" class="ct-view">
-        <el-radio-button value="card">卡片</el-radio-button>
-        <el-radio-button value="table">表格</el-radio-button>
-      </el-radio-group>
       <template v-if="selection.length">
         <span class="ct-sel">已选 {{ selection.length }} 项</span>
         <el-button type="primary" plain :disabled="!bulkStartable" :loading="bulkLoading" @click="bulkAction('start')">批量启动</el-button>
@@ -34,114 +28,19 @@
       <span class="count ct-count">共 {{ filteredContainers.length }} 个容器</span>
     </div>
 
-    <!-- row-key + reserve-selection：10s 轮询整体替换数据后保留勾选（P0） -->
-    <el-table
-      v-if="viewMode === 'table'"
-      ref="containerTableRef"
-      :data="filteredContainers"
-      row-key="ID"
-      v-loading="loading"
-      stripe
-      size="small"
-      @selection-change="onSelectionChange"
-    >
-      <template #empty><el-empty description="暂无容器" :image-size="80" /></template>
-      <el-table-column type="selection" width="36" reserve-selection />
-      <el-table-column label="名称" min-width="96" show-overflow-tooltip>
-        <template #default="{ row }">
-          <span class="mono">{{ containerName(row.Names) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="Image" label="镜像" min-width="108" show-overflow-tooltip>
-        <template #default="{ row }">
-          <!-- 镜像名可点跳镜像页（织网：容器↔镜像） -->
-          <router-link v-if="row.Image" class="mono ct-img-link" to="/images">{{ row.Image }}</router-link>
-          <span v-else class="mono">—</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="72">
-        <template #default="{ row }">
-          <el-tag :type="stateTag(row.State)" effect="light" size="small">{{ stateText(row.State) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="CPU%" width="62">
-        <template #default="{ row }">
-          <span class="mono">{{ cpuText(row) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="内存%" width="66">
-        <template #default="{ row }">
-          <span class="mono" :title="memTitle(row)">{{ memText(row) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="Status" label="明细" min-width="96" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.Status || '—' }}</template>
-      </el-table-column>
-      <el-table-column label="端口" min-width="96" show-overflow-tooltip>
-        <template #default="{ row }">{{ portsText(row.Ports) }}</template>
-      </el-table-column>
-      <el-table-column label="创建时间" width="146">
-        <template #default="{ row }">
-          <span class="mono">{{ dockerTime(row.CreatedAt || row.Created) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="368" fixed="right" class-name="ct-op">
-        <template #default="{ row }">
-          <el-button
-            v-if="row.State !== 'running' && row.State !== 'paused'"
-            size="small" text type="success"
-            :loading="actingKey === row.ID + ':start'"
-            :disabled="!!actingKey && actingKey !== row.ID + ':start'"
-            @click="containerAction(row, 'start')"
-          >启动</el-button>
-          <el-button
-            v-else
-            size="small" text type="warning"
-            :loading="actingKey === row.ID + ':stop'"
-            :disabled="!!actingKey && actingKey !== row.ID + ':stop'"
-            @click="containerAction(row, 'stop')"
-          >停止</el-button>
-          <!-- 暂停/恢复按 State 互斥：paused 容器 docker start 会报错，只能 unpause -->
-          <el-button
-            v-if="row.State === 'running'"
-            size="small" text type="info"
-            :loading="actingKey === row.ID + ':pause'"
-            :disabled="!!actingKey && actingKey !== row.ID + ':pause'"
-            @click="containerAction(row, 'pause')"
-          >暂停</el-button>
-          <el-button
-            v-else-if="row.State === 'paused'"
-            size="small" text type="success"
-            :loading="actingKey === row.ID + ':unpause'"
-            :disabled="!!actingKey && actingKey !== row.ID + ':unpause'"
-            @click="containerAction(row, 'unpause')"
-          >恢复</el-button>
-          <el-button
-            size="small" text type="primary"
-            :loading="actingKey === row.ID + ':restart'"
-            :disabled="!!actingKey && actingKey !== row.ID + ':restart'"
-            @click="containerAction(row, 'restart')"
-          >重启</el-button>
-          <el-button size="small" text type="primary" :disabled="row.State !== 'running'" :title="row.State !== 'running' ? '容器未运行' : ''" @click="openTerminal(row)">终端</el-button>
-          <el-button size="small" text type="primary" @click="openInspect(row)">详情</el-button>
-          <el-button size="small" text type="primary" @click="openLogs(row)">日志</el-button>
-          <el-button size="small" text type="danger" @click="removeContainer(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <!-- 卡片视图（用户拍板：虚拟机列表同款）：状态徽标 + 实时 CPU/内存 + 操作钮一张卡；
-         勾选与表格共用 selection 数组，批量操作两视图通用 -->
-    <div v-if="viewMode === 'card'" v-loading="loading" class="ct-grid">
+    <!-- 纯卡片视图（用户拍板：去表格只留卡片）：整卡可点进详情抽屉；
+         勾选/操作钮在头部与操作区 .stop 防误触详情 -->
+    <div v-loading="loading" class="ct-grid">
       <el-empty v-if="!filteredContainers.length" description="暂无容器" :image-size="80" />
-      <el-card v-for="row in filteredContainers" :key="row.ID" shadow="hover" class="ct-card">
+      <el-card v-for="row in filteredContainers" :key="row.ID" shadow="hover" class="ct-card" @click="openDetail(row)">
         <div class="ct-card-head">
           <el-checkbox
             :model-value="selection.some((s) => s.ID === row.ID)"
+            @click.stop
             @change="toggleCardSelect(row)"
           />
           <span class="ct-card-name mono" :title="containerName(row.Names)">{{ containerName(row.Names) }}</span>
-          <!-- 运行中状态点带呼吸动效（复用全局 breathe；感官收尾，与 VM 卡片同款） -->
+          <!-- 运行中状态点带呼吸动效（复用全局 breathe；与 VM 卡片同款观感） -->
           <span v-if="row.State === 'running'" class="ct-live-dot" title="运行中" />
           <el-tag :type="stateTag(row.State)" effect="light" size="small">{{ stateText(row.State) }}</el-tag>
         </div>
@@ -152,7 +51,8 @@
           <span>内存 <b class="mono" :title="memTitle(row)">{{ memText(row) }}</b></span>
           <span v-if="portsText(row.Ports) !== '—'" class="mono ct-card-ports">{{ portsText(row.Ports) }}</span>
         </div>
-        <div class="ct-card-actions">
+        <div class="ct-card-meta ct-card-time mono">{{ dockerTime(row.CreatedAt || row.Created) }}</div>
+        <div class="ct-card-actions" @click.stop>
           <el-button
             v-if="row.State !== 'running' && row.State !== 'paused'"
             size="small" :icon="VideoPlay"
@@ -168,7 +68,7 @@
             @click="containerAction(row, 'stop')"
           >停止</el-button>
           <el-button size="small" :icon="Monitor" :disabled="row.State !== 'running'" @click="openTerminal(row)">终端</el-button>
-          <!-- 日志/重启/详情收进「更多」下拉：主行 4 元素保单行（5 钮实测在 305px 卡宽差 13px 换行） -->
+          <!-- 日志/重启/暂停恢复收进「更多」下拉：主行 4 元素保单行（5 钮实测在 305px 卡宽差 13px 换行） -->
           <el-dropdown trigger="click" @command="(cmd) => cardMore(row, cmd)">
             <el-button size="small" class="ct-card-more" :icon="MoreFilled" />
             <template #dropdown>
@@ -177,7 +77,6 @@
                 <el-dropdown-item v-if="row.State === 'running'" command="pause">暂停</el-dropdown-item>
                 <el-dropdown-item v-else-if="row.State === 'paused'" command="unpause">恢复</el-dropdown-item>
                 <el-dropdown-item command="restart" :disabled="row.State !== 'running'">重启</el-dropdown-item>
-                <el-dropdown-item command="inspect">详情</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -210,9 +109,9 @@
 // 容器页（原容器 tab，1Panel 式子路由化）：数据（containers / statsMap）与容器域全部交互自持。
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast）；10s 静默轮询随本页走，
 // KeepAlive 下 onUnmounted 不触发，故用 onActivated/onDeactivated 显式启停轮询（防切走后后台空转）。
-import { ref, computed, inject, watch, onMounted, onActivated, onDeactivated } from 'vue'
+import { ref, computed, inject, onMounted, onActivated, onDeactivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {  Search, Plus, Delete, VideoPlay, VideoPause, Monitor, Document, MoreFilled } from '@element-plus/icons-vue'
+import { Search, Plus, Delete, VideoPlay, VideoPause, Monitor, MoreFilled } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { containerName, stateTag, stateText, portsText, dockerTime } from '../../../utils/docker-format'
@@ -234,31 +133,34 @@ async function fetchContainers() {
   containers.value = (res.data || {}).items || []
 }
 
-// 全容器实时 stats（docker stats --no-stream）：按容器名建索引，供 CPU%/内存% 列查询
-async function fetchStats() {
+// 全容器实时 stats（docker stats --no-stream 单次要 2s 采样）：按容器名建索引，
+// 供 CPU%/内存% 展示。刻意不 await 进 refresh——列表（45ms）秒开，stats 后台补数，
+// 数字到达后自动填充（否则 loading 陪跑 2s+，进页面必卡）
+async function loadStatsSilent() {
   try {
     const res = await api.dockerStats()
     const items = (res.data || {}).items || []
     const m = {}
     for (const it of items) m[it.Name || it.Container || it.ID] = it
     statsMap.value = m
-  } catch (e) {
-    // stats 是增强列，拉取失败静默（列显示 —），不打扰列表主流程
+  } catch {
+    // stats 是增强数据，拉取失败静默（显示 —），不打扰列表主流程
   }
 }
 
-// 首次挂载 / 壳刷新按钮 / 创建容器成功 共用的取数入口：列表 + stats 一起拉，
-// 成功清 503 门控，失败交壳上报（stats 内部静默）
+// 首次挂载 / 壳刷新按钮 / 创建容器成功 共用的取数入口：loading 只等列表，
+// 成功清 503 门控，失败交壳上报；stats 始终后台静默补
 async function refresh() {
   loading.value = true
   try {
-    await Promise.all([fetchContainers(), fetchStats()])
+    await fetchContainers()
     clearLoadError()
   } catch (e) {
     reportLoadError(e, '获取容器列表失败')
   } finally {
     loading.value = false
   }
+  loadStatsSilent()
 }
 
 // ═══════════════ 10s 静默轮询（KeepAlive 适配）═══════════════
@@ -282,13 +184,14 @@ async function silentRefresh() {
   if (refreshing || loading.value) return
   refreshing = true
   try {
-    await Promise.all([fetchContainers(), fetchStats()])
+    await fetchContainers()
     clearLoadError()
   } catch (e) {
     if (e.response && e.response.status === 503) reportLoadError(e, 'Docker 服务不可用')
   } finally {
     refreshing = false
   }
+  loadStatsSilent()
 }
 
 onMounted(() => {
@@ -376,32 +279,21 @@ function memTitle(row) {
 
 // ── 批量操作 ──
 
-const containerTableRef = ref(null)
 const selection = ref([])
-// 视图切换（卡片默认/表格）：localStorage 记忆（ct-view = card | table）
-const viewMode = ref(localStorage.getItem('ct-view') || 'card')
-watch(viewMode, (v) => {
-  try { localStorage.setItem('ct-view', v) } catch { /* 隐私模式忽略 */ }
-})
-// 卡片勾选：与表格 selection 共用同一数组（批量操作两视图通用）
+// 卡片勾选：批量操作的数据源
 function toggleCardSelect(row) {
   const idx = selection.value.findIndex((s) => s.ID === row.ID)
   if (idx > -1) selection.value.splice(idx, 1)
   else selection.value.push(row)
 }
-// 卡片「更多」下拉：日志 / 暂停恢复 / 重启 / 详情（inspect 抽屉）
+// 卡片「更多」下拉：日志 / 暂停恢复 / 重启（详情走整卡点击）
 function cardMore(row, cmd) {
   if (cmd === 'logs') return openLogs(row)
   if (cmd === 'pause') return containerAction(row, 'pause')
   if (cmd === 'unpause') return containerAction(row, 'unpause')
   if (cmd === 'restart') return containerAction(row, 'restart')
-  if (cmd === 'inspect') return openInspect(row)
 }
 const bulkLoading = ref(false)
-
-function onSelectionChange(rows) {
-  selection.value = rows
-}
 
 const bulkStartable = computed(() => selection.value.some((r) => r.State !== 'running'))
 const bulkStoppable = computed(() => selection.value.some((r) => r.State === 'running'))
@@ -436,8 +328,9 @@ async function bulkAction(action) {
     const fail = results.length - ok
     if (fail) ElMessage.warning(`批量${label}完成：成功 ${ok} 个，失败 ${fail} 个`)
     else ElMessage.success(`批量${label}完成（${ok} 个）`)
-    if (containerTableRef.value) containerTableRef.value.clearSelection()
-    await Promise.all([fetchContainers(), fetchStats()])
+    selection.value = []
+    await fetchContainers()
+    loadStatsSilent()
   } finally {
     bulkLoading.value = false
   }
@@ -453,7 +346,8 @@ async function containerAction(row, action) {
   try {
     await api.dockerContainerAction(row.ID, action)
     ElMessage.success(`已${label} ${containerName(row.Names)}`)
-    await Promise.all([fetchContainers(), fetchStats()])
+    await fetchContainers()
+    loadStatsSilent()
   } catch (e) {
     ElMessage.error(errMsg(e, `${label}失败`))
   } finally {
@@ -480,7 +374,8 @@ async function removeContainer(row) {
     // 运行中的容器必须带 force=true，否则 Docker API 拒绝删除
     await api.dockerContainerDelete(row.ID, running)
     ElMessage.success(`已删除 ${name}`)
-    await Promise.all([fetchContainers(), fetchStats()])
+    await fetchContainers()
+    loadStatsSilent()
   } catch (e) {
     ElMessage.error(errMsg(e, '删除失败'))
   }
@@ -505,7 +400,8 @@ async function pruneStopped() {
   try {
     const res = await api.dockerPrune('containers')
     ElMessage.success((res.data && res.data.message) || '清理完成')
-    await Promise.all([fetchContainers(), fetchStats()])
+    await fetchContainers()
+    loadStatsSilent()
   } catch (e) {
     ElMessage.error(errMsg(e, '清理失败'))
   } finally {
@@ -533,13 +429,14 @@ function openTerminal(row) {
 const detailDrawerRef = ref(null)
 const logsDrawerRef = ref(null)
 
-function openInspect(row) {
+function openDetail(row) {
   detailDrawerRef.value.open(row)
 }
 
 // 详情抽屉内操作（启停/暂停/重命名/删除）后重拉列表，保持与本页一致
 async function onDetailChanged() {
-  await Promise.all([fetchContainers(), fetchStats()])
+  await fetchContainers()
+  loadStatsSilent()
 }
 
 function openLogs(row) {
@@ -581,20 +478,8 @@ defineExpose({ refresh })
   color: var(--el-color-primary, #409eff);
   font-size: 0.85rem;
 }
-/* 容器行内 7 个操作全部 text 化 + 收紧间距，保证 1440 宽下 CPU%/内存% 列不被固定列遮住 */
-.ct-op .el-button + .el-button {
-  margin-left: 6px;
-}
 .ct-count {
   margin-left: auto;
-}
-/* 镜像列链接：与普通文本区分（容器↔镜像织网） */
-.ct-img-link {
-  color: var(--el-color-primary);
-  text-decoration: none;
-}
-.ct-img-link:hover {
-  text-decoration: underline;
 }
 /* 开关 + 文字标签（容器工具栏「自动刷新」/ 日志抽屉「跟随」共用） */
 .ct-auto {
@@ -615,6 +500,7 @@ defineExpose({ refresh })
 .ct-card {
   display: flex;
   flex-direction: column;
+  cursor: pointer;
   transition: transform var(--dur-base) var(--ease-standard), box-shadow var(--dur-base) var(--ease-standard);
 }
 .ct-card:hover {
@@ -660,6 +546,11 @@ defineExpose({ refresh })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 创建时间行弱化展示（信息补全,不与状态明细争注意力） */
+.ct-card-time {
+  font-size: 0.76rem;
+  opacity: 0.75;
 }
 .ct-card-metrics {
   display: flex;
