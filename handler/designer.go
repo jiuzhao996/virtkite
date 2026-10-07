@@ -240,6 +240,9 @@ type dsgApplyState struct {
 	Steps   []string `json:"steps"`
 	Error   string   `json:"error,omitempty"`
 	Started time.Time
+	TaskID  uint // 关联 tasks 表记录（AD1：任务中心可见 + 重启后状态可查）
+	// ExpectedSteps 进度粗估分母（节点数×2 + 1），running 时按 len(Steps)/它折算
+	ExpectedSteps int
 }
 
 var (
@@ -300,6 +303,20 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 		return
 	}
 	st := &dsgApplyState{Status: "running", Started: time.Now()}
+	// AD1：落地同时落 tasks 表（不排队，仅记录）——任务中心可见，服务重启后
+	// apply-status 回退查这条记录，进度不再随进程丢失
+	if h.DB != nil {
+		pl, _ := json.Marshal(map[string]string{"plan_id": id})
+		st.ExpectedSteps = len(p.Nodes)*2 + 1
+		t := model.Task{Type: "designer_apply", Title: "落地架构 " + p.Name, Status: "running", Payload: string(pl)}
+		if uid, name := h.taskUser(); uid != nil {
+			t.UserID = uid
+			t.Username = name
+		}
+		if err := h.DB.Create(&t).Error; err == nil {
+			st.TaskID = t.ID
+		}
+	}
 	dsgApplyRuns[id] = st
 	if uid, ok := c.Get("user_id"); ok {
 		if v, ok := uid.(uint); ok {
@@ -320,6 +337,9 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 				st.Error = "应用协程异常（详见服务日志）"
 				log.Printf("[designer] 计划 %s 应用 panic: %v\n%s", plan.ID, r, debug.Stack())
 			}
+			// AD1：goroutine 收口时把最终状态同步进 tasks 表（正常/失败/panic 三路都走这）。
+			// 不依赖前端轮询触发的懒同步——用户中途关页面也要有终态落库。
+			h.syncApplyTask(st)
 		}()
 		// 前置守卫：配了应用或 playbook 的 VM 节点必须拿到口令（凭据随请求体来，
 		// 计划文件里没有）——两类动作都要用口令（app 加密入 payload / playbook 托管
@@ -665,15 +685,64 @@ func (h *DesignerHandler) taskUser() (*uint, string) {
 	return nil, "designer"
 }
 
+// syncApplyTask 把内存态同步进 tasks 表（AD1）。progress 按「步骤行数」粗估：
+// 节点数×2 为满分母（每节点大约「开始+完成」两行），封顶 95 留终态写 100。
+func (h *DesignerHandler) syncApplyTask(st *dsgApplyState) {
+	if h.DB == nil || st.TaskID == 0 {
+		return
+	}
+	vals := map[string]interface{}{
+		"status": st.Status,
+		"result": strings.Join(st.Steps, "\n"),
+	}
+	if st.Status == "success" {
+		vals["progress"] = 100
+	} else if st.Status == "failed" {
+		vals["error"] = st.Error
+	} else if st.ExpectedSteps > 0 {
+		// 粗估进度封顶 95：终态 100 由成功分支写
+		pct := len(st.Steps) * 95 / st.ExpectedSteps
+		if pct > 95 {
+			pct = 95
+		}
+		vals["progress"] = pct
+	}
+	if err := h.DB.Model(&model.Task{}).Where("id = ?", st.TaskID).Updates(vals).Error; err != nil {
+		log.Printf("[designer] 同步落地任务 %d 失败: %v", st.TaskID, err)
+	}
+}
+
 // ApplyStatus GET /api/designer/plans/:id/apply-status。
+// 内存命中优先并懒同步进 tasks 表（轮询天然节流）；内存未命中（服务重启）回退
+// 查 tasks 表最近一条该计划的 designer_apply 记录——重启后状态与步骤不再丢失。
 func (h *DesignerHandler) ApplyStatus(c *gin.Context) {
 	id := c.Param("id")
 	dsgApplyMu.Lock()
 	st := dsgApplyRuns[id]
 	dsgApplyMu.Unlock()
-	if st == nil {
+	if st != nil {
+		h.syncApplyTask(st)
+		Success(c, gin.H{"id": id, "status": st.Status, "steps": st.Steps, "error": st.Error})
+		return
+	}
+	// 回退：查该计划最近一条落地任务（payload 含 plan_id）
+	var t model.Task
+	q := h.DB.Where("type = ? AND payload LIKE ?", "designer_apply", `%"plan_id":"`+id+`"%`).
+		Order("id DESC").First(&t)
+	if q.Error != nil {
 		Success(c, gin.H{"id": id, "status": "idle"})
 		return
 	}
-	Success(c, gin.H{"id": id, "status": st.Status, "steps": st.Steps, "error": st.Error})
+	steps := []string{}
+	if t.Result != "" {
+		steps = strings.Split(t.Result, "\n")
+	}
+	// 任务中心视角的 cancelled/超时映射为 failed 语义（有 error 文案）
+	status := t.Status
+	errMsg := t.Error
+	if status == "cancelled" {
+		status = "failed"
+		errMsg = errMsg + "（任务被取消）"
+	}
+	Success(c, gin.H{"id": id, "status": status, "steps": steps, "error": errMsg, "task_id": t.ID})
 }
