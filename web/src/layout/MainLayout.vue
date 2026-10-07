@@ -310,13 +310,22 @@ function onGroupClose(name) {
 
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard'))
 
-// 深链/搜索跳转自动展开高亮项所在组（声明须在 activeIndex 之后，watch 首参立即求值）
+// 深链/搜索跳转/刷新后自动展开高亮项所在组。
+// immediate 必须有：Vue 3 的 watch 创建时只取首值做基线、不首次回调，
+// 刷新后 activeIndex 全程不变，没有 immediate 就不会触发，落在「基础设施/管理」
+// 这类默认收起组里的页面会显示成灰色未展开（组里明明有高亮项）。
 watch(activeIndex, (idx) => {
   const owner = menuGroups.value.find((g) => g.items.some((it) => it.index === idx))
   if (owner && !openedGroups.value.has(owner.name)) {
     openedGroups.value.add(owner.name)
-    menuRef.value?.open(owner.name)
   }
+}, { immediate: true })
+
+// menuRef 的 open() 要在菜单挂载后调用：immediate 回调跑在 setup 期间，
+// 此时 el-menu 还没挂载，调用会被忽略——故这里补一次展开
+onMounted(() => {
+  const owner = menuGroups.value.find((g) => g.items.some((it) => it.index === activeIndex.value))
+  if (owner) menuRef.value?.open(owner.name)
 })
 
 // 全局搜索：每次下拉展开都重新拉 VM 清单（不做常驻缓存，新建/删除的机器下次展开即生效）。
