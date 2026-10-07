@@ -28,6 +28,7 @@
         <span class="ds-h">已保存计划</span>
         <div v-for="p in plans" :key="p.id" class="ds-plan" @click="loadPlan(p)">
           <span class="ds-tpl-name mono">{{ p.id }}</span>
+          <el-button text size="small" type="primary" :icon="CopyDocument" title="复制计划" @click.stop="duplicatePlan(p)" />
           <el-button text size="small" type="danger" :icon="Delete" @click.stop="removePlan(p.id)" />
         </div>
       </el-card>
@@ -41,7 +42,7 @@
             <el-button size="small" :icon="Download" @click="exportYaml">导出 YAML</el-button>
             <el-button size="small" :icon="Aim" @click="zoomFit">适应画布</el-button>
             <el-button type="primary" size="small" :icon="VideoPlay" :loading="applying" @click="applyPlan">一键落地</el-button>
-            <span class="ds-tip">拖节点编排 · 节点边缘拉线连线 · Delete 删除选中</span>
+            <span class="ds-tip">拖节点编排 · 边缘拉线连线 · 框选 · Ctrl+Z 撤销 · Delete 删除</span>
           </div>
         </template>
         <!-- 外层锁高（overflow:hidden 兜底），X6 用独立内层容器——autoResize 的
@@ -50,6 +51,7 @@
              十几万 px，centerContent 失效＝点模板"没反应"） -->
         <div class="ds-canvas">
           <div ref="canvasRef" class="ds-canvas-inner"></div>
+          <div ref="minimapRef" class="ds-minimap"></div>
         </div>
         <div v-if="applyStatus" class="ds-apply" :class="applyStatus.status">
           <b>{{ applyStatusText }}</b>
@@ -122,7 +124,21 @@
           <el-divider />
           <el-button text type="danger" size="small" :icon="Delete" @click="removeSelected">删除节点</el-button>
         </template>
-        <el-empty v-else description="点击画布节点编辑" :image-size="60" />
+        <template v-else-if="selectedEdge">
+          <el-form label-width="64px" size="small">
+            <el-form-item label="类型">
+              <el-radio-group v-model="edgeKindModel" size="small">
+                <el-radio-button v-for="(v, k) in EDGE_KINDS" :key="k" :value="k">{{ v.label }}</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item label="连接">
+              <span class="mono ds-ref">{{ selectedEdge.text }}</span>
+            </el-form-item>
+          </el-form>
+          <el-divider />
+          <el-button text type="danger" size="small" :icon="Delete" @click="removeEdge(selectedEdgeId)">删除连线</el-button>
+        </template>
+        <el-empty v-else description="点击画布节点或连线编辑" :image-size="60" />
       </el-card>
     </div>
   </div>
@@ -144,6 +160,11 @@ import { errMsg, isCancel, cssVar } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import { Graph, Shape } from '@antv/x6'
 import { Snapline } from '@antv/x6-plugin-snapline'
+import { Selection } from '@antv/x6-plugin-selection'
+import { Keyboard } from '@antv/x6-plugin-keyboard'
+import { History } from '@antv/x6-plugin-history'
+import { Clipboard } from '@antv/x6-plugin-clipboard'
+import { MiniMap } from '@antv/x6-plugin-minimap'
 import { Dnd } from '@antv/x6-plugin-dnd'
 
 const templates = ref([])
@@ -156,7 +177,25 @@ const apps = ref([])
 const playbooks = ref([])
 const planName = ref('')
 const selected = ref(null)
+const minimapRef = ref(null)
 const selectedEdgeId = ref('')
+// 选中连线的展示模型（依赖 graphTick 以响应改型）
+const selectedEdge = computed(() => {
+  void graphTick.value
+  if (!graph || !selectedEdgeId.value) return null
+  const e = graph.getCellById(selectedEdgeId.value)
+  if (!e || e.shape !== 'edge') return null
+  const nm = (c) => {
+    const d = c && c.getData()
+    return (d && (d.name || d.ref)) || (c && c.id) || '?'
+  }
+  const d = e.getData() || {}
+  return { id: e.id, kind: d.kind || 'net', text: nm(graph.getCellById(e.getSourceCellId())) + ' → ' + nm(graph.getCellById(e.getTargetCellId())) }
+})
+const edgeKindModel = computed({
+  get: () => (selectedEdge.value && selectedEdge.value.kind) || 'net',
+  set: (v) => { const e = graph && graph.getCellById(selectedEdgeId.value); if (e) setEdgeKind(e, v) }
+})
 const edgesOfSelected = ref([])
 const applying = ref(false)
 const applyStatus = ref(null)
@@ -245,6 +284,22 @@ watch(selected, (v) => {
   refreshEdges()
 }, { deep: true })
 
+// 连线语义（D1）：不同连线类型不同线型，一眼可辨接入/挂载/依赖
+const EDGE_KINDS = {
+  net: { label: '网络接入', stroke: '#2f7fe0', dash: '' },
+  storage: { label: '存储挂载', stroke: '#8b8f96', dash: '6 4' },
+  dep: { label: '启动依赖', stroke: '#8b8f96', dash: '2 3' },
+}
+function edgeLineAttrs(kind) {
+  const k = EDGE_KINDS[kind] || EDGE_KINDS.net
+  return {
+    stroke: k.stroke,
+    strokeWidth: 2,
+    strokeDasharray: k.dash || undefined,
+    targetMarker: kind === 'dep' ? { name: 'block', size: 6 } : null,
+  }
+}
+
 // ── 画布初始化 ──
 function initGraph() {
   graph = new Graph({
@@ -262,10 +317,19 @@ function initGraph() {
       allowBlank: false, allowLoop: false, allowNode: false, allowPort: true, allowMulti: false,
       highlight: true, snap: { radius: 28 },
       connector: { name: 'smooth', args: { radius: 12 } },
-      createEdge: () => new Shape.Edge({ attrs: { line: { stroke: KIND_COLOR.net, strokeWidth: 2, targetMarker: null } } }),
+      createEdge: () => new Shape.Edge({ attrs: { line: edgeLineAttrs('net') } }),
     },
   })
   graph.use(new Snapline({ sharp: true }))
+  // D1：官方插件——框选多选、键盘快捷键、撤销重做、复制粘贴、缩略图
+  graph.use(new Selection({ enabled: true, multiple: true, rubberband: true, movable: true, showNodeSelectionBox: true }))
+  graph.use(new Clipboard({ enabled: true }))
+  graph.use(new History({ enabled: true }))
+  graph.use(new Keyboard({ enabled: true, global: true }))
+  if (minimapRef.value) {
+    graph.use(new MiniMap({ container: minimapRef.value, width: 180, height: 120, padding: 12 }))
+  }
+  bindKeys()
   bindGraphEvents()
   dnd = new Dnd({ target: graph, scaled: false, animation: true })
 }
@@ -283,19 +347,45 @@ function bindGraphEvents() {
   graph.on('edge:connected', refreshEdges)
   graph.on('edge:removed', refreshEdges)
   graph.on('node:removed', () => { selected.value = null; refreshEdges() })
-  // Delete/Backspace 删除选中节点或连线（原生监听即可；X6 的 bindKey 在 keyboard
-  // 插件里，核心没有）。输入框聚焦时不拦截
-  document.addEventListener('keydown', onKeydown)
 }
-function onKeydown(e) {
-  if (e.key !== 'Delete' && e.key !== 'Backspace') return
+
+// 输入框聚焦时不接管快捷键（否则在属性表单里打字会被 Delete 删节点）
+function inInput() {
   const ae = document.activeElement
-  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return
-  if (!graph) return
-  if (selectedEdgeId.value) { e.preventDefault(); removeEdge(selectedEdgeId.value); return }
-  if (selected.value) { e.preventDefault(); removeSelected() }
+  return !!(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable))
 }
+// 快捷键：Delete 删除选中、Ctrl+Z/Y 撤销重做、Ctrl+A 全选、Ctrl+C/V 复制粘贴
+function bindKeys() {
+  const g = graph
+  g.bindKey(['delete', 'backspace'], () => { if (inInput()) return true; deleteSelection(); return false })
+  g.bindKey(['ctrl+z', 'meta+z'], () => { if (inInput()) return true; if (g.canUndo()) g.undo(); return false })
+  g.bindKey(['ctrl+y', 'meta+y', 'ctrl+shift+z', 'meta+shift+z'], () => { if (inInput()) return true; if (g.canRedo()) g.redo(); return false })
+  g.bindKey(['ctrl+a', 'meta+a'], () => { if (inInput()) return true; g.select(g.getNodes()); return false })
+  g.bindKey(['ctrl+c', 'meta+c'], () => { if (inInput()) return true; const c = g.getSelectedCells(); if (c.length) g.copy(c); return false })
+  g.bindKey(['ctrl+v', 'meta+v'], () => {
+    if (inInput()) return true
+    if (!g.isClipboardEmpty()) { const cells = g.paste({ offset: 32 }); g.cleanSelection(); g.select(cells) }
+    return false
+  })
+}
+function deleteSelection() {
+  if (!graph) return
+  const cells = graph.getSelectedCells()
+  if (cells.length) { graph.removeCells(cells); selected.value = null; selectedEdgeId.value = ''; touchGraph(); return }
+  if (selectedEdgeId.value) { removeEdge(selectedEdgeId.value); return }
+  if (selected.value) removeSelected()
+}
+// graphTick：X6 图状态非响应式，选中连线/改线型后手动 +1 触发右栏重算
+const graphTick = ref(0)
+function touchGraph() { graphTick.value++ }
+function setEdgeKind(edge, kind) {
+  edge.setData({ ...(edge.getData() || {}), kind })
+  edge.attr('line', edgeLineAttrs(kind))
+  touchGraph()
+}
+
 function refreshEdges() {
+  touchGraph()
   if (!graph) { edgesOfSelected.value = []; return }
   edgesOfSelected.value = graph.getEdges().map((e) => ({
     id: e.id,
@@ -353,7 +443,7 @@ function graphToPlan() {
     if (d.kind === 'vm') Object.assign(out, { pool: d.pool || '', vcpu: d.vcpu || 0, memory_mb: d.memory_mb || 0, ssh_user: d.ssh_user || '', apps: d.apps || [], playbooks: d.playbooks || [] })
     return out
   })
-  const links = graph.getEdges().map((e) => ({ from: idMap.get(e.getSourceCellId()), to: idMap.get(e.getTargetCellId()) }))
+  const links = graph.getEdges().map((e) => ({ from: idMap.get(e.getSourceCellId()), to: idMap.get(e.getTargetCellId()), kind: (e.getData() || {}).kind || 'net' }))
   return { nodes, links }
 }
 function loadIntoGraph(pNodes, pLinks) {
@@ -362,8 +452,13 @@ function loadIntoGraph(pNodes, pLinks) {
   selectedEdgeId.value = ''
   for (const n of pNodes) graph.addNode(buildNodeConfig(normalizeVMNode({ ...n })))
   for (const l of pLinks || []) {
-    if (graph.getCellById(l.from) && graph.getCellById(l.to)) graph.addEdge({ source: { cell: l.from }, target: { cell: l.to }, attrs: { line: { stroke: KIND_COLOR.net, strokeWidth: 2, targetMarker: null } } })
+    if (graph.getCellById(l.from) && graph.getCellById(l.to)) {
+      const kind = l.kind || 'net'
+      graph.addEdge({ source: { cell: l.from }, target: { cell: l.to }, attrs: { line: edgeLineAttrs(kind) }, data: { kind } })
+    }
   }
+  touchGraph()
+  if (graph.canUndo && graph.cleanHistory) graph.cleanHistory()
   graph.centerContent()
 }
 function clearCanvas() {
@@ -397,6 +492,20 @@ async function savePlan() {
   ElMessage.success('计划已保存：' + p.id)
   loadPlans()
 }
+// 复制计划为一个新计划（id 加时间后缀避免撞名）
+async function duplicatePlan(p) {
+  const name = (p.name || p.id) + ' 副本'
+  const payload = {
+    id: name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 54) + '-' + Date.now().toString(36).slice(-4),
+    name,
+    nodes: (p.nodes || []).map((n) => ({ ...n })),
+    links: (p.links || []).map((l) => ({ ...l }))
+  }
+  await api.saveDesignerPlan(payload)
+  ElMessage.success('已复制为「' + name + '」')
+  loadPlans()
+}
+
 async function removePlan(id) {
   try { await ElMessageBox.confirm(`删除计划「${id}」？`, '删除', { type: 'warning', confirmButtonClass: 'el-button--danger' }) } catch (e) { if (!isCancel(e)) return }
   await api.deleteDesignerPlan(id)
@@ -492,7 +601,6 @@ onMounted(async () => {
   await loadPlans()
 })
 onUnmounted(() => {
-  document.removeEventListener('keydown', onKeydown)
   if (applyTimer) clearInterval(applyTimer)
   if (graph) { graph.dispose(); graph = null }
 })
@@ -581,6 +689,17 @@ onUnmounted(() => {
   height: 520px; /* 窄屏堆叠布局兜底高；桌面端由上方 media 覆盖为 flex 撑满 */
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--el-bg-color); overflow: hidden;
+}
+.ds-minimap {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 .ds-canvas-inner { position: absolute; inset: 0; }
 /* 节点边缘连接点：hover 节点时显现，拖出即连线 */
