@@ -8,9 +8,12 @@
       </div>
     </PageHead>
 
-    <!-- Docker 资源拆分批次：平台存储（qcow2 池）+ Docker 卷双 tab，统一存储入口 -->
+    <!-- Docker 资源拆分批次：拓扑图 + 平台存储（qcow2 池）+ Docker 卷，统一存储入口 -->
     <el-tabs v-model="activeTab" class="storage-tabs">
-      <el-tab-pane label="存储池" name="pools">
+      <el-tab-pane label="拓扑图" name="topo">
+        <StorageTopology @open-pool="activeTab = 'pools'" />
+      </el-tab-pane>
+      <el-tab-pane label="存储池" name="pools" lazy>
 
     <!-- 汇总条：物理容量 / cloud-init 种子目录 / 默认存储池 -->
     <!-- dir 池容量是文件系统级的，同盘多池口径相同，取 items 里最大 capacity 及其 available，不再每行重复 -->
@@ -296,6 +299,7 @@ import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId } from '../utils/task.js'
 import PageHead from '../components/PageHead.vue'
 import VolumeLineageGraph from './storage/components/VolumeLineageGraph.vue'
+import StorageTopology from './storage/components/StorageTopology.vue'
 import DockerGate from '../components/DockerGate.vue'
 import VolumeTab from './docker/components/VolumeTab.vue'
 // 容量格式化 / 错误文案 / 取消判定统一走 utils/format.js（原本地三份实现已删）
@@ -303,7 +307,8 @@ import VolumeTab from './docker/components/VolumeTab.vue'
 import { fmtSizeBytes, fmtGBSum, errMsg, isCancel, usageColor, clampPct } from '../utils/format'
 
 const { isAdmin, canOperate } = useAuth()
-const activeTab = ref('pools')
+// 默认落在拓扑图（与网络页同款首屏），池列表/卷管理备查
+const activeTab = ref('topo')
 const dockerVolRef = ref(null)
 
 const pools = ref([])
