@@ -27,7 +27,7 @@
     <div class="st-canvas-wrap">
       <div ref="canvasRef" class="st-canvas" />
       <el-empty
-        v-if="!loading && !nodes.length"
+        v-if="!loading && !gNodes.length"
         class="st-empty"
         description="暂无存储池或卷（libvirt 未返回数据）"
         :image-size="80"
