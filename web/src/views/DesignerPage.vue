@@ -40,6 +40,7 @@
             <el-input v-model="planName" size="small" placeholder="计划名（保存用）" style="width: 180px" />
             <el-button size="small" :icon="DocumentChecked" @click="savePlan">保存</el-button>
             <el-button size="small" :icon="Download" @click="exportYaml">导出 YAML</el-button>
+            <el-button size="small" :icon="Promotion" :loading="exportingAnsible" @click="exportAnsible" title="生成 inventory + site.yml（site 直接进入 Playbook 库）">导出 Ansible</el-button>
             <el-button size="small" :icon="Aim" @click="zoomFit">适应画布</el-button>
             <el-button size="small" :icon="Grid" @click="autoLayout" title="按 网络→虚拟机→容器栈 分层重排">一键整理</el-button>
             <el-button size="small" :icon="Connection" :loading="liveLoading" @click="loadLiveStatus">刷新状态</el-button>
@@ -712,6 +713,32 @@ function zoomFit() {
   graph?.zoomToFit({ padding: 40, maxScale: 1 })
 }
 
+// 画布 → Ansible（DE1）：后端生成 inventory/site.yml 并把 site 落进 playbook 库
+const exportingAnsible = ref(false)
+async function exportAnsible() {
+  const p = planPayload()
+  if (!p.nodes.length) return ElMessage.warning('画布为空')
+  exportingAnsible.value = true
+  try {
+    await api.saveDesignerPlan(p)
+    const res = await api.exportDesignerAnsible(p.id)
+    const d = res.data || {}
+    ElMessage.success(`已导出：${d.playbook_id} 已进入 Playbook 库，inventory 已存档`)
+    // 弹窗展示生成物（可复制），并给「去执行」出口
+    ElMessageBox.alert(
+      `<pre class="ds-export-pre">${(d.inventory || '') + '\n──\n' + (d.site || '')}</pre>`,
+      '生成的 Ansible 文件',
+      { dangerouslyUseHTMLString: true, confirmButtonText: '去 Playbook 库', cancelButtonText: '关闭' }
+    ).then(() => {
+      router.push({ path: '/automation', query: { tab: 'playbooks' } })
+    }).catch(() => {})
+  } catch (e) {
+    ElMessage.error(errMsg(e, '导出失败'))
+  } finally {
+    exportingAnsible.value = false
+  }
+}
+
 async function applyPlan() {
   const { nodes } = graphToPlan()
   if (!nodes.length) return ElMessage.warning('画布为空')
@@ -884,6 +911,18 @@ onUnmounted(() => {
   height: 520px; /* 窄屏堆叠布局兜底高；桌面端由上方 media 覆盖为 flex 撑满 */
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--el-bg-color); overflow: hidden;
+}
+.ds-export-pre {
+  max-height: 420px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  background: #0d1b2a;
+  color: #cfe8ff;
+  padding: 12px;
+  border-radius: 8px;
+  margin: 0;
 }
 .ds-diff-tip {
   margin: 0 0 12px;

@@ -478,6 +478,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		designer.POST("/plans", designerHandler.SavePlan)
 		designer.DELETE("/plans/:id", designerHandler.DeletePlan)
 		designer.GET("/plans/:id/export", designerHandler.ExportYAML)
+		// 画布 → Ansible（DE1）：inventory + site.yml，落 playbook 库
+		designer.GET("/plans/:id/export-ansible", designerHandler.ExportAnsible)
 		designer.POST("/plans/:id/apply", designerHandler.Apply)
 		designer.GET("/plans/:id/apply-status", designerHandler.ApplyStatus)
 	}

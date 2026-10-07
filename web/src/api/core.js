@@ -204,6 +204,8 @@ export const core = {
   saveDesignerPlan: (plan) => unwrap(http.post('/designer/plans', plan)),
   deleteDesignerPlan: (id) => unwrap(http.delete(`/designer/plans/${id}`)),
   exportDesignerPlan: (id) => http.get(`/designer/plans/${id}/export`).then((r) => r.data),
+  // 画布 → Ansible（DE1）：inventory + site.yml，site 落 playbook 库
+  exportDesignerAnsible: (id) => unwrap(http.get(`/designer/plans/${id}/export-ansible`)),
   // payload 可选：{credentials:{节点id:{ssh_user,ssh_secret}}}——VM 口令只随应用请求
   // 一次性携带，不随计划保存（后端写盘前也会强制剥离 ssh_secret 兜底）
   applyDesignerPlan: (id, payload) => unwrap(http.post(`/designer/plans/${id}/apply`, payload || {})),
