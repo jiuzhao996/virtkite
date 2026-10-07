@@ -41,6 +41,8 @@
             <el-button size="small" :icon="DocumentChecked" @click="savePlan">保存</el-button>
             <el-button size="small" :icon="Download" @click="exportYaml">导出 YAML</el-button>
             <el-button size="small" :icon="Aim" @click="zoomFit">适应画布</el-button>
+            <el-button size="small" :icon="Connection" :loading="liveLoading" @click="loadLiveStatus">刷新状态</el-button>
+            <el-button size="small" :icon="Import" :loading="importing" @click="importFromReality">从现状导入</el-button>
             <el-button type="primary" size="small" :icon="VideoPlay" :loading="applying" @click="applyPlan">一键落地</el-button>
             <span class="ds-tip">拖节点编排 · 边缘拉线连线 · 框选 · Ctrl+Z 撤销 · Delete 删除</span>
           </div>
@@ -270,8 +272,80 @@ function buildNodeConfig(n) {
 // 属性面板改动回写节点：名称/规格摘要同步到节点文字
 function syncNodeView(node, d) {
   node.attr('label/text', d.name)
-  if (d.kind === 'vm') node.attr('sub/text', d.vcpu ? d.vcpu + 'C/' + d.memory_mb + 'MB' : '未选规格')
-  else node.attr('sub/text', d.ref)
+  node.attr('sub/text', nodeSubText(d))
+}
+
+// 节点副标题：规格/引用 + （VM 已知运行态时）实时状态
+function nodeSubText(d) {
+  const base = d.kind === 'vm' ? (d.vcpu ? d.vcpu + 'C/' + d.memory_mb + 'MB' : '未选规格') : (d.ref || '')
+  if (d.kind !== 'vm') return base
+  const st = liveMap.value[d.name]
+  return st ? base + ' · ' + (st === 'running' ? '运行中' : '已停止') : base
+}
+
+// ── 设计态↔运行态（D2）：按名称回填虚拟机运行状态，节点描边着色 ──
+const liveMap = ref({})       // 虚拟机名 → 平台状态
+const liveLoading = ref(false)
+const importing = ref(false)
+async function fetchLiveMap() {
+  const res = await api.listVMs()
+  const items = (res.data && res.data.items) || []
+  const m = {}
+  for (const vm of items) m[vm.name] = vm.status
+  return m
+}
+// 把状态映射写到节点（silent：不进撤销栈，属只读回填）
+function applyLiveStatus() {
+  if (!graph) return
+  const m = liveMap.value
+  for (const node of graph.getNodes()) {
+    const d = node.getData() || {}
+    if (d.kind !== 'vm') continue
+    const st = m[d.name]
+    // 绿=运行、灰=已停止、橙=未找到同名虚拟机（设计态尚未落地）
+    const color = st === 'running' ? '#3aa76d' : st ? '#c0c4cc' : '#e6a23c'
+    node.attr('body/stroke', color, { silent: true })
+    node.attr('sub/text', nodeSubText(d), { silent: true })
+  }
+}
+async function loadLiveStatus() {
+  liveLoading.value = true
+  try {
+    liveMap.value = await fetchLiveMap()
+    applyLiveStatus()
+    ElMessage.success('已回填运行状态')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取虚拟机状态失败'))
+  } finally {
+    liveLoading.value = false
+  }
+}
+// 从现状导入：扫描平台现有虚拟机生成设计草稿（教学「从现状改造」）
+async function importFromReality() {
+  importing.value = true
+  try {
+    const m = await fetchLiveMap()
+    const names = Object.keys(m)
+    if (!names.length) {
+      ElMessage.warning('当前没有虚拟机可导入')
+      return
+    }
+    const nodes = names.map((name, i) => ({
+      id: 'n' + (i + 1), kind: 'vm', ref: '', name,
+      x: 90 + (i % 4) * 190, y: 90 + Math.floor(i / 4) * 110,
+      note: '导入自现状', pool: '', vcpu: 0, memory_mb: 0, ssh_user: 'root', apps: [], playbooks: []
+    }))
+    loadIntoGraph(nodes, [])
+    seq = nodes.length + 1
+    planName.value = '现状导入 ' + new Date().toLocaleDateString()
+    liveMap.value = m
+    applyLiveStatus()
+    ElMessage.success(`已从现状导入 ${nodes.length} 台虚拟机`)
+  } catch (e) {
+    ElMessage.error(errMsg(e, '导入失败'))
+  } finally {
+    importing.value = false
+  }
 }
 watch(selected, (v) => {
   if (!v || !graph) return
@@ -347,6 +421,12 @@ function bindGraphEvents() {
   graph.on('edge:connected', refreshEdges)
   graph.on('edge:removed', refreshEdges)
   graph.on('node:removed', () => { selected.value = null; refreshEdges() })
+  // 双击节点直进对应管理页（设计态↔运行态闭环：D2）
+  graph.on('node:dblclick', ({ node }) => {
+    const d = node.getData() || {}
+    if (d.kind === 'vm' && d.name) router.push({ path: '/vms', query: { keyword: d.name } })
+    else if (d.kind === 'container') router.push({ path: '/containers', query: { tab: 'containers' } })
+  })
 }
 
 // 输入框聚焦时不接管快捷键（否则在属性表单里打字会被 Delete 删节点）
@@ -459,6 +539,7 @@ function loadIntoGraph(pNodes, pLinks) {
   }
   touchGraph()
   if (graph.canUndo && graph.cleanHistory) graph.cleanHistory()
+  applyLiveStatus()
   graph.centerContent()
 }
 function clearCanvas() {
