@@ -48,6 +48,9 @@ type deletedVMItem struct {
 	StoragePool  string         `json:"storage_pool"`
 	DeletedAt    gorm.DeletedAt `json:"deleted_at"`
 	DomainExists bool           `json:"domain_exists"`
+	// 系统盘是否仍在池中（C 批次）：域不在+盘不在 = 恢复只能捞回一条空记录
+	DiskExists bool   `json:"disk_exists"`
+	DiskVolume string `json:"disk_volume,omitempty"` // 系统盘卷名（存在时）
 }
 
 // ListDeleted 回收站列表（admin）。GET /api/vms-recycle
@@ -67,7 +70,8 @@ func (h *VMRecycleHandler) ListDeleted(c *gin.Context) {
 		// 该 VM 的域在 libvirt 是否仍存在：能查到状态即存在（对应 virsh domstate）。
 		// 查询失败（含 libvirt 不可达）一律按不存在呈现，不阻断整个列表。
 		_, err := h.Virt.GetDomainState(vm.Name)
-		items = append(items, deletedVMItem{
+		diskPath, pool := h.systemDiskPath(vm)
+		item := deletedVMItem{
 			ID:           vm.ID,
 			Name:         vm.Name,
 			UUID:         vm.UUID,
@@ -75,7 +79,15 @@ func (h *VMRecycleHandler) ListDeleted(c *gin.Context) {
 			StoragePool:  vm.StoragePool,
 			DeletedAt:    vm.DeletedAt,
 			DomainExists: err == nil,
-		})
+			DiskExists:   diskPath != "",
+		}
+		if diskPath != "" {
+			item.DiskVolume = filepath.Base(diskPath)
+			if item.StoragePool == "" {
+				item.StoragePool = pool
+			}
+		}
+		items = append(items, item)
 	}
 	Success(c, gin.H{"total": len(items), "items": items})
 }
@@ -180,6 +192,59 @@ func (h *VMRecycleHandler) Restore(c *gin.Context) {
 	})
 }
 
+// systemDiskPath 探测 VM 的系统盘卷路径（返回 路径, 所在池名）。
+// 先按记录池位找，未命中再跨池兜底——VM.StoragePool 字段可能为空或与磁盘实际所在池
+// 不符（删卷守卫、手工建机、迁移后残留等），只认单池会让「盘明明还在却恢复不了」。
+func (h *VMRecycleHandler) systemDiskPath(vm model.VM) (string, string) {
+	pool := vm.StoragePool
+	if pool != "" {
+		if poolPath, err := h.Virt.GetPoolPath(pool); err == nil {
+			if disk, ok := probeSystemDisk(poolPath, vm.Name); ok {
+				return disk, pool
+			}
+		}
+	}
+	pools, err := h.Virt.ListPools()
+	if err != nil {
+		if pool == "" {
+			pool = tasks.DefaultStoragePoolResolver()
+		}
+		return "", pool
+	}
+	for _, pn := range pools {
+		if pn == pool {
+			continue
+		}
+		pp, err := h.Virt.GetPoolPath(pn)
+		if err != nil {
+			continue
+		}
+		if disk, ok := probeSystemDisk(pp, vm.Name); ok {
+			return disk, pn
+		}
+	}
+	if pool == "" {
+		pool = tasks.DefaultStoragePoolResolver()
+	}
+	return "", pool
+}
+
+// probeSystemDisk 按建卷命名约定探测系统盘：新建机 <名>.qcow2 / 克隆机 <名>-diska.qcow2
+// / 镜像建机 <名>-sys.qcow2（见 execDeleteVM 的兜底与 execCloneImageVM）。
+func probeSystemDisk(poolPath, vmName string) (string, bool) {
+	for _, cand := range []string{
+		vmName + ".qcow2",
+		vmName + "-diska.qcow2",
+		vmName + "-sys.qcow2",
+	} {
+		p := filepath.Join(poolPath, cand)
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+	}
+	return "", false
+}
+
 // redefineRestoredVM 恢复场景下按 DB 行重建精简域定义并 define（对应 virsh define）。
 // 仅在系统盘卷仍存在时才有意义——删除时卷可能被 shouldKeepVol 守卫保留，或 VM 走的
 // 「恢复过的域已不存在」路径本就没删卷。
@@ -187,29 +252,13 @@ func (h *VMRecycleHandler) Restore(c *gin.Context) {
 // 与 execDeleteVM 的兜底同一套）+ 默认 NAT 网络单网卡（MAC 用登记值）；多盘 VM 恢复后
 // 其余盘仍留在池中，可在磁盘管理手动挂回。
 func (h *VMRecycleHandler) redefineRestoredVM(vm model.VM) error {
-	pool := vm.StoragePool
-	if pool == "" {
-		pool = tasks.DefaultStoragePoolResolver()
-	}
-	poolPath, err := h.Virt.GetPoolPath(pool)
-	if err != nil {
-		return fmt.Errorf("获取存储池 %s 路径失败: %w", pool, err)
-	}
-	// 系统盘探测：新建机 <vm名>.qcow2 / 克隆机 <vm名>-diska.qcow2 / 镜像建机 <vm名>-sys.qcow2
-	var diskPath string
-	for _, cand := range []string{
-		vm.Name + ".qcow2",
-		vm.Name + "-diska.qcow2",
-		vm.Name + "-sys.qcow2",
-	} {
-		p := filepath.Join(poolPath, cand)
-		if _, err := os.Stat(p); err == nil {
-			diskPath = p
-			break
-		}
-	}
+	diskPath, diskPool := h.systemDiskPath(vm)
 	if diskPath == "" {
-		return fmt.Errorf("存储池 %s 中未找到 %s 的系统盘卷，无法重建定义", pool, vm.Name)
+		return fmt.Errorf("未找到 %s 的系统盘卷（记录池位 %q 及各池均未命中），无法重建定义", vm.Name, vm.StoragePool)
+	}
+	if vm.StoragePool != "" && diskPool != vm.StoragePool {
+		// 盘位漂移留痕：能恢复（按绝对路径重建），但记录与实际不符值得知道
+		log.Printf("[recycle] 系统盘不在记录池位 vm=%s 记录=%s 实际=%s", vm.Name, vm.StoragePool, diskPool)
 	}
 
 	vcpu := vm.VCPU

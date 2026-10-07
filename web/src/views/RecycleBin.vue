@@ -3,7 +3,12 @@
     <PageHead title="回收站">
       <template #subtitle>
         <!-- 历史 p.page-desc（UA 外边距参与布局），经插槽原样保留 -->
-        <p class="page-desc">删除的虚拟机在此保留，可一键恢复；记录永久保留，直至手动彻底清除；彻底清除将物理删除记录与无主卷</p>
+        <p class="page-desc">
+          删除 = 软删记录 + 删除 libvirt 域定义 + 按守卫删除自有磁盘（快照随之丢弃）。
+          <b>此处保留的是数据库记录，不保证磁盘还在</b>——域与磁盘都存在可原样恢复；
+          域没了但磁盘还在会按记录重建精简定义（单系统盘 + 默认网络）；两者都不在则
+          只能恢复一条空记录。彻底清除将物理删除记录与无主卷
+        </p>
       </template>
     </PageHead>
 
@@ -57,6 +62,39 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="磁盘" width="100">
+          <template #header>
+            <el-tooltip
+              content="存在 = 系统盘卷仍在存储池中，恢复时可重建定义；不存在 = 磁盘已被删除，恢复只能捞回记录（开机必然失败）"
+              placement="top"
+            >
+              <span class="col-help">
+                磁盘
+                <el-icon><QuestionFilled /></el-icon>
+              </span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <el-tooltip :content="row.disk_volume || '未找到系统盘卷'" placement="top" :disabled="!row.disk_volume">
+              <el-tag :type="row.disk_exists ? 'success' : 'danger'" effect="light" size="small">
+                {{ row.disk_exists ? '存在' : '已删除' }}
+              </el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="可恢复性" width="110">
+          <template #header>
+            <el-tooltip content="域与磁盘都在 = 原样恢复；仅磁盘在 = 重建精简定义；都不在 = 只能恢复记录" placement="top">
+              <span class="col-help">
+                可恢复性
+                <el-icon><QuestionFilled /></el-icon>
+              </span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <el-tag :type="restoreLevel(row).type" effect="light" size="small">{{ restoreLevel(row).text }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button
@@ -81,8 +119,8 @@
     </el-card>
 
     <!-- 原机信息抽屉（行点击进入）：数据全部来自列表行，无需再请求。
-         字段以回收站接口 deletedVMItem 实际返回为准（id/name/uuid/status/storage_pool/deleted_at/domain_exists），
-         vCPU/内存/磁盘等规格字段后端未下发，缺的字段不编造 -->
+         字段以回收站接口 deletedVMItem 实际返回为准（id/name/uuid/status/storage_pool/deleted_at/domain_exists/disk_exists/disk_volume），
+         vCPU/内存等规格字段后端未下发，缺的字段不编造 -->
     <el-drawer v-model="detailOpen" title="原机信息" :size="440" :append-to-body="true" destroy-on-close>
       <template v-if="detail">
         <div class="rb-head">
@@ -104,10 +142,21 @@
             <!-- 语义与表格「域状态」列 tooltip 同源：存在多为删除中途失败的残留 -->
             {{ detail.domain_exists
               ? '仍存在同名域定义（删除中途失败的残留），恢复后可直接开机'
-              : '域定义已彻底删除，恢复后需重新定义' }}
+              : '域定义已彻底删除，恢复后可重建精简定义' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="系统盘卷">
+            {{ detail.disk_exists
+              ? `仍在存储池中：${detail.disk_volume || '（卷名未取到）'}`
+              : '已被物理删除——恢复只能捞回记录，该记录无法开机' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="可恢复性">
+            <el-tag :type="restoreLevel(detail).type" effect="light" size="small">{{ restoreLevel(detail).text }}</el-tag>
           </el-descriptions-item>
         </el-descriptions>
-        <div class="rb-note">恢复后配置原样回归；彻底清除不可逆。</div>
+        <div class="rb-note">
+          恢复的边界：域与磁盘都在 → 原样恢复；仅域残留 → 直接可开；仅磁盘在 → 重建精简定义
+          （单系统盘 + 默认 NAT 网卡，多盘需手动挂回，机器类型/光驱等不回填）；两者都不在 → 只能捞回记录。
+        </div>
       </template>
     </el-drawer>
   </div>
@@ -145,7 +194,27 @@ async function load() {
 // ===== 恢复（POST /vms-recycle/:id/restore）=====
 const actingId = ref(null)
 
+// 可恢复性分级（C）：域与磁盘的四种组合对应三种结果
+function restoreLevel(row) {
+  if (row.domain_exists && row.disk_exists) return { text: '原样恢复', type: 'success' }
+  if (row.domain_exists) return { text: '域残留可开', type: 'success' }
+  if (row.disk_exists) return { text: '重建精简', type: 'warning' }
+  return { text: '仅恢复记录', type: 'danger' }
+}
+
 async function restore(row) {
+  // 域与磁盘都不在：先说清后果再动手（此前是恢复完才提示，用户已白点一次）
+  if (!row.domain_exists && !row.disk_exists) {
+    try {
+      await ElMessageBox.confirm(
+        `${row.name} 的 libvirt 域定义与系统盘卷都已不存在。恢复只会捞回一条数据库记录，该记录无法开机（可在创建向导用同名卷重新定义）。确定继续恢复？`,
+        '恢复后无法开机',
+        { type: 'warning', confirmButtonText: '仍要恢复', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+      )
+    } catch (e) {
+      return
+    }
+  }
   actingId.value = row.id
   try {
     const res = await api.recycleRestore(row.id)
