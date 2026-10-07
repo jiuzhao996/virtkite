@@ -16,29 +16,20 @@
       </div>
       <el-menu
         v-if="!collapsed || isMobile"
-        ref="menuRef"
         :default-active="activeIndex"
-        :default-openeds="[...openedGroups]"
         router
         class="menu"
         background-color="transparent"
-        @open="onGroupOpen"
-        @close="onGroupClose"
       >
-        <!-- 二级菜单（IA 归并批次 2026-10-03）：el-sub-menu 标准折叠子菜单替代手搓分组
-             （组名升级为可点击父级，展开箭头/键盘导航由 EP 原生处理）。default-openeds
-             在挂载瞬间生效——此安全由 S1-1 的 ensureUserLoaded 屏障保证（守卫先补完
-             me() 才放行，MainLayout 挂载时 isAdmin 已就绪，不存在异步分组竞态）；
-             全组默认展开，点击父级可收起 -->
-        <el-sub-menu v-for="group in menuGroups" :key="group.name" :index="group.name">
-          <template #title>
-            <span class="group-title">{{ group.name }}</span>
-          </template>
+        <!-- 固定分组标签（宝塔/1Panel 式，用户拍板 2026-10-07）：分组标题只做视觉分节，
+             不可折叠、整栏滚动——没有「默认关着的组」，展开状态及其竞态逻辑整类删除 -->
+        <template v-for="group in menuGroups" :key="group.name">
+          <div class="nav-group-title">{{ group.name }}</div>
           <el-menu-item v-for="item in group.items" :key="item.index" :index="item.index">
             <el-icon><component :is="item.icon" /></el-icon>
             <span>{{ item.label }}</span>
           </el-menu-item>
-        </el-sub-menu>
+        </template>
       </el-menu>
       <div v-else-if="collapsed && !isMobile" class="collapse-nav">
         <!-- 折叠态按分组渲染：组间细分隔线保留「总览/资源/基础设施/运维/管理」的扫视结构
@@ -199,7 +190,7 @@
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 // 图标按需显式 import：Share/Tickets 随拓扑图与 cloud-init 独立菜单项撤销一并移除
 import { ArrowDown, MagicStick, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Picture, Setting, SwitchButton, Ticket, User, UserFilled } from '@element-plus/icons-vue'
@@ -294,41 +285,9 @@ const menuGroups = computed(() => {
     .filter((g) => g.items.length > 0)
 })
 
-// 分组展开状态（受控）：默认只展开「总览/资源/运维」——五组全开时菜单内容 994px、
-// 900px 视口可视仅 788px（管理组整组沉底不可见且无滚动提示），低频的「基础设施/管理」
-// 默认收起，点组名即开。el-menu 无受控 openeds 属性，且收起侧栏会 v-if 重挂组件、
-// default-openeds 仅挂载瞬间生效——故用 Set 记录用户手动开/关（@open/@close），
-// 重挂后经 default-openeds 还原；深链/搜索跳转经 watch 自动展开高亮项所在组。
-const menuRef = ref(null)
-const openedGroups = ref(new Set(['总览', '资源', '运维']))
-function onGroupOpen(name) {
-  openedGroups.value.add(name)
-}
-function onGroupClose(name) {
-  openedGroups.value.delete(name)
-}
-
+// 菜单高亮随路由（固定分组标签无展开态：default-openeds / 手动开合 / 自动展开
+// watch 已随 el-sub-menu 一并移除，「刷新后组没展开」这类问题不复存在）
 const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard'))
-
-// 深链/搜索跳转/刷新后自动展开高亮项所在组。
-// immediate 必须有：Vue 3 的 watch 创建时只取首值做基线、不首次回调，
-// 刷新后 activeIndex 全程不变，没有 immediate 就不会触发，落在「基础设施/管理」
-// 这类默认收起组里的页面会显示成灰色未展开（组里明明有高亮项）。
-//
-// 同时把 menuRef.open() 放进同一个 watch 的 flush:post：刷新时权限是异步拉取的
-// （menuGroups 依赖 canOperate），挂载瞬间当前项所在组可能还没渲染，那时调 open()
-// 会被 el-menu 忽略——只在 onMounted 调一次就会「有时不展开」。
-// flush:post + nextTick 保证每轮数据就绪后都补调，且不阻塞渲染。
-watch(
-  [activeIndex, menuGroups],
-  ([idx]) => {
-    const owner = menuGroups.value.find((g) => g.items.some((it) => it.index === idx))
-    if (!owner) return
-    if (!openedGroups.value.has(owner.name)) openedGroups.value.add(owner.name)
-    nextTick(() => menuRef.value?.open(owner.name))
-  },
-  { immediate: true, flush: 'post' }
-)
 
 // 全局搜索：每次下拉展开都重新拉 VM 清单（不做常驻缓存，新建/删除的机器下次展开即生效）。
 // viewer 也可用（GET /vms 对 viewer 放行）。拉取失败静默保留旧清单（搜索是辅助入口）。
@@ -462,22 +421,18 @@ function onUserCommand(cmd) {
   background: transparent;
 }
 /* 分组标题行（本地折叠状态，点击切换） */
-.menu :deep(.el-menu-item-group__title) {
-  padding: 0;
-}
-/* el-sub-menu 二级菜单适配：父级标题与 EP 展开箭头对齐全站质感；
-   深色侧栏上 popup/inline 子菜单背景继承侧栏底色 */
-:deep(.el-sub-menu__title) {
-  padding-left: 20px !important;
+/* 固定分组标签：沿用原 el-sub-menu 标题的字号/字色，组间留出节奏；纯分节不可点 */
+.nav-group-title {
+  padding: 14px 20px 6px;
   font-size: 0.82rem;
   color: rgba(255, 255, 255, 0.55);
   letter-spacing: 0.05em;
+  user-select: none;
+  cursor: default;
 }
-:deep(.el-sub-menu__title:hover) {
-  background: rgba(255, 255, 255, 0.06);
-}
-:deep(.el-sub-menu .el-menu) {
-  background: transparent !important;
+.menu :first-child.nav-group-title,
+.menu > .nav-group-title:first-child {
+  padding-top: 6px;
 }
 .collapse-nav {
   flex: 1;
@@ -534,12 +489,6 @@ function onUserCommand(cmd) {
   box-shadow: var(--elev-hover);
 }
 /* 分组之间留呼吸感（首个分组不额外加） */
-.menu :deep(.el-menu-item-group) {
-  margin-top: 8px;
-}
-.menu :deep(.el-menu-item-group:first-child) {
-  margin-top: 2px;
-}
 .menu :deep(.el-menu-item) {
   height: 42px;
   line-height: 42px;
