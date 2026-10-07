@@ -29,6 +29,7 @@
     <pre
       ref="preRef"
       class="lv-pre"
+      @scroll="onPreScroll"
       :class="{ 'lv-nowrap': !wrap }"
     ><template v-for="(ln, i) in displayLines" :key="i"><span :class="{ 'lv-err': ln.err }"><span
       v-for="(s, j) in ln.segs"
@@ -158,14 +159,23 @@ function scrollBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
-// 贴底自动滚动：跟随开=无条件贴底；关=仅当更新前本来就贴底才跟随（用户上滚翻历史不受打扰）。
+// 贴底自动滚动：仅当更新前本来就贴底才跟随——用户上滚翻历史绝不被拽回。
 // pre 阶段记「更新前是否贴底」，post 阶段再滚，避免新日志撑高后判定失真；暂停时完全不打断阅读。
 let wasNearBottom = true
 watch(allRows, () => { wasNearBottom = nearBottom() }, { flush: 'pre' })
 watch(allRows, () => {
   if (paused.value) return
-  if (props.follow || wasNearBottom) nextTick(scrollBottom)
+  if (wasNearBottom) nextTick(scrollBottom)
 }, { flush: 'post' })
+
+// 跟随状态双向同步（Dozzle/浏览器控制台式）：上滚离底=自动脱离跟随，滚回底部=自动恢复。
+// 勾选框（follow prop）只是该状态的显示与手动控制，不再驱动滚动本身。
+function onPreScroll() {
+  const nb = nearBottom()
+  if (nb !== props.follow) emit('update:follow', nb)
+}
+// 外部勾上「跟随」时立即滚底对准最新；取消勾选只脱离，不动滚动位置
+watch(() => props.follow, (on) => { if (on && !paused.value) nextTick(scrollBottom) })
 
 // 首批日志到达强制贴底一次：新会话总是从最新处看起（此时布局未稳，wasNearBottom 判定可能失真）
 watch(() => renderRows.value.length, (n, o) => {

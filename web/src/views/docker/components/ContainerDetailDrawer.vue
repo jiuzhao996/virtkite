@@ -294,15 +294,16 @@ function onTsChange(v) {
   reloadLogs()
 }
 
-// WS 重试用尽 → 切 HTTP 轮询（本抽屉内 2s 定时，切走 tab 即停）
+// WS 重试用尽 → 切 HTTP 轮询（本抽屉内 2s 定时，切走 tab 即停）。
+// 轮询与跟随解耦：只要在日志页就持续拉新，「跟随」仅是 LogViewer 内部滚动状态。
 watch(wsFallback, (on) => {
   if (!on) return
   logsMode.value = 'http'
   fetchLogs()
-  if (logsFollow.value && tab.value === 'logs') startLogTimer()
+  if (tab.value === 'logs') startLogTimer()
 })
 
-// 日志跟随：本组件内简单 2s 定时（抽屉关闭/切走即停）
+// 日志轮询定时（仅 HTTP 降级模式用；抽屉关闭/切走即停）
 let logTimer = null
 function startLogTimer() {
   stopLogTimer()
@@ -328,15 +329,13 @@ watch(tab, (t) => {
   if (t === 'stats') { startStatsTimer(); nextTick(renderCharts) } else stopStatsTimer()
   if (t === 'logs') {
     if (logsMode.value === 'ws') startStream(row.value.ID, { tail: logsTail, timestamps: logsTimestamps.value })
-    else fetchLogs()
+    else { fetchLogs(); startLogTimer() }
     stickLogsBottom()
   } else {
     stopStream()
     stopLogTimer()
   }
 })
-// HTTP 降级模式下「跟随」才需要定时轮询（WS 模式本就实时，跟随仅控制自动滚动）
-watch(logsFollow, (on) => { if (on && tab.value === 'logs' && logsMode.value === 'http') startLogTimer(); else stopLogTimer() })
 
 // ── 头部快捷操作 ──
 async function act(action) {

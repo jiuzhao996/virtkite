@@ -119,11 +119,7 @@ function onTimestampsChange(v) {
 // 跟随：WS 模式本就实时，跟随仅控制自动滚动（LogViewer 内部按贴底判定）；
 // HTTP 模式才需要 2s 轮询。
 function onFollowChange(v) {
-  logsFollow.value = v
-  if (mode.value === 'http') {
-    if (v && logsDrawer.value) startHttpTimer()
-    else stopHttpTimer()
-  }
+  logsFollow.value = v // 仅状态记录；轮询节奏与跟随解耦，见 wsFallback watch
 }
 
 // ── HTTP 降级模式的 2s 轮询（仅降级时启用）──
@@ -143,7 +139,7 @@ watch(wsFallback, (on) => {
   if (!on) return
   mode.value = 'http'
   fetchLogs()
-  if (logsFollow.value) startHttpTimer()
+  startHttpTimer()
 })
 
 function retryStream() {
