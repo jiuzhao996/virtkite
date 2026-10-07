@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -361,14 +362,70 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 					return
 				}
 				st.Steps = append(st.Steps, "✓ VM "+n.Name+" 就绪（id="+strconv.FormatUint(uint64(vmID), 10)+"）")
+			case "net":
+				created, nerr := h.provisionNet(n)
+				if nerr != nil {
+					st.Status = "failed"
+					st.Error = "网络 " + n.Name + " 落地失败：" + nerr.Error()
+					return
+				}
+				if created {
+					st.Steps = append(st.Steps, "✓ 网络 "+n.Name+" 已创建（NAT）")
+				} else {
+					st.Steps = append(st.Steps, "· 网络 "+n.Name+" 已存在，跳过")
+				}
 			default:
-				st.Steps = append(st.Steps, "跳过 "+n.Name+"（网络节点 v1 为标注性）")
+				st.Steps = append(st.Steps, "跳过 "+n.Name+"（未知节点类型）")
 			}
 		}
 		st.Status = "success"
 	}(p, st)
 
 	Accepted(c, "计划应用已启动", gin.H{"id": id})
+}
+
+// provisionNet 网络节点落地（D3）：libvirt 已存在同名网络则跳过（不覆盖用户网络），
+// 否则按默认 NAT 模板定义并启动。节点 ref 若形如网段（10.10.0.0/24），取其第一个
+// 可用地址作网关（当前模板固定 /24 掩码，不支持更宽网段）。
+func (h *DesignerHandler) provisionNet(n dsgNode) (bool, error) {
+	if h.Virt == nil {
+		return false, fmt.Errorf("虚拟化服务不可用")
+	}
+	if !validateVMName(n.Name) {
+		return false, fmt.Errorf("网络名 %q 非法（字母数字与下划线/连字符）", n.Name)
+	}
+	if nets, err := h.Virt.ListNetworks(); err == nil {
+		for _, e := range nets {
+			if e.Name == n.Name {
+				return false, nil // 已存在：不覆盖
+			}
+		}
+	}
+	xml := virt.NetworkXMLFromParams(n.Name, "", netGatewayFromCIDR(n.Ref))
+	if xml == "" {
+		return false, fmt.Errorf("生成网络定义失败")
+	}
+	if err := h.Virt.DefineNetwork(xml); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// netGatewayFromCIDR 若是 CIDR（如 10.10.0.0/24）返回其第一个可用地址作网关，否则空串。
+func netGatewayFromCIDR(s string) string {
+	_, ipnet, err := net.ParseCIDR(strings.TrimSpace(s))
+	if err != nil {
+		return ""
+	}
+	ip := ipnet.IP.To4()
+	if ip == nil {
+		return ""
+	}
+	next := net.IPv4(ip[0], ip[1], ip[2], ip[3]+1)
+	if !ipnet.Contains(next) {
+		return ""
+	}
+	return next.String()
 }
 
 // provisionVM VM 节点落地（P2B v2）：create_vm 建机（云镜像 + cloud-init 注入

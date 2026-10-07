@@ -143,6 +143,29 @@
         <el-empty v-else description="点击画布节点或连线编辑" :image-size="60" />
       </el-card>
     </div>
+
+    <!-- 落地预览对话框（D3）：将创建 / 已存在 对比 -->
+    <el-dialog v-model="diffVisible" title="落地预览" width="640px">
+      <p class="ds-diff-tip">
+        对照平台现状：<b class="ds-new">将创建</b> 的节点会执行落地；<b class="ds-old">已存在</b> 的按类型跳过（VM 同名会失败、网络同名跳过、栈重新 up）。
+      </p>
+      <el-table :data="diffRows" size="small" max-height="360">
+        <template #empty><el-empty description="画布为空" :image-size="60" /></template>
+        <el-table-column label="名称" prop="name" min-width="180" />
+        <el-table-column label="类型" prop="kind" width="100" />
+        <el-table-column label="动作" width="120">
+          <template #default="{ row }">
+            <el-tag :type="row.exists ? 'info' : 'success'" effect="light" size="small">
+              {{ row.exists ? '已存在·跳过' : '将创建' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="diffVisible = false">取消</el-button>
+        <el-button type="primary" :loading="applying" @click="confirmApply">确认落地</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -603,28 +626,70 @@ async function exportYaml() {
   a.click()
   URL.revokeObjectURL(a.href)
 }
+// ── 落地预览（D3）：节点 vs 平台现状 ──
+const diffVisible = ref(false)
+const diffRows = ref([])
+const kindTextMap = { vm: '虚拟机', container: '容器栈', net: '网络' }
+async function buildDiff() {
+  const cells = graph.getNodes().map((n) => ({ cellId: n.id, d: n.getData() || {} }))
+  const [vmRes, netRes, stackRes] = await Promise.all([
+    api.listVMs(), api.listNetworks(), api.listStacks().catch(() => ({ data: {} }))
+  ])
+  const vmNames = new Set(((vmRes.data && vmRes.data.items) || []).map((v) => v.name))
+  const netNames = new Set(((netRes.data && netRes.data.items) || []).map((n) => n.name))
+  const deployedStacks = new Set(
+    (((stackRes.data && stackRes.data.items) || []).filter((s) => s.deployed).map((s) => s.id))
+  )
+  return cells.map(({ cellId, d }) => ({
+    cellId,
+    name: d.name || d.ref || '未命名',
+    kind: kindTextMap[d.kind] || d.kind,
+    exists: d.kind === 'vm' ? vmNames.has(d.name)
+      : d.kind === 'net' ? netNames.has(d.name)
+        : d.kind === 'container' ? deployedStacks.has(d.ref)
+          : false
+  }))
+}
+// 画布上标色：将创建=绿、已存在=灰（silent 不进撤销栈）
+function highlightDiff() {
+  if (!graph) return
+  for (const r of diffRows.value) {
+    const node = graph.getCellById(r.cellId)
+    if (node) node.attr('body/stroke', r.exists ? '#c0c4cc' : '#3aa76d', { silent: true })
+  }
+}
+
 function zoomFit() {
   graph?.zoomToFit({ padding: 40, maxScale: 1 })
 }
 
 async function applyPlan() {
-  const { nodes, links: _links } = graphToPlan()
+  const { nodes } = graphToPlan()
   if (!nodes.length) return ElMessage.warning('画布为空')
-  const idMap = nodeIdMap()
   const vmDatas = graph.getNodes().map((n) => ({ gid: n.id, d: n.getData() || {} })).filter((x) => x.d.kind === 'vm')
+  // cts 必须在引用前声明（此前写成先引用后声明，点「一键落地」直接 TDZ 崩溃）
+  const cts = nodes.filter((n) => n.kind === 'container')
   if (!cts.length && !vmDatas.length) return ElMessage.warning('计划中没有可落地节点（容器栈 / VM）')
   const noImg = vmDatas.filter((x) => !x.d.ref)
   if (noImg.length) return ElMessage.warning('VM「' + noImg.map((x) => x.d.name).join('、') + '」还未选择云镜像')
   const needCred = vmDatas.filter((x) => (x.d.apps || []).length || (x.d.playbooks || []).length)
   const noPass = needCred.filter((x) => !x.d._sshSecret)
   if (noPass.length) return ElMessage.warning('VM「' + noPass.map((x) => x.d.name).join('、') + '」配了应用安装，需要填 SSH 口令')
-  const parts = []
-  const cts = nodes.filter((n) => n.kind === 'container')
-  if (cts.length) parts.push(`部署 ${cts.length} 个容器栈（${cts.map((n) => n.ref).join('、')}）`)
-  if (vmDatas.length) parts.push(`创建并初始化 ${vmDatas.length} 台 VM（${vmDatas.map((x) => x.d.name).join('、')}）`)
+  // 落地预览（D3）：比对平台现状标注「将创建/已存在」，确认后再执行
   try {
-    await ElMessageBox.confirm(`一键落地将顺序执行：${parts.join('；')}。镜像拉取与 VM 初始化可能需要数分钟。`, '落地确认', { type: 'info', confirmButtonText: '开始' })
-  } catch (e) { if (!isCancel(e)) return }
+    diffRows.value = await buildDiff()
+  } catch (e) {
+    diffRows.value = [] // 现状拉取失败不阻断落地，预览表留空
+  }
+  highlightDiff()
+  diffVisible.value = true
+}
+
+// 预览确认 → 真正落地
+async function confirmApply() {
+  diffVisible.value = false
+  const idMap = nodeIdMap()
+  const vmDatas = graph.getNodes().map((n) => ({ gid: n.id, d: n.getData() || {} })).filter((x) => x.d.kind === 'vm')
   const p = planPayload()
   // 口令只在这次请求里带上（后端 overlay 到对应节点，不写盘）；键用重映射后的计划 id
   const credentials = {}
@@ -770,6 +835,18 @@ onUnmounted(() => {
   height: 520px; /* 窄屏堆叠布局兜底高；桌面端由上方 media 覆盖为 flex 撑满 */
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--el-bg-color); overflow: hidden;
+}
+.ds-diff-tip {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  color: var(--color-muted-foreground);
+  line-height: 1.6;
+}
+.ds-diff-tip .ds-new {
+  color: #3aa76d;
+}
+.ds-diff-tip .ds-old {
+  color: #909399;
 }
 .ds-minimap {
   position: absolute;
