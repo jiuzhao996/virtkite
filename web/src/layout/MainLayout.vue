@@ -199,7 +199,7 @@
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 // 图标按需显式 import：Share/Tickets 随拓扑图与 cloud-init 独立菜单项撤销一并移除
 import { ArrowDown, MagicStick, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Picture, Setting, SwitchButton, Ticket, User, UserFilled } from '@element-plus/icons-vue'
@@ -314,19 +314,21 @@ const activeIndex = computed(() => '/' + (route.path.split('/')[1] || 'dashboard
 // immediate 必须有：Vue 3 的 watch 创建时只取首值做基线、不首次回调，
 // 刷新后 activeIndex 全程不变，没有 immediate 就不会触发，落在「基础设施/管理」
 // 这类默认收起组里的页面会显示成灰色未展开（组里明明有高亮项）。
-watch(activeIndex, (idx) => {
-  const owner = menuGroups.value.find((g) => g.items.some((it) => it.index === idx))
-  if (owner && !openedGroups.value.has(owner.name)) {
-    openedGroups.value.add(owner.name)
-  }
-}, { immediate: true })
-
-// menuRef 的 open() 要在菜单挂载后调用：immediate 回调跑在 setup 期间，
-// 此时 el-menu 还没挂载，调用会被忽略——故这里补一次展开
-onMounted(() => {
-  const owner = menuGroups.value.find((g) => g.items.some((it) => it.index === activeIndex.value))
-  if (owner) menuRef.value?.open(owner.name)
-})
+//
+// 同时把 menuRef.open() 放进同一个 watch 的 flush:post：刷新时权限是异步拉取的
+// （menuGroups 依赖 canOperate），挂载瞬间当前项所在组可能还没渲染，那时调 open()
+// 会被 el-menu 忽略——只在 onMounted 调一次就会「有时不展开」。
+// flush:post + nextTick 保证每轮数据就绪后都补调，且不阻塞渲染。
+watch(
+  [activeIndex, menuGroups],
+  ([idx]) => {
+    const owner = menuGroups.value.find((g) => g.items.some((it) => it.index === idx))
+    if (!owner) return
+    if (!openedGroups.value.has(owner.name)) openedGroups.value.add(owner.name)
+    nextTick(() => menuRef.value?.open(owner.name))
+  },
+  { immediate: true, flush: 'post' }
+)
 
 // 全局搜索：每次下拉展开都重新拉 VM 清单（不做常驻缓存，新建/删除的机器下次展开即生效）。
 // viewer 也可用（GET /vms 对 viewer 放行）。拉取失败静默保留旧清单（搜索是辅助入口）。
