@@ -72,6 +72,7 @@ func Init() {
 		&model.ScheduledTask{},
 		&model.CloudInitTemplate{},
 		&model.HostKey{},
+		&model.HostGroup{},
 		&model.Notification{},
 	)
 	if err != nil {

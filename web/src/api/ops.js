@@ -29,6 +29,11 @@ export const ops = {
 
   // 运维自动化（P4）：引擎状态 + 批量执行（adhoc/playbook，ansible_run 异步任务）
   ansibleStatus: () => unwrap(http.get('/ansible/status')),
+  // 主机组（AU1）：批量执行目标快捷集合
+  hostGroups: () => unwrap(http.get('/ansible/host-groups')),
+  hostGroupCreate: (payload) => unwrap(http.post('/ansible/host-groups', payload)),
+  hostGroupUpdate: (id, payload) => unwrap(http.put(`/ansible/host-groups/${id}`, payload)),
+  hostGroupDelete: (id) => unwrap(http.delete(`/ansible/host-groups/${id}`)),
   ansibleRun: (payload) => unwrap(http.post('/ansible/run', payload)),
   ansibleDeployKey: (payload) => unwrap(http.post('/ansible/deploy-key', payload)),
   // playbook CRUD（保存前服务端过 --syntax-check）

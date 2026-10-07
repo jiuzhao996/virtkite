@@ -375,6 +375,12 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	ansibleGroup := api.Group("/ansible")
 	ansibleGroup.Use(middleware.OperatorMiddleware())
 	{
+		// 主机组（AU1）：批量执行目标的快捷集合
+		hostGroupHandler := NewHostGroupHandler(deps.DB)
+		ansibleGroup.GET("/host-groups", hostGroupHandler.List)
+		ansibleGroup.POST("/host-groups", hostGroupHandler.Create)
+		ansibleGroup.PUT("/host-groups/:id", hostGroupHandler.Update)
+		ansibleGroup.DELETE("/host-groups/:id", hostGroupHandler.Delete)
 		ansibleGroup.GET("/status", ansibleHandler.Status)
 		ansibleGroup.POST("/run", ansibleHandler.Run)
 		ansibleGroup.POST("/deploy-key", ansibleHandler.DeployKey)

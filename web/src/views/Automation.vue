@@ -27,10 +27,23 @@
       <el-tab-pane label="快速执行" name="adhoc">
         <el-card shadow="never">
           <el-form label-width="96px" :disabled="!engine.installed">
+<div class="auto-groups">
+            <span class="auto-groups-label">主机组</span>
+            <el-tag v-for="g in hostGroups" :key="g.id" class="auto-group-chip" effect="plain"
+              :title="'点击选中「' + g.name + '」组成员（并集）'" @click="applyGroup(g)">
+              {{ g.name }} ×{{ groupRunnableCount(g) }}
+            </el-tag>
+            <el-button text size="small" :icon="Setting" @click="groupDrawerOpen = true">
+              {{ hostGroups.length ? '管理' : '建主机组' }}
+            </el-button>
+          </div>
             <el-form-item label="目标虚拟机">
               <div class="auto-targets">
                 <el-select v-model="targets" multiple filterable placeholder="选择运行中的虚拟机（可多选）" style="flex: 1; min-width: 320px">
-                  <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vm.name + '（' + vm.ip + '）'" :value="vm.id" />
+                  <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vmOptionLabel(vm)" :value="vm.id">
+                    <span>{{ vm.name }}（{{ vm.ip }}）</span>
+                    <el-tag v-if="!sshOK(vm.id)" type="danger" size="small" effect="plain" class="auto-cred-tag">无凭据</el-tag>
+                  </el-option>
                 </el-select>
                 <el-button size="small" @click="selectAll" :disabled="!runnableVMs.length">全选</el-button>
                 <span class="auto-count">已选 {{ targets.length }} / {{ runnableVMs.length }} 台</span>
@@ -174,10 +187,23 @@
     <!-- Playbook 执行对话框 -->
     <el-dialog v-model="runDialogOpen" :title="'执行 Playbook — ' + (runPb?.id || '')" width="560px" :append-to-body="true">
       <el-form label-width="96px">
+<div class="auto-groups">
+        <span class="auto-groups-label">主机组</span>
+        <el-tag v-for="g in hostGroups" :key="g.id" class="auto-group-chip" effect="plain"
+              :title="'点击选中「' + g.name + '」组成员（并集）'" @click="applyGroup(g)">
+            {{ g.name }} ×{{ groupRunnableCount(g) }}
+        </el-tag>
+        <el-button text size="small" :icon="Setting" @click="groupDrawerOpen = true">
+            {{ hostGroups.length ? '管理' : '建主机组' }}
+        </el-button>
+          </div>
         <el-form-item label="目标虚拟机">
           <div class="auto-targets">
             <el-select v-model="targets" multiple filterable placeholder="选择运行中的虚拟机（可多选）" style="flex: 1">
-              <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vm.name + '（' + vm.ip + '）'" :value="vm.id" />
+              <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vmOptionLabel(vm)" :value="vm.id">
+                <span>{{ vm.name }}（{{ vm.ip }}）</span>
+                <el-tag v-if="!sshOK(vm.id)" type="danger" size="small" effect="plain" class="auto-cred-tag">无凭据</el-tag>
+              </el-option>
             </el-select>
             <el-button size="small" @click="selectAll">全选</el-button>
           </div>
@@ -196,6 +222,45 @@
         <el-button type="primary" :loading="submitting" :disabled="!targets.length" @click="runPlaybook">开始执行</el-button>
       </template>
     </el-dialog>
+
+    <!-- 主机组管理（AU1）：批量执行目标的快捷集合 -->
+    <el-drawer v-model="groupDrawerOpen" title="主机组管理" size="440px">
+      <div class="auto-group-bar">
+        <el-button type="primary" size="small" :icon="Plus" @click="openGroupForm(null)">新建主机组</el-button>
+        <span class="auto-hint">点击上方组标签即可一键选中组成员</span>
+      </div>
+      <el-empty v-if="!hostGroups.length" description="还没有主机组" :image-size="70" />
+      <div v-for="g in hostGroups" :key="g.id" class="auto-group-row">
+        <div class="auto-group-info">
+          <b>{{ g.name }}</b>
+          <span class="auto-group-desc">{{ g.description || '—' }}</span>
+          <span class="auto-group-n">{{ (g.vm_ids || []).length }} 台成员 · 当前可执行 {{ groupRunnableCount(g) }} 台</span>
+        </div>
+        <el-button text size="small" type="primary" :icon="Edit" @click="openGroupForm(g)">编辑</el-button>
+        <el-button text size="small" type="danger" :icon="Delete" @click="removeGroup(g)">删除</el-button>
+      </div>
+    </el-drawer>
+
+    <!-- 主机组表单 -->
+    <el-dialog v-model="groupFormOpen" :title="groupFormId ? '编辑主机组' : '新建主机组'" width="480px" :append-to-body="true">
+      <el-form label-width="72px">
+        <el-form-item label="组名" required>
+          <el-input v-model="groupFormName" placeholder="如 ceph / k8s-node" maxlength="50" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="groupFormDesc" placeholder="用途（可空）" maxlength="200" />
+        </el-form-item>
+        <el-form-item label="成员">
+          <el-select v-model="groupFormVMs" multiple filterable placeholder="选择虚拟机（可多选，不限运行状态）" style="width: 100%">
+            <el-option v-for="vm in vms" :key="vm.id" :label="vm.name + (vm.ip ? '（' + vm.ip + '）' : '')" :value="vm.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="groupFormOpen = false">取消</el-button>
+        <el-button type="primary" :loading="groupSaving" @click="saveGroup">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -205,7 +270,7 @@
 // 任务详情（executor 端 2s 节流落库 Result，前端 1.5s 轮询即实时日志）。
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, VideoPlay, Edit, Delete, Close } from '@element-plus/icons-vue'
+import { Plus, Refresh, VideoPlay, Edit, Delete, Close, Setting } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { errMsg, isCancel } from '../utils/format'
@@ -300,6 +365,88 @@ async function loadStatus() {
     engine.value = { installed: false, hint: errMsg(e, '引擎探测失败') }
   } finally {
     statusLoading.value = false
+  }
+}
+
+// ── 主机组 + 凭据标记（AU1）──
+const hostGroups = ref([])
+const groupDrawerOpen = ref(false)
+async function loadHostGroups() {
+  try {
+    const res = await api.hostGroups()
+    hostGroups.value = (res.data && res.data.items) || []
+  } catch {
+    // 组是增强入口，拉取失败静默（手动选目标不受影响）
+  }
+}
+// SSH 可用口径 = 免密（ansible_ready）∪ 已托管凭据；其余标「无凭据」
+const sshOKSet = computed(() => {
+  const s = new Set((engine.value.ansible_ready_ids || []).map(Number))
+  for (const id of engine.value.cred_vm_ids || []) s.add(Number(id))
+  return s
+})
+function sshOK(id) {
+  return sshOKSet.value.has(Number(id))
+}
+function vmOptionLabel(vm) {
+  const base = vm.name + '（' + vm.ip + '）'
+  return sshOK(vm.id) ? base : base + ' · 无凭据'
+}
+function groupRunnableCount(g) {
+  const ids = new Set((g.vm_ids || []).map(Number))
+  return runnableVMs.value.filter((v) => ids.has(v.id)).length
+}
+// 点组标签 = 该组成员并入已选（并集；只并入当前可执行的）
+function applyGroup(g) {
+  const ids = new Set((g.vm_ids || []).map(Number))
+  const pick = runnableVMs.value.filter((v) => ids.has(v.id)).map((v) => v.id)
+  if (!pick.length) return ElMessage.warning(`「${g.name}」当前没有可执行成员（需运行中且有 IP）`)
+  targets.value = [...new Set([...targets.value, ...pick])]
+  ElMessage.success(`已并入「${g.name}」可执行成员 ${pick.length} 台`)
+}
+
+const groupFormOpen = ref(false)
+const groupFormId = ref(null)
+const groupFormName = ref('')
+const groupFormDesc = ref('')
+const groupFormVMs = ref([])
+const groupSaving = ref(false)
+function openGroupForm(g) {
+  groupFormId.value = g ? g.id : null
+  groupFormName.value = g ? g.name : ''
+  groupFormDesc.value = g ? g.description || '' : ''
+  groupFormVMs.value = g ? [...(g.vm_ids || [])] : []
+  groupFormOpen.value = true
+}
+async function saveGroup() {
+  if (!groupFormName.value.trim()) return ElMessage.warning('请填写组名')
+  groupSaving.value = true
+  const payload = { name: groupFormName.value.trim(), description: groupFormDesc.value.trim(), vm_ids: groupFormVMs.value }
+  try {
+    if (groupFormId.value) await api.hostGroupUpdate(groupFormId.value, payload)
+    else await api.hostGroupCreate(payload)
+    ElMessage.success('主机组已保存')
+    groupFormOpen.value = false
+    await loadHostGroups()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '保存失败'))
+  } finally {
+    groupSaving.value = false
+  }
+}
+async function removeGroup(g) {
+  try {
+    await ElMessageBox.confirm(`删除主机组「${g.name}」？不影响虚拟机本身。`, '删除主机组', { type: 'warning', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' })
+  } catch (e) {
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))
+    return
+  }
+  try {
+    await api.hostGroupDelete(g.id)
+    ElMessage.success('已删除')
+    loadHostGroups()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '删除失败'))
   }
 }
 
@@ -505,7 +652,7 @@ function scrollToBottom() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadStatus(), loadVMs(), loadPlaybooks(), loadHistory()])
+  await Promise.all([loadStatus(), loadVMs(), loadPlaybooks(), loadHistory(), loadHostGroups()])
 })
 onUnmounted(stopPolling)
 </script>
@@ -517,6 +664,54 @@ onUnmounted(stopPolling)
 .auto-path { font-size: 0.82rem; color: var(--color-muted-foreground); word-break: break-all; }
 .auto-engine-desc { margin-top: 10px; font-size: 0.8rem; color: var(--color-muted-foreground); }
 .auto-keyrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.auto-groups {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 10px 96px;
+}
+.auto-groups-label {
+  font-size: 0.82rem;
+  color: var(--color-muted-foreground);
+}
+.auto-group-chip {
+  cursor: pointer;
+}
+.auto-cred-tag {
+  margin-left: 8px;
+}
+.auto-group-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.auto-group-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+.auto-group-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.auto-group-desc {
+  font-size: 0.8rem;
+  color: var(--color-muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auto-group-n {
+  font-size: 0.76rem;
+  color: var(--color-muted-foreground);
+}
 .auto-targets { display: flex; align-items: center; gap: 10px; width: 100%; flex-wrap: wrap; }
 .auto-count { font-size: 0.8rem; color: var(--color-muted-foreground); white-space: nowrap; }
 .auto-hint { margin-left: 12px; font-size: 0.78rem; color: var(--color-muted-foreground); }

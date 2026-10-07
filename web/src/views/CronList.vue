@@ -169,7 +169,12 @@
             <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vmName(vm)" :value="vm.id" />
           </el-select>
           <div class="field-tip">执行时逐台复核：需运行中、有 IP、已保存托管凭据</div>
-        </el-form-item>
+        <div v-if="hostGroups.length" class="group-chips">
+              <span class="group-chips-label">主机组</span>
+              <el-tag v-for="g in hostGroups" :key="g.id" class="group-chip" effect="plain"
+                :title="'点击并入「' + g.name + '」组成员'" @click="applyPbGroup(g)">{{ g.name }}</el-tag>
+            </div>
+          </el-form-item>
         <el-form-item v-else-if="form.action === 'db_backup'" label="说明">
           <div class="field-tip">备份数据库到主机 backup 目录，按保留份数自动清理旧备份</div>
         </el-form-item>
@@ -752,7 +757,25 @@ async function remove(row) {
   }
 }
 
+// 主机组（AU1）：ansible 目标一键并入组成员
+const hostGroups = ref([])
+async function loadHostGroups() {
+  try {
+    const res = await api.hostGroups()
+    hostGroups.value = (res.data && res.data.items) || []
+  } catch {
+    // 静默：无组时手选不受影响
+  }
+}
+function applyPbGroup(g) {
+  const pick = (g.vm_ids || []).filter((id) => runnableVMs.value.some((v) => v.id === id))
+  if (!pick.length) return ElMessage.warning(`「${g.name}」当前没有可执行成员（需运行中且有 IP）`)
+  form.value.pb_targets = [...new Set([...form.value.pb_targets, ...pick])]
+  ElMessage.success(`已并入「${g.name}」${pick.length} 台`)
+}
+
 onMounted(() => {
+  loadHostGroups()
   loadTemplates()
   load()
   // 参数列要把 vm_id 翻译成虚拟机名，列表数据里没有，进页面就拉一份
@@ -800,6 +823,20 @@ onUnmounted(() => {
 .tpl-desc {
   font-size: 0.76rem;
   color: var(--color-muted-foreground);
+}
+.group-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.group-chips-label {
+  font-size: 0.78rem;
+  color: var(--color-muted-foreground);
+}
+.group-chip {
+  cursor: pointer;
 }
 .retry-sep {
   margin: 0 6px;

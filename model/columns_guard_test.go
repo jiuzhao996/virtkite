@@ -29,6 +29,7 @@ var guardModels = []interface{}{
 	&Setting{}, &Alert{}, &PoolMeta{}, &VMGrant{}, &CronRun{}, &VMCredential{},
 	&ScheduledTask{}, &CloudInitTemplate{}, &HostKey{}, &Notification{},
 	&UserGroup{}, &UserGroupMember{}, &VMGroupGrant{}, &GrantRequest{},
+	&HostGroup{},
 }
 
 // guardNameSet 收集全部模型的合法列名（DBName）与字段名（Name）——GORM 的

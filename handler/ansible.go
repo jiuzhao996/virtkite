@@ -304,6 +304,13 @@ func (h *AnsibleHandler) Status(c *gin.Context) {
 	h.DB.Model(&model.VMCredential{}).Count(&credCnt)
 	out["ansible_ready_count"] = readyCnt
 	out["cred_count"] = credCnt
+	// per-VM 就绪标记（AU1）：目标选择处标注「无凭据」机器，选中即失败的坑前置暴露
+	readyIDs := []uint{}
+	h.DB.Model(&model.VM{}).Where("ansible_ready = ?", true).Pluck("id", &readyIDs)
+	credIDs := []uint{}
+	h.DB.Model(&model.VMCredential{}).Pluck("vm_id", &credIDs)
+	out["ansible_ready_ids"] = readyIDs
+	out["cred_vm_ids"] = credIDs
 	Success(c, out)
 }
 
