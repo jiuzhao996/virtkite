@@ -11,6 +11,10 @@
           孤儿 {{ fmtGB(summary.orphan_actual_gb) }}
         </el-tag>
         <div class="st-toggle">
+          <el-switch v-model="showVMs" size="small" />
+          <span>挂载的虚拟机</span>
+        </div>
+        <div class="st-toggle">
           <el-switch v-model="showLineage" size="small" />
           <span>克隆血缘</span>
         </div>
@@ -20,7 +24,7 @@
         <span class="st-legend"><i class="lg lg-tpl" />模板基盘</span>
         <span class="st-legend"><i class="lg lg-vol" />在用卷</span>
         <span class="st-legend"><i class="lg lg-orph" />零引用卷</span>
-        <span class="st-legend"><i class="lg lg-vm" />虚拟机</span>
+        <span v-if="showVMs" class="st-legend"><i class="lg lg-vm" />虚拟机</span>
       </template>
     </Toolbar>
 
@@ -34,18 +38,17 @@
       />
     </div>
     <p class="st-hint">
-      图为「池 → 卷 → 挂载虚拟机」的静态关系；虚线金边是增量克隆血缘（基盘 → 子卷，跨池如实画出）。
-      点击存储池节点进入池管理，点击虚拟机节点跳转虚拟机列表。
+      图为「池 → 卷」的静态关系；池之间的金色弧线是跨池克隆血缘（标注条数），卷级克隆链
+      的完整视图在「克隆家谱」与本池卷抽屉里。打开「挂载的虚拟机」可叠加挂载关系。点击池节点进入池管理。
     </p>
   </div>
 </template>
 
 <script setup>
-// 存储拓扑（对标网络页拓扑图）：池 → 卷 → VM 三层关系 + 可选克隆血缘虚线边。
-// 数据复用两个既有端点：listStoragePools（池容量/卷数）与 volumeGraph（全库血缘，
-// nodes 按 path 唯一、edges.parent/child 即 path）。布局为确定性手工分层，
-// 与 NetworkTopology 同一套已验证的 X6 用法（shape 显式 / orth 路由 / fromJSON /
-// 隐形端口 / 内层 absolute+inset:0 断开 autoResize 回写反馈环）。
+// 存储拓扑（对标网络页首屏）：池 → 卷 两层为主，克隆血缘虚线为故事线。
+// 挂载虚拟机层默认收起（26 条挂载边全画出来会盖掉主体），开关按需叠加。
+// 数据复用既有端点 listStoragePools + volumeGraph；X6 用法与网络拓扑同套
+// （shape 显式 / orth 路由 / fromJSON / 隐形端口 / 内层 absolute+inset:0 断回写环）。
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Graph } from '@antv/x6'
@@ -61,26 +64,43 @@ const router = useRouter()
 const canvasRef = ref(null)
 const loading = ref(false)
 const pools = ref([])          // 池条目（listStoragePools）
-const gNodes = ref([])         // volumeGraph.nodes
-const gEdges = ref([])         // volumeGraph.edges（path → path）
+const gNodes = ref([])         // volumeGraph.nodes（path 唯一）
+const gEdges = ref([])         // volumeGraph.edges（parent/child 即 path）
 const summary = ref({})
+const showVMs = ref(false)     // 挂载边默认不画：全画出来会盖掉池→卷主体
 const showLineage = ref(true)
 
 let graph = null
 
-// 尺寸/间距常量（卷多时网格换行，避免单行撑爆画布）
-const PW = 170, PH = 56        // 池节点
-const VW = 132, VH = 44        // 卷节点
+const PW = 176, PH = 58        // 池节点
+const VW = 136, VH = 44        // 卷节点
 const MW = 132, MH = 42        // VM 节点
-const GAPX = 16, GAPY = 16
-const GAP_COL = 44
+const GAPX = 14, GAPY = 14
+const GAP_COL = 56
 const MAX_COLS = 4
-const ROW = { pool: 24, vol: 150, vm: 320 }
+const ROW = { pool: 24, vol: 150, vm: 330 }
 
 const stats = computed(() => ({
   pools: pools.value.length,
   vols: gNodes.value.filter((n) => !n.phantom).length
 }))
+
+// 跨池血缘聚合到池层级：卷级虚线全画出来会横穿所有池的卷区（实测太乱）。
+// 池间一条弧线 + 条数标注；卷级细节由「克隆家谱 / 本池血缘」抽屉兜底。
+const poolLineage = computed(() => {
+  const poolOf = {}
+  for (const v of gNodes.value) poolOf[v.path] = v.pool
+  const m = {}
+  for (const e of gEdges.value) {
+    const fp = poolOf[e.parent], tp = poolOf[e.child]
+    if (!fp || !tp || fp === tp) continue
+    m[fp + '->' + tp] = (m[fp + '->' + tp] || 0) + 1
+  }
+  return Object.entries(m).map(([k, count]) => {
+    const [from, to] = k.split('->')
+    return { from, to, count }
+  })
+})
 
 function fmtGB(v) {
   const n = Number(v) || 0
@@ -96,20 +116,23 @@ function short(s, n = 14) {
 const volId = (path) => 'vol:' + path
 const vmId = (name) => 'vm:' + name
 const poolId = (name) => 'pool:' + name
+const panelId = (name) => 'panel:' + name
 
-// 卷状态分类：模板金 / 在用青 / 零引用灰 / 池外淡虚线
+// 卷状态：模板金 / 在用青 / 零引用灰 / 池外淡虚线
 function volStyle(n) {
-  if (n.is_template) return { stroke: '#c9971c', fill: '#fdf6e3', text: '#7a5b00', sub: '模板基盘' }
-  if (n.in_use) return { stroke: '#0ea5b7', fill: '#e6f7fb', text: '#0e7490', sub: '' }
-  if (n.phantom) return { stroke: '#b9c0ca', fill: '#f4f4f5', text: '#6b7280', sub: '池外父盘', dash: '4 3' }
-  return { stroke: '#9aa3ad', fill: '#f2f4f6', text: '#5f6b76', sub: '零引用' }
+  if (n.is_template) return { stroke: '#c9971c', fill: '#fdf6e3', text: '#7a5b00' }
+  if (n.phantom) return { stroke: '#b9c0ca', fill: '#f4f4f5', text: '#6b7280', dash: '4 3' }
+  if (n.in_use) return { stroke: '#0ea5b7', fill: '#e6f7fb', text: '#0e7490' }
+  return { stroke: '#b3bac2', fill: '#f5f6f8', text: '#66707a' }
 }
 
-// ── 分层布局：池一行；各池列内卷网格换行；VM 全局一行去重 ──
+// ── 分层布局：池一行；各池卷网格（池底板视觉分组）；VM 行可选 ──
 function buildLayout(poolList, vols) {
   const pos = {}
+  const panels = []
   const byPool = {}
   for (const v of vols) (byPool[v.pool] = byPool[v.pool] || []).push(v)
+  for (const k of Object.keys(byPool)) byPool[k].sort((a, b) => String(a.name).localeCompare(String(b.name)))
 
   const col = {}
   let totalW = 0
@@ -121,19 +144,26 @@ function buildLayout(poolList, vols) {
     col[p.name] = { colW, rows, kids }
     totalW += colW + (i ? GAP_COL : 0)
   })
-  // VM 行也参与总宽
-  const vmNames = [...new Set(vols.flatMap((v) => v.vms || []))]
+  const vmNames = showVMs.value ? [...new Set(vols.flatMap((v) => v.vms || []))] : []
   const vmRowW = vmNames.length ? vmNames.length * MW + (vmNames.length - 1) * GAPX : 0
   const canvasW = Math.max(760, totalW, vmRowW) + 120
   const cx = canvasW / 2
   let maxVolRows = 1
 
-  // 池一行居中
   let px = cx - totalW / 2
   for (const p of poolList) {
     const { colW, rows, kids } = col[p.name]
     maxVolRows = Math.max(maxVolRows, rows)
     pos[poolId(p.name)] = { x: px + colW / 2 - PW / 2, y: ROW.pool }
+    if (kids.length) {
+      // 池底板：把该池的卷网格圈进一块浅色区域（zIndex 0，纯视觉分组）
+      panels.push({
+        id: panelId(p.name),
+        x: px - 8, y: ROW.vol - 12,
+        width: colW + 16, height: rows * (VH + GAPY) - GAPY + 24,
+        name: p.name
+      })
+    }
     kids.forEach((k, idx) => {
       const r = Math.floor(idx / MAX_COLS)
       const c = idx % MAX_COLS
@@ -141,105 +171,42 @@ function buildLayout(poolList, vols) {
     })
     px += colW + GAP_COL
   }
-  // VM 全局一行居中
   let mx = cx - vmRowW / 2
   for (const name of vmNames) {
     pos[vmId(name)] = { x: mx, y: ROW.vm }
     mx += MW + GAPX
   }
-  const canvasH = ROW.vm + MH + 60
-  return { pos, canvasW, canvasH }
+  const canvasH = (vmNames.length ? ROW.vm + MH : ROW.vol + maxVolRows * (VH + GAPY)) + 60
+  return { pos, panels, canvasW, canvasH }
 }
 
 function poolAttrs(p) {
-  const used = Number(p.capacity) - Number(p.available)
-  const sub = p.vol_count != null ? `${p.vol_count} 卷 · ${fmtGB(used / (1024 ** 3))}/${fmtGB(p.capacity / (1024 ** 3))}` : ''
+  const cap = Number(p.capacity) || 0
+  const used = cap - (Number(p.available) || 0)
+  const pct = cap > 0 ? Math.min(100, Math.round((used / cap) * 100)) : 0
+  const sub = `${p.vol_count != null ? p.vol_count + ' 卷 · ' : ''}${fmtGB(used / (1024 ** 3))} / ${fmtGB(cap / (1024 ** 3))}`
   return {
     body: { stroke: '#7c5cd6', strokeWidth: 1.8, fill: '#f0e6ff', rx: 10, ry: 10, cursor: 'pointer' },
     label: { text: short(p.name, 12), fill: '#5b21b6', fontSize: 13, fontWeight: 600, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 16 },
-    sub: { text: sub, fill: '#8b6fd8', fontSize: 10, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 38 }
+    sub: { text: sub, fill: '#8b6fd8', fontSize: 10, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 36 },
+    bar: { refX: 14, refY: 46, refWidth: PW - 28, height: 5, stroke: 'none', fill: '#e2d4fa', rx: 2.5, ry: 2.5 },
+    barFill: { refX: 14, refY: 46, width: ((PW - 28) * pct) / 100, height: 5, stroke: 'none', fill: '#9b6ee8', rx: 2.5, ry: 2.5 }
   }
 }
 function volAttrs(n) {
   const st = volStyle(n)
-  const title = short(n.name, 14) + (n.is_template ? ' ⭐' : '')
-  const sub = [fmtGB(n.capacity_gb), st.sub].filter(Boolean).join(' · ')
+  const title = short(n.name, 15) + (n.is_template ? ' ⭐' : '')
   return {
-    body: { stroke: st.stroke, strokeWidth: 1.5, fill: st.fill, rx: 7, ry: 7, strokeDasharray: st.dash },
+    body: { stroke: st.stroke, strokeWidth: 1.4, fill: st.fill, rx: 7, ry: 7, strokeDasharray: st.dash },
     label: { text: title, fill: st.text, fontSize: 11.5, fontWeight: 600, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 15 },
-    sub: { text: sub, fill: st.text, opacity: 0.75, fontSize: 9.5, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 32 }
+    sub: { text: fmtGB(n.capacity_gb), fill: st.text, opacity: 0.7, fontSize: 9.5, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 32 }
   }
 }
 function vmAttrs(name) {
   return {
-    body: { stroke: '#3aa76d', strokeWidth: 1.5, fill: '#e8f7ee', rx: 8, ry: 8, cursor: 'pointer' },
+    body: { stroke: '#3aa76d', strokeWidth: 1.5, fill: '#e8f7ee', rx: 8, ry: 8 },
     label: { text: short(name, 14), fill: '#1b6b3f', fontSize: 11.5, fontWeight: 600, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: '50%' }
   }
-}
-
-function renderGraph() {
-  if (!graph) return
-  const { pos } = buildLayout(pools.value, gNodes.value)
-  graph.fromJSON({ cells: buildCells(pos) })
-  fitView()
-}
-
-function buildCells(pos) {
-  const at = (id) => pos[id] || { x: 0, y: 0 }
-  const vols = gNodes.value
-  const cells = []
-  for (const p of pools.value) {
-    cells.push({
-      shape: 'rect', id: poolId(p.name), x: at(poolId(p.name)).x, y: at(poolId(p.name)).y, width: PW, height: PH,
-      attrs: poolAttrs(p), data: { kind: 'pool', name: p.name }, zIndex: 2,
-      ports: portGroups()
-    })
-  }
-  for (const v of vols) {
-    cells.push({
-      shape: 'rect', id: volId(v.path), x: at(volId(v.path)).x, y: at(volId(v.path)).y, width: VW, height: VH,
-      attrs: volAttrs(v), data: { kind: 'vol', ...v }, zIndex: 2,
-      ports: portGroups()
-    })
-  }
-  const vmNames = [...new Set(vols.flatMap((v) => v.vms || []))]
-  for (const name of vmNames) {
-    cells.push({
-      shape: 'rect', id: vmId(name), x: at(vmId(name)).x, y: at(vmId(name)).y, width: MW, height: MH,
-      attrs: vmAttrs(name), data: { kind: 'vm', name }, zIndex: 2,
-      ports: portGroups()
-    })
-  }
-  const known = new Set(cells.map((c) => c.id))
-  const edge = (from, to, opts = {}) => ({
-    shape: 'edge',
-    source: { cell: from, port: 'bottom' },
-    target: { cell: to, port: 'top' },
-    attrs: { line: { stroke: opts.stroke || '#c3cbd6', strokeWidth: opts.width || 1.4, strokeDasharray: opts.dash, targetMarker: opts.arrow ? { name: 'block', size: 6 } : null } },
-    router: { name: 'orth' },
-    connector: { name: 'rounded', args: { radius: 8 } },
-    zIndex: 1
-  })
-  // 池 → 卷
-  for (const v of vols) {
-    if (known.has(poolId(v.pool)) && known.has(volId(v.path))) {
-      cells.push(edge(poolId(v.pool), volId(v.path)))
-    }
-  }
-  // 卷 → VM
-  for (const v of vols) {
-    for (const vm of v.vms || []) {
-      if (known.has(vmId(vm))) cells.push(edge(volId(v.path), vmId(vm), { stroke: '#b9d6c6' }))
-    }
-  }
-  // 克隆血缘（虚线金边，父盘 → 子卷；跨池如实画）
-  if (showLineage.value) {
-    for (const e of gEdges.value) {
-      const f = volId(e.parent), t = volId(e.child)
-      if (known.has(f) && known.has(t)) cells.push(edge(f, t, { stroke: '#d9a62e', dash: '5 4', arrow: true }))
-    }
-  }
-  return cells
 }
 
 function portGroups() {
@@ -252,7 +219,113 @@ function portGroups() {
   }
 }
 
-// 适应视口：按宽度缩放，下限 0.6 保文字可读（超出部分平移查看）
+function renderGraph() {
+  if (!graph) return
+  const { pos, panels } = buildLayout(pools.value, gNodes.value)
+  graph.fromJSON({ cells: buildCells(pos, panels) })
+  fitView()
+}
+
+function buildCells(pos, panels) {
+  const at = (id) => pos[id] || { x: 0, y: 0 }
+  const vols = gNodes.value
+  const cells = []
+  // 池底板垫底（纯视觉分组，无交互）
+  for (const pn of panels) {
+    cells.push({
+      shape: 'rect', id: panelId(pn.name), x: pn.x, y: pn.y, width: pn.width, height: pn.height,
+      attrs: { body: { stroke: '#e8edf3', strokeWidth: 1, fill: '#fafbfd', rx: 10, ry: 10 } },
+      zIndex: 0, data: { kind: 'panel' }
+    })
+  }
+  for (const p of pools.value) {
+    cells.push({
+      shape: 'rect', id: poolId(p.name), x: at(poolId(p.name)).x, y: at(poolId(p.name)).y, width: PW, height: PH,
+      attrs: poolAttrs(p), data: { kind: 'pool', name: p.name }, zIndex: 2,
+      markup: [
+        { tagName: 'rect', selector: 'body' },
+        { tagName: 'text', selector: 'label' },
+        { tagName: 'text', selector: 'sub' },
+        { tagName: 'rect', selector: 'bar' },
+        { tagName: 'rect', selector: 'barFill' }
+      ],
+      ports: portGroups()
+    })
+  }
+  for (const v of vols) {
+    cells.push({
+      shape: 'rect', id: volId(v.path), x: at(volId(v.path)).x, y: at(volId(v.path)).y, width: VW, height: VH,
+      attrs: volAttrs(v), data: { kind: 'vol' }, zIndex: 2,
+      ports: portGroups()
+    })
+  }
+  const vmNames = showVMs.value ? [...new Set(vols.flatMap((v) => v.vms || []))] : []
+  for (const name of vmNames) {
+    cells.push({
+      shape: 'rect', id: vmId(name), x: at(vmId(name)).x, y: at(vmId(name)).y, width: MW, height: MH,
+      attrs: vmAttrs(name), data: { kind: 'vm', name }, zIndex: 2,
+      ports: portGroups()
+    })
+  }
+  const known = new Set(cells.map((c) => c.id))
+  const edge = (from, to, o = {}) => ({
+    shape: 'edge',
+    source: { cell: from, port: 'bottom' },
+    target: { cell: to, port: 'top' },
+    attrs: {
+      line: {
+        stroke: o.stroke || '#d5dbe3',
+        strokeWidth: o.width || 1.2,
+        strokeDasharray: o.dash,
+        opacity: o.opacity != null ? o.opacity : 0.9,
+        targetMarker: o.arrow ? { name: 'block', size: 6 } : null
+      }
+    },
+    connector: { name: 'smooth' },
+    zIndex: 1
+  })
+  // 池 → 卷（柔和竖线）
+  for (const v of vols) {
+    if (known.has(poolId(v.pool)) && known.has(volId(v.path))) {
+      cells.push(edge(poolId(v.pool), volId(v.path), { stroke: '#dbe1e8' }))
+    }
+  }
+  // 卷 → VM（开启时才画）
+  if (showVMs.value) {
+    for (const v of vols) {
+      for (const vm of v.vms || []) {
+        if (known.has(vmId(vm))) cells.push(edge(volId(v.path), vmId(vm), { stroke: '#bcd8ca', opacity: 0.75 }))
+      }
+    }
+  }
+  // 跨池血缘：池节点间的金色弧线（从池行上方绕行），标注条数
+  if (showLineage.value) {
+    for (const pl of poolLineage.value) {
+      const f = poolId(pl.from), t = poolId(pl.to)
+      if (!known.has(f) || !known.has(t)) continue
+      cells.push({
+        shape: 'edge',
+        source: { cell: f, port: 'top' },
+        target: { cell: t, port: 'top' },
+        attrs: {
+          line: { stroke: '#d9a62e', strokeWidth: 1.6, strokeDasharray: '5 4', opacity: 0.9, targetMarker: { name: 'block', size: 6 } }
+        },
+        connector: { name: 'smooth' },
+        labels: [{
+          // 用默认 label/body 选择器：自定义 markup 缺 label 选择器会抛 reference 错误
+          attrs: {
+            label: { text: pl.count + ' 条血缘', fill: '#8a6a10', fontSize: 10 },
+            body: { fill: '#fff8e1', stroke: '#e5cf8a', rx: 4, ry: 4, strokeWidth: 1 }
+          },
+          position: { distance: 0.5 }
+        }],
+        zIndex: 1
+      })
+    }
+  }
+  return cells
+}
+
 function fitView() {
   if (!graph) return
   graph.zoomToFit({ padding: 24, maxScale: 1.1 })
@@ -282,10 +355,9 @@ async function load() {
 function onNodeClick({ node }) {
   const d = node.getData() || {}
   if (d.kind === 'pool') emit('open-pool', d.name)
-  else if (d.kind === 'vm') router.push({ path: '/vms', query: { keyword: d.name } })
 }
 
-watch(showLineage, () => nextTick(renderGraph))
+watch([showVMs, showLineage], () => nextTick(renderGraph))
 
 onMounted(async () => {
   graph = new Graph({
@@ -365,6 +437,6 @@ onBeforeUnmount(() => {
 .lg-pool { background: #f0e6ff; border: 1px solid #7c5cd6; }
 .lg-tpl { background: #fdf6e3; border: 1px solid #c9971c; }
 .lg-vol { background: #e6f7fb; border: 1px solid #0ea5b7; }
-.lg-orph { background: #f2f4f6; border: 1px solid #9aa3ad; }
+.lg-orph { background: #f5f6f8; border: 1px solid #b3bac2; }
 .lg-vm { background: #e8f7ee; border: 1px solid #3aa76d; }
 </style>
