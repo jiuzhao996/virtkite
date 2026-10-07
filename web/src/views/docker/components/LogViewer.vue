@@ -12,7 +12,7 @@
       <span v-if="keyword.trim()" class="lv-count">{{ matchedCount }}/{{ totalLines }} 行</span>
       <el-checkbox v-model="wrap" size="small" title="长行自动换行">换行</el-checkbox>
       <el-checkbox :model-value="timestamps" size="small" title="显示 docker 写入时间戳" @change="(v) => $emit('update:timestamps', v)">时间戳</el-checkbox>
-      <el-checkbox :model-value="follow" size="small" title="自动拉取新日志，贴底时自动滚动">跟随</el-checkbox>
+      <el-checkbox :model-value="follow" size="small" title="跟随最新日志并自动贴底" @change="(v) => $emit('update:follow', v)">跟随</el-checkbox>
       <el-button
         size="small"
         :type="paused ? 'warning' : 'default'"
@@ -158,14 +158,19 @@ function scrollBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
-// 贴底自动滚动：pre 阶段（DOM 更新前）记「更新前是否贴底」，post 阶段据此滚到底，
-// 避免新日志把内容撑高后再判定导致永不滚动；暂停时完全不打断阅读。
+// 贴底自动滚动：跟随开=无条件贴底；关=仅当更新前本来就贴底才跟随（用户上滚翻历史不受打扰）。
+// pre 阶段记「更新前是否贴底」，post 阶段再滚，避免新日志撑高后判定失真；暂停时完全不打断阅读。
 let wasNearBottom = true
 watch(allRows, () => { wasNearBottom = nearBottom() }, { flush: 'pre' })
 watch(allRows, () => {
   if (paused.value) return
-  if (wasNearBottom) nextTick(scrollBottom)
+  if (props.follow || wasNearBottom) nextTick(scrollBottom)
 }, { flush: 'post' })
+
+// 首批日志到达强制贴底一次：新会话总是从最新处看起（此时布局未稳，wasNearBottom 判定可能失真）
+watch(() => renderRows.value.length, (n, o) => {
+  if (!o && n && !paused.value) nextTick(scrollBottom)
+})
 
 function download() {
   const blob = new Blob([rawText.value], { type: 'text/plain;charset=utf-8' })

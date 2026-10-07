@@ -243,7 +243,7 @@ function renderLine(key, points, color) {
 // ── 日志（WS 实时流，失败降级 HTTP；渲染复用 LogViewer）──
 const logsText = ref('')
 const logsLoading = ref(false)
-const logsFollow = ref(false)
+const logsFollow = ref(true) // 进日志就是要看最新,默认跟随贴底
 const logsTimestamps = ref(false)
 const logsTail = 200
 const logsMode = ref('ws')
@@ -266,7 +266,7 @@ async function fetchLogs() {
   try {
     const res = await api.dockerContainerLogs(row.value.ID, logsTail, logsTimestamps.value)
     logsText.value = (res.data || {}).logs || ''
-    if (logViewerRef.value) logViewerRef.value.scrollToEndOnce()
+    if (logsFollow.value && logViewerRef.value) logViewerRef.value.scrollToEndOnce()
   } catch (e) {
     ElMessage.error(errMsg(e, '获取日志失败'))
   } finally {
@@ -396,6 +396,8 @@ function open(r) {
   inspectText.value = ''
   logsText.value = ''
   logsMode.value = 'ws'
+  logsFollow.value = true
+  logsTimestamps.value = false
   cpuSeries.value = []
   memSeries.value = []
   stats.value = null

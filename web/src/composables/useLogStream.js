@@ -53,6 +53,7 @@ export function useLogStream() {
     const timestamps = !!(opts && opts.timestamps)
     stop()
     manualClose = false
+    lines.value = [] // 新会话不残留上一次的行（换容器/重连时旧内容必须清掉）
     retries = 0
     fallback.value = false
     errorMsg.value = ''
