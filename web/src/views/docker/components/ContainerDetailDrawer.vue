@@ -399,7 +399,7 @@ async function remove() {
   }
 }
 
-function open(r) {
+function open(r, initialTab) {
   row.value = r
   tab.value = 'summary'
   raw.value = {}
@@ -414,6 +414,9 @@ function open(r) {
   resetStream()
   visible.value = true
   fetchInspect()
+  // 跳转直达场景（栈详情→容器日志）：先归位 summary 再切目标 tab，
+  // 两次赋值同 tick 合并、watcher 以最终值触发一次，避免残留态
+  if (initialTab) tab.value = initialTab
 }
 
 function onClosed() {

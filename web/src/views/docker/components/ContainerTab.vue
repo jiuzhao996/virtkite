@@ -103,7 +103,8 @@
 // 容器页（原容器 tab，1Panel 式子路由化）：数据（containers / statsMap）与容器域全部交互自持。
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast）；10s 静默轮询随本页走，
 // KeepAlive 下 onUnmounted 不触发，故用 onActivated/onDeactivated 显式启停轮询（防切走后后台空转）。
-import { ref, computed, inject, onMounted, onActivated, onDeactivated } from 'vue'
+import { ref, computed, inject, watch, onMounted, onActivated, onDeactivated } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Delete, VideoPlay, VideoPause, Monitor } from '@element-plus/icons-vue'
 import { api } from '../../../api'
@@ -417,6 +418,28 @@ const detailDrawerRef = ref(null)
 function openDetail(row) {
   detailDrawerRef.value.open(row)
 }
+
+// 栈详情/商店「终端/日志」跳转落地：query 带 id+open，列表就绪后匹配容器开对应抽屉。
+// 一次性消费（openQueryDone），刷新轮询不再重复触发。
+const route = useRoute()
+let openQueryDone = false
+watch(
+  [() => route.query.id, containers],
+  () => {
+    if (openQueryDone) return
+    const id = route.query.id
+    const mode = route.query.open
+    if (!id || (mode !== 'terminal' && mode !== 'logs')) return
+    const row = containers.value.find(
+      (r) => r.ID === id || String(r.ID || '').startsWith(String(id)) || containerName(r.Names) === id
+    )
+    if (!row) return
+    openQueryDone = true
+    if (mode === 'logs') detailDrawerRef.value.open(row, 'logs')
+    else openTerminal(row)
+  },
+  { immediate: true }
+)
 
 // 详情抽屉内操作（启停/暂停/重命名/删除）后重拉列表，保持与本页一致
 async function onDetailChanged() {

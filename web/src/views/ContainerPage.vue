@@ -23,7 +23,7 @@
 // 容器页（Docker 管理拆分批次 2026-10）：容器 + 编排（compose）一页，
 // 原 DockerPage 壳的页头/503 门控/刷新职责收编于此（镜像/网络/卷已分散到各自语义页）。
 // 两 tab 均常驻（compose lazy 首次激活才挂载），刷新只作用于当前激活 tab。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import PageHead from '../components/PageHead.vue'
@@ -34,6 +34,13 @@ import ComposeTab from './docker/components/ComposeTab.vue'
 const route = useRoute()
 // 外部跳转落点：/containers?tab=compose（栈商店「去编排」）/ ?id=&open=（栈内服务跳终端/日志）
 const activeTab = ref(route.query.tab === 'compose' ? 'compose' : 'containers')
+// 同路由内 query 变化（编排 tab 的栈详情跳服务终端/日志）不会重跑 setup，须 watch 同步
+watch(
+  () => route.query.tab,
+  (t) => {
+    if (t === 'compose' || t === 'containers') activeTab.value = t
+  }
+)
 const containerRef = ref(null)
 const composeRef = ref(null)
 const refreshing = ref(false)

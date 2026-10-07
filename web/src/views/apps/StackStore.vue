@@ -76,11 +76,10 @@ function onStackChanged() {
   load()
 }
 
-// 栈内服务跳容器域：本页没有终端/日志抽屉，落到容器页并带容器 ID
+// 栈内服务跳容器域：本页没有终端/日志抽屉，落到容器页由 query 自动开对应抽屉
 function onStackTerminal(row) {
   const id = String(row.ID || '')
-  router.push({ path: '/containers', query: { id, open: row.openLogs ? 'logs' : 'terminal' } })
-  ElMessage.info(`已跳转到容器页，请定位容器 ${id.slice(0, 12)}`)
+  router.push({ path: '/containers', query: { tab: 'containers', id, open: row.openLogs ? 'logs' : 'terminal' } })
 }
 
 // 已部署栈 → 容器页编排 tab（栈商店此前与容器页零互链）
