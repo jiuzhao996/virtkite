@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHead title="容器" subtitle="Docker 容器与编排（compose）一体化管理（对标 1Panel 容器页）">
+    <PageHead title="容器" subtitle="Docker 容器与编排（compose）一体化管理">
       <el-tooltip content="刷新" placement="top">
         <el-button :icon="Refresh" circle text aria-label="刷新" :loading="refreshing" @click="refreshActive" />
       </el-tooltip>
