@@ -20,6 +20,10 @@ type ScheduledTask struct {
 	// 注意：重试在 execute 持锁期间 sleep，会推迟其它任务的执行（单机小任务量下可接受）。
 	RetryCount    int `gorm:"default:0" json:"retry_count"`
 	RetryInterval int `gorm:"default:60" json:"retry_interval"`
+	// 链式编排（A3）：本次执行成功/失败后触发的下一个任务 id（nil=不链）。
+	// 下一跳 params 里的 {prev.output} 会用本次摘要（失败时为错误信息）替换。
+	OnSuccessTaskID *uint `json:"on_success_task_id"`
+	OnFailureTaskID *uint `json:"on_failure_task_id"`
 	RunCount  int        `gorm:"default:0" json:"run_count"`        // 累计执行次数（成功失败都计）
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`

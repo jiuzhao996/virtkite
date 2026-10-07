@@ -70,6 +70,9 @@ type cronTaskReq struct {
 	GraceMinutes  *int `json:"grace_minutes"`
 	RetryCount    *int `json:"retry_count"`
 	RetryInterval *int `json:"retry_interval"`
+	// 链式编排（A3）：成功后/失败后触发的下一跳任务 id。0 或 null 表示清除（不链）。
+	OnSuccessTaskID *uint `json:"on_success_task_id"`
+	OnFailureTaskID *uint `json:"on_failure_task_id"`
 }
 
 // List GET /api/crons：全部任务 + 每条的下次执行时间预览 + 最近 3 条执行记录。
@@ -272,6 +275,9 @@ func (h *CronsHandler) Create(c *gin.Context) {
 	if !h.ensureVMExists(c, &st) {
 		return
 	}
+	if !h.ensureChainTargets(c, &st) {
+		return
+	}
 	// Select 强制写入全部列：Enabled 的 gorm default:true 会让零值 false 被 INSERT 省略，
 	// 显式列出字段才能落库「创建即停用」的语义（Keep 已显式赋默认值，一并列入）
 	if err := h.DB.Select("Name", "CronExpr", "Action", "Params", "Enabled", "Keep", "GraceMinutes", "RetryCount", "RetryInterval").Create(&st).Error; err != nil {
@@ -304,6 +310,9 @@ func (h *CronsHandler) Update(c *gin.Context) {
 	if !h.ensureVMExists(c, &st) {
 		return
 	}
+	if !h.ensureChainTargets(c, &st) {
+		return
+	}
 	if err := h.DB.Save(&st).Error; err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
@@ -325,6 +334,15 @@ func (h *CronsHandler) Delete(c *gin.Context) {
 	if res.RowsAffected == 0 {
 		Fail(c, http.StatusNotFound, "计划任务不存在")
 		return
+	}
+	// 清理指向该任务的链式引用，避免悬空（运行时查不到会打日志跳过，这里主动断干净）
+	if err := h.DB.Model(&model.ScheduledTask{}).Where("on_success_task_id = ?", id).
+		Update("on_success_task_id", nil).Error; err != nil {
+		log.Printf("[crons] 清理成功链引用失败 task_id=%d: %v", id, err)
+	}
+	if err := h.DB.Model(&model.ScheduledTask{}).Where("on_failure_task_id = ?", id).
+		Update("on_failure_task_id", nil).Error; err != nil {
+		log.Printf("[crons] 清理失败链引用失败 task_id=%d: %v", id, err)
 	}
 	Success(c, gin.H{"message": "计划任务已删除"})
 }
@@ -390,6 +408,12 @@ func applyCronReq(st *model.ScheduledTask, req cronTaskReq) error {
 	if req.Enabled != nil {
 		st.Enabled = *req.Enabled
 	}
+	if req.OnSuccessTaskID != nil {
+		st.OnSuccessTaskID = nilIfZero(*req.OnSuccessTaskID)
+	}
+	if req.OnFailureTaskID != nil {
+		st.OnFailureTaskID = nilIfZero(*req.OnFailureTaskID)
+	}
 	if req.GraceMinutes != nil {
 		st.GraceMinutes = *req.GraceMinutes
 	}
@@ -415,6 +439,37 @@ func applyCronReq(st *model.ScheduledTask, req cronTaskReq) error {
 	}
 	_, err := validateCronTask(st)
 	return err
+}
+
+// nilIfZero 把 0 转成 nil（链式引用清空语义：任务 id 从 1 起，0 表示不链）。
+func nilIfZero(v uint) *uint {
+	if v == 0 {
+		return nil
+	}
+	return &v
+}
+
+// ensureChainTargets 校验链式下一跳任务存在且不自指。返回 false 表示响应已写好。
+func (h *CronsHandler) ensureChainTargets(c *gin.Context, st *model.ScheduledTask) bool {
+	for _, ref := range []*uint{st.OnSuccessTaskID, st.OnFailureTaskID} {
+		if ref == nil {
+			continue
+		}
+		if st.ID != 0 && *ref == st.ID {
+			Fail(c, http.StatusBadRequest, "链式下一跳不能指向任务自身")
+			return false
+		}
+		var n int64
+		if err := h.DB.Model(&model.ScheduledTask{}).Where("id = ?", *ref).Count(&n).Error; err != nil {
+			ErrorResponse(c, http.StatusInternalServerError, err)
+			return false
+		}
+		if n == 0 {
+			Fail(c, http.StatusBadRequest, fmt.Sprintf("链式下一跳任务 %d 不存在", *ref))
+			return false
+		}
+	}
+	return true
 }
 
 // validateCronTask 校验任务的名称/cron 表达式/动作/参数（纯校验，不查库），

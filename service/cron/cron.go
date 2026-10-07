@@ -80,6 +80,10 @@ const (
 	maxGraceMinutes = 1440
 	// maxRunAge 超过此时长仍未回写结束状态的 running 行视为孤儿（进程崩溃残留）。
 	maxRunAge = 2 * time.Hour
+	// maxChainDepth 链式编排的最大深度（防环）。深到 5 跳还没停，多半是配错了。
+	maxChainDepth = 5
+	// prevPlaceholder 链式编排里引用上一跳结果的占位符（在 params 里替换）。
+	prevPlaceholder = "{prev.output}"
 )
 
 // DefaultKeep 保留份数默认值：任务未配置 Keep（<=0，含历史行零值）时的兜底，
@@ -364,7 +368,7 @@ func (s *Scheduler) tick(now time.Time) {
 			continue
 		}
 		// 定时触发走防叠跑：上一轮未结束时本轮跳过而非排队
-		if err := s.execute(st, true); err != nil {
+		if err := s.execute(st, true, 0); err != nil {
 			log.Printf("[cron] 计划任务执行失败 id=%d(%s) action=%s: %v", st.ID, st.Name, st.Action, err)
 		}
 	}
@@ -376,14 +380,12 @@ func (s *Scheduler) tick(now time.Time) {
 // ExecuteNow 立即执行一次计划任务（handler 的手动触发入口），与定时执行共用 execute。
 func (s *Scheduler) ExecuteNow(st model.ScheduledTask) error {
 	// 手动触发不跳过：是显式的用户意图，即便有在跑的任务也排队等待（execMu 串行）
-	return s.execute(st, false)
+	return s.execute(st, false, 0)
 }
 
-// execute 执行单个任务：更新执行统计（LastRun/RunCount），写执行历史（cron_runs：
-// 开始插一行 running、结束回写 status/output 摘要），失败时按配置重试，最终失败经 NotifyURL 推送通知。
-// 执行全程持锁（见 execMu）；统计/历史写失败只记日志不阻断——下次执行仍会正常累计。
-// skipIfRunning=true（定时触发）时，上一轮未结束则跳过本轮而非排队。
-func (s *Scheduler) execute(st model.ScheduledTask, skipIfRunning bool) error {
+// execute 执行单个任务并按其链式配置触发下一跳。
+// depth 为链式深度（顶层调用传 0）；链式触发在 runOnce 释放锁之后进行，避免重入死锁。
+func (s *Scheduler) execute(st model.ScheduledTask, skipIfRunning bool, depth int) error {
 	// 防叠跑：存在未回写结束的 running 行即跳过。检查在取锁前做——排队到这里的上一轮已结束，不会误判；
 	// 崩溃残留的孤儿行由 sweepOrphanRuns 在超 maxRunAge 后标记 failed，不会永久阻塞。
 	if skipIfRunning && s.hasRunningRun(st.ID) {
@@ -399,6 +401,16 @@ func (s *Scheduler) execute(st model.ScheduledTask, skipIfRunning bool) error {
 		return nil
 	}
 
+	summary, err := s.runOnce(st)
+
+	// 链式编排：按本次结果触发下一跳（深度上限防环）。此处已在锁外，可安全再进 execute。
+	s.maybeChain(st, summary, err, depth)
+	return err
+}
+
+// runOnce 实际执行并落库执行历史/统计，返回摘要与错误。全程持锁（见 execMu）；
+// 统计/历史写失败只记日志不阻断——下次执行仍会正常累计。
+func (s *Scheduler) runOnce(st model.ScheduledTask) (string, error) {
 	s.execMu.Lock()
 	defer s.execMu.Unlock()
 
@@ -458,7 +470,56 @@ func (s *Scheduler) execute(st model.ScheduledTask, skipIfRunning bool) error {
 	if err != nil {
 		notifyFailure(st.Name, err.Error())
 	}
-	return err
+	return summary, err
+}
+
+// maybeChain 按执行结果触发链式下一跳（成功→on_success，失败→on_failure）。
+// 深度到达上限即停（防环）；下一跳不存在/已停用则跳过；params 里的 {prev.output}
+// 用上一跳摘要做 JSON 字符串转义后替换（仅本次运行，不落库）。
+func (s *Scheduler) maybeChain(st model.ScheduledTask, summary string, runErr error, depth int) {
+	var nextID uint
+	var prevOutput string
+	if runErr != nil {
+		if st.OnFailureTaskID != nil {
+			nextID = *st.OnFailureTaskID
+			prevOutput = runErr.Error()
+		}
+	} else if st.OnSuccessTaskID != nil {
+		nextID = *st.OnSuccessTaskID
+		prevOutput = summary
+	}
+	if nextID == 0 {
+		return
+	}
+	if depth >= maxChainDepth {
+		log.Printf("[cron] 链式深度已达上限 %d，任务 %d(%s) 不再下跳", maxChainDepth, st.ID, st.Name)
+		return
+	}
+	var next model.ScheduledTask
+	if err := s.DB.First(&next, nextID).Error; err != nil {
+		log.Printf("[cron] 链式下一跳任务 %d 不存在（可能已删除），跳过: %v", nextID, err)
+		return
+	}
+	if !next.Enabled {
+		log.Printf("[cron] 链式下一跳任务 %d(%s) 已停用，跳过", next.ID, next.Name)
+		return
+	}
+	if strings.Contains(next.Params, prevPlaceholder) {
+		next.Params = strings.ReplaceAll(next.Params, prevPlaceholder, jsonEscapeString(prevOutput))
+	}
+	log.Printf("[cron] 链式触发：%d(%s) → %d(%s)（深度 %d）", st.ID, st.Name, next.ID, next.Name, depth+1)
+	if err := s.execute(next, false, depth+1); err != nil {
+		log.Printf("[cron] 链式任务执行失败 id=%d(%s): %v", next.ID, next.Name, err)
+	}
+}
+
+// jsonEscapeString 把 s 转成可安全嵌进 JSON 字符串字面量的形式（去掉 json.Marshal 的外层引号）。
+func jsonEscapeString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil || len(b) < 2 {
+		return ""
+	}
+	return string(b[1 : len(b)-1])
 }
 
 // runContainerHealthcheck 容器健康巡检：params JSON 可选 {"notify":true}。

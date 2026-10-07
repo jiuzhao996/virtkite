@@ -95,6 +95,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="run_count" label="次数" width="70" align="center" />
+        <el-table-column label="链" width="56" align="center">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.on_success_task_id || row.on_failure_task_id" :content="chainTip(row)" placement="top">
+              <el-tag size="small" effect="plain" type="warning">链</el-tag>
+            </el-tooltip>
+            <span v-else class="mono">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button
@@ -185,6 +193,15 @@
           <el-input-number v-model="form.retry_interval" :min="1" :max="120" controls-position="right" style="width: 120px" />
           <span class="retry-sep">秒</span>
           <div class="field-tip">执行失败后自动重试（0 次表示不重试）</div>
+        </el-form-item>
+        <el-form-item label="链式编排">
+          <el-select v-model="form.on_success_task_id" clearable placeholder="成功后执行（可选）" style="width: 210px">
+            <el-option v-for="t in otherTasks" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+          <el-select v-model="form.on_failure_task_id" clearable placeholder="失败后执行（可选）" style="width: 210px; margin-left: 8px">
+            <el-option v-for="t in otherTasks" :key="t.id" :label="t.name" :value="t.id" />
+          </el-select>
+          <div class="field-tip">按结果触发下一跳（最多 5 级防环）；下一跳 params 里可用 {prev.output} 引用本次结果</div>
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" active-text="启用" inactive-text="停用" />
@@ -301,6 +318,21 @@ function runStatusTag(s) {
   return { success: 'success', failed: 'danger', running: 'primary', skipped: 'warning' }[s] || 'info'
 }
 
+// 可选的链式下一跳（排除自身）
+const otherTasks = computed(() => items.value.filter((t) => t.id !== editingId.value))
+
+// 列表「链」标记的提示：解析下一跳任务名
+function chainTip(row) {
+  const nameOf = (id) => {
+    const t = items.value.find((x) => x.id === id)
+    return t ? t.name : `#${id}`
+  }
+  const parts = []
+  if (row.on_success_task_id) parts.push('成功 → ' + nameOf(row.on_success_task_id))
+  if (row.on_failure_task_id) parts.push('失败 → ' + nameOf(row.on_failure_task_id))
+  return parts.join('；')
+}
+
 // 死开关提示：预期时刻 + 处置建议
 function staleTip(row) {
   const due = row.stale_due ? fmtDateTime(row.stale_due) : '预期时刻'
@@ -411,7 +443,7 @@ const PRESETS = [
 const DEFAULT_KEEP = 7
 const DEFAULT_GRACE = 30
 const DEFAULT_RETRY_INTERVAL = 60
-const form = ref({ name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, keep: DEFAULT_KEEP, grace_minutes: DEFAULT_GRACE, retry_count: 0, retry_interval: DEFAULT_RETRY_INTERVAL, enabled: true })
+const form = ref({ name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, keep: DEFAULT_KEEP, grace_minutes: DEFAULT_GRACE, retry_count: 0, retry_interval: DEFAULT_RETRY_INTERVAL, on_success_task_id: null, on_failure_task_id: null, enabled: true })
 
 // ===== cron 表达式「下次执行」预览 =====
 // 契约：GET /crons/preview?expr=<表达式> → data.next = 最多 5 个「YYYY-MM-DD HH:mm:ss」字符串；
@@ -465,7 +497,7 @@ function applyPreset(expr) {
 function openCreate() {
   editingId.value = null
   preset.value = ''
-  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, pb_playbook: '', pb_targets: [], keep: DEFAULT_KEEP, grace_minutes: DEFAULT_GRACE, retry_count: 0, retry_interval: DEFAULT_RETRY_INTERVAL, enabled: true }
+  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, pb_playbook: '', pb_targets: [], keep: DEFAULT_KEEP, grace_minutes: DEFAULT_GRACE, retry_count: 0, retry_interval: DEFAULT_RETRY_INTERVAL, on_success_task_id: null, on_failure_task_id: null, enabled: true }
   dialog.value = true
   if (vms.value.length === 0) loadVMs()
   if (playbooks.value.length === 0) loadPlaybooks()
@@ -494,6 +526,8 @@ function openEdit(row) {
     grace_minutes: row.grace_minutes == null ? DEFAULT_GRACE : Number(row.grace_minutes),
     retry_count: Number(row.retry_count) || 0,
     retry_interval: Number(row.retry_interval) || DEFAULT_RETRY_INTERVAL,
+    on_success_task_id: row.on_success_task_id || null,
+    on_failure_task_id: row.on_failure_task_id || null,
     enabled: !!row.enabled
   }
   dialog.value = true
@@ -532,6 +566,9 @@ async function save() {
     grace_minutes: form.value.grace_minutes,
     retry_count: form.value.retry_count,
     retry_interval: form.value.retry_interval,
+    // 链式引用：清空(null/undefined)时送 0，后端把 0 归一化为「不链」
+    on_success_task_id: Number(form.value.on_success_task_id) || 0,
+    on_failure_task_id: Number(form.value.on_failure_task_id) || 0,
     enabled: form.value.enabled
   }
   saving.value = true
@@ -613,6 +650,8 @@ function applyTemplate(t) {
     grace_minutes: t.grace_minutes == null ? DEFAULT_GRACE : Number(t.grace_minutes),
     retry_count: Number(t.retry_count) || 0,
     retry_interval: Number(t.retry_interval) || DEFAULT_RETRY_INTERVAL,
+    on_success_task_id: null,
+    on_failure_task_id: null,
     enabled: true
   }
   dialog.value = true

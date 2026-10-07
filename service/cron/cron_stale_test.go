@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -42,5 +43,21 @@ func TestClampInt(t *testing.T) {
 		if got := clampInt(c.v, c.lo, c.hi); got != c.want {
 			t.Errorf("clampInt(%d,%d,%d)=%d want %d", c.v, c.lo, c.hi, got, c.want)
 		}
+	}
+}
+
+func TestJSONEscapeString(t *testing.T) {
+	// 含引号/换行/反斜杠的摘要替换进 JSON 字符串后必须仍是合法 JSON
+	got := jsonEscapeString("行1\n\"引号\"\\反斜杠")
+	wrapped := `{"msg":"` + got + `"}`
+	var m map[string]string
+	if err := json.Unmarshal([]byte(wrapped), &m); err != nil {
+		t.Fatalf("转义后不是合法 JSON: %v（串=%q）", err, wrapped)
+	}
+	if m["msg"] != "行1\n\"引号\"\\反斜杠" {
+		t.Errorf("转义往返不一致: %q", m["msg"])
+	}
+	if jsonEscapeString("") != "" {
+		t.Errorf("空串应得空串")
 	}
 }
