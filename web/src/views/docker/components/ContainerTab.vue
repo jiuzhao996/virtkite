@@ -419,7 +419,7 @@ function openDetail(row) {
   detailDrawerRef.value.open(row)
 }
 
-// 栈详情/商店「终端/日志」跳转落地：query 带 id+open，列表就绪后匹配容器开对应抽屉。
+// 跨页跳转落地：query 带 id（可选 open=terminal|logs），列表就绪后匹配容器开对应抽屉。
 // 一次性消费（openQueryDone），刷新轮询不再重复触发。
 const route = useRoute()
 let openQueryDone = false
@@ -429,14 +429,15 @@ watch(
     if (openQueryDone) return
     const id = route.query.id
     const mode = route.query.open
-    if (!id || (mode !== 'terminal' && mode !== 'logs')) return
+    if (!id) return
     const row = containers.value.find(
-      (r) => r.ID === id || String(r.ID || '').startsWith(String(id)) || containerName(r.Names) === id
+      (r) => r.ID === id || String(r.ID || '').startsWith(String(id)) || String(id).startsWith(String(r.ID || '')) || containerName(r.Names) === id
     )
     if (!row) return
     openQueryDone = true
-    if (mode === 'logs') detailDrawerRef.value.open(row, 'logs')
-    else openTerminal(row)
+    if (mode === 'terminal') openTerminal(row)
+    else if (mode === 'logs') detailDrawerRef.value.open(row, 'logs')
+    else detailDrawerRef.value.open(row) // 只给 id：打开详情抽屉（拓扑图点容器）
   },
   { immediate: true }
 )

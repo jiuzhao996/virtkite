@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -695,4 +696,86 @@ func parseJSONMaps(out string) []map[string]interface{} {
 		list = append(list, m)
 	}
 	return list
+}
+
+// NetworkContainer docker 网络内的容器挂接（network inspect 的 Containers 项）。
+type NetworkContainer struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	IPv4 string `json:"ipv4"`
+	MAC  string `json:"mac"`
+}
+
+// NetworkTopo docker 网络拓扑要素（网段 + 挂接容器）。
+type NetworkTopo struct {
+	Name       string             `json:"name"`
+	Driver     string             `json:"driver"`
+	Subnet     string             `json:"subnet"`
+	Gateway    string             `json:"gateway"`
+	Builtin    bool               `json:"builtin"`
+	Containers []NetworkContainer `json:"containers"`
+}
+
+// NetworkTopology 批量 inspect 全部 docker 网络，返回网段与挂接容器（网络拓扑视图用）。
+// 容器挂接取自 network inspect 的 Containers——仅运行中/暂停容器有活跃端点，停止容器不再挂接，
+// 与「网络拓扑只画当前真实连接」的语义一致。
+func (d *Dockerx) NetworkTopology() ([]NetworkTopo, error) {
+	nets, err := d.Networks()
+	if err != nil {
+		return nil, err
+	}
+	if len(nets) == 0 {
+		return []NetworkTopo{}, nil
+	}
+	names := make([]string, 0, len(nets))
+	for _, n := range nets {
+		names = append(names, n.Name)
+	}
+	raw, err := run(append([]string{"network", "inspect"}, names...)...)
+	if err != nil {
+		return nil, fmt.Errorf("检查网络失败: %w", err)
+	}
+	var arr []struct {
+		Name   string `json:"Name"`
+		Driver string `json:"Driver"`
+		IPAM   struct {
+			Config []struct {
+				Subnet  string `json:"Subnet"`
+				Gateway string `json:"Gateway"`
+			} `json:"Config"`
+		} `json:"IPAM"`
+		Containers map[string]struct {
+			Name        string `json:"Name"`
+			MacAddress  string `json:"MacAddress"`
+			IPv4Address string `json:"IPv4Address"`
+		} `json:"Containers"`
+	}
+	if err := jsonUnmarshal(raw, &arr); err != nil {
+		return nil, fmt.Errorf("解析网络详情失败: %w", err)
+	}
+	out := make([]NetworkTopo, 0, len(arr))
+	for _, n := range arr {
+		t := NetworkTopo{Name: n.Name, Driver: n.Driver, Builtin: builtinNetworks[n.Name]}
+		if len(n.IPAM.Config) > 0 {
+			t.Subnet = n.IPAM.Config[0].Subnet
+			t.Gateway = n.IPAM.Config[0].Gateway
+		}
+		ids := make([]string, 0, len(n.Containers))
+		for id := range n.Containers {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids) // 输出稳定，便于前端 diff/对比
+		for _, id := range ids {
+			c := n.Containers[id]
+			ip := c.IPv4Address
+			if i := strings.IndexByte(ip, '/'); i > 0 {
+				ip = ip[:i]
+			}
+			t.Containers = append(t.Containers, NetworkContainer{
+				ID: id, Name: c.Name, IPv4: ip, MAC: strings.ToLower(c.MacAddress),
+			})
+		}
+		out = append(out, t)
+	}
+	return out, nil
 }

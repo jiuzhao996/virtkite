@@ -99,6 +99,8 @@ export const core = {
 
   // 网络通信流量视图（P1：连接边 + 接口速率，前端 3s 轮询）
   networkFlows: () => unwrap(http.get('/networks/flows')),
+  // 全局网络拓扑（N1：宿主机 → 桥/虚拟网络 → VM/容器）
+  networkTopology: () => unwrap(http.get('/networks/topology')),
   getNetwork: (name) => unwrap(http.get('/networks/' + name)),
   createNetwork: (payload) => unwrap(http.post('/networks', payload)),
   setNetworkAutostart: (name, autostart) => unwrap(http.put('/networks/' + name + '/autostart', { autostart })),

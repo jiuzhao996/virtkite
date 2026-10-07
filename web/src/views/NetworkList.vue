@@ -5,8 +5,11 @@
       <span class="page-desc">管理 libvirt 虚拟网络：NAT、桥接、隔离网络</span>
     </PageHead>
 
-    <!-- Docker 资源拆分批次：虚拟网络（libvirt）+ Docker 网络双 tab，语义归并统一网络入口 -->
+    <!-- Docker 资源拆分批次：拓扑图 + 通信流量 + 虚拟网络（libvirt）+ Docker 网络，语义归并统一网络入口 -->
     <el-tabs v-model="activeTab" class="net-tabs">
+      <el-tab-pane label="拓扑图" name="topology">
+        <NetworkTopology @open-network="onOpenNetwork" />
+      </el-tab-pane>
       <el-tab-pane label="通信流量" name="flow" lazy>
         <FlowView />
       </el-tab-pane>
@@ -116,9 +119,11 @@ import Toolbar from '../components/Toolbar.vue'
 import DockerGate from '../components/DockerGate.vue'
 import NetworkTab from './docker/components/NetworkTab.vue'
 import FlowView from './network/FlowView.vue'
+import NetworkTopology from './network/NetworkTopology.vue'
 
 const { isAdmin, canOperate } = useAuth()
-const activeTab = ref('flow')
+// 默认落在拓扑图（N1：一眼看清网络如何通信），通信流量/列表 tab 备查
+const activeTab = ref('topology')
 const dockerNetRef = ref(null)
 
 const networks = ref([])
@@ -145,6 +150,11 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+// 拓扑图里点网络节点 → 切到对应管理列表 tab
+function onOpenNetwork({ kind }) {
+  activeTab.value = kind === 'docker_net' ? 'docker' : 'libvirt'
 }
 
 function openCreate() {
