@@ -117,7 +117,7 @@
 - **github 直连不可达**（443 超时），推送/拉取 github 须走本机 Clash 代理（仅命令级环境变量，不改 git config）：
   `https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890 git push github main`；gitee 可直连。
 - 沙箱内 git 推送会因无法写 `~/.git-credentials.lock` 失败（credential.helper=store），需在沙箱外执行。
-- 本地 `main` 上游曾误配 `origin/master`（曾致 `git status` 显示"领先 92"）；修正方式 `git branch --set-upstream-to=origin/main main`（由用户自行执行）。
+- 本地 `main` 上游已于 2026-10-08 修正为 `origin/main`（此前误配 `origin/master`，曾致 `git status` 显示"领先 92"；gitee 旧 `master` 分支同日已删除）。
 - 仓库内 `stacks/es-cluster.yml` 的 `cluster.initial_master_nodes` 与 `mysql-master-slave` 栈是 ES/MySQL 主从语义，与 git 分支无关，**不得当作分支引用改动**。
 - `.trae/` 是 Trae 工具产物（规划文档等），**不提交**。
 
