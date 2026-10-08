@@ -56,15 +56,30 @@ type deletedVMItem struct {
 	HasArchive bool `json:"has_archive"`
 }
 
-// ListDeleted 回收站列表（admin）。GET /api/vms-recycle
+// ListDeleted 回收站列表（admin）。GET /api/vms-recycle?page=&page_size=
 // Unscoped 绕过软删过滤取全部记录，再筛 deleted_at 非空（即只在回收站里的）。
+// 分页在 DB 层完成：total 为回收站记录总数，items 只含当前页——每行的 libvirt 域状态
+// 探测（GetDomainState）只对当前页执行，不再为全量记录逐台查询。
 func (h *VMRecycleHandler) ListDeleted(c *gin.Context) {
 	if !requireAdminRole(c) {
 		return
 	}
-	var vms []model.VM
+	page, pageSize := parsePageQuery(c, 20, 100)
+
+	var total int64
 	if err := h.DB.Unscoped().Model(&model.VM{}).
-		Where("deleted_at IS NOT NULL").Find(&vms).Error; err != nil {
+		Where("deleted_at IS NOT NULL").Count(&total).Error; err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "查询回收站失败", err)
+		return
+	}
+
+	var vms []model.VM
+	// 按删除时间倒序（最近删除在前），id 兜底——分页必须有确定序，否则同一行可能跨页重复或漏出
+	if err := h.DB.Unscoped().Model(&model.VM{}).
+		Where("deleted_at IS NOT NULL").
+		Order("deleted_at DESC, id DESC").
+		Limit(pageSize).Offset((page - 1) * pageSize).
+		Find(&vms).Error; err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "查询回收站失败", err)
 		return
 	}
@@ -93,7 +108,7 @@ func (h *VMRecycleHandler) ListDeleted(c *gin.Context) {
 		}
 		items = append(items, item)
 	}
-	Success(c, gin.H{"total": len(items), "items": items})
+	Success(c, gin.H{"total": total, "page": page, "page_size": pageSize, "items": items})
 }
 
 // findDeletedVM 按 path 主键取回收站记录：paramID 解析 + Unscoped 查询 + 状态校验一体。

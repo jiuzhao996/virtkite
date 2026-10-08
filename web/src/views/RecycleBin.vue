@@ -15,7 +15,7 @@
     <el-card shadow="never" v-loading="loading">
       <!-- 计数走默认插槽（左），操作按钮走 right 插槽（Toolbar 自带 flex 骨架与 gap） -->
       <Toolbar>
-        <span class="count">共 {{ items.length }} 条记录<span v-if="checked.length" class="checked-hint"> · 已选 {{ checked.length }} 条</span></span>
+        <span class="count">共 {{ total }} 条记录<span v-if="checked.length" class="checked-hint"> · 已选 {{ checked.length }} 条</span></span>
         <template #right>
           <el-button
             v-if="checked.length"
@@ -25,123 +25,124 @@
             :loading="bulkBusy"
             @click="bulkPurge"
           >批量清除（{{ checked.length }}）</el-button>
-          <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+          <el-button :icon="Refresh" :loading="loading" @click="reload">刷新</el-button>
         </template>
       </Toolbar>
       <!-- 空态：回收站没有软删记录 -->
       <el-empty v-if="!loading && items.length === 0" description="回收站是空的" :image-size="80" />
-      <!-- 行点击进入原机信息抽屉；行内按钮 .stop 防冒泡；勾选列点击不触发抽屉（selection 列判断） -->
-      <el-table v-else ref="tableRef" :data="items" size="small" @row-click="openDetail" @selection-change="(rows) => (checked = rows)" row-class-name="clickable-row">
-        <el-table-column type="selection" width="86">
-          <!-- 默认表头只有裸复选框，意图不自明：自绘「复选框 + 全选」文字，
-               勾选走 el-table 原生 toggleAllSelection（半选态由 checked/items 推导） -->
-          <template #header>
-            <el-checkbox
-              :model-value="allSelected"
-              :indeterminate="checked.length > 0 && !allSelected"
-              @change="tableRef && tableRef.toggleAllSelection()"
-            >全选</el-checkbox>
-          </template>
-        </el-table-column>
-        <el-table-column label="名称" prop="name" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="vm-name">{{ row.name }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="UUID" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="mono uuid">{{ row.uuid || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="最后状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="vmStatusTag(row.status)" effect="light" size="small">{{ vmStatusText(row.status, '未知') }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="存储池" prop="storage_pool" width="110">
-          <template #default="{ row }">{{ row.storage_pool || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="删除时间" width="170">
-          <template #default="{ row }">{{ fmtDateTime(row.deleted_at) }}</template>
-        </el-table-column>
-        <el-table-column label="域状态" width="100">
-          <template #header>
-            <el-tooltip
-              content="存在 = libvirt 中仍有同名域定义（删除中途失败的残留），恢复后可直接开机；不存在 = 域定义已彻底删除，恢复后需重新定义"
-              placement="top"
-            >
-              <span class="col-help">
-                域状态
-                <el-icon><QuestionFilled /></el-icon>
+      <template v-else>
+        <!-- 行点击进入原机信息抽屉（恢复/彻底清除操作已收进抽屉）；勾选列自绘复选框，勾选区 @click.stop 不触发行点击 -->
+        <el-table :data="items" size="small" @row-click="openDetail" row-class-name="clickable-row">
+          <!-- 勾选列：EP 的 type="selection" 表头由 cellForced 强制接管（config.mjs setColumnForcedProps
+               无条件覆盖 renderHeader），#header 插槽与 render-header 属性都会被丢弃，无法加「全选」文字；
+               故改用普通列自绘表头/单元格复选框，选中态由 checked 自行维护（含「全选」可点文字）。 -->
+          <el-table-column width="92">
+            <template #header>
+              <el-checkbox
+                :model-value="allSelected"
+                :indeterminate="checked.length > 0 && !allSelected"
+                :disabled="items.length === 0"
+                @change="toggleAll"
+              >全选</el-checkbox>
+            </template>
+            <template #default="{ row }">
+              <span @click.stop>
+                <el-checkbox :model-value="isChecked(row)" @change="toggleRow(row)" />
               </span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <!-- 域仍存在多为删除中途失败的残留，恢复后可直接开机；不存在则需重新定义 -->
-            <el-tag :type="row.domain_exists ? 'success' : 'info'" effect="light" size="small">
-              {{ row.domain_exists ? '存在' : '不存在' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="磁盘" width="100">
-          <template #header>
-            <el-tooltip
-              content="存在 = 系统盘卷仍在存储池中，恢复时可重建定义；不存在 = 磁盘已被删除，恢复只能捞回记录（开机必然失败）"
-              placement="top"
-            >
-              <span class="col-help">
-                磁盘
-                <el-icon><QuestionFilled /></el-icon>
-              </span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <el-tooltip :content="row.disk_volume || '未找到系统盘卷'" placement="top" :disabled="!row.disk_volume">
-              <el-tag :type="row.disk_exists ? 'success' : 'danger'" effect="light" size="small">
-                {{ row.disk_exists ? '存在' : '已删除' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="名称" prop="name" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="vm-name">{{ row.name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="UUID" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="mono uuid">{{ row.uuid || '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="最后状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="vmStatusTag(row.status)" effect="light" size="small">{{ vmStatusText(row.status, '未知') }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="存储池" prop="storage_pool" width="110">
+            <template #default="{ row }">{{ row.storage_pool || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="删除时间" width="170">
+            <template #default="{ row }">{{ fmtDateTime(row.deleted_at) }}</template>
+          </el-table-column>
+          <el-table-column label="域状态" width="100">
+            <template #header>
+              <el-tooltip
+                content="存在 = libvirt 中仍有同名域定义（删除中途失败的残留），恢复后可直接开机；不存在 = 域定义已彻底删除，恢复后需重新定义"
+                placement="top"
+              >
+                <span class="col-help">
+                  域状态
+                  <el-icon><QuestionFilled /></el-icon>
+                </span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <!-- 域仍存在多为删除中途失败的残留，恢复后可直接开机；不存在则需重新定义 -->
+              <el-tag :type="row.domain_exists ? 'success' : 'info'" effect="light" size="small">
+                {{ row.domain_exists ? '存在' : '不存在' }}
               </el-tag>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column label="可恢复性" width="110">
-          <template #header>
-            <el-tooltip content="域与磁盘都在 = 原样恢复；仅域残留 = 直接可开；仅磁盘在且有删除时存档 = 精确重建（多盘/固件/网卡全还原）；仅磁盘在无存档 = 精简重建；都不在 = 只能恢复记录" placement="top">
-              <span class="col-help">
-                可恢复性
-                <el-icon><QuestionFilled /></el-icon>
-              </span>
-            </el-tooltip>
-          </template>
-          <template #default="{ row }">
-            <el-tag :type="restoreLevel(row).type" effect="light" size="small">{{ restoreLevel(row).text }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              text
-              type="primary"
-              size="small"
-              :icon="RefreshLeft"
-              :loading="actingId === row.id"
-              :disabled="bulkBusy"
-              @click.stop="restore(row)"
-            >恢复</el-button>
-            <el-button
-              text
-              type="danger"
-              size="small"
-              :icon="Delete"
-              :disabled="actingId === row.id || bulkBusy"
-              @click.stop="purge(row)"
-            >彻底清除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+            </template>
+          </el-table-column>
+          <el-table-column label="磁盘" width="100">
+            <template #header>
+              <el-tooltip
+                content="存在 = 系统盘卷仍在存储池中，恢复时可重建定义；不存在 = 磁盘已被删除，恢复只能捞回记录（开机必然失败）"
+                placement="top"
+              >
+                <span class="col-help">
+                  磁盘
+                  <el-icon><QuestionFilled /></el-icon>
+                </span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <el-tooltip :content="row.disk_volume || '未找到系统盘卷'" placement="top" :disabled="!row.disk_volume">
+                <el-tag :type="row.disk_exists ? 'success' : 'danger'" effect="light" size="small">
+                  {{ row.disk_exists ? '存在' : '已删除' }}
+                </el-tag>
+              </el-tooltip>
+            </template>
+          </el-table-column>
+          <el-table-column label="可恢复性" width="110">
+            <template #header>
+              <el-tooltip content="域与磁盘都在 = 原样恢复；仅域残留 = 直接可开；仅磁盘在且有删除时存档 = 精确重建（多盘/固件/网卡全还原）；仅磁盘在无存档 = 精简重建；都不在 = 只能恢复记录" placement="top">
+                <span class="col-help">
+                  可恢复性
+                  <el-icon><QuestionFilled /></el-icon>
+                </span>
+              </el-tooltip>
+            </template>
+            <template #default="{ row }">
+              <el-tag :type="restoreLevel(row).type" effect="light" size="small">{{ restoreLevel(row).text }}</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <!-- 服务端分页：与审计/任务列表同款（layout 与 page-sizes 对齐） -->
+        <el-pagination
+          class="pager"
+          layout="total, sizes, prev, pager, next"
+          :total="total"
+          :current-page="page"
+          v-model:page-size="pageSize"
+          :page-sizes="[20, 50, 100]"
+          @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
+        />
+      </template>
     </el-card>
 
-    <!-- 原机信息抽屉（行点击进入）：数据全部来自列表行，无需再请求。
-         字段以回收站接口 deletedVMItem 实际返回为准（id/name/uuid/status/storage_pool/deleted_at/domain_exists/disk_exists/disk_volume），
+    <!-- 原机信息抽屉（行点击进入）：数据全部来自列表行，无需再请求；恢复/彻底清除操作收进此处
+         （行内不再放按钮，避免操作按钮压过行内容）。字段以回收站接口 deletedVMItem 实际返回为准
+         （id/name/uuid/status/storage_pool/deleted_at/domain_exists/disk_exists/disk_volume），
          vCPU/内存等规格字段后端未下发，缺的字段不编造 -->
     <el-drawer v-model="detailOpen" title="原机信息" :size="440" :append-to-body="true" destroy-on-close>
       <template v-if="detail">
@@ -184,6 +185,23 @@
           恢复的边界：域与磁盘都在 → 原样恢复；仅域残留 → 直接可开；仅磁盘在 → 重建精简定义
           （单系统盘 + 默认 NAT 网卡，多盘需手动挂回，机器类型/光驱等不回填）；两者都不在 → 只能捞回记录。
         </div>
+        <!-- 操作：从行内收敛到抽屉（行内容不再被按钮压过） -->
+        <div class="rb-actions">
+          <el-button
+            type="primary"
+            :icon="RefreshLeft"
+            :loading="actingId === detail.id"
+            :disabled="bulkBusy"
+            @click="restore(detail)"
+          >恢复</el-button>
+          <el-button
+            type="danger"
+            plain
+            :icon="Delete"
+            :disabled="actingId === detail.id || bulkBusy"
+            @click="purge(detail)"
+          >彻底清除</el-button>
+        </div>
       </template>
     </el-drawer>
   </div>
@@ -195,28 +213,50 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, RefreshLeft, Delete, QuestionFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { errMsg, isCancel, vmStatusText, vmStatusTag, fmtDateTime } from '../utils/format'
+import { errMsg, vmStatusText, vmStatusTag, fmtDateTime } from '../utils/format'
+import { usePagination } from '../composables/usePagination'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 
-// ===== 列表（GET /vms-recycle → {total, items}）=====
+// ===== 列表（GET /vms-recycle?page=&page_size= → {total, page, page_size, items}）=====
 const router = useRouter()
-const loading = ref(false)
 const items = ref([])
+// 勾选状态：自绘勾选列（非 el-table 原生 selection），checked 存当前页选中的行对象。
+// 全选 = 有数据且选中数等于本页行数；半选由 indeterminate 表达。
+const checked = ref([])
+const allSelected = computed(() => items.value.length > 0 && checked.value.length === items.value.length)
 
-async function load() {
-  loading.value = true
+function isChecked(row) {
+  return checked.value.includes(row)
+}
+function toggleRow(row) {
+  const i = checked.value.indexOf(row)
+  checked.value = i === -1 ? [...checked.value, row] : checked.value.filter((r) => r !== row)
+}
+function toggleAll() {
+  checked.value = allSelected.value ? [] : [...items.value]
+}
+
+// 单页拉取：解包本页 items 并回传 total；分页状态与流转交给 usePagination。
+// 契约见 composables/usePagination.js：入参 {page,pageSize}，返回 total，自行捕获异常。
+async function fetchPage({ page, pageSize }) {
   try {
-    const res = await api.recycleList()
-    const d = res.data
-    // 兼容 data 直接是数组或包一层 { items }（当前实现为后者）
-    items.value = Array.isArray(d) ? d : (d && d.items) || []
+    const res = await api.recycleList({ page, page_size: pageSize })
+    const d = res.data || {}
+    items.value = Array.isArray(d) ? d : d.items || []
+    checked.value = [] // 换页/刷新后行对象已更换，旧选择失效（不清会误伤上一页的行）
+    const t = Array.isArray(d) ? items.value.length : d.total || 0
+    // 末页被清空（如清除了本页最后一条）→ 回退一页，避免停在空白页
+    if (items.value.length === 0 && t > 0 && page > 1) return handleCurrentChange(page - 1)
+    return t
   } catch (e) {
     ElMessage.error(errMsg(e, '获取回收站列表失败'))
-  } finally {
-    loading.value = false
+    return undefined
   }
 }
+
+const { page, pageSize, total, loading, handleCurrentChange, handleSizeChange, reload } =
+  usePagination(fetchPage, { defaultPageSize: 20 })
 
 // ===== 恢复（POST /vms-recycle/:id/restore）=====
 const actingId = ref(null)
@@ -253,6 +293,8 @@ async function restore(row) {
     } else {
       ElMessage.success(d.message || `已恢复 ${row.name}`)
     }
+    detailOpen.value = false
+    await reload()
     // 流程出口：恢复完成给「下一步」入口（此前恢复后无任何去向引导）
     try {
       await ElMessageBox.confirm(
@@ -264,7 +306,6 @@ async function restore(row) {
     } catch (e) {
       // 取消 = 留在本页，非错误
     }
-    load()
   } catch (e) {
     ElMessage.error(errMsg(e, '恢复失败'))
   } finally {
@@ -294,7 +335,8 @@ async function purge(row) {
     } else {
       ElMessage.success(d.message || `已彻底清除 ${row.name}`)
     }
-    load()
+    detailOpen.value = false
+    await reload()
   } catch (e) {
     ElMessage.error(errMsg(e, '彻底清除失败'))
   } finally {
@@ -303,11 +345,7 @@ async function purge(row) {
 }
 
 // ===== 批量彻底清除（勾选后循环调单条 purge：守卫逐条生效，语义与单条完全一致）=====
-const tableRef = ref(null)
-const checked = ref([])
 const bulkBusy = ref(false)
-// 表头自绘「全选」复选框的选中态：有勾选且勾满全部才算全选（半选由 indeterminate 表达）
-const allSelected = computed(() => items.value.length > 0 && checked.value.length === items.value.length)
 
 async function bulkPurge() {
   const rows = checked.value
@@ -349,7 +387,7 @@ async function bulkPurge() {
       ElMessage.success(`已彻底清除 ${ok} 条记录`)
     }
     checked.value = []
-    await load()
+    await reload()
   } finally {
     bulkBusy.value = false
   }
@@ -359,14 +397,13 @@ async function bulkPurge() {
 const detailOpen = ref(false)
 const detail = ref(null)
 
-function openDetail(row, column) {
-  // 勾选列点击不弹抽屉（row-click 第二参为被点列；type=selection 即勾选框区域）
-  if (column && column.type === 'selection') return
+// 勾选列单元格内已 @click.stop，不会冒泡到此；此处只需打开抽屉
+function openDetail(row) {
   detail.value = row
   detailOpen.value = true
 }
 
-onMounted(load)
+onMounted(reload)
 </script>
 
 <style scoped>
@@ -389,6 +426,12 @@ onMounted(load)
   color: var(--color-muted-foreground);
 }
 
+/* 服务端分页器：与审计/任务列表同款右对齐 */
+.pager {
+  margin-top: var(--space-xl);
+  justify-content: flex-end;
+}
+
 /* ===== 原机信息抽屉 ===== */
 .rb-head {
   display: flex;
@@ -409,6 +452,12 @@ onMounted(load)
   color: var(--el-color-primary-dark-2);
   background: var(--el-color-primary-light-9);
   border-radius: var(--radius-sm);
+}
+/* 抽屉内操作区：行内按钮收敛到此处 */
+.rb-actions {
+  display: flex;
+  gap: var(--space-md);
+  margin-top: var(--space-xl);
 }
 
 /* 行点击进入信息抽屉：scoped 需穿透 el-table 内部行 */

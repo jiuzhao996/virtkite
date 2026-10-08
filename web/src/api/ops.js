@@ -18,7 +18,8 @@ export const ops = {
   cronDelete: (id) => unwrap(http.delete('/crons/' + id)),
 
   // 回收站（VM 软删恢复/彻底清除；purge 附带 purge_volumes=true 连卷清除）
-  recycleList: () => unwrap(http.get('/vms-recycle')),
+  // 列表服务端分页：params { page, page_size }
+  recycleList: (params) => unwrap(http.get('/vms-recycle', { params })),
   recycleRestore: (id) => unwrap(http.post(`/vms-recycle/${id}/restore`)),
   recyclePurge: (id) => unwrap(http.delete(`/vms-recycle/${id}/purge`, { params: { purge_volumes: 'true' } })),
 
