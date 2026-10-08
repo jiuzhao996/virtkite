@@ -13,15 +13,26 @@
     </PageHead>
 
     <el-card shadow="never" v-loading="loading">
-      <!-- 计数与按钮原为 .toolbar 直接子元素（两端对齐左右分列），经默认插槽保持同构 -->
+      <!-- 计数走默认插槽（左），操作按钮走 right 插槽（Toolbar 自带 flex 骨架与 gap） -->
       <Toolbar>
-        <span class="count">共 {{ items.length }} 条记录</span>
-        <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+        <span class="count">共 {{ items.length }} 条记录<span v-if="checked.length" class="checked-hint"> · 已选 {{ checked.length }} 条</span></span>
+        <template #right>
+          <el-button
+            v-if="checked.length"
+            type="danger"
+            plain
+            :icon="Delete"
+            :loading="bulkBusy"
+            @click="bulkPurge"
+          >批量清除（{{ checked.length }}）</el-button>
+          <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+        </template>
       </Toolbar>
       <!-- 空态：回收站没有软删记录 -->
       <el-empty v-if="!loading && items.length === 0" description="回收站是空的" :image-size="80" />
-      <!-- 行点击进入原机信息抽屉；行内按钮 .stop 防冒泡 -->
-      <el-table v-else :data="items" size="small" @row-click="openDetail" row-class-name="clickable-row">
+      <!-- 行点击进入原机信息抽屉；行内按钮 .stop 防冒泡；勾选列点击不触发抽屉（selection 列判断） -->
+      <el-table v-else :data="items" size="small" @row-click="openDetail" @selection-change="(rows) => (checked = rows)" row-class-name="clickable-row">
+        <el-table-column type="selection" width="40" />
         <el-table-column label="名称" prop="name" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="vm-name">{{ row.name }}</span>
@@ -103,6 +114,7 @@
               size="small"
               :icon="RefreshLeft"
               :loading="actingId === row.id"
+              :disabled="bulkBusy"
               @click.stop="restore(row)"
             >恢复</el-button>
             <el-button
@@ -110,7 +122,7 @@
               type="danger"
               size="small"
               :icon="Delete"
-              :disabled="actingId === row.id"
+              :disabled="actingId === row.id || bulkBusy"
               @click.stop="purge(row)"
             >彻底清除</el-button>
           </template>
@@ -280,11 +292,63 @@ async function purge(row) {
   }
 }
 
+// ===== 批量彻底清除（勾选后循环调单条 purge：守卫逐条生效，语义与单条完全一致）=====
+const checked = ref([])
+const bulkBusy = ref(false)
+
+async function bulkPurge() {
+  const rows = checked.value
+  if (!rows.length) return
+  // 名称列表 >5 台截断，确认框里一眼看清删的是谁（不可恢复操作，信息必须给足）
+  const names = rows.map((r) => r.name)
+  const nameText = names.length > 5 ? names.slice(0, 5).join('、') + ` 等 ${names.length} 台` : names.join('、')
+  try {
+    await ElMessageBox.confirm(
+      `确定彻底清除以下 ${rows.length} 条记录？该操作不可恢复：${nameText}。数据库记录将物理删除，卷文件将一并删除，共享卷会被平台保留。`,
+      '批量彻底清除确认',
+      { type: 'warning', confirmButtonText: '彻底清除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch (e) {
+    return // 用户取消
+  }
+  bulkBusy.value = true
+  let ok = 0
+  let keptTotal = 0
+  const failed = []
+  try {
+    // 顺序执行：purge 带 per-VM 锁与卷守卫，并发会互相撞锁；回收站量级小，顺序无压力
+    for (const row of rows) {
+      try {
+        const res = await api.recyclePurge(row.id)
+        const d = res.data || {}
+        const kept = Array.isArray(d.volumes_kept) ? d.volumes_kept : []
+        keptTotal += kept.length
+        ok++
+      } catch (e) {
+        failed.push(`${row.name}（${errMsg(e, '清除失败')}）`)
+      }
+    }
+    if (failed.length) {
+      ElMessage.warning(`清除完成：成功 ${ok} 台，失败 ${failed.length} 台：${failed.slice(0, 3).join('；')}${failed.length > 3 ? ` 等 ${failed.length} 台` : ''}`)
+    } else if (keptTotal > 0) {
+      ElMessage.warning(`已清除 ${ok} 条记录，${keptTotal} 个卷被守卫保留（共享/被引用）`)
+    } else {
+      ElMessage.success(`已彻底清除 ${ok} 条记录`)
+    }
+    checked.value = []
+    await load()
+  } finally {
+    bulkBusy.value = false
+  }
+}
+
 // ===== 原机信息抽屉（行点击进入）：数据全部来自列表行，无需再请求 =====
 const detailOpen = ref(false)
 const detail = ref(null)
 
-function openDetail(row) {
+function openDetail(row, column) {
+  // 勾选列点击不弹抽屉（row-click 第二参为被点列；type=selection 即勾选框区域）
+  if (column && column.type === 'selection') return
   detail.value = row
   detailOpen.value = true
 }
