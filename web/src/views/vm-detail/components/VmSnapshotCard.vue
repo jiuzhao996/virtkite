@@ -56,7 +56,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, RefreshLeft, Delete } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { taskErrorMessage } from '../../../utils/task.js'
-import { vmStatusText, vmStatusTag, isCancel } from '../../../utils/format'
+import { vmStatusText, vmStatusTag, isCancel, fmtDateTime } from '../../../utils/format'
 
 const props = defineProps({
   vmId: { type: [String, Number], required: true },
