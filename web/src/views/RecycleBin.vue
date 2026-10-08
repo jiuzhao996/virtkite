@@ -31,8 +31,18 @@
       <!-- 空态：回收站没有软删记录 -->
       <el-empty v-if="!loading && items.length === 0" description="回收站是空的" :image-size="80" />
       <!-- 行点击进入原机信息抽屉；行内按钮 .stop 防冒泡；勾选列点击不触发抽屉（selection 列判断） -->
-      <el-table v-else :data="items" size="small" @row-click="openDetail" @selection-change="(rows) => (checked = rows)" row-class-name="clickable-row">
-        <el-table-column type="selection" width="40" />
+      <el-table v-else ref="tableRef" :data="items" size="small" @row-click="openDetail" @selection-change="(rows) => (checked = rows)" row-class-name="clickable-row">
+        <el-table-column type="selection" width="86">
+          <!-- 默认表头只有裸复选框，意图不自明：自绘「复选框 + 全选」文字，
+               勾选走 el-table 原生 toggleAllSelection（半选态由 checked/items 推导） -->
+          <template #header>
+            <el-checkbox
+              :model-value="allSelected"
+              :indeterminate="checked.length > 0 && !allSelected"
+              @change="tableRef && tableRef.toggleAllSelection()"
+            >全选</el-checkbox>
+          </template>
+        </el-table-column>
         <el-table-column label="名称" prop="name" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="vm-name">{{ row.name }}</span>
@@ -180,7 +190,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, RefreshLeft, Delete, QuestionFilled } from '@element-plus/icons-vue'
@@ -293,8 +303,11 @@ async function purge(row) {
 }
 
 // ===== 批量彻底清除（勾选后循环调单条 purge：守卫逐条生效，语义与单条完全一致）=====
+const tableRef = ref(null)
 const checked = ref([])
 const bulkBusy = ref(false)
+// 表头自绘「全选」复选框的选中态：有勾选且勾满全部才算全选（半选由 indeterminate 表达）
+const allSelected = computed(() => items.value.length > 0 && checked.value.length === items.value.length)
 
 async function bulkPurge() {
   const rows = checked.value
