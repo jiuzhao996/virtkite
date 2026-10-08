@@ -83,8 +83,8 @@ var poolRoleNames = []string{"模板基盘", "系统盘", "数据盘", "安装�
 
 // inferPoolRole 按池名/路径推断池角色（纯函数，供列表展示与单测）。
 // libvirt 池 XML 没有语义字段，这里按本平台的目录约定给缺省角色：
-// base=模板基盘（backing 父盘与模板）、images=系统盘（增量克隆子卷）、
-// exten=数据盘（热挂数据盘）、img=安装镜像（ISO）、default=/var/lib=系统池。
+// base=模板基盘兼镜像库（backing 父盘、模板与上传/下载镜像）、images=系统盘（增量克隆子卷）、
+// exten=数据盘（热挂数据盘）、iso=安装镜像（ISO）。
 func inferPoolRole(name, path string) string {
 	switch {
 	case name == "base" || strings.HasSuffix(path, "/storage/base"):
@@ -93,10 +93,8 @@ func inferPoolRole(name, path string) string {
 		return "系统盘"
 	case name == "exten" || strings.HasSuffix(path, "/storage/exten"):
 		return "数据盘"
-	case name == "img" || strings.Contains(path, "/data/img"):
+	case name == "iso" || strings.HasSuffix(path, "/storage/iso"):
 		return "安装镜像"
-	case strings.HasPrefix(path, "/var/lib/libvirt"):
-		return "系统池"
 	default:
 		return ""
 	}

@@ -77,21 +77,11 @@
           >
             {{ pool.description || '点击编辑添加描述' }}
           </div>
+          <!-- 池卡片不再画容量条：dir 池容量是文件系统级的，同盘多池口径相同，
+               统一由顶部「物理容量」汇总条展示；卡片只留池自有信息（卷数） -->
           <div class="pool-stats">
-            <span title="dir 型池的容量统计是文件系统级的：同盘多个池显示同一口径，非池内卷独占占用">已用 <b class="mono">{{ fmtSizeBytes(pool.allocation) }}</b></span>
-            <el-divider direction="vertical" />
             <span>卷数 <b class="mono">{{ pool.vol_count == null ? 0 : pool.vol_count }}</b></span>
           </div>
-          <!-- mini 用量条：capacity 缺省（后端未返回）时不显示；dir 池口径 caveat 同上行 title -->
-          <el-progress
-            v-if="pool.capacity"
-            class="pool-bar"
-            :percentage="poolPct(pool)"
-            :color="usageColor(poolPct(pool))"
-            :stroke-width="6"
-            :show-text="false"
-            title="dir 型池的容量统计是文件系统级的：同盘多个池显示同一口径，非池内卷独占占用"
-          />
           <div class="pool-actions" @click.stop>
             <el-button size="small" :icon="FolderOpened" @click="openVolumes(pool)">浏览卷</el-button>
             <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openMeta(pool)">编辑</el-button>
@@ -385,19 +375,12 @@ const physPct = computed(() => {
   return clampPct(((capacity - available) / capacity) * 100)
 })
 
-// 池卡片 mini 用量条：allocation/capacity，钳制 0~100（超分显示满格红），capacity 缺省返回 0
-function poolPct(pool) {
-  if (!pool.capacity) return 0
-  return clampPct((pool.allocation / pool.capacity) * 100)
-}
-
 // 池角色 → el-tag type（其余/空串走「未分类」灰 tag，不在本表）
 const ROLE_TAG_TYPES = {
   模板基盘: 'warning',
   系统盘: 'primary',
   数据盘: 'success',
-  安装镜像: 'info',
-  系统池: 'info'
+  安装镜像: 'info'
 }
 function roleTagType(role) {
   return ROLE_TAG_TYPES[role] || 'info'
@@ -867,9 +850,6 @@ onMounted(load)
   font-weight: 700;
 }
 /* 卡片 mini 用量条：贴在统计行与操作区之间，capacity 缺省时不渲染、间距回落原状 */
-.pool-bar {
-  margin-bottom: 12px;
-}
 .pool-actions {
   display: flex;
   flex-wrap: wrap;

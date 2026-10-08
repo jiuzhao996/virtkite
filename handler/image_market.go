@@ -102,10 +102,10 @@ func marketItemByKey(key string) (marketItem, bool) {
 	return marketItem{}, false
 }
 
-// ListMarket 返回内置清单，每项标注默认下载目标池（系统设置 default_storage_pool）。
+// ListMarket 返回内置清单，每项标注默认下载目标池（镜像库池 default）。
 // 池仅是「默认值」标注：真正落哪个池以下载请求里的 pool 为准，下载时点再校验存在性。
 func (h *ImageMarketHandler) ListMarket(c *gin.Context) {
-	pool := tasks.DefaultStoragePoolResolver()
+	pool := imagePool
 	items := make([]gin.H, 0, len(marketCatalog))
 	for _, it := range marketCatalog {
 		fileName, _ := tasks.FileNameFromURL(it.URL)
@@ -130,7 +130,7 @@ func (h *ImageMarketHandler) ListMarket(c *gin.Context) {
 }
 
 // Download 提交云镜像下载任务（仅 admin：images 组是 OperatorMiddleware，operator 可达，
-// 故 handler 内二次收口）。body: {key*, pool?}；pool 缺省走系统设置 default_storage_pool，
+// 故 handler 内二次收口）。body: {key*, pool?}；pool 缺省落镜像库池 default，
 // 不存在的池在任务提交前 400 挡住（免得任务起跑后才失败）。
 // 单源直下（2026-10 砍掉 cn/official 双源参数）：URL 即清单标注的唯一来源。
 func (h *ImageMarketHandler) Download(c *gin.Context) {
@@ -158,7 +158,7 @@ func (h *ImageMarketHandler) Download(c *gin.Context) {
 	}
 	pool := req.Pool
 	if pool == "" {
-		pool = tasks.DefaultStoragePoolResolver()
+		pool = imagePool
 	}
 	if _, err := h.Virt.GetPoolPath(pool); err != nil {
 		ErrorWithMessage(c, http.StatusBadRequest, "存储池 "+pool+" 不存在或不可用", err)

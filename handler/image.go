@@ -31,10 +31,14 @@ func NewImageHandler(db *gorm.DB, taskMgr *tasks.Manager) *ImageHandler {
 	return &ImageHandler{DB: db, Virt: virt.New(), Tasks: taskMgr}
 }
 
-// imagePool 镜像统一存储池名：上传文件落在该池目录下，即可被 libvirt 池识别。
-const imagePool = "img"
+// imagePool 镜像库存储池名：上传的磁盘镜像与镜像市场 qcow2 落地于此，与模板基盘同池（base）。
+// 落在该池目录下即被 libvirt 目录池扫描识别，与手动 virsh vol-create 同口径。
+const imagePool = "base"
 
-// ensureImagePool 确保镜像池存在：不存在时按 ImageDir 自动建目录池（镜像统一存 img 池）。
+// isoPool 安装介质存储池名：官方安装 ISO 落此池（与磁盘镜像库分离，存储页按池角色标注）。
+const isoPool = "iso"
+
+// ensureImagePool 确保镜像池存在：不存在时按 ImageDir 自动建目录池（镜像统一存 base 池）。
 func (h *ImageHandler) ensureImagePool() (string, error) {
 	pools, err := h.Virt.ListPools()
 	if err != nil {
@@ -401,8 +405,8 @@ func (h *ImageHandler) imageRefs(path string) (string, error) {
 			}
 		}
 	}
-	// backing 依赖：扫描常见池（base/images/exten），父盘路径命中即视为在用
-	for _, pool := range []string{"base", "images", "exten", imagePool} {
+	// backing 依赖：扫描常见池（base/images/exten；镜像库池即 base，已在列）
+	for _, pool := range []string{"base", "images", "exten"} {
 		backing, err := h.Virt.ListBackingRefs(pool)
 		if err != nil {
 			continue

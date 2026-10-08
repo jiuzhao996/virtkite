@@ -5,22 +5,20 @@
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- Tab 1 云镜像/模板盘：登记列表（创建 VM「云镜像」方式的数据源） -->
       <el-tab-pane label="云镜像 / 模板盘" name="images">
-        <!-- 存储池容量区（质感专项）：与镜像同源存储，单色比例条（>90% 红 / >75% 橙 / 其余品牌青绿），
-             与 VmList 状态堆叠条同款视觉；数据随 listStoragePools 一次拉取，拉取失败或无激活池时整块
-             静默隐藏（不打扰镜像主功能）；后端 listImages 仅支持 is_template 过滤、无按池筛选能力，
-             故池行不做点击联动（核实结论，见页脚注释） -->
-        <div v-if="poolCaps.length" class="pool-caps">
+        <!-- 存储容量区：dir 池 capacity 是文件系统级的，同盘多池口径完全相同，
+             故只画一条总容量条（取容量最大的池），不再逐池重复同一条进度条 -->
+        <div v-if="poolCap" class="pool-caps">
           <div class="pool-caps-head">
-            <span class="pool-caps-title">存储池容量</span>
-            <span class="pool-caps-sub">镜像与 ISO 所在池的已用比例</span>
+            <span class="pool-caps-title">存储容量</span>
+            <span class="pool-caps-sub">全部 {{ poolCaps.length }} 个存储池共用同一文件系统，合并显示</span>
           </div>
-          <div v-for="p in poolCaps" :key="p.name" class="pool-cap-row">
-            <span class="pool-cap-name" :title="p.name">{{ p.name }}</span>
+          <div class="pool-cap-row">
+            <span class="pool-cap-name">总计</span>
             <div class="pool-cap-track">
-              <div class="pool-cap-fill" :style="{ width: p.pct + '%', background: capColor(p.pct) }" />
+              <div class="pool-cap-fill" :style="{ width: poolCap.pct + '%', background: capColor(poolCap.pct) }" />
             </div>
-            <span class="pool-cap-text mono">已用 {{ fmtSizeBytes(p.used) }} / {{ fmtSizeBytes(p.total) }}</span>
-            <span class="pool-cap-pct mono" :style="{ color: capColor(p.pct) }">{{ p.pct }}%</span>
+            <span class="pool-cap-text mono">已用 {{ fmtSizeBytes(poolCap.used) }} / {{ fmtSizeBytes(poolCap.total) }}</span>
+            <span class="pool-cap-pct mono" :style="{ color: capColor(poolCap.pct) }">{{ poolCap.pct }}%</span>
           </div>
         </div>
         <el-card shadow="never">
@@ -274,7 +272,7 @@ const uploading = ref(false)
 const uploadPct = ref(0)
 const file = ref(null)
 const uploadRef = ref(null)
-const poolOptions = ref(['img'])
+const poolOptions = ref(['base'])
 const cloneDialog = ref(false)
 const cloneImg = ref({})
 const cloning = ref(false)
@@ -282,7 +280,7 @@ const isoItems = ref([])
 const isoLoading = ref(false)
 const isoLoaded = ref(false)
 
-const form = reactive({ name: '', os_version: '', is_template: false, pool: 'img' })
+const form = reactive({ name: '', os_version: '', is_template: false, pool: 'base' })
 const cloneForm = reactive({ name: '', vcpu: 1, memory_mb: 1024, network: 'default' })
 
 const templateCount = computed(() => items.value.filter((i) => i.is_template).length)
@@ -358,6 +356,11 @@ function onTabChange(name) {
 // 与上传下拉共用 listStoragePools 一次响应（loadPools 内双消费）；仅收激活池
 // （capacity/allocation 为 libvirt 实时口径，未激活池拿不到值）；拉取失败 → 空数组 → 区块隐藏
 const poolCaps = ref([])
+// 同盘多池容量相同 → 取容量最大的那条作为「总容量」展示（只画一条，不再逐池重复）
+const poolCap = computed(() => {
+  if (!poolCaps.value.length) return null
+  return poolCaps.value.reduce((a, b) => (b.total > a.total ? b : a))
+})
 // 比例条配色：>90% 红 / >75% 橙 / 其余品牌青绿（与 VmList 状态条同源语义色，两主题各有限定值）
 function capColor(pct) {
   if (pct > 90) return 'var(--color-danger)'
@@ -371,7 +374,7 @@ async function loadPools() {
     const res = await api.listStoragePools()
     const list = (res.data && res.data.items) || []
     const names = list.map((p) => p.name)
-    poolOptions.value = [...new Set(['img', ...names])]
+    poolOptions.value = [...new Set(['base', ...names])]
     // 已用口径与存储池页一致：allocation/capacity（StorageList.vue poolPct 同式），钳制 0~100；
     // 按已用比例降序，「快满的池」排前面更符合阅读顺序
     poolCaps.value = list
@@ -384,13 +387,13 @@ async function loadPools() {
       }))
       .sort((a, b) => b.pct - a.pct)
   } catch (e) {
-    poolOptions.value = ['img']
+    poolOptions.value = ['base']
     poolCaps.value = [] // 容量区静默隐藏，不打扰镜像主功能
   }
 }
 
 function openUpload() {
-  Object.assign(form, { name: '', os_version: '', is_template: false, pool: 'img' })
+  Object.assign(form, { name: '', os_version: '', is_template: false, pool: 'base' })
   file.value = null
   uploadPct.value = 0
   // 清空上传组件遗留的文件列表，避免上次上传的文件残留（limit=1 下无法再选新文件）
@@ -411,7 +414,7 @@ async function upload() {
   fd.append('file', file.value)
   fd.append('name', form.name)
   fd.append('os_version', form.os_version)
-  fd.append('pool', form.pool || 'img')
+  fd.append('pool', form.pool || 'base')
   fd.append('is_template', form.is_template ? 'true' : 'false')
   uploading.value = true
   uploadPct.value = 0

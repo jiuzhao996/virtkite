@@ -91,9 +91,9 @@ func isoItemByKey(key string) (isoMarketItem, bool) {
 	return isoMarketItem{}, false
 }
 
-// ListMarketISO 返回官方安装 ISO 清单（标注默认下载池）。
+// ListMarketISO 返回官方安装 ISO 清单（标注默认下载池 = iso 安装介质池）。
 func (h *ImageMarketHandler) ListMarketISO(c *gin.Context) {
-	pool := tasks.DefaultStoragePoolResolver()
+	pool := isoPool
 	items := make([]gin.H, 0, len(isoMarketCatalog))
 	for _, it := range isoMarketCatalog {
 		fileName, _ := tasks.FileNameFromURL(it.URL)
@@ -138,7 +138,7 @@ func (h *ImageMarketHandler) DownloadISO(c *gin.Context) {
 	}
 	pool := req.Pool
 	if pool == "" {
-		pool = tasks.DefaultStoragePoolResolver()
+		pool = isoPool
 	}
 	payload := map[string]interface{}{
 		"url":  item.URL,
