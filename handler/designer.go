@@ -26,7 +26,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
-	"github.com/jiuzhao/vmops/service/dbx"
 	"github.com/jiuzhao/vmops/service/dockerx"
 	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/tasks"
@@ -670,7 +669,8 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 				return
 			}
 		}
-		for _, n := range plan.Nodes {
+		// 依赖排序后逐节点落地：net 先建（VM/容器要接入），vm 再建，container 最后。
+		for _, n := range orderNodes(plan.Nodes, plan.Links) {
 			switch n.Kind {
 			case "container":
 				st.Steps = append(st.Steps, "部署栈 "+n.Ref+"（"+n.Name+"）…")
@@ -694,7 +694,7 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 				}
 				st.Steps = append(st.Steps, "✓ "+n.Ref+" 完成（"+meta.Desc+"）")
 			case "vm":
-				vmID, err := h.provisionVM(n, st)
+				vmID, err := h.provisionVM(&plan, n, st)
 				if err != nil {
 					st.Status = "failed"
 					st.Error = "VM " + n.Name + " 落地失败：" + err.Error()
@@ -770,11 +770,100 @@ func netGatewayFromCIDR(s string) string {
 	return next.String()
 }
 
-// provisionVM VM 节点落地（P2B v2）：create_vm 建机（云镜像 + cloud-init 注入
-// 设计器给的 SSH 口令）→ 轮询任务至成功 → 自动开机 → 等 IP（自查 DHCP 租约）→
-// app_install 逐个装应用。create_vm / app_install 均复用既有 executor（与页面
-// 操作同一套链路），本函数只做编排。
-func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error) {
+// orderNodes 落地顺序：按 plan.Links 做拓扑排序（to 依赖 from），入度 0 中按 kind 优先级
+// net(0) → vm(1) → container(2) 挑选；有环或链接不足时退化为 kind 优先级稳定排序。
+// 目标：net 先建（VM/容器要接入），vm 先于依赖它的 container。
+func orderNodes(nodes []dsgNode, links []dsgLink) []dsgNode {
+	priority := func(kind string) int {
+		switch kind {
+		case "net":
+			return 0
+		case "vm":
+			return 1
+		case "container":
+			return 2
+		default:
+			return 3
+		}
+	}
+	ids := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		ids[n.ID] = true
+	}
+	// dep[to] = 依赖的 from 集合；indeg[to] = 未满足的依赖数
+	dep := make(map[string][]string)
+	indeg := make(map[string]int, len(nodes))
+	for _, n := range nodes {
+		indeg[n.ID] = 0
+	}
+	for _, l := range links {
+		if l.From == l.To || !ids[l.From] || !ids[l.To] {
+			continue
+		}
+		dep[l.To] = append(dep[l.To], l.From)
+		indeg[l.To]++
+	}
+	remaining := append([]dsgNode(nil), nodes...)
+	out := make([]dsgNode, 0, len(nodes))
+	for len(remaining) > 0 {
+		best := -1
+		for i, n := range remaining {
+			if indeg[n.ID] == 0 && (best == -1 || priority(n.Kind) < priority(remaining[best].Kind)) {
+				best = i
+			}
+		}
+		if best == -1 {
+			// 有环：剩余节点退化为 kind 优先级稳定排序后收尾
+			rest := append([]dsgNode(nil), remaining...)
+			sort.SliceStable(rest, func(i, j int) bool { return priority(rest[i].Kind) < priority(rest[j].Kind) })
+			out = append(out, rest...)
+			break
+		}
+		chosen := remaining[best]
+		out = append(out, chosen)
+		remaining = append(remaining[:best], remaining[best+1:]...)
+		for _, n := range remaining {
+			for _, f := range dep[n.ID] {
+				if f == chosen.ID {
+					indeg[n.ID]--
+				}
+			}
+		}
+	}
+	return out
+}
+
+// resolveVMNetwork 找与本 VM 相连的 net 节点，返回其节点名（= libvirt 网络名，provisionNet 即按此建网）；
+// 无 net 连线时回落 "default"。
+func resolveVMNetwork(p *dsgPlan, n dsgNode) string {
+	if p == nil {
+		return "default"
+	}
+	netName := make(map[string]string)
+	for _, nd := range p.Nodes {
+		if nd.Kind == "net" && nd.Name != "" {
+			netName[nd.ID] = nd.Name
+		}
+	}
+	for _, l := range p.Links {
+		if l.From == n.ID {
+			if name, ok := netName[l.To]; ok {
+				return name
+			}
+		}
+		if l.To == n.ID {
+			if name, ok := netName[l.From]; ok {
+				return name
+			}
+		}
+	}
+	return "default"
+}
+
+// provisionVM VM 节点落地：create_vm 建机（云镜像 + cloud-init + 设计网络 + provision 块）→
+// 由 create_vm executor 统一完成「开机 → 等 IP → 托管凭据」→ 本函数再逐个装应用 / 跑 playbook。
+// create_vm / app_install / ansible_run 均复用既有 executor（与页面操作同一套链路），本函数只做编排。
+func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState) (uint, error) {
 	// 前置校验：云镜像必须存在于镜像库（images 表按 id）
 	var img model.Image
 	if err := h.DB.First(&img, n.Ref).Error; err != nil {
@@ -797,17 +886,26 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 		sshUser = "root"
 	}
 
-	// 1) 提交 create_vm（payload 与镜像管理页「基于云镜像创建」同构：source_image_id 引用不拷贝）
+	// 1) 提交 create_vm（payload 与镜像管理页「基于云镜像创建」同构：source_image_id 引用不拷贝）。
+	// 网络接画布上与本 VM 相连的 net 节点（无连线回落 default）；口令以密文进 provision 块，
+	// 由 executor 解密后做 cloud-init seed 并托管到 vm_credentials——payload/日志不留明文。
 	var host model.Host
 	if err := h.DB.First(&host).Error; err != nil {
 		return 0, fmt.Errorf("请先登记宿主机")
 	}
-	// cloud_init 嵌套结构（vm_create executor 按此解析）：注入设计器给的
-	// SSH 用户/口令——这是 VM 节点能被 app_install SSH 到的前提。
-	// 过底线校验（换行可注入 cloud-config；节点名/口令来自画布自由输入）
 	ciSpec := &virt.CloudInitSpec{Hostname: n.Name, User: sshUser, Password: n.SSHSecret}
 	if verr := validateCloudInitText(ciSpec); verr != nil {
 		return 0, fmt.Errorf("VM 节点 %s 的 cloud-init 配置不合法: %w", n.Name, verr)
+	}
+	netName := resolveVMNetwork(p, n)
+	prov := map[string]interface{}{"start": true, "wait_ip": true, "ssh_user": sshUser}
+	if n.SSHSecret != "" {
+		cipherB64, saltHex, err := secretbox.SealWithMaster(h.VMCred.MasterSecret, n.SSHSecret)
+		if err != nil {
+			return 0, fmt.Errorf("SSH 口令加密失败: %w", err)
+		}
+		prov["password_enc"] = cipherB64
+		prov["salt"] = saltHex
 	}
 	createPayload := map[string]interface{}{
 		"name":         n.Name,
@@ -816,20 +914,19 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 		"vcpu":         vcpu,
 		"memory_mb":    mem,
 		"disks":        []map[string]interface{}{{"source_image_id": img.ID, "create_gb": int(img.SizeGB)}},
-		"interfaces":   []map[string]interface{}{{"type": "network", "source": "default", "model": "virtio"}},
-		"network":      "default",
+		"interfaces":   []map[string]interface{}{{"type": "network", "source": netName, "model": "virtio"}},
+		"network":      netName,
 		"cloud_init":   ciSpec,
+		"provision":    prov,
 	}
 	userID, username := h.taskUser()
-	if pb, perr := json.Marshal(createPayload); perr == nil {
-		log.Printf("[designer] create_vm payload: %s", string(pb))
-	}
 	task, err := h.Tasks.Submit("create_vm", "设计器创建 VM "+n.Name, createPayload, userID, username, n.Name, nil)
 	if err != nil {
 		return 0, fmt.Errorf("提交建机任务失败: %w", err)
 	}
-	st.Steps = append(st.Steps, "建机任务已提交（task="+strconv.FormatUint(uint64(task.ID), 10)+"），等待 provision…")
-	result, err := h.waitTask(task.ID, 8*time.Minute)
+	st.Steps = append(st.Steps, "建机任务已提交（task="+strconv.FormatUint(uint64(task.ID), 10)+"），等待建机+初始化…")
+	// 建机任务已含「等 IP」，窗口放宽到 12 分钟
+	result, err := h.waitTask(task.ID, 12*time.Minute)
 	if err != nil {
 		return 0, err
 	}
@@ -840,75 +937,18 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 	_ = json.Unmarshal([]byte(result), &res)
 	vmID := res.VMID
 	if vmID == 0 {
+		return 0, fmt.Errorf("建机任务未返回 vm_id")
+	}
+	var vm model.VM
+	if err := h.DB.First(&vm, vmID).Error; err != nil {
+		return 0, fmt.Errorf("读取虚拟机记录失败: %w", err)
+	}
+	st.Steps = append(st.Steps, "VM 运行中，IP="+vm.IP+"（凭据已自动托管）")
+	if vmID == 0 {
 		return 0, fmt.Errorf("建机任务成功但未返回 vm_id")
 	}
 
-	// 2) 自动开机（对应 virsh start <域名>）：create_vm 只 define 不 boot，
-	// 不开机则后面的等 IP 循环必然空转到超时
-	if err := h.Virt.StartDomain(n.Name); err != nil {
-		return vmID, fmt.Errorf("开机失败: %w", err)
-	}
-	dbx.PersistBestEffort(h.DB, "designer 开机回写状态", func() error {
-		return h.DB.Model(&model.VM{}).Where("id = ?", vmID).Update("status", model.VMStatusRunning).Error
-	})
-	st.Steps = append(st.Steps, "已开机，等待系统启动与 IP 分配…")
-
-	// 3) 等运行 + IP。IP 自给自足：vms.ip 平时靠列表/详情请求惰性回填（syncVMIPs），
-	// 设计器后台流程没人开页面，必须自己查 DHCP 租约按 MAC 匹配。
-	// 双窗口 + 域活性自愈（v3 遗留收口）：首次启动竞态（cloud-init seed 就绪时机/
-	// 磁盘链首次打开慢）可能让域中途停掉，DB 状态是我们乐观写入的反映不出来——
-	// 每轮用 GetDomainState 探活，域已停则自动再开机（最多 2 次），每窗 3 分钟。
-	var vm model.VM
-	restarts := 0
-	deadline := time.Now().Add(3 * time.Minute)
-	for time.Now().Before(deadline) {
-		if err := h.DB.First(&vm, vmID).Error; err != nil {
-			return 0, fmt.Errorf("VM 记录读取失败: %w", err)
-		}
-		if state, serr := h.Virt.GetDomainState(n.Name); serr == nil && state == virt.StatusShutOff && restarts < 2 {
-			restarts++
-			log.Printf("[designer] VM %s(%d) 域已停止（启动竞态），自动重启第 %d 次", n.Name, vmID, restarts)
-			st.Steps = append(st.Steps, "检测到域已停止（启动竞态），自动重启（第 "+strconv.Itoa(restarts)+" 次）…")
-			if serr := h.Virt.StartDomain(n.Name); serr != nil {
-				return vmID, fmt.Errorf("自动重启失败: %w", serr)
-			}
-			deadline = time.Now().Add(3 * time.Minute)
-		}
-		if vm.Status == model.VMStatusRunning && vm.IP == "" && vm.MACAddress != "" {
-			if ip := h.leaseIPFor(vm.MACAddress); ip != "" {
-				if err := h.DB.Model(&vm).Update("ip", ip).Error; err != nil {
-					log.Printf("[designer] 回填 %s IP=%s 失败: %v", vm.Name, ip, err)
-				}
-				vm.IP = ip
-			}
-		}
-		if vm.Status == model.VMStatusRunning && vm.IP != "" {
-			break
-		}
-		if vm.Status == model.VMStatusError {
-			return 0, fmt.Errorf("VM 进入 error 状态")
-		}
-		time.Sleep(5 * time.Second)
-	}
-	if vm.IP == "" {
-		return 0, fmt.Errorf("VM 未获得 IP（DHCP 超时，已自动重启 %d 次）", restarts)
-	}
-	st.Steps = append(st.Steps, "VM 运行中，IP="+vm.IP)
-
-	// 3) 口令自动托管（P4-S3）：cloud-init 的口令如果不落 vm_credentials，后续
-	// ansible_run（凭据通道）与凭据类功能（终端免密/文件管理）全部不可用
-	if n.SSHSecret != "" {
-		if err := h.VMCred.UpsertForVM(vmID, sshUser, n.SSHSecret); err != nil {
-			// 托管失败不终止落地：应用安装走显式 password_enc 通道不受影响，但
-			// playbook/凭据功能需要用户手工补（留痕 + 步骤可见）
-			log.Printf("[designer] 警告: VM %s(%d) 凭据托管失败: %v", n.Name, vmID, err)
-			st.Steps = append(st.Steps, "⚠ 凭据托管失败（playbook/凭据功能需手工补录）："+err.Error())
-		} else {
-			st.Steps = append(st.Steps, "✓ SSH 口令已自动托管（凭据功能可用）")
-		}
-	}
-
-	// 4) app_install 逐个装（口令边界就地加密；凭据不落明文）
+	// 2) app_install 逐个装（口令边界就地加密；凭据不落明文）
 	for _, appID := range n.Apps {
 		cipherB64, saltHex, err := secretbox.SealWithMaster(h.VMCred.MasterSecret, n.SSHSecret)
 		if err != nil {
@@ -956,23 +996,6 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 		st.Steps = append(st.Steps, "✓ "+pbID+" 完成")
 	}
 	return vmID, nil
-}
-
-// leaseIPFor 从 libvirt DHCP 租约按 MAC 找 IP（与 VMHandler.syncVMIPs 同源；
-// 设计器后台流程专用——IP 回填不能依赖有人正开着虚拟机列表页）。
-func (h *DesignerHandler) leaseIPFor(mac string) string {
-	leases, err := h.Virt.ListDHCPLeases()
-	if err != nil {
-		log.Printf("[designer] 查询 DHCP 租约失败: %v", err)
-		return ""
-	}
-	mac = strings.ToLower(mac)
-	for _, it := range leases {
-		if strings.ToLower(it.MAC) == mac {
-			return it.IP
-		}
-	}
-	return ""
 }
 
 // waitTask 轮询任务至终态：成功返回 result JSON（如 {"vm_id":N}）；失败/超时返回 error。

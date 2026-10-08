@@ -59,9 +59,18 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	if err := checkExecContext(ctx); err != nil {
 		return err
 	}
-	targets, err := uintSliceParam(ctx.Payload, "targets")
-	if err != nil || len(targets) == 0 {
-		return errors.New("缺少目标虚拟机（targets）")
+	// 目标来源：显式 targets（vm id 列表）与可选 group_id（主机组）合并——仍只收 vm_id，
+	// 组在服务端解析为成员 id（白名单结构性成立，裸 IP 无入口）；组内成员动态生效。
+	targets, _ := uintSliceParam(ctx.Payload, "targets")
+	if groupID, ok := intParam(ctx.Payload, "group_id"); ok && groupID > 0 {
+		gids, gerr := resolveHostGroupVMIDs(ctx, uint(groupID))
+		if gerr != nil {
+			return gerr
+		}
+		targets = mergeUniqueUint(targets, gids)
+	}
+	if len(targets) == 0 {
+		return errors.New("缺少目标虚拟机（targets 或 group_id）")
 	}
 	playbook, _ := strParam(ctx.Payload, "playbook")
 	module, _ := strParam(ctx.Payload, "module")
@@ -145,6 +154,7 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 			keyFile = kf
 		}
 	}
+	vmHostName := make(map[uint]string, len(vms)) // vm id → inventory 主机名（按组填充分组段）
 	for _, vm := range vms {
 		name := vm.Name
 		nameTaken[name]++
@@ -152,6 +162,7 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 			// VM 名理论唯一，防御性去重（inventory 主机名必须唯一）
 			name = fmt.Sprintf("%s-%d", vm.Name, vm.ID)
 		}
+		vmHostName[vm.ID] = name
 		if vm.AnsibleReady && keyFile != "" {
 			user := "root"
 			if cred, ok := credByVM[vm.ID]; ok && cred.User != "" {
@@ -175,7 +186,7 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	if err != nil {
 		return fmt.Errorf("ansible 引擎不可用: %w", err)
 	}
-	inv, err := ansible.BuildInventory(runDir, hosts, nil)
+	inv, err := ansible.BuildInventory(runDir, hosts, buildAnsibleGroups(ctx, vms, vmHostName))
 	if err != nil {
 		return err
 	}
@@ -270,6 +281,80 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	raw, _ := json.Marshal(result)
 	ctx.Task.Result = string(raw)
 	return nil
+}
+
+// resolveHostGroupVMIDs 解析主机组成员为 VM id 列表（VMIDs 是 JSON 文本数组）。
+func resolveHostGroupVMIDs(ctx *ExecContext, groupID uint) ([]uint, error) {
+	var g model.HostGroup
+	if err := ctx.DB.First(&g, groupID).Error; err != nil {
+		return nil, fmt.Errorf("主机组不存在: %w", err)
+	}
+	if strings.TrimSpace(g.VMIDs) == "" {
+		return nil, nil
+	}
+	var ids []uint
+	if err := json.Unmarshal([]byte(g.VMIDs), &ids); err != nil {
+		return nil, fmt.Errorf("主机组「%s」成员数据损坏: %w", g.Name, err)
+	}
+	return ids, nil
+}
+
+// mergeUniqueUint 合并两个 id 切片并去重（保持 a 在前、b 在后的稳定顺序）。
+func mergeUniqueUint(a, b []uint) []uint {
+	seen := make(map[uint]bool, len(a)+len(b))
+	out := make([]uint, 0, len(a)+len(b))
+	for _, x := range a {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	for _, x := range b {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// buildAnsibleGroups 生成 inventory 分组段（组名 → 主机名列表）：把本次目标 VM 按其所属
+// 主机组归类，供 playbook 用 `hosts: <组名>` 指定目标。只含本次目标里的成员（BuildInventory
+// 另有防御性过滤），坏组跳过不阻断。
+func buildAnsibleGroups(ctx *ExecContext, vms []model.VM, nameByVM map[uint]string) map[string][]string {
+	var groups []model.HostGroup
+	if err := ctx.DB.Find(&groups).Error; err != nil || len(groups) == 0 {
+		return nil
+	}
+	targetSet := make(map[uint]bool, len(vms))
+	for _, vm := range vms {
+		targetSet[vm.ID] = true
+	}
+	out := make(map[string][]string)
+	for _, g := range groups {
+		if strings.TrimSpace(g.VMIDs) == "" {
+			continue
+		}
+		var ids []uint
+		if err := json.Unmarshal([]byte(g.VMIDs), &ids); err != nil {
+			continue
+		}
+		members := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if targetSet[id] {
+				if hn, ok := nameByVM[id]; ok {
+					members = append(members, hn)
+				}
+			}
+		}
+		if len(members) > 0 {
+			out[g.Name] = members
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // uintSliceParam 取正整数切片参数（targets 等；容忍 json 反序列化出的 float64）。

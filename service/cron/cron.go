@@ -884,8 +884,9 @@ func (s *Scheduler) pruneVMSnapshots(vmName string, keep int) int {
 // 输出落 BackupDir/vmops-YYYYMMDD-HHMM.sql，并只保留最近 keep（st.Keep，<=0 视为 7）份。
 // 返回成果摘要供执行历史 output 使用。
 // runAnsiblePlaybook 定时执行 playbook（P4-S3）：params 形如
-// {"playbook":"sysctl-tuning","targets":[89,90]}。转 ansible_run 异步任务执行
-// （凭据/inventory/输出全在任务管线），这里提交后轮询终态并汇总 RECAP 进执行历史。
+// {"playbook":"sysctl-tuning","targets":[89,90]} 或 {"playbook":"...","group_id":3}
+// （group_id 走主机组，成员动态生效——改组即生效，不再存字面 targets）。
+// 转 ansible_run 异步任务执行（凭据/inventory/输出全在任务管线），提交后轮询终态并汇总 RECAP 进执行历史。
 // 调度与引擎各司其职：cron 回答「什么时候跑」，ansible_run 回答「怎么跑」。
 func (s *Scheduler) runAnsiblePlaybook(st model.ScheduledTask) (string, error) {
 	if s.TaskMgr == nil {
@@ -894,19 +895,26 @@ func (s *Scheduler) runAnsiblePlaybook(st model.ScheduledTask) (string, error) {
 	var params struct {
 		Playbook string `json:"playbook"`
 		Targets  []uint `json:"targets"`
+		GroupID  uint   `json:"group_id"`
 	}
 	if err := json.Unmarshal([]byte(st.Params), &params); err != nil {
 		return "", fmt.Errorf("参数解析失败: %w", err)
 	}
-	if params.Playbook == "" || len(params.Targets) == 0 {
-		return "", fmt.Errorf("参数不完整（需要 playbook 与 targets）")
+	if params.Playbook == "" || (len(params.Targets) == 0 && params.GroupID == 0) {
+		return "", fmt.Errorf("参数不完整（需要 playbook 与 targets 或 group_id）")
+	}
+	payload := map[string]interface{}{"playbook": params.Playbook}
+	if len(params.Targets) > 0 {
+		payload["targets"] = params.Targets
+	}
+	if params.GroupID > 0 {
+		payload["group_id"] = params.GroupID
 	}
 
 	username := "cron"
 	task, err := s.TaskMgr.Submit("ansible_run",
-		fmt.Sprintf("计划任务 %s（playbook %s → %d 台）", st.Name, params.Playbook, len(params.Targets)),
-		map[string]interface{}{"playbook": params.Playbook, "targets": params.Targets},
-		nil, username, "", nil)
+		fmt.Sprintf("计划任务 %s（playbook %s）", st.Name, params.Playbook),
+		payload, nil, username, "", nil)
 	if err != nil {
 		return "", fmt.Errorf("提交 ansible_run 任务失败: %w", err)
 	}

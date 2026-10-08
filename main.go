@@ -223,7 +223,7 @@ func main() {
 
 	// 异步任务系统与控制台会话注册表（handler 依赖由 Deps 统一组装下发）
 	taskMgr := tasks.NewManager(db)
-	tasks.RegisterVMTasks(taskMgr)
+	tasks.RegisterVMTasks(taskMgr, handler.CredentialMasterSecret())
 	// 主密钥与凭据托管同源（handler.NewVMCredentialHandler）：app_install 靠它解密服务端 SSH 凭据，
 	// 二者必须一致，否则「保存凭据」与「安装取凭据」会各自用不同密钥而互相解不开
 	tasks.RegisterAppTasks(taskMgr, handler.CredentialMasterSecret())

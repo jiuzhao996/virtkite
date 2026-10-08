@@ -94,6 +94,19 @@ func intParam(payload map[string]interface{}, key string) (int, bool) {
 	return int(f), true
 }
 
+// boolParam 从 payload 安全取布尔（JSON 反序列化为 bool；缺失/类型不符返回 false）。
+func boolParam(payload map[string]interface{}, key string) (bool, bool) {
+	if payload == nil {
+		return false, false
+	}
+	v, ok := payload[key]
+	if !ok || v == nil {
+		return false, false
+	}
+	b, ok := v.(bool)
+	return b, ok
+}
+
 // firstTaskHost 返回平台登记的首台宿主机（默认纳管目标，copy 自 handler firstHost）。
 func firstTaskHost(ctx *ExecContext) (*model.Host, error) {
 	var host model.Host
@@ -149,11 +162,13 @@ func setTaskResultVM(ctx *ExecContext, result map[string]interface{}, vmID uint,
 }
 
 // RegisterVMTasks 注册 6 个 VM 任务 executor（契约 service/tasks/vm_tasks.go，T2 产出）。
-func RegisterVMTasks(m *Manager) {
+// masterSecret 为凭据主密钥（与 RegisterAppTasks/RegisterAnsibleTasks 同源）：create_vm 的
+// 可选 provision 块据此解密 SSH 口令做凭据托管；缺省不传则 provision 只能开机/等 IP。
+func RegisterVMTasks(m *Manager, masterSecret string) {
 	if m == nil {
 		return
 	}
-	m.Register("create_vm", execCreateVM)
+	m.Register("create_vm", func(ctx *ExecContext) error { return execCreateVM(ctx, masterSecret) })
 	m.Register("delete_vm", execDeleteVM)
 	m.Register("clone_vm", execCloneVM)
 	m.Register("clone_image_vm", execCloneImageVM)

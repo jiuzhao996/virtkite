@@ -165,7 +165,19 @@
           </el-select>
           <div class="field-tip">执行走 ansible_run 任务管线（凭据/输出/RECAP 全在任务中心可查）</div>
         </el-form-item>
-        <el-form-item v-if="form.action === 'ansible_playbook'" label="目标虚拟机" required>
+        <el-form-item v-if="form.action === 'ansible_playbook'" label="目标方式">
+          <el-radio-group v-model="form.pb_target_mode">
+            <el-radio-button value="vms">按虚拟机</el-radio-button>
+            <el-radio-button value="group">按主机组（动态）</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-else-if="form.action === 'ansible_playbook' && form.pb_target_mode === 'group'" label="主机组" required>
+          <el-select v-model="form.pb_group_id" placeholder="选择主机组" style="width: 100%">
+            <el-option v-for="g in hostGroups" :key="g.id" :label="g.name" :value="g.id" />
+          </el-select>
+          <div class="field-tip">成员在每次触发时动态解析，改组即生效（不存字面 targets）</div>
+        </el-form-item>
+        <el-form-item v-else-if="form.action === 'ansible_playbook'" label="目标虚拟机" required>
           <el-select v-model="form.pb_targets" multiple filterable placeholder="选择运行中的虚拟机（可多选）" style="width: 100%" v-loading="vmsLoading">
             <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vmName(vm)" :value="vm.id" />
           </el-select>
@@ -506,7 +518,7 @@ function applyPreset(expr) {
 function openCreate() {
   editingId.value = null
   preset.value = ''
-  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, pb_playbook: '', pb_targets: [], keep: DEFAULT_KEEP, grace_minutes: DEFAULT_GRACE, retry_count: 0, retry_interval: DEFAULT_RETRY_INTERVAL, on_success_task_id: null, on_failure_task_id: null, enabled: true }
+  form.value = { name: '', cron_expr: '', action: 'vm_snapshot', vm_id: null, pb_playbook: '', pb_targets: [], pb_target_mode: 'vms', pb_group_id: null, keep: DEFAULT_KEEP, grace_minutes: DEFAULT_GRACE, retry_count: 0, retry_interval: DEFAULT_RETRY_INTERVAL, on_success_task_id: null, on_failure_task_id: null, enabled: true }
   dialog.value = true
   if (vms.value.length === 0) loadVMs()
   if (playbooks.value.length === 0) loadPlaybooks()
@@ -516,11 +528,11 @@ function openEdit(row) {
   editingId.value = row.id
   preset.value = ''
   let vmId = null
-  let pbParams = { playbook: '', targets: [] }
+  let pbParams = { playbook: '', targets: [], group_id: null }
   try {
     const obj = JSON.parse(row.params || '{}')
     if (obj && obj.vm_id != null) vmId = obj.vm_id
-    if (obj && obj.playbook) pbParams = { playbook: obj.playbook, targets: obj.targets || [] }
+    if (obj && obj.playbook) pbParams = { playbook: obj.playbook, targets: obj.targets || [], group_id: obj.group_id || null }
   } catch (e) {
     // 旧数据 params 非法时按空处理，保存时会重新生成
   }
@@ -531,6 +543,8 @@ function openEdit(row) {
     vm_id: vmId,
     pb_playbook: pbParams.playbook,
     pb_targets: pbParams.targets,
+    pb_target_mode: pbParams.group_id ? 'group' : 'vms',
+    pb_group_id: pbParams.group_id,
     keep: Number(row.keep) || DEFAULT_KEEP,
     grace_minutes: row.grace_minutes == null ? DEFAULT_GRACE : Number(row.grace_minutes),
     retry_count: Number(row.retry_count) || 0,
@@ -552,7 +566,11 @@ async function save() {
   }
   if (form.value.action === 'ansible_playbook') {
     if (!form.value.pb_playbook) return ElMessage.warning('请选择 playbook')
-    if (!form.value.pb_targets.length) return ElMessage.warning('请选择目标虚拟机')
+    if (form.value.pb_target_mode === 'group') {
+      if (!form.value.pb_group_id) return ElMessage.warning('请选择主机组')
+    } else if (!form.value.pb_targets.length) {
+      return ElMessage.warning('请选择目标虚拟机')
+    }
   }
   if (!form.value.keep || form.value.keep < 1) {
     return ElMessage.warning('保留份数必须是 1-365 的整数')
@@ -562,7 +580,11 @@ async function save() {
   const params = form.value.action === 'vm_snapshot'
     ? JSON.stringify({ vm_id: form.value.vm_id })
     : form.value.action === 'ansible_playbook'
-      ? JSON.stringify({ playbook: form.value.pb_playbook, targets: form.value.pb_targets })
+      ? JSON.stringify(
+          form.value.pb_target_mode === 'group'
+            ? { playbook: form.value.pb_playbook, group_id: form.value.pb_group_id }
+            : { playbook: form.value.pb_playbook, targets: form.value.pb_targets }
+        )
       : form.value.action === 'container_healthcheck'
         ? JSON.stringify({ notify: true })
         : '{}'

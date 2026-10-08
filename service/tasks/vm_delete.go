@@ -257,6 +257,15 @@ func execDeleteVM(ctx *ExecContext) error {
 	if err := ctx.DB.Where("vm_id = ?", vm.ID).Delete(&model.VMGroupGrant{}).Error; err != nil {
 		log.Printf("[tasks] 回收组授权失败（VM 已删，授权悬挂）vm=%s err=%v", vm.Name, err)
 	}
+	// 托管凭据随资产消亡：否则成为不可达孤儿（vm_credentials 无外键）
+	if err := ctx.DB.Where("vm_id = ?", vm.ID).Delete(&model.VMCredential{}).Error; err != nil {
+		log.Printf("[tasks] 清理托管凭据失败（VM 已删，凭据成孤儿）vm=%s err=%v", vm.Name, err)
+	}
+	// 主机组成员同步剔除该 VM（host_groups.VMIDs 是 JSON 文本、无外键，须显式清理，
+	// 否则按组批量执行会命中已删 VM 而失败）
+	if err := removeVMFromHostGroups(ctx, vm.ID); err != nil {
+		log.Printf("[tasks] 清理主机组成员失败（VM 已删，组内残留 id）vm=%s err=%v", vm.Name, err)
+	}
 
 	// 结果里带上被守卫保留的卷，让用户知道哪些共享文件刻意没删（前端任务详情可见）
 	result := map[string]interface{}{"vm": vm.Name}
@@ -264,5 +273,45 @@ func execDeleteVM(ctx *ExecContext) error {
 		result["kept_volumes"] = keptVols
 	}
 	setTaskResultVM(ctx, result, vm.ID, vm.Name)
+	return nil
+}
+
+// removeVMFromHostGroups 从所有主机组的成员列表（VMIDs，JSON 文本数组）中剔除指定 VM。
+// 组是轻量快捷入口（无外键），VM 删除后须显式清理，否则按组执行会命中已删 VM。
+// 脏数据（非 JSON 数组）跳过不阻断——清理尽力而为，不能因一个坏组卡死删除流程。
+func removeVMFromHostGroups(ctx *ExecContext, vmID uint) error {
+	var groups []model.HostGroup
+	if err := ctx.DB.Find(&groups).Error; err != nil {
+		return err
+	}
+	for _, g := range groups {
+		if strings.TrimSpace(g.VMIDs) == "" {
+			continue
+		}
+		var ids []uint
+		if err := json.Unmarshal([]byte(g.VMIDs), &ids); err != nil {
+			continue
+		}
+		kept := make([]uint, 0, len(ids))
+		changed := false
+		for _, id := range ids {
+			if id == vmID {
+				changed = true
+				continue
+			}
+			kept = append(kept, id)
+		}
+		if !changed {
+			continue
+		}
+		b, err := json.Marshal(kept)
+		if err != nil {
+			continue
+		}
+		// 用结构体 Updates（字段名 → 列名由 schema 映射），避开手写列名的命名陷阱
+		if err := ctx.DB.Model(&model.HostGroup{}).Where("id = ?", g.ID).Updates(model.HostGroup{VMIDs: string(b)}).Error; err != nil {
+			return err
+		}
+	}
 	return nil
 }

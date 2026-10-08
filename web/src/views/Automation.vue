@@ -37,7 +37,19 @@
               {{ hostGroups.length ? '管理' : '建主机组' }}
             </el-button>
           </div>
-            <el-form-item label="目标虚拟机">
+            <el-form-item label="目标方式">
+              <el-radio-group v-model="targetMode">
+                <el-radio-button value="vms">按虚拟机</el-radio-button>
+                <el-radio-button value="group">按主机组（动态）</el-radio-button>
+              </el-radio-group>
+              <span class="auto-hint">按组执行：成员在触发时动态解析，改组即生效</span>
+            </el-form-item>
+            <el-form-item v-if="targetMode === 'group'" label="主机组">
+              <el-select v-model="groupId" placeholder="选择主机组" style="width: 300px">
+                <el-option v-for="g in hostGroups" :key="g.id" :label="g.name + '（' + groupRunnableCount(g) + ' 台可执行）'" :value="g.id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item v-else label="目标虚拟机">
               <div class="auto-targets">
                 <el-select v-model="targets" multiple filterable placeholder="选择运行中的虚拟机（可多选）" style="flex: 1; min-width: 320px">
                   <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vmOptionLabel(vm)" :value="vm.id">
@@ -202,7 +214,18 @@
             {{ hostGroups.length ? '管理' : '建主机组' }}
         </el-button>
           </div>
-        <el-form-item label="目标虚拟机">
+        <el-form-item label="目标方式">
+          <el-radio-group v-model="targetMode">
+            <el-radio-button value="vms">按虚拟机</el-radio-button>
+            <el-radio-button value="group">按主机组（动态）</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="targetMode === 'group'" label="主机组">
+          <el-select v-model="groupId" placeholder="选择主机组" style="width: 300px">
+            <el-option v-for="g in hostGroups" :key="g.id" :label="g.name + '（' + groupRunnableCount(g) + ' 台可执行）'" :value="g.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-else label="目标虚拟机">
           <div class="auto-targets">
             <el-select v-model="targets" multiple filterable placeholder="选择运行中的虚拟机（可多选）" style="flex: 1">
               <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vmOptionLabel(vm)" :value="vm.id">
@@ -224,7 +247,7 @@
       </el-form>
       <template #footer>
         <el-button @click="runDialogOpen = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" :disabled="!targets.length" @click="runPlaybook">开始执行</el-button>
+        <el-button type="primary" :loading="submitting" :disabled="targetMode === 'group' ? !groupId : !targets.length" @click="runPlaybook">开始执行</el-button>
       </template>
     </el-dialog>
 
@@ -292,6 +315,9 @@ const engine = ref({})
 const statusLoading = ref(true)
 const vms = ref([])
 const targets = ref([])
+// 目标方式：vms=按选中的虚拟机；group=按主机组（后端在触发时动态解析成员，改组即生效）
+const targetMode = ref('vms')
+const groupId = ref(null)
 const module = ref('ping')
 const args = ref('')
 const submitting = ref(false)
@@ -534,11 +560,18 @@ function selectAll() {
 }
 
 async function runAdhoc() {
-  if (!targets.value.length) return ElMessage.warning('请选择目标虚拟机')
+  const payload = { module: module.value, args: args.value.trim() }
+  if (targetMode.value === 'group') {
+    if (!groupId.value) return ElMessage.warning('请选择主机组')
+    payload.group_id = groupId.value
+  } else {
+    if (!targets.value.length) return ElMessage.warning('请选择目标虚拟机')
+    payload.targets = targets.value
+  }
   if (module.value !== 'ping' && !args.value.trim()) return ElMessage.warning('请填写执行参数')
   submitting.value = true
   try {
-    const res = await api.ansibleRun({ targets: targets.value, module: module.value, args: args.value.trim() })
+    const res = await api.ansibleRun(payload)
     ElMessage.success('任务已提交')
     startPolling(res.data.task_id)
   } catch (e) {
@@ -556,13 +589,21 @@ function openRunDialog(pb) {
 }
 
 async function runPlaybook() {
+  const ev = {}
+  for (const [k, v] of Object.entries(extraVars)) {
+    if (v !== '' && v != null) ev[k] = v
+  }
+  const payload = { playbook: runPb.value.id, extra_vars: ev }
+  if (targetMode.value === 'group') {
+    if (!groupId.value) return ElMessage.warning('请选择主机组')
+    payload.group_id = groupId.value
+  } else {
+    if (!targets.value.length) return ElMessage.warning('请选择目标虚拟机')
+    payload.targets = targets.value
+  }
   submitting.value = true
   try {
-    const ev = {}
-    for (const [k, v] of Object.entries(extraVars)) {
-      if (v !== '' && v != null) ev[k] = v
-    }
-    const res = await api.ansibleRun({ targets: targets.value, playbook: runPb.value.id, extra_vars: ev })
+    const res = await api.ansibleRun(payload)
     runDialogOpen.value = false
     ElMessage.success('任务已提交')
     startPolling(res.data.task_id)

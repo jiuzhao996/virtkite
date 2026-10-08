@@ -488,7 +488,7 @@ func TestRegisterVMTasks(t *testing.T) {
 		queueSlow: make(chan uint, 1),
 		executors: map[string]Executor{},
 	}
-	RegisterVMTasks(m)
+	RegisterVMTasks(m, "")
 
 	want := []string{"create_vm", "delete_vm", "clone_vm", "clone_image_vm", "stop_vm", "cleanup_volumes"}
 	for _, taskType := range want {
@@ -536,7 +536,7 @@ func TestRegisterVMTasks(t *testing.T) {
 				t.Fatalf("传 nil Manager 时应静默返回，实际 panic：%v", r)
 			}
 		}()
-		RegisterVMTasks(nil)
+		RegisterVMTasks(nil, "")
 	})
 }
 

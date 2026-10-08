@@ -7,6 +7,8 @@ set -euo pipefail
 BASE="${BASE:-http://127.0.0.1:8080}"
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASS="${ADMIN_PASS:-password}"
+# /metrics 配了 METRICS_TOKEN 时需带令牌（Bearer 或 ?token=）；未配置则公开
+METRICS_TOKEN="${METRICS_TOKEN:-}"
 PASS=0
 FAIL=0
 
@@ -66,7 +68,10 @@ expect200 "audit list" "$BASE/api/audit?page_size=1" "${AUTH[@]}"
 expect200 "audit actions" "$BASE/api/audit/actions" "${AUTH[@]}"
 
 echo "== /metrics exposition =="
-curl -s -m 12 "$BASE/metrics" | grep -q "^vmops_vm_running" && ok "metrics vmops_*" || fail "metrics" "no vmops_ series"
+METRICS_URL="$BASE/metrics"
+[ -n "$METRICS_TOKEN" ] && METRICS_URL="$BASE/metrics?token=$METRICS_TOKEN"
+# 断言恒存在的宿主机级系列（vmops_vm_running 是带 vm 标签的 GaugeVec，无 VM 时无 series）
+curl -s -m 12 "$METRICS_URL" | grep -q "^vmops_host_cpu_percent" && ok "metrics vmops_*" || fail "metrics" "no vmops_ series"
 
 echo "== 写流程（task 异步） =="
 VN="smoke-e2e-$(date +%s)"

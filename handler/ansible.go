@@ -404,6 +404,7 @@ func (h *AnsibleHandler) DeployKey(c *gin.Context) {
 func (h *AnsibleHandler) Run(c *gin.Context) {
 	var req struct {
 		Targets   []uint            `json:"targets"`
+		GroupID   uint              `json:"group_id"`
 		Module    string            `json:"module"`
 		Args      string            `json:"args"`
 		Playbook  string            `json:"playbook"`
@@ -413,8 +414,9 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "参数格式非法")
 		return
 	}
-	if len(req.Targets) == 0 {
-		Fail(c, http.StatusBadRequest, "请选择目标虚拟机")
+	// 目标来源：显式 targets 或主机组 group_id（至少其一；executor 侧再合并去重）
+	if len(req.Targets) == 0 && req.GroupID == 0 {
+		Fail(c, http.StatusBadRequest, "请选择目标虚拟机或主机组")
 		return
 	}
 	if len(req.Targets) > 50 {
@@ -422,13 +424,32 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 		return
 	}
 	// 轻校验目标存在性（权威校验在 executor：运行态/IP/凭据逐台复核）
-	var cnt int64
-	if err := h.DB.Model(&model.VM{}).Where("id IN ?", req.Targets).Count(&cnt).Error; err != nil || cnt != int64(len(req.Targets)) {
-		Fail(c, http.StatusBadRequest, "部分目标虚拟机不存在")
-		return
+	if len(req.Targets) > 0 {
+		var cnt int64
+		if err := h.DB.Model(&model.VM{}).Where("id IN ?", req.Targets).Count(&cnt).Error; err != nil || cnt != int64(len(req.Targets)) {
+			Fail(c, http.StatusBadRequest, "部分目标虚拟机不存在")
+			return
+		}
+	}
+	if req.GroupID > 0 {
+		var g model.HostGroup
+		if err := h.DB.First(&g, req.GroupID).Error; err != nil {
+			Fail(c, http.StatusBadRequest, "主机组不存在")
+			return
+		}
 	}
 
-	payload := map[string]interface{}{"targets": req.Targets}
+	targetDesc := strconv.Itoa(len(req.Targets)) + " 台"
+	if req.GroupID > 0 && len(req.Targets) == 0 {
+		targetDesc = "主机组"
+	}
+	payload := map[string]interface{}{}
+	if len(req.Targets) > 0 {
+		payload["targets"] = req.Targets
+	}
+	if req.GroupID > 0 {
+		payload["group_id"] = req.GroupID
+	}
 	var title string
 	if req.Playbook != "" {
 		// playbook 分支：id 合法性 + 文件存在（executor 再按 path 执行）
@@ -444,7 +465,7 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 		if len(req.ExtraVars) > 0 {
 			payload["extra_vars"] = req.ExtraVars
 		}
-		title = "Ansible playbook " + req.Playbook + " → " + strconv.Itoa(len(req.Targets)) + " 台"
+		title = "Ansible playbook " + req.Playbook + " → " + targetDesc
 	} else {
 		req.Module = strings.TrimSpace(req.Module)
 		if !ansibleModules[req.Module] {
@@ -457,7 +478,7 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 		}
 		payload["module"] = req.Module
 		payload["args"] = req.Args
-		title = "Ansible " + req.Module + " → " + strconv.Itoa(len(req.Targets)) + " 台"
+		title = "Ansible " + req.Module + " → " + targetDesc
 	}
 	userID, username := taskUserFromContext(c)
 	task, err := h.Tasks.Submit("ansible_run", title, payload, userID, username, "", nil)
@@ -466,7 +487,7 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 		return
 	}
 	// 留痕：谁、从哪、对几台机器跑了什么（shell 参数/playbook 内容不进日志——可能含敏感内容）
-	log.Printf("[ansible] 提交批量执行 playbook=%q module=%q targets=%d user=%s from=%s",
-		req.Playbook, req.Module, len(req.Targets), username, c.ClientIP())
+	log.Printf("[ansible] 提交批量执行 playbook=%q module=%q targets=%d group=%d user=%s from=%s",
+		req.Playbook, req.Module, len(req.Targets), req.GroupID, username, c.ClientIP())
 	Accepted(c, "批量执行任务已提交", gin.H{"task_id": task.ID})
 }

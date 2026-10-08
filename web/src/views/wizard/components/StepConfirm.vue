@@ -57,6 +57,10 @@
       <div class="summary-item"><span class="hw-key">网络</span><span>{{ primaryNet || '—' }}</span></div>
       <div class="summary-item"><span class="hw-key">操作系统</span><span>{{ summaryOs }}</span></div>
       <div class="summary-item"><span class="hw-key">总容量</span><span>{{ totalCapacity }} GB</span></div>
+      <!-- 自动初始化：建机后自动开机 → 等 IP → 托管凭据（需 cloud-init 用户名+口令） -->
+      <div v-if="cloudInitEnabled" class="summary-item summary-auto">
+        <el-checkbox v-model="autoProvision">创建后自动开机并初始化（等 IP、托管凭据）</el-checkbox>
+      </div>
     </el-card>
   </div>
 </template>
@@ -80,6 +84,8 @@ defineProps({
 })
 
 const submitError = defineModel('submitError', { type: String, default: '' })
+// 自动初始化开关（壳持有，此处可切换）；仅 cloud-init 启用时展示
+const autoProvision = defineModel('autoProvision', { type: Boolean, default: true })
 </script>
 
 <style scoped>

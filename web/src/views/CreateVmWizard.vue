@@ -52,6 +52,7 @@
       <StepConfirm
         v-else-if="step === 3"
         v-model:submit-error="submitError"
+        v-model:auto-provision="autoProvision"
         :form="form" :submitting="submitting" :submit-text="submitText" :create-progress="createProgress"
         :preview-disks="previewDisks" :preview-nics="previewNics" :boot-devices-label="bootDevicesLabel"
         :cloud-init-enabled="cloudInitEnabled" :primary-net="primaryNet" :summary-os="summaryOs"
@@ -117,6 +118,9 @@ const extraDisks = reactive([])
 const nics = reactive([{ id: 1, source: '' }])
 
 const cloudInitEnabled = ref(false)
+// 自动初始化：建机后自动开机 → 等 IP → 托管凭据（与设计器落地同一套 create_vm provision）。
+// 需 cloud-init 用户名+口令；默认开，让向导建出的 VM 直接可 SSH/可运维。
+const autoProvision = ref(true)
 const cloudInit = reactive({ hostname: '', user: '', password: '', sshKey: '', netMode: 'dhcp', ip: '', gateway: '', dns: '' })
 
 // ── 向导草稿持久化（sessionStorage）：中途切到别的模块再回来不丢已填内容（2026-09 用户反馈） ──
@@ -385,7 +389,11 @@ function buildPayload() {
   }
   payload.interfaces = nics.map((n) => ({ type: 'network', source: n.source || 'default', model: nicModel.value }))
   payload.network = primaryNet.value
-  if (cloudInitEnabled.value) payload.cloud_init = buildCloudInit()
+  if (cloudInitEnabled.value) {
+    payload.cloud_init = buildCloudInit()
+    // 自动初始化需 cloud-init 用户名+口令（后端据此托管 SSH 凭据）
+    if (autoProvision.value && cloudInit.user.trim() && cloudInit.password) payload.auto_provision = true
+  }
   return payload
 }
 

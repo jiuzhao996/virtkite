@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/virt"
 )
 
@@ -85,6 +86,24 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 	if payload == nil {
 		payload = map[string]interface{}{}
 	}
+	// 可选「自动初始化」（向导勾选）：建机任务在 define 后自动 开机 → 等 IP → 托管凭据，
+	// 与设计器落地共用 create_vm 的 provision 块。口令在此边界加密，payload/日志不留明文。
+	var autoReq struct {
+		AutoProvision bool `json:"auto_provision"`
+	}
+	_ = json.Unmarshal(body, &autoReq)
+	if autoReq.AutoProvision {
+		if ciProbe.CloudInit == nil || ciProbe.CloudInit.User == "" || ciProbe.CloudInit.Password == "" {
+			Fail(c, http.StatusBadRequest, "自动初始化需要 cloud-init 的用户名与口令（用于托管 SSH 凭据）")
+			return
+		}
+		prov, perr := buildProvisionBlock(ciProbe.CloudInit.User, ciProbe.CloudInit.Password)
+		if perr != nil {
+			ErrorWithMessage(c, http.StatusInternalServerError, "初始化配置加密失败", perr)
+			return
+		}
+		payload["provision"] = prov
+	}
 	userID, username := taskUserFromContext(c)
 	task, err := h.Tasks.Submit("create_vm", "创建虚拟机 "+req.Name, payload, userID, username, req.Name, nil)
 	if err != nil {
@@ -92,6 +111,22 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 		return
 	}
 	Accepted(c, "任务已提交", gin.H{"task_id": task.ID})
+}
+
+// buildProvisionBlock 组装 create_vm 的 provision 块：开机 + 等 IP + 托管凭据（口令以密文进 payload）。
+// 与设计器 provisionVM 内的组装同义——向导在此边界加密，避免明文口令落 tasks.payload / 日志。
+func buildProvisionBlock(user, password string) (map[string]interface{}, error) {
+	cipherB64, saltHex, err := secretbox.SealWithMaster(CredentialMasterSecret(), password)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"start":        true,
+		"wait_ip":      true,
+		"ssh_user":     user,
+		"password_enc": cipherB64,
+		"salt":         saltHex,
+	}, nil
 }
 
 // CloneVM 克隆虚拟机（异步：校验后 Submit clone_vm，后台执行 vol-clone + define）。
