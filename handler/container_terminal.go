@@ -37,6 +37,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/jiuzhao/vmops/service/console"
+	"github.com/jiuzhao/vmops/service/wsticket"
 )
 
 const (
@@ -95,11 +96,34 @@ var dockerExecShells = map[string]bool{
 // 复用全局 console.Registry：docker-exec 会话在「控制台会话」页可见、可被管理员强制断开。
 type ContainerTerminalHandler struct {
 	Registry *console.Registry
+	// Tickets WS 一次性票据库（与 AuthMiddleware 校验侧同一实例，由 routes.go 装配）
+	Tickets *wsticket.Store
 }
 
 // NewContainerTerminalHandler 创建容器终端处理器。
 func NewContainerTerminalHandler(registry *console.Registry) *ContainerTerminalHandler {
 	return &ContainerTerminalHandler{Registry: registry}
+}
+
+// MintWSTicket POST /api/docker/containers/:id/ws-ticket —— 为容器终端/日志流 WS 签发一次性短时票据。
+// 挂在 docker 组（NonViewerMiddleware）：viewer 无论方法一律 403，容器内网端口映射不向 viewer 暴露。
+// 静态段 ws-ticket 与同级 POST /containers/:id/:action 通配符并存，gin v1.12 静态优先（已实测）。
+func (h *ContainerTerminalHandler) MintWSTicket(c *gin.Context) {
+	id := c.Param("id")
+	if !safeDockerID(id) {
+		Fail(c, http.StatusBadRequest, "容器 ID 非法")
+		return
+	}
+	if h.Tickets == nil {
+		Fail(c, http.StatusServiceUnavailable, "连接凭证服务未就绪")
+		return
+	}
+	tk, err := h.Tickets.Issue(c.GetUint("user_id"), wsticket.DockerResource(id))
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "签发连接凭证失败", err)
+		return
+	}
+	Success(c, gin.H{"ticket": tk, "expires_in": int(wsticket.TTL.Seconds())})
 }
 
 // wsControlFrame 容器终端 WS 控制帧。

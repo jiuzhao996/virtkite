@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/ansible"
 	"github.com/jiuzhao/vmops/service/virt"
@@ -275,7 +276,7 @@ func execCreateVM(ctx *ExecContext) error {
 		// 平台 ansible 公钥注入（P4-S4 免密渐进）：cloud-init 建机直通——此后该 VM
 		// 走私钥免密通道，ansible inventory 不再瞬时承载口令文件。密钥不可用只降级
 		// 回口令通道（warn），不阻断建机
-		if _, pub, kerr := ansible.EnsureKeyPair("data/ansible"); kerr == nil {
+		if _, pub, kerr := ansible.EnsureKeyPair(config.DataPath("ansible")); kerr == nil {
 			cfg.SSHKeys = append(cfg.SSHKeys, pub)
 			keyInjected = true
 		} else {

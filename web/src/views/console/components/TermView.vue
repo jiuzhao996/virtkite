@@ -132,7 +132,7 @@ import {
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { TOKEN_KEY } from '../../../api'
+import { api } from '../../../api'
 import consoleBg from '../../../assets/console-bg.webp'
 import { buildTermTheme, VM_TERM_SURFACE } from '../../../utils/term-theme'
 
@@ -342,16 +342,20 @@ function changeTermFont(delta) {
   onResize() // 字号变化行列数随之变化：fit + 同步 SSH PTY 尺寸
 }
 
-function openWs(path) {
-  const token = localStorage.getItem(TOKEN_KEY) || ''
+// 取一次性短时票据建连：浏览器 WS 无法带 Authorization 头，票据一次性 + 30s，
+// 即便进访问日志也只是废票（不再像 ?token= 那样泄漏小时级全权限 JWT）。
+async function openWs(path) {
+  const res = await api.wsTicket(props.vmId)
+  const ticket = (res.data && res.data.ticket) || ''
+  if (!ticket) throw new Error('连接凭证获取失败')
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return new WebSocket(`${proto}//${location.host}/api/vms/${props.vmId}/${path}?token=${encodeURIComponent(token)}`)
+  return new WebSocket(`${proto}//${location.host}/api/vms/${props.vmId}/${path}?ticket=${encodeURIComponent(ticket)}`)
 }
 
 // 建连超时兜底：代理/网络黑洞导致 WS open 挂起时，避免“连接中…”无限转圈
-function openWsWithTimeout(path, ms = 10000) {
+async function openWsWithTimeout(path, ms = 10000) {
+  const socket = await openWs(path) // 取票失败直接抛出，由调用方按连接失败处理
   return new Promise((resolve, reject) => {
-    const socket = openWs(path)
     socket.binaryType = 'arraybuffer'
     const timer = setTimeout(() => {
       try { socket.close() } catch (e) {}

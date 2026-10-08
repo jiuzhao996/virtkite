@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 )
 
 // TestMain 统一初始化 handler 包的测试环境。
@@ -19,13 +20,27 @@ import (
 //  2. 标准库 log 输出丢弃：ErrorResponse/LogError 会把**完整错误**写进日志（这是刻意设计，
 //     响应里只回中文友好文案），测试默认不需要这些行混进 go test -v 输出。
 //     需要验证「日志确实写了」的用例自行用 log.SetOutput 临时接管（见 response_test.go）。
+//  3. 运行数据根（config.DataDir）指向临时目录：所有写盘路径经 config.DataPath，
+//     避免相对 data/ 随 cwd 落到包目录（handler/data 残留曾真实发生过），也避免污染仓库 ./data。
 //
 // 说明：本包所有测试都不调用 t.Parallel()。多个用例会临时接管全局 log 输出，
 // 并行执行会互相污染，且这些用例本身都是微秒级，并行没有收益。
 func TestMain(m *testing.M) {
 	gin.SetMode(gin.TestMode)
 	log.SetOutput(io.Discard)
+
+	tmpDir, _ := os.MkdirTemp("", "vmops-handler-testdata-*")
+	if tmpDir != "" {
+		if config.GlobalConfig == nil {
+			config.Init()
+		}
+		config.GlobalConfig.DataDir = tmpDir
+	}
+
 	code := m.Run()
+	if tmpDir != "" {
+		_ = os.RemoveAll(tmpDir)
+	}
 	log.SetOutput(os.Stderr)
 	os.Exit(code)
 }

@@ -99,8 +99,8 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 			SourceIP:   sourceIP,
 			Status:     status,
 			// Detail 带路径：全站活动流要按路径判断「跳哪个对象页」，审计列表的
-		// 可读性也依赖它（此前只有耗时，同一 action 的行长得一模一样）
-		Detail:     path + " · 耗时 " + duration.String(),
+			// 可读性也依赖它（此前只有耗时，同一 action 的行长得一模一样）
+			Detail: path + " · 耗时 " + duration.String(),
 		}
 
 		// 同步写入审计日志

@@ -46,7 +46,7 @@ func (h *MonitorHandler) ListAlerts(c *gin.Context) {
 	resp, err := h.Client.Do(req)
 	if err != nil {
 		// 典型场景：监控栈未启动（docker compose 未起 alertmanager 容器）
-		ErrorResponse(c, http.StatusBadGateway, fmt.Errorf("Alertmanager 不可达(%s): %w", url, err))
+		ErrorResponse(c, http.StatusBadGateway, fmt.Errorf("监控后端 Alertmanager 不可达(%s): %w", url, err))
 		return
 	}
 	defer resp.Body.Close()

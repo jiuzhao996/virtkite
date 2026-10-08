@@ -15,6 +15,8 @@ export const docker = {
   // 删除容器：force=true 时运行中容器强制删除（后端按 State 决定 force 参数）
   dockerContainerDelete: (id, force) => unwrap(http.delete('/docker/containers/' + id, { params: force ? { force: 'true' } : {} })),
   dockerContainerInspect: (id) => unwrap(http.get(`/docker/containers/${id}/inspect`)),
+  // WS 一次性票据（容器终端/日志流）：同 VM 票据，避免长期 JWT 经 query 进日志
+  dockerContainerWsTicket: (id) => unwrap(http.post(`/docker/containers/${id}/ws-ticket`)),
   dockerContainerLogs: (id, tail, timestamps) => unwrap(http.get(`/docker/containers/${id}/logs`, { params: { tail, ...(timestamps ? { timestamps: '1' } : {}) } })),
   // 创建并启动容器（name/image 必填；ports/volumes/envs 为字符串数组；restart ∈ no/always/unless-stopped/on-failure；command 可空）
   createContainer: (payload) => unwrap(http.post('/docker/containers', payload)),

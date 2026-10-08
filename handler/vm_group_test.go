@@ -45,7 +45,7 @@ func TestGrantedVMIDsUnionWithGroups(t *testing.T) {
 
 	future := time.Now().Add(time.Hour)
 	past := time.Now().Add(-time.Hour)
-	db.Create(&model.VMGrant{UserID: user.ID, VMID: 1})                      // 直接授权
+	db.Create(&model.VMGrant{UserID: user.ID, VMID: 1})                            // 直接授权
 	db.Create(&model.VMGroupGrant{GroupID: group.ID, VMID: 2, ExpiresAt: &future}) // 有效组授权
 	db.Create(&model.VMGroupGrant{GroupID: group.ID, VMID: 3, ExpiresAt: &past})   // 过期组授权
 

@@ -20,6 +20,7 @@ import (
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"github.com/jiuzhao/vmops/service/vnc"
+	"github.com/jiuzhao/vmops/service/wsticket"
 	"gorm.io/gorm"
 )
 
@@ -31,7 +32,10 @@ type Deps struct {
 	Sessions   *console.Registry
 	SettingMgr *setting.Manager
 	// VNCTokens 全局唯一 VNC 令牌库：签发与解析必须共用同一实例，由 main 装配一次。
-	VNCTokens         *vnc.TokenStore
+	VNCTokens *vnc.TokenStore
+	// WSTickets 全局唯一 WS 一次性票据库：签发端点在认证组，校验在 AuthMiddleware，
+	// 必须共用同一实例，由 main 装配一次。
+	WSTickets         *wsticket.Store
 	AlertmanagerURL   string
 	PrometheusURL     string
 	AlertWebhookToken string
@@ -90,6 +94,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	recycleHandler := NewVMRecycleHandler(deps.DB, deps.Virt)
 	imageMarketHandler := NewImageMarketHandler(deps.DB, deps.Tasks)
 	containerTerminalHandler := NewContainerTerminalHandler(deps.Sessions)
+	containerTerminalHandler.Tickets = deps.WSTickets
 	hostHandler := NewHostHandler(deps.DB)
 	imageHandler := NewImageHandler(deps.DB, deps.Tasks)
 	taskHandler := NewTaskHandler(deps.DB, deps.Tasks)
@@ -114,6 +119,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	// 离线挂载守卫：启动对账清理上次进程遗留的 FUSE 挂载点，并挂上 SIGINT/SIGTERM 退出钩子
 	StartOfflineMountGuard()
 	vmHandler := NewVMHandler(deps.DB, deps.Tasks, deps.Sessions)
+	vmHandler.Tickets = deps.WSTickets
 	aiHandler := NewAIHandler(deps.DB, deps.SettingMgr)
 	// 凭据主密钥走独立配置项（回落与告警见 CredentialMasterSecret），不再直接喂 JWT 密钥
 	vmCredHandler := NewVMCredentialHandler(deps.DB, CredentialMasterSecret())
@@ -260,6 +266,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.GET("/:id/export", vmExportHandler.Export)
 		vms.POST("/import-file", vmExportHandler.Import)
 		vms.POST("/:id/vnc-token", vncHandler.RequestToken)
+		// WS 一次性票据签发（终端/串口）：浏览器 WS 无法带 Authorization 头，改为先取短时票据再带 ?ticket= 连接
+		vms.POST("/:id/ws-ticket", vmHandler.MintWSTicket)
 		vms.GET("/:id/terminal", terminalHandler.Connect)
 		vms.GET("/:id/serial", vmHandler.ConnectSerial)
 	}
@@ -332,6 +340,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		docker.GET("/containers/:id/logs/ws", containerLogsHandler.Connect)
 		// 容器终端（v3.2 R2：WS ↔ Docker Engine API exec TTY 流；viewer 由组内 NonViewerMiddleware 403）
 		docker.GET("/containers/:id/terminal", containerTerminalHandler.Connect)
+		// WS 一次性票据签发（容器终端/日志流）。静态段与同级的 POST /containers/:id/:action
+		// 通配符并存：gin v1.12 静态优先（已实测 /containers/:id/ws-ticket 不被 :action 吞掉）。
+		docker.POST("/containers/:id/ws-ticket", containerTerminalHandler.MintWSTicket)
 		// 容器详情 / 实时统计 / 全量统计（v3.2 R1/R4）
 		docker.GET("/containers/:id/inspect", dockerHandler.InspectContainer)
 		docker.GET("/containers/:id/stats", dockerHandler.ContainerStats)

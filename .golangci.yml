@@ -1,32 +1,45 @@
-# vmops golangci-lint 配置
+# vmops golangci-lint 配置（v2 schema）
 # 运行：golangci-lint run ./...
+#
+# v2 迁移要点（2026-10 升级，二进制 v2.5.0）：
+#   - 顶层新增 `version: "2"`；
+#   - `unused` / `gosimple` 已并入 `staticcheck`，不再作为独立 linter 启用（启用旧名会报未知 linter）；
+#   - `gofmt` 属"格式化器"，从 linters 移到独立的 `formatters` 段；
+#   - `linters-settings` → `linters.settings`；`issues.exclude-rules` → `linters.exclusions.rules`。
+version: "2"
+
 run:
   timeout: 3m
-  # 目标 Go 语言版本：必须与 go.mod 的 `go 1.25.0` 保持一致（此处取 major.minor），
+  # 目标 Go 语言版本：必须与 go.mod 的 `go 1.26.0` 保持一致（此处取 major.minor），
   # 否则 linter 会按旧版本语言规则检查，误报/漏报新语法
-  go: "1.25"
+  go: "1.26"
 
 linters:
   enable:
     - govet
     - errcheck
-    - staticcheck
-    - unused
+    - staticcheck # v2 起已涵盖 gosimple / stylecheck / unused
     - ineffassign
-    - gofmt
     - revive
-  disable:
-    - gosimple
-
-linters-settings:
-  revive:
+  settings:
+    revive:
+      rules:
+        - name: exported
+          severity: warning
+  exclusions:
+    # v2 起内置排除集默认不生效（v1 是默认排除）：显式启用等价集，
+    # 否则 errcheck 会把大量惯用写法（defer f.Close() 等）报成新告警。
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: exported
-        severity: warning
+      # 交互式控制台 WS 错误保留细节属故意（见 AGENTS.md）
+      - path: handler/terminal\.go|handler/serial\.go
+        linters:
+          - revive
 
-issues:
-  exclude-rules:
-    # 交互式控制台 WS 错误保留细节属故意（见 AGENTS.md）
-    - path: handler/terminal\.go|handler/serial\.go
-      linters:
-        - revive
+formatters:
+  enable:
+    - gofmt

@@ -57,7 +57,8 @@ func TestBuildRunArgs(t *testing.T) {
 		}
 	})
 
-	t.Run("最简形态只有name与image", func(t *testing.T) {		opts := ContainerOpts{Name: "box", Image: "busybox"}
+	t.Run("最简形态只有name与image", func(t *testing.T) {
+		opts := ContainerOpts{Name: "box", Image: "busybox"}
 		want := []string{"run", "-d", "--name", "box", "busybox"}
 		got := BuildRunArgs(opts)
 		if !reflect.DeepEqual(got, want) {

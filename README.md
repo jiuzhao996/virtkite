@@ -18,7 +18,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Go 1.25 + gin + GORM + golang-jwt + bcrypt |
+| 后端 | Go 1.26 + gin + GORM + golang-jwt + bcrypt |
 | 数据库 | MySQL 8（Docker 部署） |
 | 虚拟化 | libvirt / KVM（`digitalocean/go-libvirt` 纯 Go RPC 直连，无 CGO） |
 | 容器 | Docker CLI / Docker Engine API（`service/dockerx` 封装：结构化输出 + exec TTY 容器终端）+ docker compose |
@@ -78,13 +78,13 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **系统公告 + 安全入口（v3）**（公告板登录页与仪表盘公开展示（admin 经设置页编辑）；登录接口可设安全入口暗号，无暗号请求一律 404 伪装；建用户/改密密码复杂度校验）
 - [x] **安全加固**（路径参数主键统一解析防 SQL 注入 / libvirt XML 全部走 `encoding/xml` / JWT 锁定 HS256 / SSH 目标白名单 / release 密钥强校验）
 - [x] E2E 回归脚本（`scripts/smoke.sh`，23 项断言）
-- [x] 单元测试（239 个顶层测试函数 / 195 个 `t.Run` 子测试分组 / 18 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
+- [x] 单元测试（278 个顶层 Test 函数 / 213 个 `t.Run` 子测试分组 / 20 个测试包，`go test -race ./...` 全通过；纯函数目标覆盖率基本 100%）
 - [x] 前端工程化（路由懒加载 + manualChunks 分包：首屏下载量 −50%；`utils/format.js` 收敛 10 余处重复；图标全部换成 `@element-plus/icons-vue`）
 
 
 ## 环境要求
 
-- Go 1.25+
+- Go 1.26+
 - Node.js 18+（仅前端开发 / 构建需要）
 - MySQL 8.0+（或 Docker）
 - libvirt + KVM（运行虚拟机的宿主机）
@@ -171,7 +171,6 @@ npm run dev          # 访问 http://localhost:5173
 # docker-compose 一键栈（唯一方式；原生 ~/monitor 目录已废弃删除）
 # Grafana 已退役（看板原生化）：监控栈只剩 prometheus + alertmanager
 docker compose up -d prometheus alertmanager
-# 看板：http://127.0.0.1:3000/d/vmops-overview（admin/admin）
 # Prometheus :9090，Alertmanager :9093
 ```
 
@@ -190,12 +189,12 @@ docker compose up -d prometheus alertmanager
 
 ```bash
 ./scripts/smoke.sh          # E2E 23 项：只读接口 + metrics + 创建/删除 task 全链路 + 硬件管理
-go test -race ./...         # 单元测试 257 个顶层函数 / 18 个测试包（必须带 -race）
+go test -race ./...         # 单元测试 278 个顶层 Test 函数 / 20 个测试包（必须带 -race）
 go build ./... && go vet ./... && gofmt -l .
 ```
 
-> 静态检查：`go build` / `go vet` / `gofmt` 三件套全过；`.golangci.yml` 配置就绪
-> （govet/errcheck/staticcheck/unused/ineffassign/gofmt/revive，v1 schema——装 v2.x 会因字段改名报错）。
+> 静态检查：`go build` / `go vet` / `gofmt -l .` / `golangci-lint run ./...` 全过（**0 发现**）；`golangci-lint` v2.5.0
+> （`.golangci.yml` 已迁移 v2 schema，规则集 govet/errcheck/staticcheck/ineffassign/revive + 格式化器 gofmt）。
 
 ### 7. 容器构建（可选）
 
@@ -208,7 +207,7 @@ Dockerfile 关键点（均为实测踩坑后固定下来的）：
 
 | 项 | 取值 | 原因 |
 |---|---|---|
-| builder 基础镜像 | `golang:1.25-alpine` | `go.mod` 要求 `go 1.25.0`，`golang:1.21` 直接报版本不足 |
+| builder 基础镜像 | `golang:1.26-alpine` | `go.mod` 要求 `go 1.26.0`，`golang:1.21` 直接报版本不足 |
 | 构建目标 | `go build -o vmops .` | 写 `./...` 匹配到 11 个包，报 `cannot write multiple packages to non-directory` |
 | 模块代理 | `ARG GOPROXY=https://goproxy.cn,direct` | 容器内 `proxy.golang.org` 实测超时，不加则 `go mod download` 挂死；海外环境用 `--build-arg` 覆盖 |
 | 时区 | `-tags timetzdata` + `ENV TZ=Asia/Shanghai` | alpine 无 `/usr/share/zoneinfo`，而 DSN 带 `loc=Local`，否则时间静默退化为 UTC（差 8 小时） |
@@ -221,7 +220,7 @@ Dockerfile 关键点（均为实测踩坑后固定下来的）：
 
 统一响应格式：`{"code":200,"message":"success","data":{...}}`；除登录与 `/metrics`、`/health`、
 websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <token>` 头携带 JWT
-（浏览器 WebSocket 无法带 Header，改用 `?token=<JWT>` 查询参数）。耗时操作（创建/删除/克隆/停止）返回
+（浏览器 WebSocket 无法带 Header，改用一次性短时票据 `?ticket=`：先 POST `/api/vms/:id/ws-ticket` 取票）。耗时操作（创建/删除/克隆/停止）返回
 `202 {"task_id"}`，轮询 `GET /api/tasks/:id` 至终态。
 
 常见错误码：
@@ -274,7 +273,7 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 - `GET  /api/vms/:id/xml` `PUT /api/vms/:id/xml` — XML 查看/编辑
 - 快照：`GET /api/vms/:id/snapshots`（名称/描述/时间/状态） `POST /api/vms/:id/snapshots`（`{name, description}`） `DELETE /api/vms/:id/snapshots/:snap` `POST .../revert`
 - `POST /api/vms/:id/vnc-token` — noVNC token（viewer 可用，响应含 `view_only`：非 admin 为 `true`，前端以 noVNC 只读模式打开）
-- `GET  /api/vms/:id/terminal` — Web 终端 WS（SSH 桥，`?token=` 鉴权；**仅 admin**，目标须过私有网段白名单）
+- `GET  /api/vms/:id/terminal` — Web 终端 WS（SSH 桥，`?ticket=` 一次性票据鉴权；**仅 admin**，目标须过私有网段白名单）
 - `GET  /api/vms/:id/serial` — 串口 WS（libvirt console 桥；**仅 admin**）
 
 ### 镜像管理
@@ -339,7 +338,7 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 vmops/
 ├── main.go              # 入口：静态托管（四候选探测）/Deps 组装/任务管理器/会话注册表/种子数据/启动收敛
 ├── config/              # 环境变量配置（含 SEED_DIR）
-├── database/            # GORM 连接与自动迁移（21 张表）
+├── database/            # GORM 连接与自动迁移（22 张表）
 ├── handler/             # HTTP 处理器，routes.go 按域收口注册
 │                        #   vm/存储/网络/镜像/任务/会话/设置/监控/历史 + v3：docker*/apps/
 │                        #   ai/crons/vm_files*/vm_credentials/image_market/vm_export/vm_recycle/
@@ -371,7 +370,7 @@ vmops/
 │   └── ansible/         # Ansible 引擎封装（inventory 生成/adhoc/Playbook 执行）
 ├── scripts/             # init-db.sql（手工建库）/ smoke.sh（E2E 回归）/ credential-rekey、purge-task-secrets（密钥运维，独立 main 包）
 ├── deploy/              # prometheus.yml(.example) / alerts.yml / alertmanager.yml(.example) / gen-monitor-conf.sh / docker-compose
-├── web/                 # Vue3 + Vite 前端（30 个视图：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
+├── web/                 # Vue3 + Vite 前端（21 个路由页面组件：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
 │                        #   Host/Image(四 tab 含镜像市场与容器镜像)/Storage(含 Docker 卷)/Network(含 Docker 网络)/Containers(容器+编排)/Task/Audit/Settings/UserList/Profile/Login）
 │   ├── src/utils/format.js  # 状态文案/时间/尺寸/错误提取统一实现（收敛 10 余处重复）
 │   └── dist/            # 构建产物，由后端托管（路由懒加载 + manualChunks：首屏 −50%）
@@ -386,7 +385,7 @@ vmops/
 - [01-相关技术基础.md](docs/01-相关技术基础.md) — KVM/libvirt、Go/gin/GORM、Vue3、技术选型
 - [02-系统需求分析.md](docs/02-系统需求分析.md) — 角色权限、功能/非功能需求（含 v3 运维面板扩展需求）
 - [03-系统总体设计.md](docs/03-系统总体设计.md) — 架构、模块划分、请求流转（含任务/会话/RBAC 与 v3 双运行时扩展）
-- [04-数据库设计.md](docs/04-数据库设计.md) — 七张核心表结构、ER 图
+- [04-数据库设计.md](docs/04-数据库设计.md) — 核心表 + 扩展表（共 22 张）结构、ER 图
 - [05-详细设计与实现.md](docs/05-详细设计与实现.md) — 逐模块实现 + 前端 + 监控
 - [06-系统测试与验证.md](docs/06-系统测试与验证.md) — 测试环境、功能测试、真实 KVM 演示
 - [07-部署与运维.md](docs/07-部署与运维.md) — 部署、监控栈、二进制直跑、E2E 回归
@@ -398,16 +397,14 @@ vmops/
 
 | 项 | 现状 | 影响面 |
 |---|---|---|
-| `GET /metrics` | 未设置 `METRICS_TOKEN` 时公开（启动日志有提示）；设置后要求 Bearer/`?token=` 认证 | 生产建议开启令牌或以防火墙限制来源网段 |
+| `GET /metrics` | ✅ 已核实为陈旧信息：`.env` 自 v3.3 起即配置 `METRICS_TOKEN`，实测无 token 401 / 带 token 200（prometheus.yml 的 vmops job 一直在发配对凭证） | 生产环境保持令牌或以防火墙限制来源网段 |
 | `POST /api/auth/login` | ✅ 已限流（同 IP 1 分钟 5 次失败锁定）+ 可设安全入口暗号（无暗号一律 404 伪装） | 残余：无验证码，可换 IP 分布式爆破 |
 | CORS | `CORS_ORIGINS` 默认 `*`（release 模式下为 `*` 拒绝启动） | 生产需收敛为具体来源 |
 | Web 终端 SSH | ✅ 主机密钥已按 TOFU 语义校验（首次连接记录指纹，指纹变化拒绝连接并提示风险，admin 可管理指纹清单） | 残余：TOFU 首连本身无法识别「首次即中间人」；目标已限私有网段 |
-| 静态检查 | `go build` / `go vet` / `gofmt` 全过，`.golangci.yml` 配置就绪 | 深度 lint 覆盖以 vet 为主 |
-| 状态字面量 | 全仓库仍有 7 处状态字面量未换成常量 | 一致性隐患，行为正确 |
-| deploy 明文密钥 | `deploy/prometheus.yml`（remote_write BasicAuth）与 `deploy/alertmanager.yml` 含明文凭据入库 | 仓库可见，需轮换并改环境变量注入 |
+| 静态检查 | `go build` / `go vet` / `gofmt -l .` / `golangci-lint run ./...` 全过（v2.5.0 + v2 schema，**0 发现**） | 深度 lint 已接入闭环 |
+| 状态字面量 | ✅ 已全部收敛为 `model.VMStatus*` / `virt.Status*` 常量（批 B 清零） | 无 |
 | 原生监控看板 | 看板曲线数据走 `/api/monitor/pool-history` 等端点，与告警/file-sd 同为 viewer 403（数据面统一收权，无部署层旁路） | viewer 监控中心整页 403 |
 | 批 B/C 审计修复 | 已完成（详见 AGENTS.md 同名批次）：null→[]、WS 帧固定文案、回写/守卫检查、路径边界、RegisterImage 限池内、启动清扫、日志降噪、N+1、webhook token 轮换、前端清理。残留小项见 AGENTS.md | 大部分闭环 |
-| 导入失败原因 | `POST /api/vms/import` 响应的 `errors` 数组前端 `VmList.vue` 未消费（只读 `imported`/`skipped`/`failed`） | 单台导入失败时用户看不到具体原因 |
 | 多宿主机 | 多宿主机纳管空壳已砍除（`hosts.libvirt_uri` 字段已删），宿主机模块定位为「登记与状态采集」，虚拟化连接固定本机 `qemu:///system` | 跨宿主机虚拟化操作（`qemu+ssh://` 等）列为后续工作 |
 
 ## License

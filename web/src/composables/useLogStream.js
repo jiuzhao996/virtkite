@@ -3,7 +3,7 @@
 // 连接失败或首帧未就绪则退避重连 3 次，仍失败置 fallback=true 由调用方降级为 HTTP 轮询
 // （保底永不比改造前差）。服务端做行重组，前端只管累积与渲染。
 import { ref, onUnmounted } from 'vue'
-import { TOKEN_KEY } from '../api'
+import { api } from '../api'
 
 // 环形缓冲：长会话只保留末尾 N 行，防内存与 DOM 膨胀
 const MAX_LINES = 5000
@@ -23,11 +23,10 @@ export function useLogStream() {
   let pingTimer = null
   let manualClose = false
 
-  function url(id, tail, timestamps) {
-    const token = localStorage.getItem(TOKEN_KEY) || ''
+  function url(id, tail, timestamps, ticket) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const q = `tail=${tail || 500}${timestamps ? '&timestamps=1' : ''}`
-    return `${proto}//${location.host}/api/docker/containers/${encodeURIComponent(id)}/logs/ws?${q}&token=${encodeURIComponent(token)}`
+    return `${proto}//${location.host}/api/docker/containers/${encodeURIComponent(id)}/logs/ws?${q}&ticket=${encodeURIComponent(ticket)}`
   }
 
   function push(stream, data) {
@@ -59,8 +58,21 @@ export function useLogStream() {
     errorMsg.value = ''
     status.value = 'connecting'
 
-    const connect = () => {
-      ws = new WebSocket(url(id, tail, timestamps))
+    const connect = async () => {
+      // 票据一次性：每次（含退避重连）都必须重新取，不能缓存复用
+      let ticket = ''
+      try {
+        const res = await api.dockerContainerWsTicket(id)
+        ticket = (res.data && res.data.ticket) || ''
+      } catch (e) {
+        // 取票失败（权限不足 / 后端异常）不空转重试，直接降级 HTTP 轮询兜底
+        fallback.value = true
+        status.value = 'error'
+        errorMsg.value = '实时日志凭证获取失败'
+        return
+      }
+      if (manualClose) return // 取票期间已被 stop()，不再建连
+      ws = new WebSocket(url(id, tail, timestamps, ticket))
       // 建连超时兜底（对齐 ContainerTerminal：防代理黑洞下无限「连接中…」）
       const openTimer = setTimeout(() => {
         try { ws.close() } catch (e) { /* 已关闭 */ }

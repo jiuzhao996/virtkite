@@ -29,9 +29,9 @@ func TestBuildInventory(t *testing.T) {
 		{Name: "web-2", IP: "10.0.0.84", User: "ubuntu", Port: 2222, Pass: "plain"},
 	}
 	inv, err := BuildInventory(dir, hosts, map[string][]string{
-		"web":  {"web-1", "web-2"},
+		"web":   {"web-1", "web-2"},
 		"ghost": {"web-1", "not-exist"}, // 引用未定义主机应被过滤
-		"all":  {"web-1"},               // 内置组名不应产出重复段
+		"all":   {"web-1"},              // 内置组名不应产出重复段
 	})
 	if err != nil {
 		t.Fatalf("BuildInventory: %v", err)

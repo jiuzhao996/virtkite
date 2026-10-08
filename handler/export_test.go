@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 )
 
 // TestExportAnsibleDump 造一个含 VM/网络/连线的计划，调导出端点验证 inventory 分组与
@@ -34,8 +35,8 @@ func TestExportAnsibleDump(t *testing.T) {
 	}
 	defer func() {
 		_ = os.Remove(filepath.Join(designerDir(), "zz-export-test.json"))
-		_ = os.Remove(filepath.Join("data", "ansible", "playbooks", "zz-export-test-site.yml"))
-		_ = os.Remove(filepath.Join("data", "ansible", "inventory", "zz-export-test.yml"))
+		_ = os.Remove(config.DataPath("ansible", "playbooks", "zz-export-test-site.yml"))
+		_ = os.Remove(config.DataPath("ansible", "inventory", "zz-export-test.yml"))
 	}()
 
 	w := httptest.NewRecorder()
@@ -69,7 +70,7 @@ func TestExportAnsibleDump(t *testing.T) {
 			t.Errorf("site 缺少 %q", want)
 		}
 	}
-	if _, err := os.Stat(filepath.Join("data", "ansible", "playbooks", "zz-export-test-site.yml")); err != nil {
+	if _, err := os.Stat(config.DataPath("ansible", "playbooks", "zz-export-test-site.yml")); err != nil {
 		t.Errorf("site.yml 未落盘: %v", err)
 	}
 }

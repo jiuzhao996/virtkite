@@ -427,7 +427,7 @@ func (h *StorageHandler) GetVolumeGraph(c *gin.Context) {
 	nodes := []LineageNode{}
 	edges := []LineageEdge{}
 	summary := LineageSummary{Orphans: []string{}}
-	nodeIdxByPath := map[string]int{}   // 卷路径 → 节点下标（边与池外父盘解析用）
+	nodeIdxByPath := map[string]int{}            // 卷路径 → 节点下标（边与池外父盘解析用）
 	nameIdxByPool := map[string]map[string]int{} // 池名 → 卷名 → 节点下标（子卷名反查用）
 	// 全局域磁盘挂载（一次查询跨池共用）；镜像库登记即全局索引，跨池匹配
 	allDisks, _ := h.Virt.ListAllDomainDiskSources()

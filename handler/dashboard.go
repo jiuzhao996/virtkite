@@ -323,7 +323,7 @@ func (h *DashboardHandler) VmPerf(c *gin.Context) {
 
 	items := make([]gin.H, 0, len(vms))
 	for _, vm := range vms {
-		if vm.Status != "running" {
+		if vm.Status != model.VMStatusRunning {
 			continue
 		}
 		cpuPercent, memPct := 0.0, 0.0
@@ -339,7 +339,7 @@ func (h *DashboardHandler) VmPerf(c *gin.Context) {
 		items = append(items, gin.H{
 			"id":          vm.ID,
 			"name":        vm.Name,
-			"status":      "running",
+			"status":      model.VMStatusRunning,
 			"cpu_percent": cpuPercent,
 			"mem_pct":     memPct,
 		})

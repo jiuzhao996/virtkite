@@ -16,9 +16,9 @@
 | 01 | [01-相关技术基础.md](01-相关技术基础.md) | 第二章 相关技术 | KVM/libvirt、qcow2 增量镜像与 backing chain、Go/gin/GORM、MySQL8、Vue3、JWT/bcrypt、技术选型对比 |
 | 02 | [02-系统需求分析.md](02-系统需求分析.md) | 第三章 需求分析 | 角色权限、功能需求用例、非功能需求（安全 / 可靠性 / 正确性三类细化） |
 | 03 | [03-系统总体设计.md](03-系统总体设计.md) | 第四章 总体设计 | 系统架构、模块划分、请求流转、并发与可靠性、安全设计、破坏性操作收敛、部署形态 |
-| 04 | [04-数据库设计.md](04-数据库设计.md) | 第四章 总体设计 | ER 图、七张核心表结构 |
+| 04 | [04-数据库设计.md](04-数据库设计.md) | 第四章 总体设计 | ER 图、22 张表结构 |
 | 05 | [05-详细设计与实现.md](05-详细设计与实现.md) | 第五章 详细设计与实现 | 认证/宿主机/VM/镜像/审计/仪表盘逐模块实现 + 增量克隆与删除保护 + 前端 + 监控 + 并发容错 + 安全加固 + v4 扩展模块（流量图/部署栈/架构设计器/版本检测/Ansible）+ 可观测性取舍（Grafana 退役与 Loki 拆除） |
-| 06 | [06-系统测试与验证.md](06-系统测试与验证.md) | 第六章 系统测试 | 测试环境与工具、功能测试、单元测试 239 个顶层函数 / 18 包（`-race`）、安全验证、虚拟化语义验证、稳定性验证、真实 KVM 演示、v4 四新与 Ansible 验证、问题与修复记录（P0/P1/P2 三批） |
+| 06 | [06-系统测试与验证.md](06-系统测试与验证.md) | 第六章 系统测试 | 测试环境与工具、功能测试、单元测试 278 个顶层 Test 函数 / 20 个测试包（`-race`）、安全验证、虚拟化语义验证、稳定性验证、真实 KVM 演示、v4 四新与 Ansible 验证、问题与修复记录（P0/P1/P2 三批） |
 | 07 | [07-部署与运维.md](07-部署与运维.md) | 附录 | 环境要求、Docker（Dockerfile 关键点）/源码部署、配置（含生产密钥强校验）、前端产物探测、存储卷与克隆运维、排错 |
 | 08 | [08-总结与展望.md](08-总结与展望.md) | 第七章 总结与展望 | 工作总结（含三轮加固与方法论结论）、已落地批次一览、后续工作（跨宿主机/监控增强/混合云等） |
 | 09 | [09-答辩演示脚本.md](09-答辩演示脚本.md) | 答辩辅助 | 演示流程脚本、功能清单、FAQ |
@@ -37,7 +37,7 @@
 ## 文档约定
 
 - 统一响应格式：`{"code":200,"message":"success","data":{...}}`。业务失败由 `handler.Fail` 产出 `{code, message}`，中间件拦截由 `middleware.abortJSON` 产出 `{code, message, data:null}`。唯一例外是 websockify 回调 `GET /api/vnc/token/:token`（外部契约，返回 `{"host","port"}` / `{"error"}`）。
-- 除登录、`/metrics`、`/api/health` 与上述 websockify 回调外，所有接口需 `Authorization: Bearer <token>`；浏览器 WebSocket 无法带 Header，改用 `?token=<JWT>`。
+- 除登录、`/metrics`、`/api/health` 与上述 websockify 回调外，所有接口需 `Authorization: Bearer <token>`；浏览器 WebSocket 无法带 Header，改用一次性短时票据 `?ticket=`（先 POST `/api/vms/:id/ws-ticket` 或 `/api/docker/containers/:id/ws-ticket` 取票，30s 单次有效）。
 - 前端构建产物 `web/dist` 由后端直接托管（四候选目录探测，缺失时降级为「仅 API」）。
 - 早期契约文档已清理：现行接口事实源是 `handler/routes.go`，任务系统事实源是 `service/tasks/`。
 - **实测优先**：涉及虚拟化语义的描述，以 `qemu-img` / `virsh` 的实际输出为最终判据（曾出现文档与代码同时把「增量克隆」写成 `StorageVolCreateXMLFrom`，而该接口实际不产生 backing file），验收命令写进正文（见 05 §6.7.1、06 §8）。

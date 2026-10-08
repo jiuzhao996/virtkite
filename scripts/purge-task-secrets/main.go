@@ -74,7 +74,11 @@ const (
 
 // plainSecretKeys 判定为「明文口令」的键名。password_enc / salt 是现行加密通道的合法字段，
 // 不在列表内；isNeverTouch 再做一层兜底，防止将来误加。
-var plainSecretKeys = []string{"password", "ssh_password", "passwd", "pwd"}
+//
+// cloud_init_password 是历史遗留的「顶层散键」写法（2026-10 全库扫描发现：某条 create_vm
+// 任务把初始口令写成顶层 cloud_init_password，而非 cloud_init.password）。现行代码全仓库
+// 从无此键名，属纯遗留脏字段，一并清除；不清则它会绕过其余键名清单继续以明文留在库里。
+var plainSecretKeys = []string{"password", "ssh_password", "passwd", "pwd", "cloud_init_password"}
 
 // nestedSecretScopes payload 里内嵌过明文口令的子对象键（vm_create 的 cloud-init 配置）。
 var nestedSecretScopes = []string{"cloud_init"}

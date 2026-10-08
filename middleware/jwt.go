@@ -11,6 +11,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/wsticket"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -68,48 +69,18 @@ func abortJSON(c *gin.Context, status int, message string) {
 	})
 }
 
-// claimsFromRequest 从 HTTP 请求的 Authorization 头（或 ?token= 查询参数）解析 JWT Claims。
+// claimsFromRequest 从 HTTP 请求的 Authorization 头解析 JWT Claims。
 // 供全局注册的审计中间件使用（其执行时机早于 AuthMiddleware，需自行补全用户身份）。
+//
+// 只认标准 Authorization 头：WebSocket 的 ?token= 兼容分支已移除（改用一次性短时票据，
+// 见 service/wsticket 与 AuthMiddleware 的票据分支）；且 GET 本就不入审计，WS 也无需此路径。
 func claimsFromRequest(req *http.Request) (*Claims, error) {
 	authHeader := req.Header.Get("Authorization")
-	if authHeader == "" {
-		authHeader = "Bearer " + req.URL.Query().Get("token")
-	}
 	parts := strings.SplitN(authHeader, " ", 2)
-	if !(len(parts) == 2 && parts[0] == "Bearer") || parts[1] == "" {
+	if len(parts) != 2 || parts[0] != "Bearer" || parts[1] == "" {
 		return nil, fmt.Errorf("无有效认证信息")
 	}
 	return ParseToken(parts[1])
-}
-
-// PromoteQueryJWT 把 ?token= 里的 JWT 挪进 Authorization 头并从 URL 抹除。
-//
-// 为什么必须做：浏览器 WebSocket 无法自定义请求头，串口/SSH/容器终端的 WS 升级
-// 请求只能靠 ?token=<JWT> 携带凭证（AuthMiddleware 的兼容分支）。gin 自带 Logger
-// 会把完整 query 打进访问日志——JWT 一旦落日志，任何能读日志的人就拿到了该用户
-// 有效期内的全部权限（token 以小时计，日志保留 30 天）。
-//
-// 为什么是「挪」而不是「遮蔽」：直接抹掉会让 AuthMiddleware 的 ?token= 分支失效
-// （WS 认证断掉）；挪进标准 Authorization 头后认证链完全等价，而 URL/日志侧不再
-// 出现凭证。只挪能被 ParseToken 成功解析的值——metrics 抓取与告警 webhook 也用
-// ?token= 传共享密钥，那不是 JWT，原样保留（走它们各自的校验分支）。
-//
-// 必须注册在 gin.Logger 之前：Logger 在 c.Next() 前就把 RawQuery 捕获进局部变量，
-// 顺序反了它打印的仍是原始 URL。
-func PromoteQueryJWT() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if tok := c.Query("token"); tok != "" {
-			if _, err := ParseToken(tok); err == nil {
-				if c.GetHeader("Authorization") == "" {
-					c.Request.Header.Set("Authorization", "Bearer "+tok)
-				}
-				q := c.Request.URL.Query()
-				q.Del("token")
-				c.Request.URL.RawQuery = q.Encode()
-			}
-		}
-		c.Next()
-	}
 }
 
 // HashPassword 哈希密码
@@ -124,63 +95,99 @@ func CheckPassword(password, hash string) bool {
 	return err == nil
 }
 
-// AuthMiddleware JWT认证中间件
-func AuthMiddleware(db *gorm.DB) gin.HandlerFunc {
+// applyUserIdentity 查库取用户、校验状态、刷新最后登录时间并写入 gin 上下文。
+// 返回 false 表示已写响应并中断，调用方直接 return。两条认证路径（JWT 头 / WS 票据）
+// 共用，避免身份处理逻辑分叉。
+func applyUserIdentity(c *gin.Context, db *gorm.DB, userID uint) bool {
+	var user model.User
+	if err := db.First(&user, userID).Error; err != nil {
+		abortJSON(c, http.StatusUnauthorized, "用户不存在")
+		return false
+	}
+	if !user.IsActive {
+		abortJSON(c, http.StatusForbidden, "账号已被禁用")
+		return false
+	}
+
+	// 更新最后登录时间（best-effort）：审计时间写不进去只降级为缺一条记录，
+	// 因此仅记日志、不阻断登录；静默吞掉错误则数据库故障永远不会被发现。
+	now := time.Now()
+	if err := db.Model(&user).Update("last_login", &now).Error; err != nil {
+		log.Printf("[auth] 记录最后登录时间失败 user=%s err=%v", user.Username, err)
+	}
+
+	c.Set("user_id", user.ID)
+	c.Set("username", user.Username)
+	c.Set("role", user.Role)
+	c.Set("user", &user)
+	return true
+}
+
+// wsTicketResource 返回当前 WS 请求对应的资源标识，供票据绑定校验（见 service/wsticket）。
+// 按注册路由模板 c.FullPath 判定，覆盖 SSH 终端/串口与容器终端/日志流四类；
+// 其它路径返回空串——空串永不匹配已签发票据（票据 resource 非空），安全兜底。
+func wsTicketResource(c *gin.Context) string {
+	full := c.FullPath()
+	switch {
+	case strings.HasPrefix(full, "/api/vms/") &&
+		(strings.HasSuffix(full, "/terminal") || strings.HasSuffix(full, "/serial")):
+		return wsticket.VMResource(c.Param("id"))
+	case strings.HasPrefix(full, "/api/docker/") &&
+		(strings.HasSuffix(full, "/terminal") || strings.HasSuffix(full, "/logs/ws")):
+		return wsticket.DockerResource(c.Param("id"))
+	}
+	return ""
+}
+
+// AuthMiddleware 认证中间件，支持两种凭证：
+//  1. Authorization: Bearer <JWT>（常规 HTTP 请求，axios 默认带上）；
+//  2. ?ticket=<一次性短时票据>（仅 WebSocket：浏览器无法自定义请求头）。
+//
+// 历史实现的 WebSocket 分支是 ?token=<JWT>（长期凭证进 URL/日志），已由票据取代：
+// 票据由 POST /api/vms/:id/ws-ticket 与 POST /api/docker/containers/:id/ws-ticket 签发，
+// 单次使用 + 30 秒有效 + 绑定目标资源，泄漏面从「小时级全权限」降到「一张废票」。
+func AuthMiddleware(db *gorm.DB, tickets *wsticket.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 获取Authorization头
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			// WebSocket 无法设置 Header，允许通过 ?token= 传递 JWT
-			authHeader = "Bearer " + c.Query("token")
-		}
-		if authHeader == "Bearer " {
-			abortJSON(c, http.StatusUnauthorized, "未提供认证信息")
+		// 1) 标准 Authorization 头
+		if authHeader := c.GetHeader("Authorization"); authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || parts[0] != "Bearer" {
+				abortJSON(c, http.StatusUnauthorized, "认证格式错误")
+				return
+			}
+			claims, err := ParseToken(parts[1])
+			if err != nil {
+				abortJSON(c, http.StatusUnauthorized, "Token 无效或已过期")
+				return
+			}
+			if !applyUserIdentity(c, db, claims.UserID) {
+				return
+			}
+			c.Next()
 			return
 		}
 
-		// 提取Token
-		parts := strings.SplitN(authHeader, " ", 2)
-		if !(len(parts) == 2 && parts[0] == "Bearer") {
-			abortJSON(c, http.StatusUnauthorized, "认证格式错误")
-			return
+		// 2) WebSocket 一次性票据
+		if tickets != nil {
+			if tk := c.Query("ticket"); tk != "" {
+				entry, ok := tickets.Consume(tk)
+				if !ok {
+					abortJSON(c, http.StatusUnauthorized, "连接凭证无效或已过期")
+					return
+				}
+				if entry.Resource == "" || entry.Resource != wsTicketResource(c) {
+					abortJSON(c, http.StatusUnauthorized, "连接凭证与目标不匹配")
+					return
+				}
+				if !applyUserIdentity(c, db, entry.UserID) {
+					return
+				}
+				c.Next()
+				return
+			}
 		}
 
-		tokenString := parts[1]
-
-		// 解析Token
-		claims, err := ParseToken(tokenString)
-		if err != nil {
-			abortJSON(c, http.StatusUnauthorized, "Token 无效或已过期")
-			return
-		}
-
-		// 查询用户
-		var user model.User
-		if err := db.First(&user, claims.UserID).Error; err != nil {
-			abortJSON(c, http.StatusUnauthorized, "用户不存在")
-			return
-		}
-
-		// 检查用户状态
-		if !user.IsActive {
-			abortJSON(c, http.StatusForbidden, "账号已被禁用")
-			return
-		}
-
-		// 更新最后登录时间（best-effort）：审计时间写不进去只降级为缺一条记录，
-		// 因此仅记日志、不阻断登录；静默吞掉错误则数据库故障永远不会被发现。
-		now := time.Now()
-		if err := db.Model(&user).Update("last_login", &now).Error; err != nil {
-			log.Printf("[auth] 记录最后登录时间失败 user=%s err=%v", user.Username, err)
-		}
-
-		// 将用户信息存储到上下文
-		c.Set("user_id", user.ID)
-		c.Set("username", user.Username)
-		c.Set("role", user.Role)
-		c.Set("user", &user)
-
-		c.Next()
+		abortJSON(c, http.StatusUnauthorized, "未提供认证信息")
 	}
 }
 

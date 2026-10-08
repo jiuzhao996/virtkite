@@ -17,7 +17,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { TOKEN_KEY } from '../api'
+import { api } from '../api'
 import { buildTermTheme, DOCKER_TERM_SURFACE } from '../utils/term-theme'
 
 // 容器终端（xterm.js + WebSocket ↔ docker exec TTY 桥）。
@@ -55,11 +55,14 @@ const statusText = computed(() => {
   return '连接已断开'
 })
 
-function openSocket() {
-  const token = localStorage.getItem(TOKEN_KEY) || ''
+// 取一次性短时票据建连：容器终端/日志流同样不再把 JWT 放进 URL（见后端 service/wsticket）。
+async function openSocket() {
+  const res = await api.dockerContainerWsTicket(props.containerId)
+  const ticket = (res.data && res.data.ticket) || ''
+  if (!ticket) throw new Error('连接凭证获取失败')
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(
-    `${proto}//${location.host}/api/docker/containers/${encodeURIComponent(props.containerId)}/terminal?token=${encodeURIComponent(token)}`
+    `${proto}//${location.host}/api/docker/containers/${encodeURIComponent(props.containerId)}/terminal?ticket=${encodeURIComponent(ticket)}`
   )
   // TTY 输出走二进制帧，arraybuffer 便于 xterm 直接 write
   ws.binaryType = 'arraybuffer'
@@ -67,9 +70,9 @@ function openSocket() {
 }
 
 // 建连超时兜底（对齐 ConsolePage 的 openWsWithTimeout：防代理黑洞下无限「连接中…」）
-function openSocketWithTimeout(ms = 10000) {
+async function openSocketWithTimeout(ms = 10000) {
+  const socket = await openSocket() // 取票失败直接抛出
   return new Promise((resolve, reject) => {
-    const socket = openSocket()
     const timer = setTimeout(() => {
       try { socket.close() } catch (e) { /* 已关闭 */ }
       reject(new Error('WebSocket 连接超时'))

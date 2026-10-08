@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/ansible"
 	"github.com/jiuzhao/vmops/service/secretbox"
@@ -126,7 +126,7 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 
 	// 3) inventory：明文口令只在 run 目录瞬时存在（0700/0600，跑完即删，见包注释）
 	reportProgress(ctx, 10, "生成 inventory（"+strconv.Itoa(len(vms))+" 台目标）")
-	runDir := filepath.Join("data", "ansible", "runs", strconv.FormatUint(uint64(ctx.Task.ID), 10)+"-"+time.Now().Format("20060102-150405"))
+	runDir := config.DataPath("ansible", "runs", strconv.FormatUint(uint64(ctx.Task.ID), 10)+"-"+time.Now().Format("20060102-150405"))
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return fmt.Errorf("创建执行目录失败: %w", err)
 	}
@@ -140,7 +140,7 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	nameTaken := map[string]int{}
 	keyFile := ""
 	if len(needPass) < len(vms) { // 有免密目标才探测私钥
-		kf, _, kerr := ansible.EnsureKeyPair("data/ansible")
+		kf, _, kerr := ansible.EnsureKeyPair(config.DataPath("ansible"))
 		if kerr == nil {
 			keyFile = kf
 		}
@@ -187,7 +187,7 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		if !ansiblePlaybookIDRe.MatchString(playbook) {
 			return errors.New("playbook ID 非法")
 		}
-		pbPath := filepath.Join("data", "ansible", "playbooks", playbook+".yml")
+		pbPath := config.DataPath("ansible", "playbooks", playbook+".yml")
 		if _, perr := os.Stat(pbPath); perr != nil {
 			return fmt.Errorf("playbook 不存在: %s", playbook)
 		}

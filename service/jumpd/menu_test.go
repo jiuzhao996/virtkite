@@ -18,7 +18,7 @@ func TestFilterMenuAssets(t *testing.T) {
 		mkVM(2, "node2", "192.168.122.11", model.VMStatusShutOff), // 非运行中
 		mkVM(3, "node3", "192.168.122.12", model.VMStatusPaused),
 		mkVM(4, "node4", "192.168.122.13", model.VMStatusError),
-		mkVM(5, "node5", "", model.VMStatusRunning),          // 无 IP
+		mkVM(5, "node5", "", model.VMStatusRunning), // 无 IP
 		mkVM(6, "node6", "192.168.122.15", model.VMStatusRunning),
 		mkVM(7, "node7", "192.168.122.16", model.VMStatusRunning),
 	}

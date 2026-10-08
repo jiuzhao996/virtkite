@@ -693,17 +693,17 @@ func TestTaskSeedDir(t *testing.T) {
 	original := config.GlobalConfig
 	defer func() { config.GlobalConfig = original }()
 
-	// 该默认值是写死在代码里的绝对路径（含用户名），换机器部署时需要靠环境变量覆盖，
-	// 已在回报中列为待改进项。这里断言现状，改动时会失败提醒同步。
-	const hardcodedDefault = "/home/jiuzhao/vmops/data/seed"
+	// 配置未初始化（或 SeedDir 为空）时回落到 config.DataPath 的默认根 "data" 下；
+	// 不再硬编码含用户名的绝对路径（那会让换机部署必须靠环境变量兜底）。
+	const fallbackDefault = "data/seed"
 
 	cases := []struct {
 		name string
 		cfg  *config.Config
 		want string
 	}{
-		{"配置未初始化：回落到内置默认值", nil, hardcodedDefault},
-		{"配置里 SeedDir 为空：回落到内置默认值", &config.Config{}, hardcodedDefault},
+		{"配置未初始化：回落到默认 data 根", nil, fallbackDefault},
+		{"配置里 SeedDir 为空：回落到默认 data 根", &config.Config{}, fallbackDefault},
 		{"配置里有值：使用配置值", &config.Config{SeedDir: "/data/seed"}, "/data/seed"},
 	}
 

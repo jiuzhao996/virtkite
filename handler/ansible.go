@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/ansible"
 	"github.com/jiuzhao/vmops/service/secretbox"
@@ -42,20 +43,23 @@ var ansibleModules = map[string]bool{"ping": true, "command": true, "shell": tru
 
 // playbook 目录约定：仓库内置种子（git 跟踪，ansible/playbooks/）首次启动复制到
 // data/ansible/playbooks/（用户编辑区，重启不覆盖）；id = 文件名去 .yml。
-var (
-	playbookDir  = filepath.Join("data", "ansible", "playbooks")
-	seedDir      = filepath.Join("ansible", "playbooks")
-	playbookIDRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-)
+var playbookIDRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+
+// playbookDir 用户编辑区（运行数据，随 DATA_DIR）——函数而非包级 var：
+// 相对路径会随工作目录漂移，且 var 在 init 期即固化，无法随配置/测试覆盖生效。
+func playbookDir() string { return config.DataPath("ansible", "playbooks") }
+
+// seedPlaybookDir 仓库内置种子源（git 跟踪的只读创作内容，保持仓库根相对路径）。
+func seedPlaybookDir() string { return filepath.Join("ansible", "playbooks") }
 
 // EnsureSeedPlaybooks 种子落盘：目录里缺哪个补哪个（用户删掉的会复活——种子语义
 // 就是「出厂预设」；用户改过的同名文件不覆盖）。routes.go 装配时调用一次。
 func EnsureSeedPlaybooks() {
-	if err := os.MkdirAll(playbookDir, 0o755); err != nil {
+	if err := os.MkdirAll(playbookDir(), 0o755); err != nil {
 		log.Printf("[ansible] 创建 playbook 目录失败: %v", err)
 		return
 	}
-	entries, err := os.ReadDir(seedDir)
+	entries, err := os.ReadDir(seedPlaybookDir())
 	if err != nil {
 		return // 仓库内无种子目录（非源码运行），静默跳过
 	}
@@ -64,11 +68,11 @@ func EnsureSeedPlaybooks() {
 		if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".yml" {
 			continue
 		}
-		dst := filepath.Join(playbookDir, e.Name())
+		dst := filepath.Join(playbookDir(), e.Name())
 		if _, err := os.Stat(dst); err == nil {
 			continue // 用户区已有（含改过的），不覆盖
 		}
-		raw, err := os.ReadFile(filepath.Join(seedDir, e.Name()))
+		raw, err := os.ReadFile(filepath.Join(seedPlaybookDir(), e.Name()))
 		if err != nil {
 			continue
 		}
@@ -79,7 +83,7 @@ func EnsureSeedPlaybooks() {
 		copied++
 	}
 	if copied > 0 {
-		log.Printf("[ansible] 已落盘 %d 个种子 playbook → %s", copied, playbookDir)
+		log.Printf("[ansible] 已落盘 %d 个种子 playbook → %s", copied, playbookDir())
 	}
 }
 
@@ -135,7 +139,7 @@ func parsePlaybookHeader(raw []byte) (name, desc, targets string, vars []string)
 
 // ListPlaybooks GET /api/ansible/playbooks —— playbook 清单（按更新时间倒序）。
 func (h *AnsibleHandler) ListPlaybooks(c *gin.Context) {
-	entries, err := os.ReadDir(playbookDir)
+	entries, err := os.ReadDir(playbookDir())
 	if err != nil {
 		Success(c, gin.H{"items": []playbookMeta{}})
 		return
@@ -146,7 +150,7 @@ func (h *AnsibleHandler) ListPlaybooks(c *gin.Context) {
 			continue
 		}
 		id := strings.TrimSuffix(e.Name(), ".yml")
-		full := filepath.Join(playbookDir, e.Name())
+		full := filepath.Join(playbookDir(), e.Name())
 		raw, err := os.ReadFile(full)
 		if err != nil {
 			continue
@@ -168,7 +172,7 @@ func (h *AnsibleHandler) ListPlaybooks(c *gin.Context) {
 
 // isSeedFile 判断文件是否与仓库内置种子同名（仅用于 UI 标识，不影响权限）。
 func isSeedFile(name string) bool {
-	_, err := os.Stat(filepath.Join(seedDir, name))
+	_, err := os.Stat(filepath.Join(seedPlaybookDir(), name))
 	return err == nil
 }
 
@@ -179,7 +183,7 @@ func (h *AnsibleHandler) GetPlaybook(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "playbook ID 非法")
 		return
 	}
-	raw, err := os.ReadFile(filepath.Join(playbookDir, id+".yml"))
+	raw, err := os.ReadFile(filepath.Join(playbookDir(), id+".yml"))
 	if err != nil {
 		Fail(c, http.StatusNotFound, "playbook 不存在")
 		return
@@ -203,7 +207,7 @@ func (h *AnsibleHandler) CreatePlaybook(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "ID 仅允许字母数字与 -_（≤64 字符，字母开头）")
 		return
 	}
-	dst := filepath.Join(playbookDir, req.ID+".yml")
+	dst := filepath.Join(playbookDir(), req.ID+".yml")
 	if _, err := os.Stat(dst); err == nil {
 		Fail(c, http.StatusConflict, "同名 playbook 已存在")
 		return
@@ -226,7 +230,7 @@ func (h *AnsibleHandler) UpdatePlaybook(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "playbook ID 非法")
 		return
 	}
-	dst := filepath.Join(playbookDir, id+".yml")
+	dst := filepath.Join(playbookDir(), id+".yml")
 	if _, err := os.Stat(dst); err != nil {
 		Fail(c, http.StatusNotFound, "playbook 不存在")
 		return
@@ -256,7 +260,7 @@ func (h *AnsibleHandler) DeletePlaybook(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "playbook ID 非法")
 		return
 	}
-	if err := os.Remove(filepath.Join(playbookDir, id+".yml")); err != nil {
+	if err := os.Remove(filepath.Join(playbookDir(), id+".yml")); err != nil {
 		Fail(c, http.StatusNotFound, "playbook 不存在")
 		return
 	}
@@ -295,7 +299,7 @@ func (h *AnsibleHandler) Status(c *gin.Context) {
 		"version":   eng.Version,
 	}
 	// 免密态势：平台密钥指纹 + 已注入 VM 数 / 已托管凭据 VM 数（分发的候选池）
-	if _, pub, kerr := ansible.EnsureKeyPair("data/ansible"); kerr == nil {
+	if _, pub, kerr := ansible.EnsureKeyPair(config.DataPath("ansible")); kerr == nil {
 		out["key_fingerprint"] = ansible.FingerprintPair(pub)
 		out["pubkey"] = pub
 	}
@@ -326,7 +330,7 @@ func (h *AnsibleHandler) DeployKey(c *gin.Context) {
 		Fail(c, http.StatusServiceUnavailable, "凭据加密未初始化，请联系管理员配置主密钥后重启服务")
 		return
 	}
-	_, pub, err := ansible.EnsureKeyPair("data/ansible")
+	_, pub, err := ansible.EnsureKeyPair(config.DataPath("ansible"))
 	if err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "平台密钥不可用", err)
 		return
@@ -399,11 +403,11 @@ func (h *AnsibleHandler) DeployKey(c *gin.Context) {
 // playbook：body {targets*[vm_id], playbook*(id)}（S2）
 func (h *AnsibleHandler) Run(c *gin.Context) {
 	var req struct {
-		Targets    []uint               `json:"targets"`
-		Module     string               `json:"module"`
-		Args       string               `json:"args"`
-		Playbook   string               `json:"playbook"`
-		ExtraVars  map[string]string    `json:"extra_vars"`
+		Targets   []uint            `json:"targets"`
+		Module    string            `json:"module"`
+		Args      string            `json:"args"`
+		Playbook  string            `json:"playbook"`
+		ExtraVars map[string]string `json:"extra_vars"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数格式非法")
@@ -432,7 +436,7 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 			Fail(c, http.StatusBadRequest, "playbook ID 非法")
 			return
 		}
-		if _, err := os.Stat(filepath.Join(playbookDir, req.Playbook+".yml")); err != nil {
+		if _, err := os.Stat(filepath.Join(playbookDir(), req.Playbook+".yml")); err != nil {
 			Fail(c, http.StatusNotFound, "playbook 不存在")
 			return
 		}

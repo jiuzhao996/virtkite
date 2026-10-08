@@ -6,14 +6,14 @@
 package dockerx
 
 import (
-	"os"
-	"path/filepath"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -310,8 +310,8 @@ func (d *Dockerx) NetworkDetails(names []string) (map[string]NetworkDetail, erro
 		return nil, fmt.Errorf("检查网络详情失败: %w", err)
 	}
 	var arr []struct {
-		Name  string `json:"Name"`
-		IPAM  struct {
+		Name string `json:"Name"`
+		IPAM struct {
 			Config []struct {
 				Subnet  string `json:"Subnet"`
 				Gateway string `json:"Gateway"`

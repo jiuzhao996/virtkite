@@ -1,7 +1,7 @@
 # 多阶段构建：golang 构建 → alpine 运行
 # 构建：docker build -t vmops:latest .
-# 基础镜像必须满足 go.mod 的 `go 1.25.0`（golang:1.21 会直接报版本不足）
-FROM golang:1.25-alpine AS builder
+# 基础镜像必须满足 go.mod 的 `go 1.26.0`（golang:1.21 会直接报版本不足）
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /build
 

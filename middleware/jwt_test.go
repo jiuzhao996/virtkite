@@ -18,9 +18,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/wsticket"
+	"gorm.io/gorm"
 )
 
 const (
@@ -507,10 +510,11 @@ func TestParseTokenRejectsMalformedToken(t *testing.T) {
 	}
 }
 
-// TestClaimsFromRequest 覆盖审计中间件用的身份提取（支持 Header 与查询参数两种来源）。
+// TestClaimsFromRequest 覆盖审计中间件用的身份提取（只认同标准 Authorization 头）。
 //
-// 风险点：浏览器发起 WebSocket 时无法设置请求头，所以必须支持 ?token=；
-// 但这条旁路不能放宽校验 —— 空 token、格式错误、非 Bearer 方案都必须失败。
+// 风险点：这条身份旁路不能放宽校验 —— 空 token、格式错误、非 Bearer 方案都必须失败。
+// WebSocket 的 ?token= 兼容分支已移除（改用一次性短时票据，见 TestAuthMiddlewareWSTicket），
+// 未带 Authorization 头即视为无身份。
 func TestClaimsFromRequest(t *testing.T) {
 	token, err := GenerateToken(&model.User{ID: 8, Username: "auditor", Role: "admin"})
 	if err != nil {
@@ -520,28 +524,20 @@ func TestClaimsFromRequest(t *testing.T) {
 	cases := []struct {
 		name    string
 		header  string
-		query   string
 		wantErr bool
 	}{
-		{"标准 Bearer 头", "Bearer " + token, "", false},
-		{"查询参数（WebSocket 场景）", "", token, false},
-		{"两者都没有", "", "", true},
-		{"查询参数为空串", "", "", true},
-		{"缺少 Bearer 前缀", token, "", true},
-		{"方案名错误", "Token " + token, "", true},
-		{"方案名小写", "bearer " + token, "", true},
-		{"只有 Bearer 没有 token", "Bearer ", "", true},
-		{"Bearer 后跟垃圾", "Bearer not-a-token", "", true},
-		{"Header 优先于查询参数：Header 非法则失败", "Bearer bad", token, true},
+		{"标准 Bearer 头", "Bearer " + token, false},
+		{"没有头", "", true},
+		{"缺少 Bearer 前缀", token, true},
+		{"方案名错误", "Token " + token, true},
+		{"方案名小写", "bearer " + token, true},
+		{"只有 Bearer 没有 token", "Bearer ", true},
+		{"Bearer 后跟垃圾", "Bearer not-a-token", true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			target := "/api/vms"
-			if tc.query != "" {
-				target += "?token=" + tc.query
-			}
-			req := httptest.NewRequest(http.MethodGet, target, nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/vms", nil)
 			if tc.header != "" {
 				req.Header.Set("Authorization", tc.header)
 			}
@@ -864,96 +860,109 @@ func TestIsGuestWriteChannel(t *testing.T) {
 	}
 }
 
-// ============================ ?token= JWT 升格 ============================
+// ============================ WebSocket 一次性票据认证 ============================
 
-// TestPromoteQueryJWT 覆盖 ?token= 里 JWT 的升格（挪进 Authorization 头 + 从 URL 抹除）。
-//
-// 风险点（P2 安全批次的核心动机）：浏览器 WebSocket 无法自定义请求头，串口/SSH 终端
-// 的 WS 升级请求只能用 ?token=<JWT> 带凭证，而 gin 自带 Logger 会把完整 query 打进
-// 访问日志——JWT 落日志 = 任何能读日志的人在有效期内冒充该用户。
-// 本用例验证四件事：合法 JWT 被挪进头并从 URL 抹除；其他 query 参数原样保留；
-// 非 JWT（metrics/webhook 的共享密钥）不动；畸形值不动（宁可留在 URL 也不能
-// 把垃圾塞进 Authorization 干扰后续认证判断）。
-func TestPromoteQueryJWT(t *testing.T) {
-	token, err := GenerateToken(&model.User{ID: 9, Username: "ws-user", Role: "operator"})
+// newAuthTestDB 建内存库并迁移 users 表，供 AuthMiddleware 的身份查询。
+func newAuthTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("准备 token 失败: %v", err)
+		t.Fatalf("打开内存库失败: %v", err)
+	}
+	if err := db.AutoMigrate(&model.User{}); err != nil {
+		t.Fatalf("迁移 users 表失败: %v", err)
+	}
+	return db
+}
+
+// TestAuthMiddlewareWSTicket 覆盖 WebSocket 一次性票据的认证链路。
+//
+// 风险点（取代 ?token= JWT 的核心动机）：WS 无法带 Authorization 头，历史实现把长期 JWT
+// 放进 URL，一旦落访问日志即等于泄漏小时级全权限凭证。改为「POST 取票 → ?ticket= 连接」后，
+// 验证：有效票放行、单次使用、资源绑定、过期拒绝、无凭证 401、禁用账号 403，
+// 以及旧 ?token= 路径已彻底失效。
+func TestAuthMiddlewareWSTicket(t *testing.T) {
+	db := newAuthTestDB(t)
+	u := model.User{Username: "wsuser", PasswordHash: "x", Role: "operator", IsActive: true}
+	if err := db.Create(&u).Error; err != nil {
+		t.Fatalf("建用户失败: %v", err)
 	}
 
-	run := func(target string, header map[string]string) *gin.Context {
-		req := httptest.NewRequest(http.MethodGet, target, nil)
-		for k, v := range header {
-			req.Header.Set(k, v)
-		}
+	store := wsticket.NewStore()
+	r := gin.New()
+	// 注册与实际一致的路由模板：AuthMiddleware 依赖 c.FullPath() 推导资源做绑定校验
+	authed := r.Group("/api", AuthMiddleware(db, store))
+	authed.GET("/vms/:id/terminal", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	authed.GET("/docker/containers/:id/terminal", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	do := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(rec)
-		c.Request = req
-		PromoteQueryJWT()(c)
-		return c
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
 	}
 
-	t.Run("合法 JWT：挪进头并从 URL 抹除", func(t *testing.T) {
-		c := run("/api/vms/1/serial?token="+token, nil)
-		if got := c.Request.Header.Get("Authorization"); got != "Bearer "+token {
-			t.Fatalf("Authorization 头未升格：期望 Bearer <token>，实际 %q", got)
-		}
-		if raw := c.Request.URL.RawQuery; strings.Contains(raw, "token=") || strings.Contains(raw, token) {
-			t.Errorf("URL 仍含凭证（将随访问日志泄漏）：RawQuery=%q", raw)
-		}
-		if raw := c.Request.URL.RawQuery; raw != "" {
-			t.Errorf("除 token 外无其他参数，RawQuery 应为空：实际 %q", raw)
+	t.Run("有效票据：放行", func(t *testing.T) {
+		tk, _ := store.Issue(u.ID, wsticket.VMResource("5"))
+		if rec := do("/api/vms/5/terminal?ticket=" + tk); rec.Code != http.StatusOK {
+			t.Fatalf("期望 200，实际 %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
-	t.Run("其他 query 参数保留", func(t *testing.T) {
-		c := run("/api/vms/1/serial?token="+token+"&rows=100&follow=1", nil)
-		if got := c.Request.Header.Get("Authorization"); got != "Bearer "+token {
-			t.Fatalf("Authorization 头未升格：实际 %q", got)
-		}
-		q := c.Request.URL.Query()
-		if q.Get("token") != "" {
-			t.Errorf("token 参数未从 URL 抹除：%q", c.Request.URL.RawQuery)
-		}
-		if q.Get("rows") != "100" || q.Get("follow") != "1" {
-			t.Errorf("无关参数被误删：%q", c.Request.URL.RawQuery)
+	t.Run("同一票据二次使用：401（一次性）", func(t *testing.T) {
+		tk, _ := store.Issue(u.ID, wsticket.VMResource("5"))
+		_ = do("/api/vms/5/terminal?ticket=" + tk)
+		if rec := do("/api/vms/5/terminal?ticket=" + tk); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("票据复用应 401，实际 %d", rec.Code)
 		}
 	})
 
-	t.Run("非 JWT 共享密钥（metrics/webhook）不动", func(t *testing.T) {
-		const sharedSecret = "prometheus-shared-token"
-		c := run("/metrics?token="+sharedSecret, nil)
-		if got := c.Request.Header.Get("Authorization"); got != "" {
-			t.Errorf("共享密钥被塞进 Authorization 头，会破坏 metrics 的校验分支：实际 %q", got)
-		}
-		if got := c.Request.URL.Query().Get("token"); got != sharedSecret {
-			t.Errorf("共享密钥被改动：实际 %q", got)
+	t.Run("票据与目标资源不匹配：401", func(t *testing.T) {
+		tk, _ := store.Issue(u.ID, wsticket.DockerResource("c1"))
+		if rec := do("/api/vms/5/terminal?ticket=" + tk); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("跨资源票据应 401，实际 %d", rec.Code)
 		}
 	})
 
-	t.Run("畸形值不动", func(t *testing.T) {
-		for _, junk := range []string{"", "not-a-jwt", "a.b.c", token[:len(token)-4]} {
-			target := "/api/vms/1/serial"
-			if junk != "" {
-				target += "?token=" + junk
-			}
-			c := run(target, nil)
-			if got := c.Request.Header.Get("Authorization"); got != "" {
-				t.Errorf("垃圾值 token=%q 被塞进 Authorization：%q", junk, got)
-			}
+	t.Run("过期票据：401", func(t *testing.T) {
+		orig := wsticket.TTL
+		wsticket.TTL = 5 * time.Millisecond
+		defer func() { wsticket.TTL = orig }()
+		tk, _ := store.Issue(u.ID, wsticket.VMResource("5"))
+		time.Sleep(20 * time.Millisecond)
+		if rec := do("/api/vms/5/terminal?ticket=" + tk); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("过期票据应 401，实际 %d", rec.Code)
 		}
 	})
 
-	t.Run("已有 Authorization 头：URL 里的 JWT 仍抹除但头不覆盖", func(t *testing.T) {
-		other, err := GenerateToken(&model.User{ID: 10, Username: "header-user", Role: "admin"})
+	t.Run("无任何凭证：401", func(t *testing.T) {
+		if rec := do("/api/vms/5/terminal"); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("无凭证应 401，实际 %d", rec.Code)
+		}
+	})
+
+	t.Run("旧 ?token= JWT 已不再接受：401", func(t *testing.T) {
+		token, err := GenerateToken(&u)
 		if err != nil {
-			t.Fatalf("准备第二个 token 失败: %v", err)
+			t.Fatalf("准备 token 失败: %v", err)
 		}
-		c := run("/api/vms/1/serial?token="+token, map[string]string{"Authorization": "Bearer " + other})
-		if got := c.Request.Header.Get("Authorization"); got != "Bearer "+other {
-			t.Errorf("已有头被覆盖（头优先语义被破坏）：实际 %q", got)
+		if rec := do("/api/vms/5/terminal?token=" + token); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("?token= 应已失效（401），实际 %d", rec.Code)
 		}
-		if strings.Contains(c.Request.URL.RawQuery, token) {
-			t.Errorf("URL 里的 JWT 未抹除：%q", c.Request.URL.RawQuery)
+	})
+
+	t.Run("禁用账号的票据：403", func(t *testing.T) {
+		off := model.User{Username: "offuser", PasswordHash: "x", Role: "operator"}
+		if err := db.Create(&off).Error; err != nil {
+			t.Fatalf("建用户失败: %v", err)
+		}
+		// IsActive 带 gorm default:true：零值 false 在 Create 时会被 DB 默认值覆盖，
+		// 必须先建再显式改，才能真正落成「禁用」。
+		if err := db.Model(&off).Update("is_active", false).Error; err != nil {
+			t.Fatalf("禁用用户失败: %v", err)
+		}
+		tk, _ := store.Issue(off.ID, wsticket.VMResource("5"))
+		if rec := do("/api/vms/5/terminal?ticket=" + tk); rec.Code != http.StatusForbidden {
+			t.Fatalf("禁用账号应 403，实际 %d", rec.Code)
 		}
 	})
 }

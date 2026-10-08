@@ -14,8 +14,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"regexp"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"slices"
 	"sort"
@@ -37,9 +37,9 @@ import (
 
 // 动作类型白名单（model.ScheduledTask.Action 的合法取值）。
 const (
-	ActionVMSnapshot          = "vm_snapshot"          // 定时对指定虚拟机打快照
-	ActionDBBackup            = "db_backup"            // 定时备份数据库（mysqldump）
-	ActionAnsiblePlaybook     = "ansible_playbook"     // 定时执行 playbook（P4-S3：调度×引擎缝合）
+	ActionVMSnapshot           = "vm_snapshot"           // 定时对指定虚拟机打快照
+	ActionDBBackup             = "db_backup"             // 定时备份数据库（mysqldump）
+	ActionAnsiblePlaybook      = "ansible_playbook"      // 定时执行 playbook（P4-S3：调度×引擎缝合）
 	ActionContainerHealthcheck = "container_healthcheck" // 容器健康巡检：unhealthy 自动重启（R8）
 	ActionImageVersionCheck    = "image_version_check"   // 镜像版本巡检：outdated 时通知（R9）
 	// ActionDesignerDrift 设计器漂移巡检（DE2）：快照 vs 现实，差异进 cron_runs + 通知
@@ -1105,7 +1105,6 @@ func notifyFailure(taskName, errMsg string) {
 		log.Printf("[cron] 失败通知已推送 task=%s", taskName)
 	}()
 }
-
 
 // runAction 按动作类型分发执行，返回摘要与错误。
 func (s *Scheduler) runAction(st model.ScheduledTask) (string, error) {

@@ -108,7 +108,7 @@ func taskSeedDir() string {
 	if config.GlobalConfig != nil && config.GlobalConfig.SeedDir != "" {
 		return config.GlobalConfig.SeedDir
 	}
-	return "/home/jiuzhao/vmops/data/seed"
+	return config.DataPath("seed")
 }
 
 // checkExecContext 校验 executor 上下文（worker 内仅可访问 ctx.Task/DB/Virt）。

@@ -38,9 +38,9 @@ func (h *UserGroupHandler) ListGroups(c *gin.Context) {
 	}
 	type groupItem struct {
 		model.UserGroup
-		MemberCount int64   `json:"member_count"`
-		GrantCount  int64   `json:"grant_count"`
-		MemberIDs   []uint  `json:"member_ids"`
+		MemberCount int64  `json:"member_count"`
+		GrantCount  int64  `json:"grant_count"`
+		MemberIDs   []uint `json:"member_ids"`
 	}
 	items := make([]groupItem, 0, len(groups))
 	for _, g := range groups {

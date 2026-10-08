@@ -9,6 +9,7 @@ package handler
 import (
 	"net/http"
 	"regexp"
+	"strconv"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ import (
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"github.com/jiuzhao/vmops/service/vmlock"
+	"github.com/jiuzhao/vmops/service/wsticket"
 	"gorm.io/gorm"
 )
 
@@ -35,11 +37,45 @@ type VMHandler struct {
 	Virt     *virt.Virt
 	Tasks    *tasks.Manager
 	Sessions *console.Registry
+	// Tickets WS 一次性票据库（与 AuthMiddleware 校验侧同一实例，由 routes.go 装配）
+	Tickets *wsticket.Store
 }
 
 // NewVMHandler 创建虚拟机处理器
 func NewVMHandler(db *gorm.DB, taskMgr *tasks.Manager, sessions *console.Registry) *VMHandler {
 	return &VMHandler{DB: db, Virt: virt.New(), Tasks: taskMgr, Sessions: sessions}
+}
+
+// MintWSTicket POST /api/vms/:id/ws-ticket —— 为 VM 终端/串口 WS 签发一次性短时票据。
+//
+// 为什么必须挂在 vms 组且为 POST：票据签发端点继承所在组的 RBAC。OperatorMiddleware 对
+// viewer 只在「POST 且非 vnc-token」时 403；若做成 GET，viewer 会命中 GET 放行分支拿到
+// terminal 票据，从而绕过「viewer 不得使用 SSH 终端/串口」的封锁。
+func (h *VMHandler) MintWSTicket(c *gin.Context) {
+	vmID, ok := paramID(c, "id")
+	if !ok {
+		return // paramID 已写 400
+	}
+	var vm model.VM
+	if err := h.DB.First(&vm, vmID).Error; err != nil {
+		Fail(c, http.StatusNotFound, "虚拟机不存在")
+		return
+	}
+	// 授权决定可见性：非 admin 未持有效授权与不存在同响应
+	if !vmVisible(c, h.DB, vm.ID) {
+		Fail(c, http.StatusNotFound, "虚拟机不存在")
+		return
+	}
+	if h.Tickets == nil {
+		Fail(c, http.StatusServiceUnavailable, "连接凭证服务未就绪")
+		return
+	}
+	tk, err := h.Tickets.Issue(c.GetUint("user_id"), wsticket.VMResource(strconv.FormatUint(uint64(vm.ID), 10)))
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "签发连接凭证失败", err)
+		return
+	}
+	Success(c, gin.H{"ticket": tk, "expires_in": int(wsticket.TTL.Seconds())})
 }
 
 // taskUserFromContext 从 gin 上下文安全取 user_id/username（取不到传 nil/""）。

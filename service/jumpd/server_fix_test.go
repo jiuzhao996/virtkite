@@ -90,9 +90,9 @@ func (f *fakeChannel) push(b []byte) {
 	defer f.mu.Unlock()
 	f.pending = append(f.pending, b...)
 }
-func (f *fakeChannel) Write(p []byte) (int, error)         { return len(p), nil }
-func (f *fakeChannel) Close() error                        { return nil }
-func (f *fakeChannel) CloseWrite() error                   { return nil }
+func (f *fakeChannel) Write(p []byte) (int, error)                    { return len(p), nil }
+func (f *fakeChannel) Close() error                                   { return nil }
+func (f *fakeChannel) CloseWrite() error                              { return nil }
 func (f *fakeChannel) SendRequest(string, bool, []byte) (bool, error) { return false, nil }
 func (f *fakeChannel) Stderr() io.ReadWriter                          { return nil }
 

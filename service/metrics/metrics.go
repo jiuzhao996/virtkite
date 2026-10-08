@@ -145,7 +145,7 @@ func (c *Collector) updateVMs() {
 	}
 	seen := map[string]bool{}
 	for _, vm := range vms {
-		if vm.Status != "running" {
+		if vm.Status != model.VMStatusRunning {
 			vmRunning.WithLabelValues(vm.Name).Set(0)
 			seen[vm.Name] = true
 			continue

@@ -23,7 +23,7 @@ fatal() { echo -e "${RED}✗ $1${OFF}"; exit 1; }
 info "预检环境…"
 command -v docker >/dev/null || fatal "未安装 Docker。请先安装：curl -fsSL https://get.docker.com | bash"
 docker info >/dev/null 2>&1 || fatal "Docker 未运行。请先启动：sudo systemctl start docker"
-command -v go >/dev/null || fatal "未安装 Go（>=1.25）。请先安装：https://go.dev/dl/"
+command -v go >/dev/null || fatal "未安装 Go（>=1.26）。请先安装：https://go.dev/dl/"
 ok "Docker / Go 就绪"
 
 for port in 8080 2222; do

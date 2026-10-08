@@ -28,18 +28,18 @@ func TestMatchBlacklist(t *testing.T) {
 		want bool
 	}{
 		{"rm -rf /", true},
-		{"RM  -RF /data", true},       // 大小写 + 多空格
+		{"RM  -RF /data", true}, // 大小写 + 多空格
 		{"cd /var && rm -rf ./cache", true},
-		{"rm -fr /tmp/x", true},       // flag 排列变体（词序归一救不了，靠单列条目）
-		{"rm -r -f /data", true},      // 分写变体
-		{"mkfs.ext4 /dev/vdb", true},  // mkfs 子串
+		{"rm -fr /tmp/x", true},      // flag 排列变体（词序归一救不了，靠单列条目）
+		{"rm -r -f /data", true},     // 分写变体
+		{"mkfs.ext4 /dev/vdb", true}, // mkfs 子串
 		{"dd if=/dev/zero of=/dev/sda", true},
-		{"dd of=/dev/sdb bs=1M", true},   // 直写块设备（无 if= 也要拦）
-		{"blkdiscard /dev/sdb", true},    // TRIM 整盘丢弃
+		{"dd of=/dev/sdb bs=1M", true}, // 直写块设备（无 if= 也要拦）
+		{"blkdiscard /dev/sdb", true},  // TRIM 整盘丢弃
 		{"ls -la", false},
 		{"systemctl restart nginx", false},
 		{"dd if=disk.img of=backup.img", true}, // dd 一律拦（教学宁严勿漏，of= 普通文件同罪）
-		{"echo rm -rf", true}, // 含子串即拦（教学场景宁严勿漏）
+		{"echo rm -rf", true},                  // 含子串即拦（教学场景宁严勿漏）
 		{"", false},
 	}
 	for _, c := range cases {

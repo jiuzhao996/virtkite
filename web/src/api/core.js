@@ -60,6 +60,8 @@ export const core = {
   grantVM: (id, payload) => unwrap(http.post('/vms/' + id + '/grants', payload)),
   revokeVMGrant: (id, gid) => unwrap(http.delete('/vms/' + id + '/grants/' + gid)),
   vncToken: (id) => unwrap(http.post('/vms/' + id + '/vnc-token')),
+  // WS 一次性票据（终端/串口）：浏览器 WS 无法带 Authorization 头，先取短时票据再以 ?ticket= 连接
+  wsTicket: (id) => unwrap(http.post('/vms/' + id + '/ws-ticket')),
   scanImportVMs: () => unwrap(http.get('/vms/import/scan')),
   importVMs: (hostId, names) => unwrap(http.post('/vms/import', { host_id: hostId, names })),
 

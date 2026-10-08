@@ -21,7 +21,7 @@ type Notification struct {
 	// AlertFingerprint 来源告警指纹（追溯到 alerts 表同一行；重复触发的告警各发一条通知，靠它关联）
 	AlertFingerprint string `gorm:"size:64;index" json:"alert_fingerprint"`
 	// Read 已读标记（未读数驱动顶栏铃铛红点）
-	Read    bool      `gorm:"default:false;index:idx_notify_user_read,priority:2" json:"read"`
+	Read      bool      `gorm:"default:false;index:idx_notify_user_read,priority:2" json:"read"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

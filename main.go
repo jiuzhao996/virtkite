@@ -26,6 +26,7 @@ import (
 	"github.com/jiuzhao/vmops/service/virt"
 	"github.com/jiuzhao/vmops/service/vmssh"
 	"github.com/jiuzhao/vmops/service/vnc"
+	"github.com/jiuzhao/vmops/service/wsticket"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
 )
@@ -105,10 +106,10 @@ func main() {
 	if config.GlobalConfig.ServerMode == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	// 不用 gin.Default()：需要把 ?token= JWT 升格中间件插在 Logger 之前，
-	// 否则 WS 升级请求的 JWT 会随完整 query 打进访问日志（见 PromoteQueryJWT 注释）
+	// 不用 gin.Default()：保持中间件注册顺序显式可控。
+	// 注：WebSocket 的 ?token= JWT 已由一次性短时票据（?ticket=）取代，
+	// 不再有「把 query JWT 升格进 Header 以免落日志」的诉求，故无需前置中间件。
 	r := gin.New()
-	r.Use(middleware.PromoteQueryJWT())
 	r.Use(gin.Logger(), gin.Recovery())
 	// 只信任本机回环代理（frp 客户端在宿主机本机转发云 nginx 的回源流量）：
 	// gin 默认信任所有代理，客户端伪造 X-Forwarded-For 最左值即可绕过登录限流并污染审计 IP
@@ -235,6 +236,8 @@ func main() {
 	consoleRegistry.StartSweeper() // 启动过期清扫协程（内部 recover 兜底）
 	// VNC 令牌库全进程唯一：签发（认证组）与解析（公开组）必须打同一个库，装配一次下发 Deps
 	vncTokens := vnc.NewTokenStore()
+	// WS 一次性票据库全进程唯一：签发端点在认证组，校验在 AuthMiddleware，必须同一实例
+	wsTickets := wsticket.NewStore()
 
 	// 路由注册（批次 0：按域收口至 handler/routes.go，main.go 只保留顶层静态托管与 health）
 	deps := handler.Deps{
@@ -244,6 +247,7 @@ func main() {
 		Sessions:          consoleRegistry,
 		SettingMgr:        settingMgr,
 		VNCTokens:         vncTokens,
+		WSTickets:         wsTickets,
 		AlertmanagerURL:   config.GlobalConfig.AlertmanagerURL,
 		PrometheusURL:     config.GlobalConfig.PrometheusURL,
 		AlertWebhookToken: config.GlobalConfig.AlertWebhookToken,
@@ -253,7 +257,7 @@ func main() {
 
 	// 需要认证的接口
 	api := r.Group("/api")
-	api.Use(middleware.AuthMiddleware(db))
+	api.Use(middleware.AuthMiddleware(db, wsTickets))
 	handler.RegisterAll(api, deps)
 
 	// 健康检查

@@ -104,13 +104,10 @@
 ## 当前有效遗留清单（2026-09-26 逐项核实代码后收敛；勿在文档中宣称已解决）
 
 - ~~`/metrics` 公开~~ **已核实为陈旧信息（2026-09-26）**：.env 自 v3.3 起即配置 METRICS_TOKEN，实测无 token 401 / 带 token 200（prometheus.yml 的 vmops job 一直在发配对凭证）
-- **JWT 仍支持 `?token=` 查询参数传递**（`middleware/jwt.go`，WS 无法设 Header 的设计取舍；会进代理日志/Referer/审计）
-- **历史 `tasks.payload` 明文待人工清洗**：`scripts/purge-task-secrets` 未执行，执行前须先 mysqldump 单表备份
-- **多宿主机是空壳**：`virt.New` 固定 `qemu:///system`，宿主机模块仅登记与状态采集，跨宿主机操作列论文展望
-- **`validateSSHTarget` 放行 IPv6 ULA 但错误文案只写 IPv4 私有网段**（文案与实现不对齐）
-- **`.golangci.yml` 为 v1 schema**：升级 v2.x 会因字段改名报错，装 v1.64.8（`~/go/bin`，源码自建）
+- ~~**JWT 仍支持 `?token=` 查询参数传递**~~ **已成为历史**：WS 改用一次性短时票据（`service/wsticket`，`POST /api/vms/:id/ws-ticket` 与 `POST /api/docker/containers/:id/ws-ticket` 签发，30s + 单次使用 + 绑定资源），`?token=` 与 `PromoteQueryJWT` 已移除
+- **多宿主机未实现**：宿主机模块仅登记与状态采集，虚拟化连接固定 `qemu:///system`（`hosts.libvirt_uri` 字段已删）
 
-已核实**解决**（勿再列为待办）：网络 XML 直定义两路由（2026-09-26 砍除）、登录限流（`handler/auth.go` loginLimiter）、CORS release 禁 `*`（main.go 启动校验）、SSH 主机密钥 TOFU（全仓库 InsecureIgnoreHostKey 归零）、孤儿卷清理闭环、golangci-lint 已装、ImportVMs errors 数组前端已消费。
+已核实**解决**（勿再列为待办）：网络 XML 直定义两路由（2026-09-26 砍除）、登录限流（`handler/auth.go` loginLimiter）、CORS release 禁 `*`（main.go 启动校验）、SSH 主机密钥 TOFU（全仓库 InsecureIgnoreHostKey 归零）、孤儿卷清理闭环、golangci-lint 已装并升级 v2.5.0（`.golangci.yml` 已迁移 v2 schema：`version:"2"`/`go:"1.26"`，字段改名与 `formatters` 段落地，全仓库 0 发现）、ImportVMs errors 数组前端已消费、`tasks.payload` 历史明文已清洗（`scripts/purge-task-secrets --apply`，共 7 条；含一条漏网遗留键 `cloud_init_password`，脚本键清单已补齐；清洗前已备份 `tasks` 单表）。
 
 ## 历史批次记录（已清理）
 

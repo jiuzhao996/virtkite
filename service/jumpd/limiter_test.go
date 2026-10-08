@@ -9,7 +9,7 @@ import (
 // 导致窗口推进只能靠真实等待，jumpd 版按计划改进这一点）
 type fakeClock struct{ t time.Time }
 
-func (c *fakeClock) Now() time.Time     { return c.t }
+func (c *fakeClock) Now() time.Time          { return c.t }
 func (c *fakeClock) Advance(d time.Duration) { c.t = c.t.Add(d) }
 
 func newTestLimiter() (*limiter, *fakeClock) {

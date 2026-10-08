@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/service/dockerx"
 	"github.com/jiuzhao/vmops/service/tasks"
 )
@@ -154,7 +155,7 @@ func (h *StackHandler) Deploy(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "栈不存在："+id)
 		return
 	}
-	target := filepath.Join("data", "stacks", id)
+	target := config.DataPath("stacks", id)
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "创建部署目录失败", err)
 		return
@@ -184,7 +185,7 @@ func (h *StackHandler) Detail(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "栈不存在："+id)
 		return
 	}
-	copyPath := filepath.Join("data", "stacks", id, "docker-compose.yml")
+	copyPath := config.DataPath("stacks", id, "docker-compose.yml")
 	copyRaw, copyErr := os.ReadFile(copyPath)
 	deployed := copyErr == nil
 	content := tmplRaw
@@ -239,7 +240,7 @@ func (h *StackHandler) File(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "请提供 compose 文件内容")
 		return
 	}
-	target := filepath.Join("data", "stacks", id)
+	target := config.DataPath("stacks", id)
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "创建部署目录失败", err)
 		return
@@ -276,7 +277,7 @@ func (h *StackHandler) Upgrade(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "栈 ID 非法（仅允许字母数字与 -_.）")
 		return
 	}
-	dir := filepath.Join("data", "stacks", id)
+	dir := config.DataPath("stacks", id)
 	if _, err := os.Stat(filepath.Join(dir, "docker-compose.yml")); err != nil {
 		Fail(c, http.StatusNotFound, "该栈尚未部署，请先部署后再升级")
 		return

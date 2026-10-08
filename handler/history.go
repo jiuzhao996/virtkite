@@ -68,11 +68,11 @@ func (h *HistoryHandler) queryRangeMulti(c *gin.Context, query string, minutes i
 	}
 	resp, err := h.Client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Prometheus 不可达: %w", err)
+		return nil, fmt.Errorf("监控后端 Prometheus 不可达: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Prometheus 响应异常: %s", resp.Status)
+		return nil, fmt.Errorf("监控后端 Prometheus 响应异常: %s", resp.Status)
 	}
 
 	var body struct {
@@ -382,7 +382,6 @@ func escapePromLabel(s string) string {
 	return string(out)
 }
 
-
 // promQueryLimit 通用查询端点的防护钳制：PromQL 天然只读（无写语义），真正要防的是
 // 昂贵正则与超大响应——查询长度、时间跨度在入口钳制，序列数在出口截断。
 const (
@@ -411,7 +410,7 @@ func (h *HistoryHandler) PromQuery(c *gin.Context) {
 	if req.Minutes <= 0 {
 		val, labels, err := h.instantQuery(c, req.Query)
 		if err != nil {
-			LogError(c, fmt.Errorf("Prometheus instant 查询: %w", err))
+			LogError(c, fmt.Errorf("监控后端 Prometheus instant 查询失败: %w", err))
 			Success(c, gin.H{"series": []gin.H{}, "source": "unavailable"})
 			return
 		}
@@ -425,7 +424,7 @@ func (h *HistoryHandler) PromQuery(c *gin.Context) {
 
 	series, err := h.queryRangeMulti(c, req.Query, clampMinutes(strconv.Itoa(req.Minutes), 30))
 	if err != nil {
-		LogError(c, fmt.Errorf("Prometheus range 查询: %w", err))
+		LogError(c, fmt.Errorf("监控后端 Prometheus range 查询失败: %w", err))
 		Success(c, gin.H{"series": []gin.H{}, "source": "unavailable"})
 		return
 	}
@@ -450,11 +449,11 @@ func (h *HistoryHandler) instantQuery(c *gin.Context, query string) (*tsPoint, m
 	}
 	resp, err := h.Client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Prometheus 不可达: %w", err)
+		return nil, nil, fmt.Errorf("监控后端 Prometheus 不可达: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("Prometheus 响应异常: %s", resp.Status)
+		return nil, nil, fmt.Errorf("监控后端 Prometheus 响应异常: %s", resp.Status)
 	}
 	var body struct {
 		Status string `json:"status"`

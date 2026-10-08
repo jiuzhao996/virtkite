@@ -287,7 +287,7 @@ func (s *Server) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 		}()
 		for req := range reqs {
 			if req.WantReply {
-				req.Reply(false, nil)
+				_ = req.Reply(false, nil)
 			}
 		}
 	}()
@@ -309,7 +309,7 @@ func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 	select {
 	case newCh := <-chans:
 		if newCh.ChannelType() != "session" {
-			newCh.Reject(ssh.UnknownChannelType, "jumpd 仅支持 session 通道")
+			_ = newCh.Reject(ssh.UnknownChannelType, "jumpd 仅支持 session 通道")
 			return
 		}
 		ch, inReqs, err := newCh.Accept()
@@ -326,7 +326,7 @@ func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 			}()
 			for req := range inReqs {
 				if req.Type == "pty-req" || req.Type == "shell" {
-					req.Reply(true, nil)
+					_ = req.Reply(true, nil)
 					if req.Type == "shell" {
 						select {
 						case shellReady <- struct{}{}:
@@ -334,7 +334,7 @@ func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 						}
 					}
 				} else if req.WantReply {
-					req.Reply(false, nil)
+					_ = req.Reply(false, nil)
 				}
 			}
 		}()
@@ -345,7 +345,7 @@ func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 		case <-time.After(10 * time.Second):
 			return
 		}
-		io.WriteString(ch, "\r\n✗ 只读角色不支持终端登录（viewer 无资产终端权限）\r\n")
+		_, _ = io.WriteString(ch, "\r\n✗ 只读角色不支持终端登录（viewer 无资产终端权限）\r\n")
 		sendExitStatus(ch)
 	case <-time.After(30 * time.Second):
 		// 客户端始终不开会话通道，超时收工
@@ -357,7 +357,7 @@ func (s *Server) rejectReadOnly(chans <-chan ssh.NewChannel) {
 func (s *Server) menuLoop(user *model.User, isAdmin bool, clientIP string, chans <-chan ssh.NewChannel) {
 	for newCh := range chans {
 		if newCh.ChannelType() != "session" {
-			newCh.Reject(ssh.UnknownChannelType, "jumpd 仅支持 session 通道")
+			_ = newCh.Reject(ssh.UnknownChannelType, "jumpd 仅支持 session 通道")
 			continue
 		}
 		ch, inReqs, err := newCh.Accept()
@@ -434,7 +434,7 @@ func forwardKeys(ks *keyStream, stdin io.Writer, waitDone <-chan struct{}, onLin
 					if _, wErr := stdin.Write([]byte{0x15, '\r'}); wErr != nil {
 						return
 					}
-					io.WriteString(stdin, "\r\n")
+					_, _ = io.WriteString(stdin, "\r\n")
 				} else {
 					// 正常放行：补发行结束符（逐字节已透传，这里只送回车）
 					if _, wErr := stdin.Write([]byte{b}); wErr != nil {
@@ -499,27 +499,27 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 			switch req.Type {
 			case "pty-req":
 				term, termW, termH = parsePTYReq(req.Payload)
-				req.Reply(true, nil)
+				_ = req.Reply(true, nil)
 			case "shell":
-				req.Reply(true, nil)
+				_ = req.Reply(true, nil)
 				select {
 				case shellReady <- struct{}{}:
 				default:
 				}
 			case "exec":
-				req.Reply(false, nil)
+				_ = req.Reply(false, nil)
 			case "window-change":
 				if w, h, ok := parseWindowChange(req.Payload); ok {
 					activeMu.Lock()
 					if activeTS != nil {
-						activeTS.WindowChange(int(w), int(h))
+						_ = activeTS.WindowChange(int(w), int(h))
 					}
 					activeMu.Unlock()
 				}
-				req.Reply(true, nil)
+				_ = req.Reply(true, nil)
 			default:
 				if req.WantReply {
-					req.Reply(false, nil)
+					_ = req.Reply(false, nil)
 				}
 			}
 		}
@@ -532,7 +532,7 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 	}
 
 	page := 1
-	keyword := "" // 搜索词（koko 交互：/ 进入，回车提交；Esc 清词回全量）
+	keyword := ""      // 搜索词（koko 交互：/ 进入，回车提交；Esc 清词回全量）
 	var items []menuVM // 菜单数据缓存：搜索/翻页/Esc 只重渲染，不重复查库（回车闪刷新的根因）
 	refreshItems := func() error {
 		var err error
@@ -541,7 +541,7 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 	}
 	if err := refreshItems(); err != nil {
 		log.Printf("[jumpd] 菜单查询失败 user=%s: %v", user.Username, err)
-		io.WriteString(ch, "\r\n✗ 资产查询失败，请稍后重试\r\n")
+		_, _ = io.WriteString(ch, "\r\n✗ 资产查询失败，请稍后重试\r\n")
 		sendExitStatus(ch)
 		return
 	}
@@ -558,7 +558,7 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 			page = 1
 		}
 		_, pages := menuPage(view, page)
-		io.WriteString(ch, "\r\n\r\n"+renderMenu(view, page, pages, keyword))
+		_, _ = io.WriteString(ch, "\r\n\r\n"+renderMenu(view, page, pages, keyword))
 	}
 	draw()
 
@@ -579,7 +579,7 @@ func (s *Server) runSession(ch ssh.Channel, inReqs <-chan *ssh.Request, user *mo
 
 		// '/' 进入搜索：行式读取（回车提交；提交后仅重渲染不查库）
 		if key[0] == '/' {
-			io.WriteString(ch, "\r\n搜索: ")
+			_, _ = io.WriteString(ch, "\r\n搜索: ")
 			line, rerr := readLine(ks, ch)
 			if rerr != nil {
 				return
@@ -644,7 +644,7 @@ func viewOf(items []menuVM, keyword string) []menuVM {
 func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, isAdmin bool, clientIP string, vmID uint, term string, w, h int, activeMu *sync.Mutex, activeTS **ssh.Session) {
 	tgt, err := revalidateSelection(s.DB, user, vmID, isAdmin, s.masterSecret)
 	if err != nil {
-		io.WriteString(ch, "\r\n✗ "+err.Error()+"，已回到菜单\r\n")
+		_, _ = io.WriteString(ch, "\r\n✗ "+err.Error()+"，已回到菜单\r\n")
 		return
 	}
 	sess := openJumpSession(s.DB, tgt.VM.ID, tgt.VM.Name, &user.ID, user.Username, clientIP)
@@ -656,7 +656,7 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 	opts, optErr := vmssh.NewOptions(tgt.VM.IP, tgt.VM.IP, tgt.Port, tgt.User, tgt.Password)
 	if optErr != nil {
 		log.Printf("[jumpd] 目标校验失败 vm=%s: %v", tgt.VM.Name, optErr)
-		io.WriteString(ch, "\r\n✗ 连接目标校验失败，已回到菜单\r\n")
+		_, _ = io.WriteString(ch, "\r\n✗ 连接目标校验失败，已回到菜单\r\n")
 		closeJumpSession(s.DB, sid, "目标校验失败")
 		return
 	}
@@ -664,9 +664,9 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 	if dialErr != nil {
 		// 指纹不匹配单独提示（对齐 terminal.go 惯例）；其余给固定文案不泄内网拓扑
 		if errors.Is(dialErr, vmssh.ErrHostKeyMismatch) {
-			io.WriteString(ch, "\r\n✗ 目标主机指纹与首次记录不一致，已拒绝连接；如确属主机重装，请管理员在设置页删除该主机密钥记录后重试\r\n")
+			_, _ = io.WriteString(ch, "\r\n✗ 目标主机指纹与首次记录不一致，已拒绝连接；如确属主机重装，请管理员在设置页删除该主机密钥记录后重试\r\n")
 		} else {
-			io.WriteString(ch, "\r\n✗ 连接虚拟机失败，请确认其 SSH 服务可达\r\n")
+			_, _ = io.WriteString(ch, "\r\n✗ 连接虚拟机失败，请确认其 SSH 服务可达\r\n")
 		}
 		log.Printf("[jumpd] 拨号失败 vm=%s user=%s: %v", tgt.VM.Name, user.Username, dialErr)
 		closeJumpSession(s.DB, sid, "拨号失败")
@@ -676,7 +676,7 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 
 	ts, err := client.NewSession()
 	if err != nil {
-		io.WriteString(ch, "\r\n✗ 建立目标会话失败，已回到菜单\r\n")
+		_, _ = io.WriteString(ch, "\r\n✗ 建立目标会话失败，已回到菜单\r\n")
 		closeJumpSession(s.DB, sid, "建会话失败")
 		return
 	}
@@ -710,12 +710,12 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 
 	// 回放用户侧终端类型与窗口尺寸（window-change 已持续转发）
 	if err := ts.RequestPty(term, h, w, nil); err != nil {
-		io.WriteString(ch, "\r\n✗ 申请伪终端失败，已回到菜单\r\n")
+		_, _ = io.WriteString(ch, "\r\n✗ 申请伪终端失败，已回到菜单\r\n")
 		closeJumpSession(s.DB, sid, "PTY 失败")
 		return
 	}
 	if err := ts.Shell(); err != nil {
-		io.WriteString(ch, "\r\n✗ 启动目标 shell 失败，已回到菜单\r\n")
+		_, _ = io.WriteString(ch, "\r\n✗ 启动目标 shell 失败，已回到菜单\r\n")
 		closeJumpSession(s.DB, sid, "shell 失败")
 		return
 	}
@@ -807,7 +807,7 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 			if blocked {
 				log.Printf("[jumpd] 已拦截高危命令 user=%s vm=%d cmd=%q", user.Username, vmID, line)
 				// 用户提示（写在目标 tty 流里，拦谁都看得见）
-				io.WriteString(ch, "\r\n\033[31m✗ 危险命令已被安全策略拦截并审计：\033[0m"+line+"\r\n")
+				_, _ = io.WriteString(ch, "\r\n\033[31m✗ 危险命令已被安全策略拦截并审计：\033[0m"+line+"\r\n")
 			}
 		}
 		forwardKeys(ks, stdin, waitDone, onLine)
@@ -819,7 +819,7 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 	case <-forwardDone: // 用户侧连接断开（键流关闭）
 	}
 
-	io.WriteString(ch, "\r\n\r\n[目标会话已结束，回到菜单]\r\n")
+	_, _ = io.WriteString(ch, "\r\n\r\n[目标会话已结束，回到菜单]\r\n")
 	closeJumpSession(s.DB, sid, "会话结束")
 }
 
@@ -856,14 +856,14 @@ func readLine(ks *keyStream, echo io.Writer) (string, error) {
 		case 0x7f, 0x08: // 退格：终端擦除（光标左移一格 + 空格覆盖 + 再左移）
 			if len(line) > 0 {
 				line = line[:len(line)-1]
-				io.WriteString(echo, "\b \b")
+				_, _ = io.WriteString(echo, "\b \b")
 			}
 		case 0x03: // Ctrl-C：中止搜索，返回空行
 			return "", nil
 		default:
 			if b >= 0x20 && b < 0x7f { // 只收可打印字符
 				line = append(line, b)
-				echo.Write([]byte{b})
+				_, _ = echo.Write([]byte{b})
 			}
 		}
 	}

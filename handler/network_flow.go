@@ -64,9 +64,9 @@ func NewNetworkFlowHandler() *NetworkFlowHandler {
 
 // cidrNet 分类用：CIDR + 所属网络 id + 前缀长度（最长前缀优先）。
 type cidrNet struct {
-	ipnet  *net.IPNet
-	netID  string
-	plen   int
+	ipnet *net.IPNet
+	netID string
+	plen  int
 }
 
 // buildFlowNets 汇总全部网络定义（libvirt ∪ docker ∪ host ∪ external）。
@@ -144,15 +144,6 @@ func classifyIP(ip net.IP, cidrs []cidrNet) string {
 		return "external"
 	}
 	return best
-}
-
-// parseSSAddr 解析 ss 的地址列（兼容 IPv6 [::1]:443 与 IPv4 10.0.0.1:53）。
-func parseSSAddr(s string) net.IP {
-	s = strings.Trim(s, "[]host")
-	if i := strings.LastIndex(s, ":"); i > 0 {
-		return net.ParseIP(s[:i])
-	}
-	return net.ParseIP(s)
 }
 
 // sampleSS 采样 TCP 连接表（ss -tn，无需 root），返回聚合边。
@@ -319,4 +310,3 @@ func (h *NetworkFlowHandler) Flows(c *gin.Context) {
 		"sampled_at": time.Now().Format("15:04:05"),
 	})
 }
-

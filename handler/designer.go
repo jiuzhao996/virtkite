@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/dbx"
 	"github.com/jiuzhao/vmops/service/dockerx"
@@ -86,7 +87,7 @@ type dsgPlan struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-func designerDir() string { return filepath.Join("data", "designer") }
+func designerDir() string { return config.DataPath("designer") }
 
 var dsgIDRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 
@@ -237,7 +238,7 @@ func (h *DesignerHandler) ExportYAML(c *gin.Context) {
 
 // snapshotDir 快照目录：data/designer/snapshots/。<plan>.latest.json 是漂移对比
 // 基准（落地成功覆盖写）；<plan>-<unixts>.json 为历史存档（不可变，保留追溯）。
-func snapshotDir() string { return filepath.Join("data", "designer", "snapshots") }
+func snapshotDir() string { return config.DataPath("designer", "snapshots") }
 
 // saveSnapshot 落地成功后存快照：latest（对比基准）+ 带时间戳历史档。
 func (h *DesignerHandler) saveSnapshot(p dsgPlan) {
@@ -267,15 +268,15 @@ func loadLatestSnapshot(planID string) *dsgPlan {
 // DriftItem 单条漂移：计划里有现实没有=missing（收敛=落地）；现实有计划没有=
 // extra（接纳=导入或拆除）；规格/状态不符=mismatch。
 type DriftItem struct {
-	Kind   string `json:"kind"`             // missing | extra | mismatch
-	Node   string `json:"node"`             // 节点名
-	Detail string `json:"detail"`           // 人读描述
+	Kind   string `json:"kind"`   // missing | extra | mismatch
+	Node   string `json:"node"`   // 节点名
+	Detail string `json:"detail"` // 人读描述
 }
 
 // DriftResult 一个计划的漂移对比结果。
 type DriftResult struct {
 	PlanID    string      `json:"plan_id"`
-	HasSnap   bool        `json:"has_snap"`   // false=从未落地，无从谈漂移
+	HasSnap   bool        `json:"has_snap"` // false=从未落地，无从谈漂移
 	Drifted   bool        `json:"drifted"`
 	Items     []DriftItem `json:"items"`
 	CheckedAt time.Time   `json:"checked_at"`
@@ -524,29 +525,29 @@ func (h *DesignerHandler) ExportAnsible(c *gin.Context) {
 	siteBytes := []byte(site.String())
 
 	// 落盘：site.yml 进 playbook 库目录（立即出现在自动化页）；inventory 存档目录
-	if err := os.MkdirAll(filepath.Join("data", "ansible", "playbooks"), 0o755); err != nil {
+	if err := os.MkdirAll(config.DataPath("ansible", "playbooks"), 0o755); err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "创建 playbook 目录失败", err)
 		return
 	}
-	if err := os.MkdirAll(filepath.Join("data", "ansible", "inventory"), 0o755); err != nil {
+	if err := os.MkdirAll(config.DataPath("ansible", "inventory"), 0o755); err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "创建 inventory 目录失败", err)
 		return
 	}
-	sitePath := filepath.Join("data", "ansible", "playbooks", id+"-site.yml")
+	sitePath := config.DataPath("ansible", "playbooks", id+"-site.yml")
 	if err := os.WriteFile(sitePath, siteBytes, 0o644); err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "写入 site.yml 失败", err)
 		return
 	}
-	invPath := filepath.Join("data", "ansible", "inventory", id+".yml")
+	invPath := config.DataPath("ansible", "inventory", id+".yml")
 	if err := os.WriteFile(invPath, invBytes, 0o644); err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "写入 inventory 失败", err)
 		return
 	}
 	Success(c, gin.H{
-		"message":       "已导出",
-		"playbook_id":   id + "-site",
-		"inventory":     string(invBytes),
-		"site":          string(siteBytes),
+		"message":        "已导出",
+		"playbook_id":    id + "-site",
+		"inventory":      string(invBytes),
+		"site":           string(siteBytes),
 		"inventory_path": invPath,
 	})
 }
@@ -679,7 +680,7 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 					st.Error = "栈不存在：" + n.Ref
 					return
 				}
-				target := filepath.Join("data", "stacks", n.Ref)
+				target := config.DataPath("stacks", n.Ref)
 				if err := os.MkdirAll(target, 0o755); err != nil {
 					st.Status = "failed"
 					st.Error = "创建部署目录失败"
@@ -940,7 +941,7 @@ func (h *DesignerHandler) provisionVM(n dsgNode, st *dsgApplyState) (uint, error
 		if !playbookIDRe.MatchString(pbID) {
 			return vmID, fmt.Errorf("playbook ID 非法: %s", pbID)
 		}
-		if _, perr := os.Stat(filepath.Join("data", "ansible", "playbooks", pbID+".yml")); perr != nil {
+		if _, perr := os.Stat(config.DataPath("ansible", "playbooks", pbID+".yml")); perr != nil {
 			return vmID, fmt.Errorf("playbook 不存在: %s", pbID)
 		}
 		t, err := h.Tasks.Submit("ansible_run", "设计器 playbook "+pbID+" → "+n.Name,

@@ -7,12 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/cron"
 	"gorm.io/gorm"
@@ -545,7 +545,7 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 		if !cron.AnsiblePlaybookIDRe.MatchString(params.Playbook) {
 			return 0, errors.New("playbook ID 非法（字母数字与 -_，字母开头）")
 		}
-		if _, err := os.Stat(filepath.Join("data", "ansible", "playbooks", params.Playbook+".yml")); err != nil {
+		if _, err := os.Stat(config.DataPath("ansible", "playbooks", params.Playbook+".yml")); err != nil {
 			return 0, fmt.Errorf("playbook 不存在: %s", params.Playbook)
 		}
 		if len(params.Targets) == 0 {

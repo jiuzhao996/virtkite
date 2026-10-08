@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -33,6 +34,11 @@ type Config struct {
 	// 镜像存储目录
 	ImageDir string
 
+	// 运行数据根目录（架构设计器计划/快照、Ansible runs/playbooks、栈部署副本等一律落此目录下）。
+	// 用环境变量 DATA_DIR 覆盖，默认 "data"；所有运行数据路径必须经 DataPath 拼接，
+	// 禁止直接 filepath.Join("data", ...)——相对路径会随进程工作目录漂移（如 go test 时 cwd 在包目录）。
+	DataDir string
+
 	// cloud-init seed 镜像目录（需当前用户可写、qemu 进程可读；不依赖存储池目录权限）
 	SeedDir string
 
@@ -54,7 +60,6 @@ type Config struct {
 	// Authorization: Bearer 匹配；为空则公开，与 deploy/alertmanager.yml 的 webhook_config 配对）
 	AlertWebhookToken string
 
-
 	// SSH 跳板入口（jumpd）：JUMPD_ENABLED=1 才启动；监听 JUMPD_PORT（默认 2222）。
 	// 默认关闭——公网部署须先评估口令爆破面（服务内有 per-IP 限流兜底）
 	JumpdEnabled bool
@@ -64,6 +69,8 @@ type Config struct {
 var GlobalConfig *Config
 
 func Init() {
+	// 运行数据根目录先解析：SeedDir 的默认值依赖它（避免在结构体字面量里读尚未赋值的 GlobalConfig）
+	dataDir := getEnv("DATA_DIR", "data")
 	GlobalConfig = &Config{
 		// 数据库配置
 		DBHost: getEnv("DB_HOST", "127.0.0.1"),
@@ -93,8 +100,11 @@ func Init() {
 		// 镜像存储目录
 		ImageDir: getEnv("IMAGE_DIR", "/var/lib/libvirt/images"),
 
-		// cloud-init seed 镜像目录
-		SeedDir: getEnv("SEED_DIR", "data/seed"),
+		// 运行数据根目录
+		DataDir: dataDir,
+
+		// cloud-init seed 镜像目录（默认随 DATA_DIR；需要时用 SEED_DIR 单独覆盖）
+		SeedDir: getEnv("SEED_DIR", filepath.Join(dataDir, "seed")),
 
 		// Alertmanager 地址
 		AlertmanagerURL: getEnv("ALERTMANAGER_URL", "http://127.0.0.1:9093"),
@@ -133,4 +143,17 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return intValue
+}
+
+// DataPath 拼接运行数据根目录（GlobalConfig.DataDir）下的路径。
+// 所有运行数据（设计器计划/快照、Ansible runs/playbooks、栈部署副本等）必须经此函数，
+// 禁止直接 filepath.Join("data", ...)：相对路径随进程工作目录漂移——`go test ./handler/...`
+// 时 cwd 在 handler/，会在包目录下生成空的 data/ 残留（已发生过）。
+// 动态读取 GlobalConfig 以便测试通过覆盖 DataDir 指向 t.TempDir()；未初始化时回落 "data"。
+func DataPath(parts ...string) string {
+	base := "data"
+	if GlobalConfig != nil && GlobalConfig.DataDir != "" {
+		base = GlobalConfig.DataDir
+	}
+	return filepath.Join(append([]string{base}, parts...)...)
 }

@@ -12,22 +12,38 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-// TestMain 初始化 tasks 包测试环境：丢弃日志输出。
+// TestMain 初始化 tasks 包测试环境：丢弃日志输出 + 运行数据根指向临时目录。
 //
 // tasks 包大量依赖日志（executor panic 的堆栈、入队超时、保留卷原因等「只进日志不入库」
 // 的信息都在这里），测试默认不需要它们混进 go test -v 输出。
 // 需要验证日志内容的用例自行用 log.SetOutput 临时接管。
 //
+// 运行数据根（config.DataDir）指向临时目录：写盘路径统一经 config.DataPath，
+// 避免相对 data/ 随 cwd 落到包目录生成残留，也避免污染仓库真实 ./data。
+//
 // 说明：本包测试不用 t.Parallel()。部分用例会临时改写 config.GlobalConfig，
 // 且 enqueue 的超时用例依赖真实时钟，并行会让耗时断言变得不可靠。
 func TestMain(m *testing.M) {
 	log.SetOutput(io.Discard)
+
+	tmpDir, _ := os.MkdirTemp("", "vmops-tasks-testdata-*")
+	if tmpDir != "" {
+		if config.GlobalConfig == nil {
+			config.Init()
+		}
+		config.GlobalConfig.DataDir = tmpDir
+	}
+
 	code := m.Run()
+	if tmpDir != "" {
+		_ = os.RemoveAll(tmpDir)
+	}
 	log.SetOutput(os.Stderr)
 	os.Exit(code)
 }

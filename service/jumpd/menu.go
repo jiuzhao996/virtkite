@@ -115,19 +115,6 @@ func truncateWidth(s string, max int) string {
 	return s
 }
 
-// displayWidth 字符串显示宽（CJK=2，其他=1）
-func displayWidth(s string) int {
-	w := 0
-	for _, r := range s {
-		if r > 0x2E80 {
-			w += 2
-		} else {
-			w++
-		}
-	}
-	return w
-}
-
 // menuAction 按键解析结果：select 选中 / next 翻下页 / prev 翻上页 / quit 退出 / stay 无效键
 type menuAction struct {
 	kind string
