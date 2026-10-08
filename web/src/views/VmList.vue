@@ -339,31 +339,15 @@ async function action(vm, type) {
   busy.value.add(vm.id)
   busy.value = new Set(busy.value)
   try {
-    if (type === 'delete') {
-      await ElMessageBox.prompt(
-        '此操作不可撤销。请输入虚拟机名称「' + vm.name + '」以确认删除：',
-        '确认删除',
-        {
-          type: 'warning',
-          confirmButtonText: '确认删除',
-          cancelButtonText: '取消',
-          confirmButtonClass: 'el-button--danger',
-          inputPlaceholder: vm.name,
-          inputValidator: (v) => (v && v.trim() === vm.name) || '请输入正确的虚拟机名称'
-        }
-      )
-      ElMessage.info('删除任务已提交，正在执行…')
-      await pollTask(extractTaskId(await api.deleteVM(vm.id)))
-      ElMessage.success('删除成功')
-      await load()
-    } else if (type === 'stop') {
+    if (type === 'stop') {
       // 优雅关机走后台任务：根治同步 15s 撞 axios 超时的误报
       ElMessage.info('关机任务已提交，正在执行…')
       await pollTask(extractTaskId(await api.stopVM(vm.id)))
       ElMessage.success('关机成功')
       await load()
     } else {
-      // start 为快接口，同步直调（restart 入口已收敛到详情页顶栏）
+      // start 为快接口，同步直调。单台删除入口不在卡片上（统一走详情页：预检 + 输名确认），
+      // 列表侧危险操作只剩批量删除（有逐台预检聚合兜底）
       await api[type + 'VM'](vm.id)
       ElMessage.success('开机指令已执行')
       await load()
@@ -378,7 +362,7 @@ async function action(vm, type) {
   }
 }
 
-// “更多”下拉已删除：删除钮常驻，重启去详情页顶栏；action 兜底保留 restart 分支
+// 卡片操作：start/stop 就地执行；单台删除已收敛到详情页（预检 + 输名确认），restart 也在详情页顶栏
 
 async function openConsole(vm) {
   router.push({ name: 'console', params: { id: vm.id } })

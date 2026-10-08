@@ -70,21 +70,8 @@
         @click="$emit('action', vm, 'stop')"
       >关机</el-button>
       <el-button size="small" :icon="Monitor" :disabled="vm.status !== 'running'" :title="vm.status === 'running' ? '' : '开机后可用控制台'" @click="$emit('console', vm)">控制台</el-button>
-      <!-- 删除常驻（原「更多」下拉悬浮突兀，重启去详情页操作）：删除有输入名称确认弹窗兜底；
-           icon-only 必须带 tooltip + aria-label（ui-ux-pro-max §1） -->
-      <el-tooltip :content="'删除 ' + vm.name" placement="top">
-        <el-button
-          v-if="canOperate"
-          class="vm-delete"
-          size="small"
-          type="danger"
-          plain
-          :icon="Delete"
-          :disabled="busy"
-          :aria-label="'删除 ' + vm.name"
-          @click="$emit('action', vm, 'delete')"
-        />
-      </el-tooltip>
+      <!-- 单台删除入口已移除：列表侧只保留批量删除（带磁盘/快照预检聚合），
+           单台删除统一走详情页（预检 + 输入名称确认），避免列表快捷入口漏预检导致误删盘 -->
     </div>
   </el-card>
 </template>
@@ -96,7 +83,7 @@
 import { watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { VideoPlay, SwitchButton, Monitor, Delete, View, CopyDocument, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
+import { VideoPlay, SwitchButton, Monitor, View, CopyDocument, Cpu, FolderOpened, Connection } from '@element-plus/icons-vue'
 import { useChart } from '../../../composables/useChart'
 import { vmStatusText, usageColor, cssVar, fmtDate } from '../../../utils/format'
 import { copyText } from '../../../utils/clipboard'
@@ -410,9 +397,5 @@ async function copyIP(ip) {
   padding-top: 12px;
   border-top: 1px solid var(--color-border);
   margin-top: auto;
-}
-/* 删除钮右对齐独立：危险动作与常规操作分离（放不下时也单独成行靠右） */
-.vm-delete {
-  margin-left: auto;
 }
 </style>
