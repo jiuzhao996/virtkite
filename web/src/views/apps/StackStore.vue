@@ -10,7 +10,7 @@
 
     <el-row :gutter="16">
       <el-col v-for="st in stacks" :key="st.id" :xs="24" :sm="12" :md="8">
-        <el-card shadow="hover" class="sk-card">
+        <el-card shadow="hover" class="sk-card" @click="openDetail(st)">
           <div class="sk-head">
             <span class="sk-name">{{ st.id }}</span>
             <el-tag size="small" effect="plain" type="info">{{ st.category || '未分类' }}</el-tag>
@@ -20,14 +20,12 @@
           <div class="sk-services">
             <el-tag v-for="s in st.services" :key="s" size="small" effect="plain" class="sk-svc mono">{{ s }}</el-tag>
           </div>
-          <div class="sk-actions">
+          <div class="sk-actions" @click.stop>
             <el-button
               type="primary" size="small" :icon="VideoPlay"
               :loading="deploying === st.id" :disabled="!!st.deployed"
               @click="deploy(st)"
             >{{ st.deployed ? '已部署' : '一键部署' }}</el-button>
-            <!-- 管理：栈详情（服务矩阵/组合日志/编排文件编辑/升级） -->
-            <el-button size="small" :icon="Setting" @click="openDetail(st)">管理</el-button>
             <!-- 已部署 → 直跳容器页编排 tab（栈商店与容器页此前零互链） -->
             <el-button v-if="st.deployed" size="small" text type="primary" @click="goCompose">去编排 →</el-button>
             <el-button v-if="st.docs && st.docs.length" text size="small" :icon="Reading" @click="openDocs(st)">参考笔记</el-button>
@@ -56,7 +54,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, VideoPlay, Reading, Setting } from '@element-plus/icons-vue'
+import { Refresh, VideoPlay, Reading } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { api } from '../../api'
@@ -66,7 +64,7 @@ import StackDetailDrawer from './StackDetailDrawer.vue'
 
 const router = useRouter()
 
-// 栈详情抽屉：管理入口（服务矩阵 / 组合日志 / 编排文件编辑 / 一键升级）
+// 栈详情抽屉：卡片点击入口（服务矩阵 / 组合日志 / 编排文件编辑 / 一键升级）
 const detailDrawerRef = ref(null)
 function openDetail(st) {
   detailDrawerRef.value.open(st.id)
@@ -159,6 +157,7 @@ load()
   margin-bottom: 16px;
   display: flex;
   flex-direction: column;
+  cursor: pointer;
   transition: transform var(--dur-base) var(--ease-standard), box-shadow var(--dur-base) var(--ease-standard);
 }
 .sk-card:hover {

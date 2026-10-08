@@ -1,6 +1,6 @@
 <template>
   <div v-loading="loading">
-    <PageHead title="任务中心" subtitle="创建、克隆、删除、关机等耗时操作都在后台异步执行，这里看每个任务的进度和结果；点「详情」可查看失败原因，以及删除虚拟机时被保护保留的共享卷" />
+    <PageHead title="任务中心" subtitle="创建、克隆、删除、关机等耗时操作都在后台异步执行，这里看每个任务的进度和结果；点任务行可查看失败原因，以及删除虚拟机时被保护保留的共享卷" />
     <el-card shadow="never">
       <!-- 原左分组为 gap 8px + flex-wrap，经 wrap 传入保持不变；计数为 .toolbar 直接子元素走默认插槽 -->
       <Toolbar wrap>
@@ -73,9 +73,8 @@
         <el-table-column prop="created_at" label="创建时间" width="170">
           <template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
-            <el-button text type="primary" size="small" @click.stop="openDetail(row)">详情</el-button>
             <el-button
               v-if="row.status === 'running'"
               text type="warning" size="small"

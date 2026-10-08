@@ -109,7 +109,7 @@
             <el-button size="small" :icon="Refresh" @click="loadHistory">刷新</el-button>
             <span class="auto-hint">ansible_run 类型任务（含 adhoc 与 playbook）</span>
           </div>
-          <el-table :data="history" v-loading="histLoading" size="small" @row-click="viewHistoryTask">
+          <el-table :data="history" v-loading="histLoading" size="small" row-class-name="clickable-row" @row-click="viewHistoryTask">
             <el-table-column prop="id" label="ID" width="70" />
             <el-table-column prop="title" label="任务" min-width="220" show-overflow-tooltip />
             <el-table-column label="状态" width="100">
@@ -118,7 +118,7 @@
               </template>
             </el-table-column>
             <el-table-column prop="created_at" label="提交时间" width="180" />
-            <el-table-column label="操作" width="210" fixed="right">
+            <el-table-column label="操作" width="170" fixed="right">
               <template #default="{ row }">
                 <el-button
                   v-if="row.status === 'running'"
@@ -126,7 +126,6 @@
                   :loading="cancellingId === row.id"
                   @click.stop="cancelHistoryTask(row)"
                 >取消</el-button>
-                <el-button text size="small" type="primary" @click.stop="viewHistoryTask(row)">输出</el-button>
                 <!-- 出口：跳到任务中心看该任务的完整时间线与结构化结果 -->
                 <el-button text size="small" @click.stop="goTaskCenter(row)">任务中心 →</el-button>
               </template>
@@ -743,6 +742,8 @@ onUnmounted(stopPolling)
 .auto-count { font-size: 0.8rem; color: var(--color-muted-foreground); white-space: nowrap; }
 .auto-hint { margin-left: 12px; font-size: 0.78rem; color: var(--color-muted-foreground); }
 .auto-pb-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+/* 执行历史表行点击钻取：el-table 内部 tr 拿不到 scoped 属性，须 :deep 穿透 */
+:deep(tr.clickable-row) { cursor: pointer; }
 .auto-out-card { margin-top: 16px; }
 .auto-out-head { display: flex; align-items: center; justify-content: space-between; }
 .auto-out-title { font-weight: 400; font-size: 0.82rem; color: var(--color-muted-foreground); }

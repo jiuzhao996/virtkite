@@ -44,7 +44,7 @@
             <el-button :icon="Download" :loading="exporting" @click="exportCsv">导出</el-button>
           </div>
 
-          <!-- 行点击钻取：整行可点开详情抽屉（与「详情」按钮同入口）；clickable-table 只作用于本表，
+          <!-- 行点击钻取：整行可点开详情抽屉（详情单元格同入口，操作列已无冗余按钮）；clickable-table 只作用于本表，
                不波及「控制台会话」tab（SessionList 为独立组件，行内另有虚拟机链接与断开按钮） -->
           <el-table :data="items" stripe border style="width: 100%" class="clickable-table" @row-click="onRowClick">
             <template #empty><el-empty description="暂无审计记录" :image-size="80" /></template>
@@ -91,11 +91,6 @@
                 <span v-else class="muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="90" fixed="right">
-              <template #default="{ row }">
-                <el-button text size="small" type="primary" :icon="View" @click.stop="openDetail(row)">详情</el-button>
-              </template>
-            </el-table-column>
           </el-table>
 
           <el-pagination
@@ -117,7 +112,7 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 审计详情抽屉（替代原小弹窗）：行点击 / 「详情」按钮 / 详情单元格三处共用 openDetail 入口。
+    <!-- 审计详情抽屉（替代原小弹窗）：行点击 / 详情单元格两处共用 openDetail 入口。
          形态对齐 TaskList 任务详情抽屉：顶部概要大字 + descriptions 结构化字段 + 关联跳转 + 详情原文 -->
     <el-drawer
       v-model="drawerOpen"
@@ -173,7 +168,7 @@
 import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Search, RefreshLeft, Refresh, Download, View } from '@element-plus/icons-vue'
+import { Search, RefreshLeft, Refresh, Download } from '@element-plus/icons-vue'
 import { api, TOKEN_KEY } from '../api'
 import echarts from '../utils/echarts'
 import { BarChart } from 'echarts/charts'
@@ -396,7 +391,7 @@ async function exportCsv() {
   }
 }
 
-// ===== 详情抽屉：行点击 / 详情按钮 / 详情单元格共用一个打开函数 =====
+// ===== 详情抽屉：行点击 / 详情单元格共用一个打开函数 =====
 function openDetail(row) {
   current.value = row
   drawerOpen.value = true

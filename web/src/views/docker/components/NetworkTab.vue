@@ -7,7 +7,7 @@
          内置网络禁删（bridge/host/none 是 docker 底座）；网段/网关由后端批量 inspect 补齐 -->
     <div v-loading="loading" class="net-cards">
       <el-empty v-if="!networks.length" description="暂无网络" :image-size="80" />
-      <el-card v-for="row in networks" :key="row.Name" shadow="hover" class="dn-card">
+      <el-card v-for="row in networks" :key="row.Name" shadow="hover" class="dn-card" @click="openDetail(row)">
         <div class="dn-head">
           <span class="dn-name mono">{{ row.Name }}</span>
           <el-tag v-if="isBuiltinNetwork(row.Name)" effect="plain" size="small">内置</el-tag>
@@ -18,8 +18,7 @@
           <div class="dn-row"><span class="dn-label">网关</span><span class="mono">{{ row.Gateway || '—' }}</span></div>
           <div class="dn-row"><span class="dn-label">创建时间</span><span class="mono">{{ dockerTime(row.CreatedAt) }}</span></div>
         </div>
-        <div class="dn-actions">
-          <el-button size="small" text type="primary" @click="openDetail(row)">详情</el-button>
+        <div class="dn-actions" @click.stop>
           <!-- bridge/host/none 等内置网络是 docker 底座，前后端双重禁删，按钮置灰 -->
           <el-button size="small" text type="danger" :disabled="isBuiltinNetwork(row.Name)" @click="removeNetwork(row)">删除</el-button>
         </div>
@@ -189,6 +188,9 @@ async function submitNetwork() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: var(--space-lg);
+}
+.dn-card {
+  cursor: pointer;
 }
 .dn-card:hover {
   transform: translateY(-2px);

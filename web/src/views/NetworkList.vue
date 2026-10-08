@@ -42,11 +42,11 @@
       </el-empty>
       <el-row v-else :gutter="16">
         <el-col v-for="row in networks" :key="row.name" :xs="24" :sm="12" :md="8">
-        <el-card shadow="hover" class="net-card" :class="{ inactive: !row.active }">
+        <el-card shadow="hover" class="net-card" :class="{ inactive: !row.active }" @click="openDetail(row)">
           <div class="nc-head">
             <span class="nc-name mono">{{ row.name }}</span>
             <el-tag :type="row.active ? 'success' : 'info'" effect="light">{{ row.active ? '运行' : '停止' }}</el-tag>
-            <div class="nc-autostart">
+            <div class="nc-autostart" @click.stop>
               <span class="nc-label">自启</span>
               <el-switch
                 v-if="isAdmin"
@@ -65,8 +65,7 @@
             <div class="nc-row"><span class="nc-label">网关</span><span class="mono">{{ row.gateway || '—' }}</span></div>
             <div class="nc-row wide"><span class="nc-label">DHCP 范围</span><span class="mono">{{ row.dhcp_start && row.dhcp_end ? row.dhcp_start + ' - ' + row.dhcp_end : '—' }}</span></div>
           </div>
-          <div class="nc-actions">
-            <el-button size="small" text type="primary" @click="openDetail(row)">详情</el-button>
+          <div class="nc-actions" @click.stop>
             <!-- 启动/停止状态切换钮：运行中显「停止」，停止态显「启动」；
                  请求进行中 :loading 禁用，防连点重复提交（ui-ux-pro-max §2 loading-buttons） -->
             <el-button
@@ -266,6 +265,7 @@ onMounted(load)
 }
 .net-card {
   margin-bottom: 16px;
+  cursor: pointer;
 }
 .net-card.inactive {
   opacity: 0.75;
