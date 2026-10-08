@@ -72,7 +72,7 @@ const showLineage = ref(true)
 
 let graph = null
 
-const PW = 176, PH = 58        // 池节点
+const PW = 176, PH = 46        // 池节点（去掉容量条后收紧高度）
 const VW = 136, VH = 44        // 卷节点
 const MW = 132, MH = 42        // VM 节点
 const GAPX = 14, GAPY = 14
@@ -180,17 +180,14 @@ function buildLayout(poolList, vols) {
   return { pos, panels, canvasW, canvasH }
 }
 
+// 池节点不再画容量条/容量文本：dir 池容量是文件系统级的，同盘多池口径完全相同，
+// 逐池重复同一条进度条纯属噪音；容量统一在「存储池」tab 的物理容量汇总条展示。
 function poolAttrs(p) {
-  const cap = Number(p.capacity) || 0
-  const used = cap - (Number(p.available) || 0)
-  const pct = cap > 0 ? Math.min(100, Math.round((used / cap) * 100)) : 0
-  const sub = `${p.vol_count != null ? p.vol_count + ' 卷 · ' : ''}${fmtGB(used / (1024 ** 3))} / ${fmtGB(cap / (1024 ** 3))}`
+  const sub = p.vol_count != null ? `${p.vol_count} 卷` : ''
   return {
     body: { stroke: '#7c5cd6', strokeWidth: 1.8, fill: '#f0e6ff', rx: 10, ry: 10, cursor: 'pointer' },
-    label: { text: short(p.name, 12), fill: '#5b21b6', fontSize: 13, fontWeight: 600, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 16 },
-    sub: { text: sub, fill: '#8b6fd8', fontSize: 10, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 36 },
-    bar: { refX: 14, refY: 46, refWidth: PW - 28, height: 5, stroke: 'none', fill: '#e2d4fa', rx: 2.5, ry: 2.5 },
-    barFill: { refX: 14, refY: 46, width: ((PW - 28) * pct) / 100, height: 5, stroke: 'none', fill: '#9b6ee8', rx: 2.5, ry: 2.5 }
+    label: { text: short(p.name, 12), fill: '#5b21b6', fontSize: 13, fontWeight: 600, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 18 },
+    sub: { text: sub, fill: '#8b6fd8', fontSize: 10, textAnchor: 'middle', textVerticalAnchor: 'middle', refX: '50%', refY: 36 }
   }
 }
 function volAttrs(n) {
@@ -245,9 +242,7 @@ function buildCells(pos, panels) {
       markup: [
         { tagName: 'rect', selector: 'body' },
         { tagName: 'text', selector: 'label' },
-        { tagName: 'text', selector: 'sub' },
-        { tagName: 'rect', selector: 'bar' },
-        { tagName: 'rect', selector: 'barFill' }
+        { tagName: 'text', selector: 'sub' }
       ],
       ports: portGroups()
     })
