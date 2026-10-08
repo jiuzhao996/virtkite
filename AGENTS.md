@@ -109,6 +109,18 @@
 
 已核实**解决**（勿再列为待办）：网络 XML 直定义两路由（2026-09-26 砍除）、登录限流（`handler/auth.go` loginLimiter）、CORS release 禁 `*`（main.go 启动校验）、SSH 主机密钥 TOFU（全仓库 InsecureIgnoreHostKey 归零）、孤儿卷清理闭环、golangci-lint 已装并升级 v2.5.0（`.golangci.yml` 已迁移 v2 schema：`version:"2"`/`go:"1.26"`，字段改名与 `formatters` 段落地，全仓库 0 发现）、ImportVMs errors 数组前端已消费、`tasks.payload` 历史明文已清洗（`scripts/purge-task-secrets --apply`，共 7 条；含一条漏网遗留键 `cloud_init_password`，脚本键清单已补齐；清洗前已备份 `tasks` 单表）。
 
+## Git 远端与分支约定（2026-10-08 用户拍板，长期有效）
+
+- **两个远端的默认分支均为 `main`，推送一律推 `main`**，不再使用 master：
+  - gitee：`git push origin main`（origin = gitee.com/jiuzhao996/virtkite.git；默认分支已改为 main，旧 `master` 分支由用户手动删除）
+  - github：`git push github main`（github = github.com/jiuzhao996/virtkite.git）
+- **github 直连不可达**（443 超时），推送/拉取 github 须走本机 Clash 代理（仅命令级环境变量，不改 git config）：
+  `https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890 git push github main`；gitee 可直连。
+- 沙箱内 git 推送会因无法写 `~/.git-credentials.lock` 失败（credential.helper=store），需在沙箱外执行。
+- 本地 `main` 上游曾误配 `origin/master`（曾致 `git status` 显示"领先 92"）；修正方式 `git branch --set-upstream-to=origin/main main`（由用户自行执行）。
+- 仓库内 `stacks/es-cluster.yml` 的 `cluster.initial_master_nodes` 与 `mysql-master-slave` 栈是 ES/MySQL 主从语义，与 git 分支无关，**不得当作分支引用改动**。
+- `.trae/` 是 Trae 工具产物（规划文档等），**不提交**。
+
 ## 历史批次记录（已清理）
 
 P0 稳定性 → P1 安全 → P2 正确性 → P3/P4 → UX → 监控栈 → 多宿主机砍除 → 冗余清理 → RBAC → 资产授权 → Skills 审计 → 批 B/C → v3.3 → v3.4 → v3.5 → 胰腺癌级审计 → IA 精简。批次流水与踩坑记录（devlog、archive 规划与契约存档、docs-site 文档站）已于 2026-09-30 按用户拍板清理；仍在生效的教训均已固化为本文件的「后端开发标准」「前端开发标准」，考古请查 git 历史。
