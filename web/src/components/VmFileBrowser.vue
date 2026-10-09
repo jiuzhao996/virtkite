@@ -35,9 +35,12 @@
           </el-breadcrumb-item>
         </el-breadcrumb>
         <div class="fb-tools">
-          <el-tag v-if="offline" type="warning" effect="plain" size="small">离线只读模式</el-tag>
+          <el-tag v-if="offline" type="warning" effect="plain" size="small">{{ readWrite ? '离线读写模式' : '离线只读模式' }}</el-tag>
+          <el-tooltip v-if="!offline && isAdmin" content="读写挂载可离线修改模板/系统文件；挂载期间绝不能开机（会损坏磁盘）" placement="top">
+            <el-checkbox v-model="readWrite" size="small">读写挂载</el-checkbox>
+          </el-tooltip>
           <el-button size="small" :icon="Refresh" @click="load">刷新</el-button>
-          <template v-if="!offline">
+          <template v-if="!offline || readWrite">
             <el-button size="small" :icon="FolderAdd" @click="mkdir">新建目录</el-button>
             <el-button size="small" type="primary" plain :icon="Upload" @click="pickUpload">上传文件</el-button>
           </template>
@@ -69,7 +72,7 @@
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button v-if="!row.is_dir" size="small" :icon="Download" @click="download(row)">下载</el-button>
-            <el-button v-if="!offline" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
+            <el-button v-if="!offline || readWrite" size="small" type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -82,6 +85,7 @@ import { reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, FolderAdd, Upload, Folder, Document, Download, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { useAuth } from '../store/auth'
 import { errMsg, fmtDateTime } from '../utils/format'
 
 const props = defineProps({
@@ -92,7 +96,9 @@ const props = defineProps({
 const conn = reactive({ host: props.ip || '', port: 22, user: 'root', password: '' })
 const connecting = ref(false)
 const connected = ref(false)
-const offline = ref(false) // 离线挂载模式：guestmount 只读，不支持上传/删除/建目录
+const offline = ref(false) // 离线挂载模式：guestmount 挂载关机 VM 系统盘（只读 / 读写）
+const readWrite = ref(false) // 是否请求读写挂载（仅 admin；挂载期间禁止开机）
+const { isAdmin } = useAuth()
 const mounting = ref(false)
 const loading = ref(false)
 const path = ref('/root')
@@ -145,16 +151,16 @@ async function load() {
   }
 }
 
-// 离线挂载浏览：guestmount 只读挂关机 VM 系统盘（无需 VM 内 SSH/开机）
+// 离线挂载浏览：guestmount 挂关机 VM 系统盘（无需 VM 内 SSH/开机）；rw=1 为读写（仅 admin）
 async function mountOffline() {
   mounting.value = true
   try {
-    await api.vmFilesOfflineMount(props.id)
+    await api.vmFilesOfflineMount(props.id, readWrite.value)
     offline.value = true
     connected.value = true
     path.value = '/'
     await load()
-    ElMessage.success('已挂载系统盘（只读）')
+    ElMessage.success(readWrite.value ? '已读写挂载系统盘（挂载期间请勿开机）' : '已挂载系统盘（只读）')
   } catch (e) {
     ElMessage.error(errMsg(e, '挂载失败（需虚拟机关机；首次运行较慢）'))
   } finally {
@@ -214,23 +220,32 @@ function pickUpload() {
 async function doUpload(ev) {
   const file = ev.target.files && ev.target.files[0]
   if (!file) return
-  if (file.size > 4 * 1024 * 1024) {
-    ElMessage.warning('单文件建议不超过 4 MB（SSH 文本通道）')
-    return
-  }
-  const reader = new FileReader()
-  reader.onload = async () => {
-    try {
-      const base64 = String(reader.result).split(',')[1] || ''
+  try {
+    if (offline.value) {
+      // 离线读写：走 HTTP multipart（不经 SSH 文本通道，大小更宽松）
+      const fd = new FormData()
+      fd.append('path', path.value)
+      fd.append('file', file)
+      await api.vmFilesOfflineUpload(props.id, fd)
+    } else {
+      if (file.size > 4 * 1024 * 1024) {
+        ElMessage.warning('单文件建议不超过 4 MB（SSH 文本通道）')
+        return
+      }
+      const base64 = await new Promise((res) => {
+        const reader = new FileReader()
+        reader.onload = () => res(String(reader.result).split(',')[1] || '')
+        reader.readAsDataURL(file)
+      })
       await api.vmFilesUpload(props.id, { ...creds(), path: join(file.name), content: base64 })
-      ElMessage.success('已上传：' + file.name)
-      await load()
-    } catch (e) {
-      ElMessage.error(errMsg(e, '上传失败'))
     }
+    ElMessage.success('已上传：' + file.name)
+    await load()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '上传失败'))
+  } finally {
+    ev.target.value = ''
   }
-  reader.readAsDataURL(file)
-  ev.target.value = ''
 }
 
 async function remove(row) {
@@ -238,7 +253,11 @@ async function remove(row) {
     await ElMessageBox.confirm(`确定删除「${row.name}」？目录将递归删除，不可恢复。`, '删除', { type: 'warning', confirmButtonClass: 'el-button--danger' })
   } catch { return }
   try {
-    await api.vmFilesDelete(props.id, { ...creds(), paths: [join(row.name)] })
+    if (offline.value) {
+      await api.vmFilesOfflineDelete(props.id, { path: join(row.name) })
+    } else {
+      await api.vmFilesDelete(props.id, { ...creds(), paths: [join(row.name)] })
+    }
     ElMessage.success('已删除')
     await load()
   } catch (e) {
@@ -253,7 +272,11 @@ async function mkdir() {
     name = (r.value || '').trim()
   } catch { return }
   try {
-    await api.vmFilesMkdir(props.id, { ...creds(), path: join(name) })
+    if (offline.value) {
+      await api.vmFilesOfflineMkdir(props.id, { path: join(name) })
+    } else {
+      await api.vmFilesMkdir(props.id, { ...creds(), path: join(name) })
+    }
     ElMessage.success('已创建')
     await load()
   } catch (e) {

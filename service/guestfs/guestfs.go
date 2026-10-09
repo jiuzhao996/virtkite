@@ -178,17 +178,23 @@ func Sysprep(ctx context.Context, disk string, disableOps []string, opts RunOpts
 }
 
 // buildCustomizeArgs 组装 virt-customize 参数（纯函数）。
-func buildCustomizeArgs(disk, scriptPath string) []string {
-	return []string{"-a", disk, "--run", scriptPath}
+// sshPubKeyPath 非空时用 --ssh-inject 把平台公钥烘进 guest 的 authorized_keys——
+// 让模板克隆出的机器开机即被平台免密接管（不依赖 cloud-init 是否生效）。
+func buildCustomizeArgs(disk, scriptPath, sshPubKeyPath string) []string {
+	args := []string{"-a", disk, "--run", scriptPath}
+	if sshPubKeyPath != "" {
+		args = append(args, "--ssh-inject", "root:file:"+sshPubKeyPath)
+	}
+	return args
 }
 
-// Customize 对镜像注入基础优化（--run 让脚本在 guest 内执行，等价 virt-customize --run）。
-func Customize(ctx context.Context, disk, scriptPath string, opts RunOpts) (*Result, error) {
+// Customize 对镜像注入基础优化（--run 让脚本在 guest 内执行）并（可选）注入平台 SSH 公钥。
+func Customize(ctx context.Context, disk, scriptPath, sshPubKeyPath string, opts RunOpts) (*Result, error) {
 	t, err := Detect()
 	if err != nil {
 		return nil, err
 	}
-	return run(ctx, defaultCustomizeTimeout, t.Customize, buildCustomizeArgs(disk, scriptPath), opts)
+	return run(ctx, defaultCustomizeTimeout, t.Customize, buildCustomizeArgs(disk, scriptPath, sshPubKeyPath), opts)
 }
 
 // buildSparsifyArgs 组装 virt-sparsify 参数（纯函数）。
@@ -205,8 +211,36 @@ func Sparsify(ctx context.Context, disk string, opts RunOpts) (*Result, error) {
 	return run(ctx, defaultSparsifyTimeout, t.Sparsify, buildSparsifyArgs(disk), opts)
 }
 
-//go:embed optimize.sh
-var optimizeScript string
+//go:embed optimize/common.sh
+var optCommon string
 
-// OptimizeScript 返回内置基础优化脚本内容（固化时写临时文件交 virt-customize --run）。
-func OptimizeScript() string { return optimizeScript }
+//go:embed optimize/rhel.sh
+var optRHEL string
+
+//go:embed optimize/debian.sh
+var optDebian string
+
+// OptimizeScript 组装基础优化脚本：公共段 + 按发行版族分支（RHEL 系 / Debian 系，在 guest 内
+// 用包管理器自动识别）+ 可选自定义段。
+// custom 非空时追加执行——用户自带 base_config.sh 可直接塞进来做镜像专属优化。
+func OptimizeScript(custom string) string {
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\n# 由 vmops 模板固化生成（公共段 + 发行版族 + 自定义段）\nset +e\n")
+	b.WriteString("log() { echo \"[vmops-optimize] $*\"; }\n\n")
+	b.WriteString(optCommon)
+	b.WriteString("\n# ── 发行版族专属（按包管理器识别）──\n")
+	b.WriteString("if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then\n")
+	b.WriteString(optRHEL)
+	b.WriteString("\nelif command -v apt-get >/dev/null 2>&1; then\n")
+	b.WriteString(optDebian)
+	b.WriteString("\nelse\n  log \"未识别包管理器，跳过发行版专属优化\"\nfi\n")
+	if strings.TrimSpace(custom) != "" {
+		b.WriteString("\n# ── 自定义优化段（用户提供）──\n")
+		b.WriteString(custom)
+		if !strings.HasSuffix(custom, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\nlog \"基础优化完成（best-effort）\"\nexit 0\n")
+	return b.String()
+}

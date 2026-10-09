@@ -17,11 +17,15 @@ func TestBuildSysprepArgs(t *testing.T) {
 	}
 }
 
-// TestBuildCustomizeArgs 覆盖 customize 参数组装（--run 脚本路径）。
+// TestBuildCustomizeArgs 覆盖 customize 参数组装（--run 脚本路径 + 可选 --ssh-inject 公钥）。
 func TestBuildCustomizeArgs(t *testing.T) {
-	got := strings.Join(buildCustomizeArgs("/p/a.qcow2", "/tmp/opt.sh"), " ")
+	got := strings.Join(buildCustomizeArgs("/p/a.qcow2", "/tmp/opt.sh", ""), " ")
 	if got != "-a /p/a.qcow2 --run /tmp/opt.sh" {
 		t.Errorf("customize 参数不符: %q", got)
+	}
+	got = strings.Join(buildCustomizeArgs("/p/a.qcow2", "/tmp/opt.sh", "/k.pub"), " ")
+	if got != "-a /p/a.qcow2 --run /tmp/opt.sh --ssh-inject root:file:/k.pub" {
+		t.Errorf("公钥注入参数不符: %q", got)
 	}
 }
 
@@ -33,17 +37,30 @@ func TestBuildSparsifyArgs(t *testing.T) {
 	}
 }
 
-// TestOptimizeScriptEmbedded 确认内置优化脚本已随包嵌入且内容合理（装 agent + 末尾 exit 0）。
+// TestOptimizeScriptEmbedded 确认优化脚本组装正确：公共段 + 两族分支 + MOTD + 末尾 exit 0；
+// 自定义段非空时被追加。
 func TestOptimizeScriptEmbedded(t *testing.T) {
-	s := OptimizeScript()
-	if !strings.Contains(s, "qemu-guest-agent") {
-		t.Error("内置优化脚本应安装 qemu-guest-agent")
+	s := OptimizeScript("")
+	for _, want := range []string{
+		"qemu-guest-agent",        // 公共/族段装 agent
+		"cloud-init",              // 同上
+		"if command -v dnf",       // RHEL 系分支
+		"elif command -v apt-get", // Debian 系分支
+		"00-vmops-motd.sh",        // MOTD 彩色欢迎语
+		"cloud-utils-growpart",    // RHEL 包名
+		"cloud-guest-utils",       // Debian 包名
+		"exit 0",                  // 末尾必须 exit 0（否则 virt-customize 判失败）
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("优化脚本缺少 %q", want)
+		}
 	}
-	if !strings.Contains(s, "cloud-init") {
-		t.Error("内置优化脚本应安装 cloud-init")
+	withCustom := OptimizeScript("echo CUSTOM_MARKER")
+	if !strings.Contains(withCustom, "CUSTOM_MARKER") {
+		t.Error("自定义段未被追加")
 	}
-	if !strings.Contains(s, "exit 0") {
-		t.Error("内置优化脚本必须以 exit 0 结尾（否则 virt-customize 判失败）")
+	if strings.Contains(OptimizeScript(""), "CUSTOM_MARKER") {
+		t.Error("空自定义段不应产生内容")
 	}
 }
 

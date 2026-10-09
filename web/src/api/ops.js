@@ -61,7 +61,11 @@ export const ops = {
   // creds = { host, port, user, password }（页面侧连接表单持有，密码不落盘）
   vmFilesList: (id, payload) => unwrap(http.post(`/vms/${id}/files/list`, payload)),
   vmFilesOfflineList: (id, path) => unwrap(http.post(`/vms/${id}/files/offline/list`, { path })),
-  vmFilesOfflineMount: (id) => unwrap(http.post(`/vms/${id}/files/offline/mount`)),
+  vmFilesOfflineMount: (id, rw) => unwrap(http.post(`/vms/${id}/files/offline/mount${rw ? '?rw=1' : ''}`)),
+  // 离线写操作（仅读写挂载下可用）
+  vmFilesOfflineDelete: (id, payload) => unwrap(http.post(`/vms/${id}/files/offline/delete`, payload)),
+  vmFilesOfflineMkdir: (id, payload) => unwrap(http.post(`/vms/${id}/files/offline/mkdir`, payload)),
+  vmFilesOfflineUpload: (id, formData) => unwrap(http.post(`/vms/${id}/files/offline/upload`, formData, { timeout: 0 })),
   vmFilesOfflineUnmount: (id) => unwrap(http.post(`/vms/${id}/files/offline/unmount`)),
   // 下载直接返回文件内容（octet-stream），unwrap 后即内容本体，适合文本/配置文件
   vmFilesOfflineDownload: (id, path) => unwrap(http.get(`/vms/${id}/files/offline/download`, { params: { path } })),

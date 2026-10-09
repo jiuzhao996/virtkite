@@ -290,9 +290,11 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 
 - `POST /api/vms/:id/finalize-image`（202 task）— 把关机的「制作机」清洗固化为模板：
   `virt-sysprep`（去 SSH 主机密钥/bash 历史/machine-id/udev 持久网卡）→ 可选 `virt-customize`
-  注入基础优化（装 qemu-guest-agent + cloud-init、开串口 console、关 SELinux/firewalld）→
+  注入基础优化（按发行版族自动选择 RHEL 系 / Debian 系脚本：装 qemu-guest-agent + cloud-init、
+  开串口 console、关 SELinux/firewalld、写彩色 MOTD、换国内源）+ **注入平台 SSH 公钥**（克隆机开机即免密接管）→
   可选 `virt-sparsify --in-place` 压缩 → `undefine` 域 + 移除制作机记录 → 登记为模板（`is_template`）。
-  body：`{name?, description?, os_version?, optimize?, sparsify?}`。需宿主机装 `guestfs-tools` 且 web 用户可免密 sudo。
+  body：`{name?, description?, os_version?, custom_script?, optimize?, sparsify?}`（`custom_script` 追加执行，用于镜像专属优化）。
+  需宿主机装 `guestfs-tools` 且 web 用户可免密 sudo。
 - `GET /api/vms/:id/finalize-capability` — 工具链就绪（真自检）+ VM 关机态探测，供前端按钮置灰。
 
 ### 存储 / 网络
@@ -333,7 +335,7 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 - VM 应用：`GET /api/apps`（SSH 脚本应用目录） `POST /api/vms/apps/install`（挂 `/vms` 前缀，operator 可用——往自己 VM 装软件属操作语义）
 - AI 助手（viewer 403）：`GET /api/ai/status` `POST /api/ai/chat`（SSE 流式；`with_context=true` 注入平台摘要）
 - SSH 凭据：`POST|GET|DELETE /api/vms/:id/credentials`（AES-256-GCM 密文落库，响应永不含明文）
-- VM 文件管理：`POST /api/vms/:id/files/{list,download,upload,delete,mkdir}`（SSH 在线通道）+ `POST /api/vms/:id/files/offline/{mount,list,unmount}` `GET .../offline/download` `GET .../offline-capability`（guestmount 离线只读通道）
+- VM 文件管理：`POST /api/vms/:id/files/{list,download,upload,delete,mkdir}`（SSH 在线通道）+ `POST /api/vms/:id/files/offline/{mount,list,unmount}` `GET .../offline/download` `GET .../offline-capability`（guestmount 离线通道：默认只读，`?rw=1` 读写仅 admin——读写挂载期间禁止开机，写操作 `POST .../offline/{delete,mkdir,upload}` 仅在读写挂载下可用）
 - 计划任务（admin）：`GET|POST /api/crons` `PUT|DELETE /api/crons/:id` `POST /api/crons/:id/{toggle,run}` `GET /api/crons/:id/runs`（执行记录） `GET /api/crons/preview?expr=`（下次执行预览）
 - SSH 主机指纹（TOFU，admin）：`GET /api/ssh-host-keys` `DELETE /api/ssh-host-keys/:id`
 - 回收站（admin）：`GET /api/vms-recycle` `POST /api/vms-recycle/:id/restore` `DELETE /api/vms-recycle/:id/purge`

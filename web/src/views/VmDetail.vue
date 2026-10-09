@@ -232,6 +232,15 @@
         <el-form-item label="描述">
           <el-input v-model="finalizeForm.description" type="textarea" :rows="2" placeholder="可空" />
         </el-form-item>
+        <el-form-item label="自定义脚本">
+          <el-input
+            v-model="finalizeForm.custom_script"
+            type="textarea"
+            :rows="4"
+            class="mono"
+            placeholder="可空。追加执行的 shell 片段（如你自带的 base_config.sh 内容），在内置优化之后运行——用于镜像专属优化"
+          />
+        </el-form-item>
         <el-form-item label="选项">
           <div class="fin-opts">
             <el-checkbox v-model="finalizeForm.optimize">注入基础优化（装 qemu-guest-agent + cloud-init、开串口 console、关 SELinux/firewalld）</el-checkbox>
@@ -461,7 +470,7 @@ async function doDelete() {
 const finalizeDlg = ref(false)
 const finalizeBusy = ref(false)
 const finalizeCap = ref({ guestfs_available: false, version: '', reason: '', vm_shutoff: false })
-const finalizeForm = reactive({ name: '', description: '', os_version: '', optimize: true, sparsify: false })
+const finalizeForm = reactive({ name: '', description: '', os_version: '', custom_script: '', optimize: true, sparsify: false })
 
 async function loadFinalizeCap() {
   try {
@@ -476,7 +485,7 @@ function openFinalize() {
     ElMessage.warning('镜像清洗工具不可用：' + (finalizeCap.value.reason || '请在宿主机安装 guestfs-tools'))
     return
   }
-  Object.assign(finalizeForm, { name: vm.value?.name || '', description: '', os_version: '', optimize: true, sparsify: false })
+  Object.assign(finalizeForm, { name: vm.value?.name || '', description: '', os_version: '', custom_script: '', optimize: true, sparsify: false })
   finalizeDlg.value = true
 }
 

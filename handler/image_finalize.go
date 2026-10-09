@@ -5,6 +5,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
@@ -33,11 +34,12 @@ func (h *VMHandler) FinalizeImage(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		OSVersion   string `json:"os_version"`
-		Optimize    *bool  `json:"optimize"`
-		Sparsify    *bool  `json:"sparsify"`
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		OSVersion    string `json:"os_version"`
+		CustomScript string `json:"custom_script"`
+		Optimize     *bool  `json:"optimize"`
+		Sparsify     *bool  `json:"sparsify"`
 	}
 	_ = c.ShouldBindJSON(&req) // body 可空，绑定失败按默认处理
 	payload := map[string]interface{}{"vm_id": vm.ID}
@@ -49,6 +51,9 @@ func (h *VMHandler) FinalizeImage(c *gin.Context) {
 	}
 	if req.OSVersion != "" {
 		payload["os_version"] = req.OSVersion
+	}
+	if strings.TrimSpace(req.CustomScript) != "" {
+		payload["custom_script"] = req.CustomScript
 	}
 	if req.Optimize != nil {
 		payload["optimize"] = *req.Optimize

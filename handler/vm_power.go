@@ -77,6 +77,12 @@ func (h *VMHandler) StartVM(c *gin.Context) {
 	}
 	defer release()
 
+	// 离线读写挂载守卫：磁盘被 FUSE 以读写方式挂载时开机 = qemu 与 FUSE 同时写一块盘 → 损坏磁盘
+	if mountedReadWrite(vm.ID) {
+		Fail(c, http.StatusConflict, "该虚拟机磁盘正被离线读写挂载，请先在「文件管理 → 离线」卸载再开机")
+		return
+	}
+
 	// 调用 libvirt 启动（后台可能正跑 delete_vm/stop_vm，上面已先挡一层）
 	if err := h.Virt.StartDomain(vm.Name); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)

@@ -257,6 +257,10 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.POST("/:id/files/offline/list", vmFilesHandler.OfflineList)
 		vms.GET("/:id/files/offline/download", vmFilesHandler.OfflineDownload)
 		vms.POST("/:id/files/offline/unmount", vmFilesHandler.OfflineUnmount)
+		// 离线写操作（仅读写挂载下可用；挂载期间禁止开机）
+		vms.POST("/:id/files/offline/delete", vmFilesHandler.OfflineDelete)
+		vms.POST("/:id/files/offline/mkdir", vmFilesHandler.OfflineMkdir)
+		vms.POST("/:id/files/offline/upload", vmFilesHandler.OfflineUpload)
 		// 应用商店安装（v2 批次 3：挂 vms 前缀让 operator 放行——往自己 VM 装软件属操作语义）
 		vms.POST("/:id/credentials", vmCredHandler.Save)
 		vms.GET("/:id/credentials", vmCredHandler.Get)

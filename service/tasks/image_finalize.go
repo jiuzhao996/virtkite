@@ -18,10 +18,14 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/ansible"
 	"github.com/jiuzhao/vmops/service/guestfs"
 	"gorm.io/gorm"
 )
@@ -47,6 +51,7 @@ func execImageFinalize(ctx *ExecContext) error {
 	name, _ := strParam(ctx.Payload, "name")
 	desc, _ := strParam(ctx.Payload, "description")
 	osVer, _ := strParam(ctx.Payload, "os_version")
+	customScript, _ := strParam(ctx.Payload, "custom_script")
 	optimize, hasOpt := boolParam(ctx.Payload, "optimize")
 	if !hasOpt {
 		optimize = true // 默认注入基础优化（让模板克隆即用）
@@ -112,15 +117,15 @@ func execImageFinalize(ctx *ExecContext) error {
 		return fmt.Errorf("镜像清洗失败: %w", err)
 	}
 
-	// 6) virt-customize 注入基础优化（可选）
+	// 6) virt-customize 注入基础优化（可选）+ 平台公钥（让克隆机开机即被平台免密接管）
 	if optimize {
-		reportProgress(ctx, 45, "注入基础优化（qemu-guest-agent / cloud-init / 串口 console）…")
-		scriptPath, serr := writeOptimizeScript()
+		reportProgress(ctx, 45, "注入基础优化（qemu-guest-agent / cloud-init / 串口 console / 平台公钥）…")
+		scriptPath, serr := writeOptimizeScript(customScript)
 		if serr != nil {
 			return serr
 		}
 		defer func() { _ = os.Remove(scriptPath) }()
-		if _, err := guestfs.Customize(baseCtx, disk, scriptPath, guestfs.RunOpts{
+		if _, err := guestfs.Customize(baseCtx, disk, scriptPath, ansiblePubKeyPath(), guestfs.RunOpts{
 			OnLine: func(line string) { log.Printf("[image-finalize] customize: %s", line) },
 		}); err != nil {
 			return fmt.Errorf("注入基础优化失败: %w", err)
@@ -246,14 +251,14 @@ func captureDiskOwner(path string) func() {
 	}
 }
 
-// writeOptimizeScript 把内置基础优化脚本写到临时文件（供 virt-customize --run 读取）。
-func writeOptimizeScript() (string, error) {
+// writeOptimizeScript 把内置基础优化脚本（+可选自定义段）写到临时文件（供 virt-customize --run 读取）。
+func writeOptimizeScript(custom string) (string, error) {
 	f, err := os.CreateTemp("", "vmops-optimize-*.sh")
 	if err != nil {
 		return "", fmt.Errorf("创建优化脚本临时文件失败: %w", err)
 	}
 	name := f.Name()
-	if _, err := f.WriteString(guestfs.OptimizeScript()); err != nil {
+	if _, err := f.WriteString(guestfs.OptimizeScript(custom)); err != nil {
 		_ = f.Close()
 		_ = os.Remove(name)
 		return "", fmt.Errorf("写入优化脚本失败: %w", err)
@@ -267,6 +272,20 @@ func writeOptimizeScript() (string, error) {
 		return "", fmt.Errorf("设置优化脚本权限失败: %w", err)
 	}
 	return name, nil
+}
+
+// ansiblePubKeyPath 平台 SSH 公钥文件路径（与建机 cloud-init 注入的是同一对）。
+// 取不到返回空串——virt-customize 会跳过 --ssh-inject（不阻断固化）。
+func ansiblePubKeyPath() string {
+	_, pub, err := ansible.EnsureKeyPair(config.DataPath("ansible"))
+	if err != nil || strings.TrimSpace(pub) == "" {
+		return ""
+	}
+	p := filepath.Join(config.DataPath("ansible"), "id_ed25519.pub")
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
 }
 
 // registerFinalizedImage 把清洗后的系统盘登记为模板镜像。

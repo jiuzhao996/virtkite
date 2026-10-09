@@ -76,9 +76,9 @@ func TestDiskSizeBytes(t *testing.T) {
 	}
 }
 
-// TestWriteOptimizeScript 覆盖优化脚本落临时文件：内容与可执行权限。
+// TestWriteOptimizeScript 覆盖优化脚本落临时文件：内容（含自定义段）与可执行权限。
 func TestWriteOptimizeScript(t *testing.T) {
-	p, err := writeOptimizeScript()
+	p, err := writeOptimizeScript("echo MY_CUSTOM_STEP")
 	if err != nil {
 		t.Fatalf("写优化脚本失败: %v", err)
 	}
@@ -89,6 +89,9 @@ func TestWriteOptimizeScript(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "qemu-guest-agent") {
 		t.Error("优化脚本应含 qemu-guest-agent")
+	}
+	if !strings.Contains(string(b), "MY_CUSTOM_STEP") {
+		t.Error("优化脚本应含自定义段")
 	}
 	st, err := os.Stat(p)
 	if err != nil {
