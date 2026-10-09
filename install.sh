@@ -37,6 +37,19 @@ ok "端口 8080 / 2222 空闲"
 systemctl is-active --quiet libvirtd 2>/dev/null && ok "libvirtd 运行中" \
   || warn "libvirtd 未运行：虚拟机功能不可用（Docker/监控功能不受影响）。安装：sudo apt install qemu-kvm libvirt-daemon-system && sudo systemctl start libvirtd"
 
+# libguestfs 工具链检查（模板制作 / 镜像清洗的前提；缺失只警告——其余功能不受影响）
+if command -v virt-sysprep >/dev/null 2>&1 && command -v virt-customize >/dev/null 2>&1 && command -v virt-sparsify >/dev/null 2>&1; then
+  ok "libguestfs 工具链就绪（virt-sysprep / virt-customize / virt-sparsify）"
+else
+  warn "未找到 libguestfs 工具链：模板制作/镜像清洗不可用（其余功能不受影响）。安装：sudo apt install guestfs-tools"
+fi
+# web 用户需免密 sudo 调 libguestfs（池卷属主 libvirt-qemu，写盘要 root）；缺失只警告
+if sudo -n true 2>/dev/null; then
+  ok "web 用户可免密 sudo（离线文件管理 / 镜像清洗需要）"
+else
+  warn "web 用户无免密 sudo：离线文件管理与镜像清洗不可用。请在 sudoers 放行 virt-sysprep/virt-customize/virt-sparsify/guestmount/guestfish（NOPASSWD）"
+fi
+
 # ── 2. 生成 .env（已存在则复用，绝不覆盖）────────────────────────────────
 if [ -f .env ]; then
   ok ".env 已存在，复用现有配置（不覆盖任何口令）"

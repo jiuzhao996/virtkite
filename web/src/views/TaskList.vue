@@ -269,7 +269,8 @@ const EXTRA_TASK_TYPE_TEXT = {
   cleanup_volumes: '清理孤儿卷',
   app_install: '安装应用',
   image_download: '下载镜像',
-  ansible_run: '执行 Playbook'
+  ansible_run: '执行 Playbook',
+  image_finalize: '镜像清洗'
 }
 
 /** 任务类型中文：补齐表优先，未命中回落 utils/format 的共享映射 */
@@ -342,7 +343,12 @@ const RESULT_KEY_TEXT = {
   size_gb: '大小 (GB)',
   image_id: '镜像 ID',
   image_name: '镜像名',
-  os_version: '系统版本'
+  os_version: '系统版本',
+  size_before: '清洗前字节数',
+  size_after: '清洗后字节数',
+  saved_bytes: '回收字节数',
+  optimized: '已注入基础优化',
+  sparsified: '已压缩磁盘'
 }
 function kvLabel(k) {
   return RESULT_KEY_TEXT[k] || k
@@ -434,6 +440,7 @@ const taskObjectLink = computed(() => {
   if (d.type === 'stack_upgrade') return { text: '查看部署栈 →', to: '/apps?tab=stacks' }
   if (d.type === 'app_install') return { text: '查看应用商店 →', to: '/apps' }
   if (d.type === 'image_download') return { text: '查看镜像库 →', to: '/images' }
+  if (d.type === 'image_finalize') return { text: '查看镜像库 →', to: '/images' }
   return null
 })
 

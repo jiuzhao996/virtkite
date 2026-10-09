@@ -27,6 +27,14 @@
           @click="act(isPaused ? 'resume' : 'pause')"
         >{{ isPaused ? '恢复' : '暂停' }}</el-button>
         <el-button v-if="canOperate && vm" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" :title="isRunning ? '' : '开机后才能重启'" @click="act('restart')">重启</el-button>
+        <!-- 模板制作：关机态把本机清洗固化为模板（此后可增量克隆批量建机） -->
+        <el-button
+          v-if="canOperate && vm && !isRunning"
+          :icon="Files"
+          :disabled="!finalizeCap.guestfs_available"
+          :title="finalizeCap.guestfs_available ? '清洗镜像并固化为模板' : '镜像清洗工具不可用：' + (finalizeCap.reason || '请在宿主机安装 guestfs-tools')"
+          @click="openFinalize"
+        >固化为模板</el-button>
         <el-button v-if="canOperate" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
       </div>
     </div>
@@ -208,6 +216,34 @@
         <VmGrantCard :vm-id="id" :active="activeView === 'grants'" />
       </el-main>
     </el-container>
+    <!-- 固化为模板（模板制作 / 镜像清洗）：关机态可见 -->
+    <el-dialog v-model="finalizeDlg" title="固化为模板" width="540px" :close-on-click-modal="false">
+      <el-alert
+        type="info" :closable="false" show-icon style="margin-bottom: 14px"
+        title="清洗镜像（virt-sysprep：去 SSH 主机密钥 / bash 历史 / machine-id / udev 持久网卡等），随后移除本制作机并把系统盘登记为模板。清洗不可逆。"
+      />
+      <el-form label-width="96px">
+        <el-form-item label="模板名称" required>
+          <el-input v-model="finalizeForm.name" placeholder="如 Rocky10-base" />
+        </el-form-item>
+        <el-form-item label="操作系统">
+          <el-input v-model="finalizeForm.os_version" placeholder="可空；如 Rocky Linux 10（克隆建机时用于自动匹配）" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="finalizeForm.description" type="textarea" :rows="2" placeholder="可空" />
+        </el-form-item>
+        <el-form-item label="选项">
+          <div class="fin-opts">
+            <el-checkbox v-model="finalizeForm.optimize">注入基础优化（装 qemu-guest-agent + cloud-init、开串口 console、关 SELinux/firewalld）</el-checkbox>
+            <el-checkbox v-model="finalizeForm.sparsify">压缩磁盘（virt-sparsify --in-place；对 qcow2 收益有限且较慢，按需勾选）</el-checkbox>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="finalizeDlg = false">取消</el-button>
+        <el-button type="primary" :loading="finalizeBusy" @click="doFinalize">开始固化</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -218,17 +254,17 @@
 //   VmSnapshotCard（快照）、VmGrantCard（授权管理）。
 // 分区显隐全部保持 v-show 常驻挂载语义（不许改成 v-if），切走再切回不丢状态。
 // 共享数据流：vm/spec/busy/activeView 在壳；分区自持数据各自的 API 调用不经过壳。
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Refresh, Odometer, TrendCharts, Cpu, Coin, FolderOpened, Connection, CameraFilled, Document, User } from '@element-plus/icons-vue'
+import { ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Refresh, Odometer, TrendCharts, Cpu, Coin, FolderOpened, Connection, CameraFilled, Document, User, Files } from '@element-plus/icons-vue'
 import { api } from '../api'
 import VmFileBrowser from '../components/VmFileBrowser.vue'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
-import { vmStatusText, vmStatusTag, isCancel, fmtDateTime } from '../utils/format'
+import { vmStatusText, vmStatusTag, isCancel, fmtDateTime, errMsg } from '../utils/format'
 import { deletePreviewHtml } from '../utils/vm-delete-preview'
 import VmPerfCard from './vm-detail/components/VmPerfCard.vue'
 import GuestMetricsCard from './vm-detail/components/GuestMetricsCard.vue'
@@ -421,6 +457,57 @@ async function doDelete() {
   }
 }
 
+/* ---------- 固化为模板（模板制作 / 镜像清洗） ---------- */
+const finalizeDlg = ref(false)
+const finalizeBusy = ref(false)
+const finalizeCap = ref({ guestfs_available: false, version: '', reason: '', vm_shutoff: false })
+const finalizeForm = reactive({ name: '', description: '', os_version: '', optimize: true, sparsify: false })
+
+async function loadFinalizeCap() {
+  try {
+    finalizeCap.value = (await api.finalizeVMCapability(id)).data || {}
+  } catch (e) {
+    finalizeCap.value = { guestfs_available: false, reason: errMsg(e, '能力探测失败') }
+  }
+}
+
+function openFinalize() {
+  if (!finalizeCap.value.guestfs_available) {
+    ElMessage.warning('镜像清洗工具不可用：' + (finalizeCap.value.reason || '请在宿主机安装 guestfs-tools'))
+    return
+  }
+  Object.assign(finalizeForm, { name: vm.value?.name || '', description: '', os_version: '', optimize: true, sparsify: false })
+  finalizeDlg.value = true
+}
+
+async function doFinalize() {
+  if (!finalizeForm.name.trim()) return ElMessage.warning('请填写模板名称')
+  const steps = ['清洗镜像']
+  if (finalizeForm.optimize) steps.push('注入基础优化')
+  if (finalizeForm.sparsify) steps.push('压缩磁盘')
+  try {
+    await ElMessageBox.confirm(
+      '将执行：' + steps.join(' → ') + '，随后移除本制作机并把系统盘登记为模板。清洗不可逆，确定继续？',
+      '固化为模板',
+      { type: 'warning', confirmButtonText: '开始固化', cancelButtonText: '取消' }
+    )
+  } catch (e) {
+    return
+  }
+  finalizeBusy.value = true
+  try {
+    ElMessage.info('固化任务已提交，正在执行（清洗耗时较长，可离开去任务中心查看）…')
+    await pollTask(extractTaskId(await api.finalizeVMImage(id, { ...finalizeForm })))
+    ElMessage.success('已固化为模板，可在镜像管理查看')
+    finalizeDlg.value = false
+    router.push('/images')
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '固化失败'))
+  } finally {
+    finalizeBusy.value = false
+  }
+}
+
 function goConsole() {
   router.push({ name: 'console', params: { id } })
 }
@@ -491,6 +578,7 @@ onMounted(async () => {
   await loadSpec()
   // 与 XML 拉取并发：健康检查失败静默，不拖慢首屏
   loadHealth()
+  loadFinalizeCap() // 固化为模板的能力探测（fire-and-forget）
   await loadXML()
   // Prometheus 预填历史曲线：保持在 loadXML 之后触发（原顺序），fire-and-forget 同原
   perfCardRef.value?.prefill()
@@ -650,5 +738,12 @@ onMounted(async () => {
 .ov-desc :deep(.el-descriptions__cell) {
   padding-bottom: 16px;
   vertical-align: middle;
+}
+
+/* 固化为模板弹窗：选项纵向排列（勾选项文案较长，横排会挤） */
+.fin-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 </style>

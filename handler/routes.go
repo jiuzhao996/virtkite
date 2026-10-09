@@ -265,6 +265,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		// VM 导出/导入（v3 批次 J：导出 operator，导入 handler 内收口仅 admin）
 		vms.GET("/:id/export", vmExportHandler.Export)
 		vms.POST("/import-file", vmExportHandler.Import)
+		// 模板制作 / 镜像清洗（关机态固化为模板：virt-sysprep + customize + sparsify）
+		vms.POST("/:id/finalize-image", vmHandler.FinalizeImage)
+		vms.GET("/:id/finalize-capability", vmHandler.FinalizeCapability)
 		vms.POST("/:id/vnc-token", vncHandler.RequestToken)
 		// WS 一次性票据签发（终端/串口）：浏览器 WS 无法带 Authorization 头，改为先取短时票据再带 ?ticket= 连接
 		vms.POST("/:id/ws-ticket", vmHandler.MintWSTicket)

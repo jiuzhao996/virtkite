@@ -47,6 +47,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] 网页控制台（admin/operator 三入口：VNC 图形 / SSH 终端 / 免 IP 串口；viewer 仅 VNC 只读；页内一键开机闭环；SSH 参数记忆）
 - [x] **控制台会话跟踪**（谁连了哪台 VM，SSH/串口可服务端强制断开；WS 写入经 `console.Conn` 串行化）
 - [x] 快照管理（名称+描述 / 列表含时间状态 / 删除 / 回滚）
+- [x] **模板制作 / 镜像清洗（v4）**（把自己从 ISO 装的「制作机」固化成私有模板：VM 详情页一键固化 → `virt-sysprep` 清洗 + 可选 `virt-customize` 注入基础优化（qemu-guest-agent/cloud-init/串口 console/关 SELinux）+ 可选 `virt-sparsify` 压缩 → 移除制作机并登记为模板；之后走既有「云镜像」方式增量克隆批量建机。前提：宿主机 `guestfs-tools` + 免密 sudo）
 - [x] 镜像管理（上传到池 / 既有池卷登记 / 模板标记 / 基于模板 linked clone 建机；页面四 tab：云镜像/模板盘 + ISO 安装镜像 + **镜像市场**（云镜像 qcow2 与官方 ISO 一键下载，逐卡标注来源）+ **容器镜像**（Docker 镜像清单/拉取/删除/检查更新，分散语义归位））
 - [x] 审计日志（中间件自动写入 + 用户名回填 + 多条件查询 / 操作类型分布；审计中心以双 tab 承载操作日志与控制台会话）
 - [x] 仪表盘（概览/监控/拓扑三 tab：总览计数、状态分布、宿主机实时大盘、资源容量/超分卡、历史性能曲线（Prometheus query_range 回放，刷新不清零）、资产从属拓扑图）
@@ -284,6 +285,15 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 - `PUT /api/images/:id/template` — 标记模板
 - `POST /api/images/:id/clone`（202 task，基于模板/云镜像增量克隆建机）
 - `DELETE /api/images/:id`
+
+### 模板制作 / 镜像清洗
+
+- `POST /api/vms/:id/finalize-image`（202 task）— 把关机的「制作机」清洗固化为模板：
+  `virt-sysprep`（去 SSH 主机密钥/bash 历史/machine-id/udev 持久网卡）→ 可选 `virt-customize`
+  注入基础优化（装 qemu-guest-agent + cloud-init、开串口 console、关 SELinux/firewalld）→
+  可选 `virt-sparsify --in-place` 压缩 → `undefine` 域 + 移除制作机记录 → 登记为模板（`is_template`）。
+  body：`{name?, description?, os_version?, optimize?, sparsify?}`。需宿主机装 `guestfs-tools` 且 web 用户可免密 sudo。
+- `GET /api/vms/:id/finalize-capability` — 工具链就绪（真自检）+ VM 关机态探测，供前端按钮置灰。
 
 ### 存储 / 网络
 
