@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jiuzhao/vmops/model"
@@ -57,21 +59,31 @@ func execImageBuild(ctx *ExecContext) error {
 	}
 	reportProgress(ctx, 5, "开始构建镜像 "+tag)
 
-	// 日志节流落库：攒行 + 2s 刷一次（与 ansible_run 同款取舍）
-	var buf []string
-	last := time.Now()
+	// 日志节流落库：攒行 + 2s 刷一次（与 ansible_run 同款取舍）。
+	// 必须加锁：dockerx.Build 对 stdout/stderr 各起一个 goroutine 读管道，OnLine 是并发调用的，
+	// 裸 slice 追加会数据竞争（-race 可复现），严重时 slice 头被写坏。
+	var (
+		mu   sync.Mutex
+		buf  []string
+		last = time.Now()
+	)
+	flush := func() {
+		text := truncate(strings.Join(buf, "\n"), 60_000)
+		if err := ctx.DB.Model(&model.Task{}).Where("id = ?", ctx.Task.ID).Update("result", text).Error; err != nil {
+			// 中间刷新失败不致命（终态由 worker 收口），留痕即可
+			log.Printf("[image_build] 任务 %d 中间日志落库失败: %v", ctx.Task.ID, err)
+		}
+		ctx.Task.Result = text
+	}
 	onLine := func(line string) {
+		mu.Lock()
+		defer mu.Unlock()
 		buf = append(buf, line)
 		if time.Since(last) < imageBuildFlushInterval {
 			return
 		}
 		last = time.Now()
-		text := truncate(strings.Join(buf, "\n"), 60_000)
-		if err := ctx.DB.Model(&model.Task{}).Where("id = ?", ctx.Task.ID).Update("result", text).Error; err != nil {
-			// 中间刷新失败不致命（终态由 worker 收口）
-			reportProgress(ctx, 50, "构建中（日志刷新失败已忽略）")
-		}
-		ctx.Task.Result = text
+		flush()
 	}
 
 	out, err := dockerx.New().Build(base, dir, dockerx.BuildOpts{
@@ -81,6 +93,10 @@ func execImageBuild(ctx *ExecContext) error {
 		NoCache:    noCache,
 		OnLine:     onLine,
 	})
+	// 收尾刷一次：最后不足一个节流窗口的日志不能丢
+	mu.Lock()
+	flush()
+	mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("镜像构建失败: %w", err)
 	}
