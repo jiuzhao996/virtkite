@@ -13,6 +13,7 @@
           <el-button v-else-if="row.State === 'paused'" size="small" type="success" plain :loading="acting === 'unpause'" @click="act('unpause')">恢复</el-button>
           <el-button size="small" plain :loading="acting === 'restart'" @click="act('restart')">重启</el-button>
           <el-button size="small" plain @click="openRename">重命名</el-button>
+          <el-button size="small" plain @click="openUpdate">调整资源</el-button>
           <el-button size="small" plain :disabled="row.State !== 'running'" @click="$emit('terminal', row)">终端</el-button>
           <el-button size="small" type="danger" plain @click="remove">删除</el-button>
         </div>
@@ -31,6 +32,21 @@
             <el-descriptions-item label="启动命令" :span="2"><span class="mono">{{ vm.summary.command || '—' }}</span></el-descriptions-item>
             <el-descriptions-item label="重启策略">{{ vm.summary.restartPolicy || 'no' }}</el-descriptions-item>
             <el-descriptions-item label="网络模式">{{ vm.summary.networkMode || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="已接入网络" :span="2">
+              <div class="net-row">
+                <el-tag v-for="n in connectedNetworks" :key="n" size="small" closable @close="disconnectNetwork(n)">{{ n }}</el-tag>
+                <el-select
+                  v-model="connectTarget"
+                  size="small"
+                  placeholder="接入网络"
+                  style="width: 170px"
+                  :disabled="!connectableNetworks.length"
+                  @change="connectNetwork"
+                >
+                  <el-option v-for="n in connectableNetworks" :key="n" :label="n" :value="n" />
+                </el-select>
+              </div>
+            </el-descriptions-item>
             <el-descriptions-item label="创建时间" :span="2">{{ dockerTime(row.CreatedAt || row.Created) }}</el-descriptions-item>
           </el-descriptions>
 
@@ -106,6 +122,24 @@
         </el-tab-pane>
       </el-tabs>
     </el-drawer>
+
+    <!-- 调整资源 / 健康检查（docker update，运行中亦可；留空项不动原值） -->
+    <el-dialog v-model="updateDlg" title="调整资源与健康检查" width="480px" :close-on-click-modal="false" append-to-body>
+      <el-form label-width="110px">
+        <el-form-item label="CPU 上限"><el-input v-model="updateForm.cpus" placeholder="如 1.5（核数）" clearable /></el-form-item>
+        <el-form-item label="内存上限"><el-input v-model="updateForm.memory" placeholder="如 512m / 1g" clearable /></el-form-item>
+        <el-form-item label="内存+Swap"><el-input v-model="updateForm.memory_swap" placeholder="如 1g；-1 表示不限 swap" clearable /></el-form-item>
+        <el-form-item label="CPU 集"><el-input v-model="updateForm.cpuset_cpus" placeholder="如 0-2 或 0,2" clearable /></el-form-item>
+        <el-form-item label="检测间隔"><el-input v-model="updateForm.health_interval" placeholder="如 30s" clearable /></el-form-item>
+        <el-form-item label="失败次数"><el-input v-model="updateForm.health_retries" placeholder="如 3" clearable /></el-form-item>
+        <el-form-item label="检测超时"><el-input v-model="updateForm.health_timeout" placeholder="如 5s" clearable /></el-form-item>
+        <el-form-item label="启动宽限"><el-input v-model="updateForm.health_start_period" placeholder="如 60s（启动慢的应用必需）" clearable /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="updateDlg = false">取消</el-button>
+        <el-button type="primary" :loading="updateBusy" @click="submitUpdate">更新</el-button>
+      </template>
+    </el-dialog>
 </template>
 
 <script setup>
@@ -399,6 +433,76 @@ async function remove() {
   }
 }
 
+/* ── 网络挂接（docker network connect / disconnect）── */
+const allNetworks = ref([])
+const connectTarget = ref('')
+const connectedNetworks = computed(() => Object.keys((raw.value.NetworkSettings && raw.value.NetworkSettings.Networks) || {}))
+const connectableNetworks = computed(() => allNetworks.value.filter((n) => !connectedNetworks.value.includes(n)))
+
+async function loadNetworks() {
+  try {
+    const res = await api.dockerNetworks()
+    allNetworks.value = ((res.data && res.data.items) || []).map((n) => n.Name)
+  } catch (e) {
+    allNetworks.value = []
+  }
+}
+
+async function connectNetwork(name) {
+  if (!name) return
+  try {
+    await api.dockerContainerConnectNetwork(row.value.ID, name)
+    ElMessage.success('已接入网络 ' + name)
+    connectTarget.value = ''
+    await fetchInspect()
+    emit('changed')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '接入网络失败'))
+  }
+}
+
+async function disconnectNetwork(name) {
+  try {
+    await api.dockerContainerDisconnectNetwork(row.value.ID, name)
+    ElMessage.success('已断开网络 ' + name)
+    await fetchInspect()
+    emit('changed')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '断开网络失败'))
+  }
+}
+
+/* ── 调整资源 / 健康检查（docker update，运行中亦可）── */
+const updateDlg = ref(false)
+const updateBusy = ref(false)
+const updateForm = reactive({
+  cpus: '', memory: '', memory_swap: '', cpuset_cpus: '',
+  health_interval: '', health_retries: '', health_timeout: '', health_start_period: ''
+})
+
+function openUpdate() {
+  Object.assign(updateForm, {
+    cpus: '', memory: '', memory_swap: '', cpuset_cpus: '',
+    health_interval: '', health_retries: '', health_timeout: '', health_start_period: ''
+  })
+  updateDlg.value = true
+}
+
+async function submitUpdate() {
+  updateBusy.value = true
+  try {
+    await api.dockerContainerUpdate(row.value.ID, { ...updateForm })
+    ElMessage.success('已更新容器资源 / 健康检查')
+    updateDlg.value = false
+    await fetchInspect()
+    emit('changed')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '更新失败'))
+  } finally {
+    updateBusy.value = false
+  }
+}
+
 function open(r, initialTab) {
   row.value = r
   tab.value = 'summary'
@@ -412,6 +516,7 @@ function open(r, initialTab) {
   memSeries.value = []
   stats.value = null
   resetStream()
+  loadNetworks()
   visible.value = true
   fetchInspect()
   // 跳转直达场景（栈详情→容器日志）：先归位 summary 再切目标 tab，
@@ -431,8 +536,14 @@ defineExpose({ open })
 <style>
 /* 详情抽屉布局:外层 body 锁死不滚(双滚动容器会让「贴底」滚错对象),
    tabs 拉伸填满,日志 pane 内 .lv-pre 成为唯一滚动容器(flex 吃剩余高度)。 */
-.cd-drawer .el-drawer__body {
+/* 已接入网络：标签 + 接入下拉横排 */
+.net-row {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cd-drawer .el-drawer__body {  display: flex;
   flex-direction: column;
   overflow: hidden;
 }

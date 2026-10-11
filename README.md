@@ -330,7 +330,7 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 
 ### v3 扩展（容器 / 应用商店 / AI / 运维面板）
 
-- Docker（viewer 403）：`GET /api/docker/containers` `POST /api/docker/containers/:id/:action`（start/stop/restart/pause/unpause） `DELETE /api/docker/containers/:id` `GET .../logs`（`?follow/&tail/`） `GET .../inspect` `GET .../stats`、`GET /api/docker/stats`（全量统计）、`GET /api/docker/containers/:id/terminal`（容器终端 WS）
+- Docker（viewer 403）：`GET /api/docker/containers` `POST /api/docker/containers/:id/:action`（start/stop/restart/pause/unpause） `POST /api/docker/containers/:id/update`（docker update：动态改资源限制/健康检查） `POST /api/docker/containers/:id/networks`（接入网络） `DELETE /api/docker/containers/:id/networks/:name`（断开网络） `DELETE /api/docker/containers/:id` `GET .../logs`（`?follow/&tail/`） `GET .../inspect` `GET .../stats`、`GET /api/docker/stats`（全量统计）、`GET /api/docker/containers/:id/terminal`（容器终端 WS）
 - Docker 镜像/网络/卷/编排：`GET|POST /api/docker/images` `DELETE /api/docker/images/:id` `POST /api/docker/images/pull` `POST /api/docker/prune`、`GET|POST|DELETE /api/docker/networks*`、`GET|POST /api/docker/volumes*` `POST /api/docker/volumes/prune`、`GET /api/docker/compose` `POST /api/docker/compose/:name/:action`
 - 应用商店：`GET /api/appstore`（目录，登录可看） `GET /api/appstore/status` `POST /api/appstore/:key/install` `POST /api/appstore/:key/uninstall`（安装走异步任务）
 - VM 应用：`GET /api/apps`（SSH 脚本应用目录） `POST /api/vms/apps/install`（挂 `/vms` 前缀，operator 可用——往自己 VM 装软件属操作语义）

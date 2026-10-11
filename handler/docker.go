@@ -541,3 +541,81 @@ func safeDockerID(id string) bool {
 	}
 	return true
 }
+
+// UpdateContainer POST /api/docker/containers/:id/update —— 动态调整资源限制与健康检查（docker update）。
+func (h *DockerHandler) UpdateContainer(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	id := c.Param("id")
+	if !safeDockerID(id) {
+		Fail(c, http.StatusBadRequest, "容器 ID 非法")
+		return
+	}
+	var opts dockerx.ContainerOpts
+	if err := c.ShouldBindJSON(&opts); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	// 参数类错误（格式非法 / 无可更新项）回 400 并带原因；docker 侧失败才是 500
+	if err := dockerx.ValidateRuntimeLimits(opts); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !dockerx.HasRuntimeUpdate(opts) {
+		Fail(c, http.StatusBadRequest, "没有可更新的项（资源限制或健康检查参数至少填一个）")
+		return
+	}
+	if err := h.Docker.UpdateContainer(id, opts); err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "更新容器失败", err)
+		return
+	}
+	Success(c, gin.H{"message": "已更新"})
+}
+
+// ConnectContainerNetwork POST /api/docker/containers/:id/networks body {network}
+// —— 把容器接入指定网络（docker network connect），补上「建得出网络、容器接不进」的闭环。
+func (h *DockerHandler) ConnectContainerNetwork(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	id := c.Param("id")
+	if !safeDockerID(id) {
+		Fail(c, http.StatusBadRequest, "容器 ID 非法")
+		return
+	}
+	var body struct {
+		Network string `json:"network"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Network) == "" {
+		Fail(c, http.StatusBadRequest, "缺少 network 参数")
+		return
+	}
+	if err := h.Docker.ConnectNetwork(body.Network, id); err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "接入网络失败", err)
+		return
+	}
+	Success(c, gin.H{"message": "已接入网络 " + body.Network})
+}
+
+// DisconnectContainerNetwork DELETE /api/docker/containers/:id/networks/:name
+func (h *DockerHandler) DisconnectContainerNetwork(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	id := c.Param("id")
+	if !safeDockerID(id) {
+		Fail(c, http.StatusBadRequest, "容器 ID 非法")
+		return
+	}
+	name := strings.TrimSpace(c.Param("name"))
+	if name == "" {
+		Fail(c, http.StatusBadRequest, "缺少网络名")
+		return
+	}
+	if err := h.Docker.DisconnectNetwork(name, id); err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "断开网络失败", err)
+		return
+	}
+	Success(c, gin.H{"message": "已断开网络 " + name})
+}

@@ -236,6 +236,14 @@
             <el-button size="small" @click="selectAll">全选</el-button>
           </div>
         </el-form-item>
+        <el-form-item v-if="runPb" label="执行选项">
+          <div class="run-opts">
+            <el-checkbox v-model="runCheck">预演（--check：只报会改什么，不真改）</el-checkbox>
+            <el-checkbox v-model="runDiff">显示差异（--diff）</el-checkbox>
+            <el-input v-model="runTags" size="small" placeholder="只跑标签 -t，如 nginx,config" style="width: 240px" />
+            <el-input v-model="runSkipTags" size="small" placeholder="跳过标签 --skip-tags" style="width: 200px" />
+          </div>
+        </el-form-item>
         <el-form-item v-if="runPb" label="说明">
           <span class="auto-hint">{{ runPb.desc || '（无说明）' }}</span>
         </el-form-item>
@@ -338,6 +346,11 @@ const checking = ref(false)
 const saving = ref(false)
 const runDialogOpen = ref(false)
 const runPb = ref(null)
+// playbook 执行选项：预演 / 差异 / 标签过滤
+const runCheck = ref(false)
+const runDiff = ref(false)
+const runTags = ref('')
+const runSkipTags = ref('')
 
 // 执行历史
 const history = ref([])
@@ -585,6 +598,10 @@ function openRunDialog(pb) {
   runPb.value = pb
   targets.value = []
   Object.keys(extraVars).forEach((k) => delete extraVars[k])
+  runCheck.value = false
+  runDiff.value = false
+  runTags.value = ''
+  runSkipTags.value = ''
   runDialogOpen.value = true
 }
 
@@ -594,6 +611,10 @@ async function runPlaybook() {
     if (v !== '' && v != null) ev[k] = v
   }
   const payload = { playbook: runPb.value.id, extra_vars: ev }
+  if (runCheck.value) payload.check = true
+  if (runDiff.value) payload.diff = true
+  if (runTags.value.trim()) payload.tags = runTags.value.trim()
+  if (runSkipTags.value.trim()) payload.skip_tags = runSkipTags.value.trim()
   if (targetMode.value === 'group') {
     if (!groupId.value) return ElMessage.warning('请选择主机组')
     payload.group_id = groupId.value
@@ -800,5 +821,12 @@ onUnmounted(stopPolling)
 .auto-editor-bar { display: flex; align-items: center; gap: 10px; }
 .auto-yaml :deep(.el-textarea__inner) {
   font-family: var(--font-mono, monospace); font-size: 0.8rem; line-height: 1.7;
+}
+/* playbook 执行选项：预演/差异/标签横排 */
+.run-opts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
 </style>

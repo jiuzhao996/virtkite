@@ -10,6 +10,11 @@ export const docker = {
   dockerContainerAction: (id, action) => unwrap(http.post(`/docker/containers/${id}/${action}`)),
   // 重命名（复用 :action 路由，请求体 {"name":"新名称"}）
   dockerContainerRename: (id, name) => unwrap(http.post(`/docker/containers/${id}/rename`, { name })),
+  // 动态调整资源限制 / 健康检查（docker update）
+  dockerContainerUpdate: (id, payload) => unwrap(http.post(`/docker/containers/${id}/update`, payload)),
+  // 容器网络挂接（docker network connect / disconnect）
+  dockerContainerConnectNetwork: (id, network) => unwrap(http.post(`/docker/containers/${id}/networks`, { network })),
+  dockerContainerDisconnectNetwork: (id, network) => unwrap(http.delete(`/docker/containers/${id}/networks/${encodeURIComponent(network)}`)),
   // 单容器实时 stats（--no-stream，含 CPU%/内存/网络/块 IO/PIDs）
   dockerContainerStats: (id) => unwrap(http.get(`/docker/containers/${id}/stats`)),
   // 删除容器：force=true 时运行中容器强制删除（后端按 State 决定 force 参数）
@@ -25,7 +30,7 @@ export const docker = {
   dockerImages: () => unwrap(http.get('/docker/images')),
   // 拉镜像可能数分钟：timeout 0 不限时（与镜像上传同一理由，15s 全局超时必错）
   dockerPullImage: (name) => unwrap(http.post('/docker/images/pull', { name }, { timeout: 0 })),
-  // type ∈ containers/images/volumes/networks（后端 docker system prune 语义）
+  // type ∈ containers/images（后端 docker system prune 语义；卷清理走 dockerPruneVolumes）
   dockerPrune: (type) => unwrap(http.post('/docker/prune', { type })),
   dockerDeleteImage: (imageId) => unwrap(http.delete('/docker/images/' + encodeURIComponent(imageId))),
 

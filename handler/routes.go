@@ -351,6 +351,11 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		// 一键创建容器（v3.2 R8 收尾：docker run -d 封装，契约见 dockerx.ContainerOpts）
 		docker.POST("/containers", dockerHandler.CreateContainer)
 		docker.POST("/containers/:id/:action", dockerHandler.ContainerAction)
+		// 资源限制/健康检查动态调整（docker update）与网络挂接（connect/disconnect）。
+		// 静态段与同级 :action 通配符并存：gin v1.12 静态优先（与 ws-ticket 同一依据）
+		docker.POST("/containers/:id/update", dockerHandler.UpdateContainer)
+		docker.POST("/containers/:id/networks", dockerHandler.ConnectContainerNetwork)
+		docker.DELETE("/containers/:id/networks/:name", dockerHandler.DisconnectContainerNetwork)
 		docker.DELETE("/containers/:id", dockerHandler.RemoveContainer)
 		docker.GET("/containers/:id/logs", dockerHandler.ContainerLogs)
 		// 容器日志实时流（R4：Engine API logs follow，WS 推送 stdout/stderr 分色）

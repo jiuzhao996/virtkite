@@ -86,6 +86,44 @@
           <el-form-item label="检测间隔">
             <el-input v-model="form.health_interval" placeholder="如 30s / 1m，留空用 docker 默认" clearable />
           </el-form-item>
+          <el-form-item label="失败次数">
+            <el-input v-model="form.health_retries" placeholder="如 3（连续失败几次判 unhealthy）" clearable />
+          </el-form-item>
+          <el-form-item label="检测超时">
+            <el-input v-model="form.health_timeout" placeholder="如 5s" clearable />
+          </el-form-item>
+          <el-form-item label="启动宽限">
+            <el-input v-model="form.health_start_period" placeholder="如 60s——启动慢的应用必需，否则启动期被判 unhealthy 反复重启" clearable />
+          </el-form-item>
+        </el-collapse-item>
+        <!-- 资源限制与网络（可选）：cgroup 限额 + 接入指定网络 -->
+        <el-collapse-item title="资源限制与网络（可选）" name="res">
+          <el-form-item label="CPU 上限">
+            <el-input v-model="form.cpus" placeholder="如 1.5（核数），留空不限" clearable />
+          </el-form-item>
+          <el-form-item label="内存上限">
+            <el-input v-model="form.memory" placeholder="如 512m / 1g，留空不限" clearable />
+          </el-form-item>
+          <el-form-item label="内存+Swap">
+            <el-input v-model="form.memory_swap" placeholder="如 1g；-1 表示不限 swap，留空用 docker 默认" clearable />
+          </el-form-item>
+          <el-form-item label="CPU 集">
+            <el-input v-model="form.cpuset_cpus" placeholder="如 0-2 或 0,2，留空不限" clearable />
+          </el-form-item>
+          <el-form-item label="网络">
+            <el-select v-model="form.network" clearable placeholder="默认 bridge" style="width: 100%">
+              <el-option label="bridge（默认）" value="bridge" />
+              <el-option label="host（用宿主网络）" value="host" />
+              <el-option label="none（无网络）" value="none" />
+              <el-option v-for="n in networks" :key="n.Name" :label="n.Name" :value="n.Name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="主机名">
+            <el-input v-model="form.hostname" placeholder="留空用容器 ID" clearable />
+          </el-form-item>
+          <el-form-item label="DNS">
+            <el-input v-model="form.dns" placeholder="多个用逗号分隔，如 223.5.5.5,8.8.8.8" clearable />
+          </el-form-item>
         </el-collapse-item>
       </el-collapse>
     </el-form>
@@ -123,8 +161,29 @@ const form = reactive({
   restart: 'no',
   command: '',
   health_cmd: '',
-  health_interval: ''
+  health_interval: '',
+  health_retries: '',
+  health_timeout: '',
+  health_start_period: '',
+  cpus: '',
+  memory: '',
+  memory_swap: '',
+  cpuset_cpus: '',
+  network: '',
+  hostname: '',
+  dns: ''
 })
+
+// 可选网络列表（自定义网络供容器接入；bridge/host/none 为内置，直接硬编码在模板）
+const networks = ref([])
+async function loadNetworks() {
+  try {
+    const res = await api.dockerNetworks()
+    networks.value = (res.data && res.data.items) || []
+  } catch (e) {
+    networks.value = []
+  }
+}
 
 // 重启策略四选一（对应 docker --restart）：label 为选项短文案，tip 为悬浮说明
 const RESTART_OPTIONS = [
@@ -172,6 +231,7 @@ function open(image = '') {
   resetCreateForm()
   form.image = image || ''
   fetchImageOptions()
+  loadNetworks()
   visible.value = true
 }
 
@@ -186,6 +246,16 @@ function resetCreateForm() {
   form.command = ''
   form.health_cmd = ''
   form.health_interval = ''
+  form.health_retries = ''
+  form.health_timeout = ''
+  form.health_start_period = ''
+  form.cpus = ''
+  form.memory = ''
+  form.memory_swap = ''
+  form.cpuset_cpus = ''
+  form.network = ''
+  form.hostname = ''
+  form.dns = ''
 }
 
 // 动态行清洗：trim + 丢弃空行，空数组交给后端按缺省处理
@@ -223,7 +293,17 @@ async function submit() {
       restart: form.restart,
       command: form.command.trim(),
       health_cmd: form.health_cmd.trim(),
-      health_interval: form.health_interval.trim()
+      health_interval: form.health_interval.trim(),
+      health_retries: form.health_retries.trim(),
+      health_timeout: form.health_timeout.trim(),
+      health_start_period: form.health_start_period.trim(),
+      cpus: form.cpus.trim(),
+      memory: form.memory.trim(),
+      memory_swap: form.memory_swap.trim(),
+      cpuset_cpus: form.cpuset_cpus.trim(),
+      network: form.network,
+      hostname: form.hostname.trim(),
+      dns: form.dns.split(/[,，\s]+/).filter(Boolean)
     })
     ElMessage.success('容器已创建')
     visible.value = false

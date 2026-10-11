@@ -163,8 +163,17 @@ type RunOpts struct {
 	// ExtraVars playbook 变量注入（S4 vars 表单化）：以 JSON 走 -e，优先级高于
 	// playbook 内 vars 段（ansible 语义）
 	ExtraVars map[string]string
-	Timeout   time.Duration
-	OnLine    func(line string) // 逐行输出回调（executor 用于节流刷任务 Result）
+	// Check 预演（--check）：只报会改什么，不真改（教学「先 check 再 apply」）
+	Check bool
+	// Diff 显示改动差异（--diff，仅 playbook；与 Check 搭配看「会改哪一行」）
+	Diff bool
+	// Tags / SkipTags 按标签只跑一段（-t / --skip-tags，仅 playbook）
+	Tags     string
+	SkipTags string
+	// ConfigFile 指定 ansible.cfg（ANSIBLE_CONFIG 环境变量；空则用 ansible 默认发现）
+	ConfigFile string
+	Timeout    time.Duration
+	OnLine     func(line string) // 逐行输出回调（executor 用于节流刷任务 Result）
 }
 
 // Run 驱动引擎执行，返回 RECAP 段原文（含逐主机 ok/changed/failed 计数）。
@@ -178,6 +187,18 @@ func (e *Engine) Run(ctx context.Context, opts RunOpts) (string, error) {
 	var cmd *exec.Cmd
 	if opts.Playbook != "" {
 		args := []string{"-i", opts.Inventory}
+		if opts.Check {
+			args = append(args, "--check")
+		}
+		if opts.Diff {
+			args = append(args, "--diff")
+		}
+		if strings.TrimSpace(opts.Tags) != "" {
+			args = append(args, "--tags", strings.TrimSpace(opts.Tags))
+		}
+		if strings.TrimSpace(opts.SkipTags) != "" {
+			args = append(args, "--skip-tags", strings.TrimSpace(opts.SkipTags))
+		}
 		if len(opts.ExtraVars) > 0 {
 			if raw, jerr := json.Marshal(opts.ExtraVars); jerr == nil {
 				args = append(args, "-e", string(raw))
@@ -206,6 +227,10 @@ func (e *Engine) Run(ctx context.Context, opts RunOpts) (string, error) {
 		"ANSIBLE_NOCOWS=1",
 		"PYTHONUNBUFFERED=1",
 	)
+	// 平台生成的 run 级 ansible.cfg（forks/fact_caching/roles_path 等）
+	if opts.ConfigFile != "" {
+		cmd.Env = append(cmd.Env, "ANSIBLE_CONFIG="+opts.ConfigFile)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

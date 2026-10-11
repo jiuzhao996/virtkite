@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -208,6 +209,13 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		runOpts = ansible.RunOpts{Inventory: inv, Module: module, ModuleArgs: moduleArgs, Timeout: ansibleAdhocTimeout}
 		reportProgress(ctx, 20, "ansible "+module+" 执行中（"+strconv.Itoa(len(hosts))+" 台）")
 	}
+	// 平台托管的 run 级 ansible.cfg（forks / facts 缓存 / interpreter），随 run 目录删除
+	runOpts.ConfigFile = writeRunAnsibleConfig(runDir)
+	// 预演 / 差异 / 标签（仅 playbook 语义，executor 不额外拦截——ansible 自己忽略无关 flag）
+	runOpts.Check, _ = boolParam(ctx.Payload, "check")
+	runOpts.Diff, _ = boolParam(ctx.Payload, "diff")
+	runOpts.Tags, _ = strParam(ctx.Payload, "tags")
+	runOpts.SkipTags, _ = strParam(ctx.Payload, "skip_tags")
 	if raw, ok := ctx.Payload["extra_vars"].(map[string]interface{}); ok && len(raw) > 0 {
 		ev := map[string]string{}
 		for k, v := range raw {
@@ -277,10 +285,27 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		"output":    output,
 		"recap":     parseRecap(recap),
 		"recap_raw": recap,
+		"inventory": sanitizeInventory(inv),
 	}
 	raw, _ := json.Marshal(result)
 	ctx.Task.Result = string(raw)
 	return nil
+}
+
+// sanitizeInventory 读取本次生成的 inventory 并脱敏（口令替换为 ***），供前端展示——
+// 「inventory 长什么样」是理解 ansible 的第一步，此前只存在于跑完即删的瞬时文件里，完全看不见。
+func sanitizeInventory(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(b), "\n")
+	for i, ln := range lines {
+		if idx := strings.Index(ln, "ansible_ssh_pass="); idx >= 0 {
+			lines[i] = ln[:idx+len("ansible_ssh_pass=")] + "***（已脱敏）"
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // resolveHostGroupVMIDs 解析主机组成员为 VM id 列表（VMIDs 是 JSON 文本数组）。
@@ -355,6 +380,32 @@ func buildAnsibleGroups(ctx *ExecContext, vms []model.VM, nameByVM map[uint]stri
 		return nil
 	}
 	return out
+}
+
+// writeRunAnsibleConfig 生成 run 级 ansible.cfg 并返回路径（随 run 目录删除）。
+// 补上平台此前完全缺失的 ansible 配置：forks、facts 缓存（jsonfile，持久目录）、
+// interpreter_python（免 sudo/python 缺失告警）、pipelining。fact 缓存目录跨 run 保留。
+func writeRunAnsibleConfig(runDir string) string {
+	cacheDir := config.DataPath("ansible", "factcache")
+	_ = os.MkdirAll(cacheDir, 0o700)
+	content := "# 由 vmops 生成（run 级，随 run 目录删除）\n" +
+		"[defaults]\n" +
+		"host_key_checking = False\n" +
+		"interpreter_python = auto_silent\n" +
+		"deprecation_warnings = False\n" +
+		"forks = 20\n" +
+		"gathering = smart\n" +
+		"fact_caching = jsonfile\n" +
+		"fact_caching_connection = " + cacheDir + "\n" +
+		"fact_caching_timeout = 86400\n" +
+		"nocows = 1\n" +
+		"\n[ssh_connection]\n" +
+		"pipelining = True\n"
+	path := filepath.Join(runDir, "ansible.cfg")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return "" // 写失败不阻断（退回 ansible 默认发现）
+	}
+	return path
 }
 
 // uintSliceParam 取正整数切片参数（targets 等；容忍 json 反序列化出的 float64）。

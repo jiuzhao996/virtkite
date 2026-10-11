@@ -211,3 +211,71 @@ func TestExtractContainerID(t *testing.T) {
 		})
 	}
 }
+
+// TestSplitCommand 覆盖 shell 风格命令拆分（引号包裹的含空格参数不被拆坏）。
+func TestSplitCommand(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"   ", nil},
+		{"nginx -g 'daemon off;'", []string{"nginx", "-g", "daemon off;"}},
+		{`sh -c "echo hello world"`, []string{"sh", "-c", "echo hello world"}},
+		{"a  b\tc", []string{"a", "b", "c"}},
+		{"--flag=值 混合", []string{"--flag=值", "混合"}},
+	}
+	for _, c := range cases {
+		if got := splitCommand(c.in); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("splitCommand(%q) = %#v, want %#v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestBuildRunArgsResourcesAndNetwork 覆盖资源限制 / 网络 / 健康检查参数输出。
+func TestBuildRunArgsResourcesAndNetwork(t *testing.T) {
+	got := strings.Join(BuildRunArgs(ContainerOpts{
+		Name: "c1", Image: "nginx:1.27",
+		Network: "mynet", Hostname: "web1", DNS: []string{"223.5.5.5"},
+		CPUs: "1.5", Memory: "512m", MemorySwap: "1g", CpusetCpus: "0-2",
+		HealthCmd: "curl -f http://localhost/", HealthInterval: "30s",
+		HealthRetries: "3", HealthTimeout: "5s", HealthStartPeriod: "60s",
+	}), " ")
+	for _, want := range []string{
+		"--network mynet", "-h web1", "--dns 223.5.5.5",
+		"--cpus 1.5", "--memory 512m", "--memory-swap 1g", "--cpuset-cpus 0-2",
+		"--health-retries 3", "--health-timeout 5s", "--health-start-period 60s",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("缺 %q：%s", want, got)
+		}
+	}
+}
+
+// TestValidateRuntimeLimits 覆盖资源 / 健康检查 / 网络参数校验与 HasRuntimeUpdate。
+func TestValidateRuntimeLimits(t *testing.T) {
+	good := ContainerOpts{
+		CPUs: "1.5", Memory: "512m", MemorySwap: "-1", CpusetCpus: "0,2",
+		Network: "bridge", Hostname: "a-b.c", DNS: []string{"8.8.8.8"},
+		HealthInterval: "30s", HealthRetries: "3", HealthTimeout: "5s", HealthStartPeriod: "1m",
+	}
+	if err := ValidateRuntimeLimits(good); err != nil {
+		t.Errorf("合法参数应通过: %v", err)
+	}
+	bad := []ContainerOpts{
+		{CPUs: "abc"}, {Memory: "512mb2"}, {MemorySwap: "x"}, {CpusetCpus: "a"},
+		{Network: "bad net"}, {Hostname: "-bad"}, {DNS: []string{"not-ip"}},
+		{HealthRetries: "x"}, {HealthInterval: "30"}, {HealthTimeout: "5sec"}, {HealthStartPeriod: "1h2m"},
+	}
+	for _, o := range bad {
+		if err := ValidateRuntimeLimits(o); err == nil {
+			t.Errorf("非法参数应报错: %+v", o)
+		}
+	}
+	if !HasRuntimeUpdate(ContainerOpts{CPUs: "1"}) {
+		t.Error("HasRuntimeUpdate 应识别出 cpus")
+	}
+	if HasRuntimeUpdate(ContainerOpts{}) {
+		t.Error("空 opts 不应算可更新")
+	}
+}

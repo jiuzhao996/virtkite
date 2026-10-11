@@ -104,6 +104,46 @@ func (d *Dockerx) Remove(id string, force bool) error {
 	return err
 }
 
+// UpdateContainer 动态调整容器的资源限制与健康检查（等价 docker update，运行中亦可）。
+// 只输出非空项——docker update 未给的 flag 不动原值。
+func (d *Dockerx) UpdateContainer(id string, opts ContainerOpts) error {
+	if err := ValidateRuntimeLimits(opts); err != nil {
+		return err
+	}
+	args := []string{"update"}
+	for _, kv := range []struct{ flag, val string }{
+		{"--cpus", opts.CPUs},
+		{"--memory", opts.Memory},
+		{"--memory-swap", opts.MemorySwap},
+		{"--cpuset-cpus", opts.CpusetCpus},
+		{"--health-interval", opts.HealthInterval},
+		{"--health-retries", opts.HealthRetries},
+		{"--health-timeout", opts.HealthTimeout},
+		{"--health-start-period", opts.HealthStartPeriod},
+	} {
+		if kv.val != "" {
+			args = append(args, kv.flag, kv.val)
+		}
+	}
+	if len(args) == 1 {
+		return errors.New("没有可更新的项（资源限制或健康检查参数至少填一个）")
+	}
+	_, err := run(append(args, id)...)
+	return err
+}
+
+// ConnectNetwork 把容器接入指定网络（等价 docker network connect）。
+func (d *Dockerx) ConnectNetwork(network, container string) error {
+	_, err := run("network", "connect", network, container)
+	return err
+}
+
+// DisconnectNetwork 把容器从指定网络断开（等价 docker network disconnect）。
+func (d *Dockerx) DisconnectNetwork(network, container string) error {
+	_, err := run("network", "disconnect", network, container)
+	return err
+}
+
 // Logs 返回容器尾部日志；timestamps 为真时每行前置 RFC3339Nano 时间戳。
 func (d *Dockerx) Logs(id string, tail int, timestamps bool) (string, error) {
 	if tail <= 0 || tail > 2000 {

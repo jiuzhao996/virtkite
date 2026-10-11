@@ -348,7 +348,11 @@ const RESULT_KEY_TEXT = {
   size_after: '清洗后字节数',
   saved_bytes: '回收字节数',
   optimized: '已注入基础优化',
-  sparsified: '已压缩磁盘'
+  sparsified: '已压缩磁盘',
+  inventory: 'inventory（口令已脱敏）',
+  check: '预演（--check）',
+  diff: '差异（--diff）',
+  tags: '标签'
 }
 function kvLabel(k) {
   return RESULT_KEY_TEXT[k] || k

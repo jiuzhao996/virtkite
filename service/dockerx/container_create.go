@@ -26,6 +26,19 @@ type ContainerOpts struct {
 	// 有健康检查的容器，docker 会维护 State.Health，容器健康自愈（cron action）据此判定。
 	HealthCmd      string `json:"health_cmd"`      // --health-cmd（如 "curl -f http://localhost/"）
 	HealthInterval string `json:"health_interval"` // --health-interval（如 30s）
+	// 健康检查其余三参数：start-period 对「启动慢的应用」必需，否则启动期被判 unhealthy 反复重启
+	HealthRetries     string `json:"health_retries"`      // --health-retries（连续失败几次判 unhealthy）
+	HealthTimeout     string `json:"health_timeout"`      // --health-timeout（单次检查超时）
+	HealthStartPeriod string `json:"health_start_period"` // --health-start-period（启动宽限期）
+	// 资源限制（cgroup）：空则不输出对应 flag（docker 默认无限制）
+	CPUs       string `json:"cpus"`        // --cpus（如 1.5）
+	Memory     string `json:"memory"`      // --memory（如 512m / 1g）
+	MemorySwap string `json:"memory_swap"` // --memory-swap（如 1g；-1 表示不限 swap）
+	CpusetCpus string `json:"cpuset_cpus"` // --cpuset-cpus（如 0-2）
+	// 网络与主机名：Network 空则不输出 --network（docker 默认 bridge）
+	Network  string   `json:"network"`  // --network（bridge / host / none / 自定义网络名）
+	Hostname string   `json:"hostname"` // -h 容器主机名
+	DNS      []string `json:"dns"`      // --dns（可多个）
 }
 
 // containerNameRe 容器名白名单：1-64 位、字母数字开头，仅允许字母数字与 _. -
@@ -39,6 +52,17 @@ var restartPolicies = map[string]bool{
 	"unless-stopped": true,
 	"on-failure":     true,
 }
+
+// 资源/网络/健康检查参数格式白名单（防任意串透传给 docker）。
+var (
+	cpusRe        = regexp.MustCompile(`^\d+(\.\d+)?$`)                     // --cpus：1 / 1.5
+	sizeRe        = regexp.MustCompile(`^\d+(\.\d+)?[kKmMgG]?[bB]?$`)       // 容量：512m / 1g / 1073741824
+	cpusetRe      = regexp.MustCompile(`^\d+([-,]\d+)*$`)                   // CPU 集：0-2 / 0,2
+	digitsRe      = regexp.MustCompile(`^\d+$`)                             // 正整数
+	durationRe    = regexp.MustCompile(`^\d+(\.\d+)?(ns|us|ms|s|m|h)$`)     // duration：30s / 1m
+	networkNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`) // 网络名（含 docker 内置 bridge/host/none）
+	hostnameRe    = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]{0,62}$`)  // 主机名
+)
 
 // ValidateContainerOpts 校验创建参数（纯函数）。返回固定中文文案，可直接回显给前端。
 // 空白列表项跳过——与 BuildRunArgs 的跳过规则一致，脏数据静默忽略而非报错。
@@ -76,10 +100,45 @@ func ValidateContainerOpts(opts ContainerOpts) error {
 			return err
 		}
 	}
-	// health-interval 须形如 30s / 1m（Go duration 语法），拒绝空值以外的非法串
-	if opts.HealthInterval != "" {
-		if _, err := time.ParseDuration(opts.HealthInterval); err != nil {
-			return errors.New("健康检查间隔格式非法（如 30s / 1m）")
+	// 资源限制 / 健康检查 / 网络参数（docker update 复用同一校验）
+	return ValidateRuntimeLimits(opts)
+}
+
+// validateRuntimeLimits 校验资源限制 / 健康检查 / 网络参数（创建与更新共用，纯函数）。
+func ValidateRuntimeLimits(opts ContainerOpts) error {
+	if opts.CPUs != "" && !cpusRe.MatchString(opts.CPUs) {
+		return errors.New("cpus 格式非法（正数，如 1.5）")
+	}
+	if opts.Memory != "" && !sizeRe.MatchString(opts.Memory) {
+		return errors.New("memory 格式非法（如 512m / 1g）")
+	}
+	if opts.MemorySwap != "" && opts.MemorySwap != "-1" && !sizeRe.MatchString(opts.MemorySwap) {
+		return errors.New("memory_swap 格式非法（如 1g，或 -1 表示不限）")
+	}
+	if opts.CpusetCpus != "" && !cpusetRe.MatchString(opts.CpusetCpus) {
+		return errors.New("cpuset_cpus 格式非法（如 0-2 或 0,2）")
+	}
+	if opts.HealthRetries != "" && !digitsRe.MatchString(opts.HealthRetries) {
+		return errors.New("health_retries 需为正整数")
+	}
+	for _, k := range []struct{ name, v string }{
+		{"health_interval", opts.HealthInterval},
+		{"health_timeout", opts.HealthTimeout},
+		{"health_start_period", opts.HealthStartPeriod},
+	} {
+		if k.v != "" && !durationRe.MatchString(k.v) {
+			return errors.New(k.name + " 格式非法（如 30s / 1m / 1h）")
+		}
+	}
+	if opts.Network != "" && !networkNameRe.MatchString(opts.Network) {
+		return errors.New("network 名称非法（仅允许字母数字与 _ . -）")
+	}
+	if opts.Hostname != "" && !hostnameRe.MatchString(opts.Hostname) {
+		return errors.New("hostname 非法（仅允许字母数字与 - .，不以 - . 开头）")
+	}
+	for _, d := range opts.DNS {
+		if strings.TrimSpace(d) != "" && net.ParseIP(strings.TrimSpace(d)) == nil {
+			return errors.New("dns 需为合法 IP")
 		}
 	}
 	return nil
@@ -157,11 +216,47 @@ func validateEnvEntry(e string) error {
 	return nil
 }
 
+// splitCommand 按 shell 风格拆分命令字符串：支持单/双引号包裹的含空格参数。
+// 替代 strings.Fields——后者会把 `nginx -g 'daemon off;'` 拆成 4 段，导致带参命令起不来。
+// 空串返回 nil；未闭合引号按字面处理（宽松，不报错）。
+func splitCommand(s string) []string {
+	var out []string
+	var b strings.Builder
+	inQuote := rune(0)
+	started := false
+	flush := func() {
+		if started {
+			out = append(out, b.String())
+			b.Reset()
+			started = false
+		}
+	}
+	for _, r := range s {
+		switch {
+		case inQuote != 0:
+			if r == inQuote {
+				inQuote = 0
+			} else {
+				b.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			inQuote = r
+			started = true
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			flush()
+		default:
+			b.WriteRune(r)
+			started = true
+		}
+	}
+	flush()
+	return out
+}
+
 // BuildRunArgs 把创建参数映射为 docker run 参数（纯函数，不执行）：
 // 等价 docker run -d --name X --restart R -p ... -v ... -e ... IMAGE [command...]。
 // restart 为空或 no 时不输出 --restart（no 即 docker 默认）；空白列表项跳过；
-// command 按空白拆分（strings.Fields 语义，多个连续空白视作一个分隔符），
-// 故含空格的引号参数（如 -g 'daemon off;'）会被拆成多个词——前端契约即按此约定传参。
+// command 按 shell 风格拆分（支持单/双引号包裹的含空格参数，如 -g 'daemon off;'）。
 func BuildRunArgs(opts ContainerOpts) []string {
 	args := []string{"run", "-d", "--name", opts.Name}
 	if opts.Restart != "" && opts.Restart != "no" {
@@ -184,8 +279,33 @@ func BuildRunArgs(opts ContainerOpts) []string {
 			args = append(args, "-e", e)
 		}
 	}
+	// 网络 / 主机名 / DNS（在镜像名之前输出）
+	if opts.Network != "" {
+		args = append(args, "--network", opts.Network)
+	}
+	if opts.Hostname != "" {
+		args = append(args, "-h", opts.Hostname)
+	}
+	for _, dns := range opts.DNS {
+		if strings.TrimSpace(dns) != "" {
+			args = append(args, "--dns", strings.TrimSpace(dns))
+		}
+	}
+	// 资源限制（cgroup；空则不限，与 docker 默认一致）
+	if opts.CPUs != "" {
+		args = append(args, "--cpus", opts.CPUs)
+	}
+	if opts.Memory != "" {
+		args = append(args, "--memory", opts.Memory)
+	}
+	if opts.MemorySwap != "" {
+		args = append(args, "--memory-swap", opts.MemorySwap)
+	}
+	if opts.CpusetCpus != "" {
+		args = append(args, "--cpuset-cpus", opts.CpusetCpus)
+	}
 	args = append(args, opts.Image)
-	if fields := strings.Fields(opts.Command); len(fields) > 0 {
+	if fields := splitCommand(opts.Command); len(fields) > 0 {
 		args = append(args, fields...)
 	}
 	// 健康检查在最末（docker run 的 flag 顺序不影响语义）
@@ -194,6 +314,15 @@ func BuildRunArgs(opts ContainerOpts) []string {
 	}
 	if opts.HealthInterval != "" {
 		args = append(args, "--health-interval", opts.HealthInterval)
+	}
+	if opts.HealthRetries != "" {
+		args = append(args, "--health-retries", opts.HealthRetries)
+	}
+	if opts.HealthTimeout != "" {
+		args = append(args, "--health-timeout", opts.HealthTimeout)
+	}
+	if opts.HealthStartPeriod != "" {
+		args = append(args, "--health-start-period", opts.HealthStartPeriod)
 	}
 	return args
 }
@@ -242,4 +371,10 @@ func isHexID(s string) bool {
 		}
 	}
 	return true
+}
+
+// HasRuntimeUpdate 判断 opts 是否含有可交给 docker update 的项（资源限制 / 健康检查）。
+func HasRuntimeUpdate(opts ContainerOpts) bool {
+	return opts.CPUs != "" || opts.Memory != "" || opts.MemorySwap != "" || opts.CpusetCpus != "" ||
+		opts.HealthInterval != "" || opts.HealthRetries != "" || opts.HealthTimeout != "" || opts.HealthStartPeriod != ""
 }

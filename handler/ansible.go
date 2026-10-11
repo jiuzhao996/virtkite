@@ -37,9 +37,21 @@ func NewAnsibleHandler(db *gorm.DB, taskMgr *tasks.Manager, masterSecret string)
 	return &AnsibleHandler{DB: db, Tasks: taskMgr, MasterSecret: masterSecret}
 }
 
-// S1 允许的 adhoc 模块：ping=连通性、command=无 shell 命令、shell=完整 shell。
+// 允许的 adhoc 模块：ping/command/shell 之外，补上教学与运维最常用的幂等模块
+// （facts 采集、文件/用户/包/服务管理、cron），让「快速执行」页能直观演示幂等。
 // 本来就是运维场景（root 批量执行），allowlist 收敛的是「误用面」而非权限面。
-var ansibleModules = map[string]bool{"ping": true, "command": true, "shell": true}
+var ansibleModules = map[string]bool{
+	"ping": true, "command": true, "shell": true,
+	"setup": true, // facts 采集（可看发行版/内核/内存等）
+	"file":  true, "copy": true, "lineinfile": true, "stat": true,
+	"user": true, "group": true,
+	"package": true, "yum": true, "dnf": true, "apt": true,
+	"service": true, "systemd": true, "cron": true,
+	"get_url": true,
+}
+
+// ansibleModuleList 模块白名单的展示文案（错误提示用，保持与上表同步）。
+const ansibleModuleList = "ping / command / shell / setup / file / copy / lineinfile / stat / user / group / package / yum / dnf / apt / service / systemd / cron / get_url"
 
 // playbook 目录约定：仓库内置种子（git 跟踪，ansible/playbooks/）首次启动复制到
 // data/ansible/playbooks/（用户编辑区，重启不覆盖）；id = 文件名去 .yml。
@@ -409,6 +421,10 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 		Args      string            `json:"args"`
 		Playbook  string            `json:"playbook"`
 		ExtraVars map[string]string `json:"extra_vars"`
+		Check     bool              `json:"check"`     // 预演（--check，仅 playbook）
+		Diff      bool              `json:"diff"`      // 差异（--diff，仅 playbook）
+		Tags      string            `json:"tags"`      // 只跑指定标签（-t，仅 playbook）
+		SkipTags  string            `json:"skip_tags"` // 跳过指定标签（仅 playbook）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数格式非法")
@@ -465,11 +481,23 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 		if len(req.ExtraVars) > 0 {
 			payload["extra_vars"] = req.ExtraVars
 		}
+		if req.Check {
+			payload["check"] = true
+		}
+		if req.Diff {
+			payload["diff"] = true
+		}
+		if strings.TrimSpace(req.Tags) != "" {
+			payload["tags"] = strings.TrimSpace(req.Tags)
+		}
+		if strings.TrimSpace(req.SkipTags) != "" {
+			payload["skip_tags"] = strings.TrimSpace(req.SkipTags)
+		}
 		title = "Ansible playbook " + req.Playbook + " → " + targetDesc
 	} else {
 		req.Module = strings.TrimSpace(req.Module)
 		if !ansibleModules[req.Module] {
-			Fail(c, http.StatusBadRequest, "模块仅支持 ping / command / shell")
+			Fail(c, http.StatusBadRequest, "模块仅支持 "+ansibleModuleList)
 			return
 		}
 		if req.Module != "ping" && strings.TrimSpace(req.Args) == "" {
