@@ -30,6 +30,16 @@ export const docker = {
   dockerImages: () => unwrap(http.get('/docker/images')),
   // 拉镜像可能数分钟：timeout 0 不限时（与镜像上传同一理由，15s 全局超时必错）
   dockerPullImage: (name) => unwrap(http.post('/docker/images/pull', { name }, { timeout: 0 })),
+  // Dockerfile 构建：构建上下文（data/docker-builds/<name>/）管理 + 提交 image_build 任务
+  dockerBuilds: () => unwrap(http.get('/docker/builds')),
+  dockerBuildCreate: (name) => unwrap(http.post('/docker/builds', { name })),
+  dockerBuildDelete: (name) => unwrap(http.delete('/docker/builds/' + encodeURIComponent(name))),
+  dockerBuildFiles: (name, path) => unwrap(http.get(`/docker/builds/${encodeURIComponent(name)}/files`, { params: { path } })),
+  dockerBuildReadFile: (name, path) => unwrap(http.get(`/docker/builds/${encodeURIComponent(name)}/file`, { params: { path } })),
+  dockerBuildWriteFile: (name, path, content) => unwrap(http.put(`/docker/builds/${encodeURIComponent(name)}/file`, { path, content })),
+  dockerBuildUpload: (name, formData) => unwrap(http.post(`/docker/builds/${encodeURIComponent(name)}/upload`, formData, { timeout: 0 })),
+  dockerBuildDeleteFile: (name, path) => unwrap(http.delete(`/docker/builds/${encodeURIComponent(name)}/file`, { params: { path } })),
+  dockerBuildRun: (name, payload) => unwrap(http.post(`/docker/builds/${encodeURIComponent(name)}/build`, payload)),
   // type ∈ containers/images（后端 docker system prune 语义；卷清理走 dockerPruneVolumes）
   dockerPrune: (type) => unwrap(http.post('/docker/prune', { type })),
   dockerDeleteImage: (imageId) => unwrap(http.delete('/docker/images/' + encodeURIComponent(imageId))),

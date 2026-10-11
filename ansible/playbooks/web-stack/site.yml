@@ -1,0 +1,12 @@
+# vmops-playbook: name=web-stack（role 示例） | desc=目录形态 playbook：roles/ 结构 + 模板 + handler，演示 role 化写法 | targets=linux
+---
+# 目录形态 playbook 示例：<id>/site.yml 为主文件，同目录下的 roles/ 会被 ansible 自动识别。
+# 平台「Playbook 库」里点该条目的「文件」按钮即可在线增删改 roles/ 下的任务/模板/handler——
+# 单文件形态做不到这件事（roles 相对引用在保存阶段就会被 --syntax-check 判为「角色不存在」）。
+- name: Web 栈（nginx + 站点页）
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - nginx

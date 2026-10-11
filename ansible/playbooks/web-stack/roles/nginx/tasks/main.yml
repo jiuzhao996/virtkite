@@ -1,0 +1,30 @@
+---
+# nginx role 任务入口：装包 → 铺站点页 → 起服务。全部幂等，可反复执行。
+- name: 安装 nginx
+  ansible.builtin.package:
+    name: nginx
+    state: present
+
+- name: 铺设站点首页（模板渲染，带主机名与平台署名）
+  ansible.builtin.template:
+    src: vmops-index.html.j2
+    dest: /usr/share/nginx/html/index.html
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload nginx
+
+- name: 启用并启动 nginx
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
+
+- name: RedHat 系放行 http
+  ansible.posix.firewalld:
+    service: http
+    permanent: true
+    immediate: true
+    state: enabled
+  when: ansible_os_family == "RedHat"
+  ignore_errors: true

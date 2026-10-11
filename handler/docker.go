@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/service/dockerx"
+	"github.com/jiuzhao/vmops/service/tasks"
 )
 
 // statsAllCacheTTL 全容器资源列缓存时长（见 StatsAll）。
@@ -18,6 +19,8 @@ const statsAllCacheTTL = 3 * time.Second
 // DockerHandler 容器/镜像管理（v2 大升级批次 1，对标宝塔的「服务管理」心智）。
 type DockerHandler struct {
 	Docker *dockerx.Dockerx
+	// Tasks 任务系统（Dockerfile 构建走后台任务）
+	Tasks *tasks.Manager
 
 	// statsAll 三件套：docker stats --no-stream 固有 ~2s CPU 采样窗，
 	// 列表页 10s 轮询 + 多端并发时每个请求现跑会把资源列拖慢一倍以上。
@@ -29,8 +32,8 @@ type DockerHandler struct {
 }
 
 // NewDockerHandler 创建 DockerHandler。
-func NewDockerHandler() *DockerHandler {
-	return &DockerHandler{Docker: dockerx.New()}
+func NewDockerHandler(taskMgr *tasks.Manager) *DockerHandler {
+	return &DockerHandler{Docker: dockerx.New(), Tasks: taskMgr}
 }
 
 // dockerAvailable 探测 docker CLI 可用性，不可用直接 503 + 引导文案。

@@ -98,10 +98,18 @@
                 <el-tag size="small" :type="row.built_in ? 'primary' : 'success'" effect="plain">{{ row.built_in ? '内置' : '自建' }}</el-tag>
               </template>
             </el-table-column>
+            <el-table-column label="形态" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.is_dir ? 'warning' : 'info'" effect="plain">
+                  {{ row.is_dir ? '目录' : '单文件' }}
+                </el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="updated_at" label="更新时间" width="170" />
-            <el-table-column label="操作" width="200" fixed="right">
+            <el-table-column label="操作" width="270" fixed="right">
               <template #default="{ row }">
                 <el-button text size="small" type="primary" :icon="VideoPlay" @click="openRunDialog(row)" :disabled="!engine.installed" :title="engine.installed ? '' : '宿主机未安装 Ansible'">执行</el-button>
+                <el-button v-if="row.is_dir" text size="small" :icon="Folder" @click="openFiles(row)">文件</el-button>
                 <el-button text size="small" :icon="Edit" @click="openEditor(row)">编辑</el-button>
                 <el-popconfirm title="删除该 playbook？" confirm-button-text="删除" @confirm="removePlaybook(row.id)">
                   <template #reference>
@@ -200,6 +208,9 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- Playbook 目录文件管理（role 结构：roles/ templates/ handlers/ …） -->
+    <PlaybookFilesDialog ref="filesDialog" @changed="loadPlaybooks" />
 
     <!-- Playbook 执行对话框 -->
     <el-dialog v-model="runDialogOpen" :title="'执行 Playbook — ' + (runPb?.id || '')" width="560px" :append-to-body="true">
@@ -306,13 +317,14 @@
 // 任务详情（executor 端 2s 节流落库 Result，前端 1.5s 轮询即实时日志）。
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, VideoPlay, Edit, Delete, Close, Setting } from '@element-plus/icons-vue'
+import { Plus, Refresh, VideoPlay, Edit, Delete, Close, Setting, Folder, Document } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import { useAuth } from '../store/auth'
 import CronList from './CronList.vue'
+import PlaybookFilesDialog from './ansible/PlaybookFilesDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -341,6 +353,7 @@ const pbLoading = ref(false)
 const editorOpen = ref(false)
 const editorId = ref('')
 const newId = ref('')
+const filesDialog = ref(null)
 const editorContent = ref('')
 const checking = ref(false)
 const saving = ref(false)
@@ -636,6 +649,10 @@ async function runPlaybook() {
 }
 
 // 编辑器
+function openFiles(row) {
+  filesDialog.value?.open(row.id)
+}
+
 function openEditor(row) {
   if (row) {
     editorId.value = row.id

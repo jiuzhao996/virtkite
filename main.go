@@ -233,6 +233,8 @@ func main() {
 	tasks.RegisterStackTasks(taskMgr)
 	// image_finalize：模板制作 / 镜像清洗（virt-sysprep + customize + sparsify，慢池 45 分钟）
 	tasks.RegisterImageFinalize(taskMgr)
+	// image_build：Dockerfile 构建（docker build，慢池 30 分钟）
+	tasks.RegisterImageBuild(taskMgr)
 	cron.NotifyURL = os.Getenv("CRON_NOTIFY_URL") // 计划任务失败通知（机器人 webhook，可空）
 	consoleRegistry := console.NewRegistry(db)
 	consoleRegistry.StartSweeper() // 启动过期清扫协程（内部 recover 兜底）

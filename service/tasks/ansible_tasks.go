@@ -199,8 +199,9 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		if !ansiblePlaybookIDRe.MatchString(playbook) {
 			return errors.New("playbook ID 非法")
 		}
-		pbPath := config.DataPath("ansible", "playbooks", playbook+".yml")
-		if _, perr := os.Stat(pbPath); perr != nil {
+		// playbook 路径解析：<id>.yml 单文件 或 <id>/ 目录（role 形态，主文件 site.yml）
+		pbPath, _, ok := ansible.ResolvePlaybook(config.DataPath("ansible", "playbooks"), playbook)
+		if !ok {
 			return fmt.Errorf("playbook 不存在: %s", playbook)
 		}
 		runOpts = ansible.RunOpts{Inventory: inv, Playbook: pbPath, Timeout: ansiblePlaybookTimeout}

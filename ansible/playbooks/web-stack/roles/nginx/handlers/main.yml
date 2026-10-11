@@ -1,0 +1,6 @@
+---
+# handler：仅在被 notify 时执行，且一轮 play 内只跑一次（模板变更才重载）。
+- name: reload nginx
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded

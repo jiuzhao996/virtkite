@@ -68,7 +68,8 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] ~~Loki 日志栈（v3）~~（2026-10 优化期拆除平台集成：查询面板/代理接口/配置字段全删，部署配置亦已随裁剪移出仓库（2026-09-30）——指标+告警已覆盖主链路，日志属可选增量自行外接，平台不再强绑）
 - [x] **镜像市场（云镜像 qcow2 + 官方安装 ISO）**（内置清单一键提交下载任务，异步流式落盘、完成自动登记镜像库；单源直下并逐卡标注来源——清华源为主、个别卡南大源，每卡附「访问源页面」链接；云镜像 5 项 / ISO 6 项含 Ubuntu 26.04）
 - [x] **架构设计器（v4，eNSP 式先设计后落地）**（预置架构模板一键载入 + AntV X6 画布：设备栏拖拽添加、节点自由拖动、边缘拉线连线、对齐吸附、Delete 删除；计划保存 data/designer + YAML 导出；**一键落地**：容器栈 compose up、VM 节点走完整建机管线（cloud-init 注入 → 自动开机 → DHCP 租约自愈重试 → 装应用 → 跑 playbook）；SSH 口令只随落地请求一次性携带，不随计划保存）
-- [x] **Ansible 自动化运维（v4，批量执行引擎缝合）**（宿主机现成 Ansible 引擎探测；**inventory 由平台资产生成**——目标只收 VM id，白名单结构性成立；adhoc 批量执行（ping/command/shell）输出节流实时滚动；**Playbook 库**（CRUD + --syntax-check 校验 + 头部 vars 约定渲染执行表单 + RECAP 逐主机矩阵）；**SSH 免密双通道**（平台托管 ed25519 密钥对：新建 VM cloud-init 直通、存量一键分发公钥，免密 VM 走私钥通道不承载口令文件）；cron 新增 playbook 动作（调度 × 引擎缝合））
+- [x] **Ansible 自动化运维（v4，批量执行引擎缝合）**（宿主机现成 Ansible 引擎探测；**inventory 由平台资产生成**——目标只收 VM id，白名单结构性成立；adhoc 批量执行（19 个模块白名单：ping/command/shell/setup/file/copy/user/package/service/systemd/cron…）输出节流实时滚动；**Playbook 库**（CRUD + `--syntax-check` 校验 + 头部 vars 约定渲染执行表单 + RECAP 逐主机矩阵；支持**目录形态（role 结构）**——`<id>/site.yml` + `roles/ templates/ files/ handlers/`，内置 `web-stack` 种子示例，页面内可在线增删改 role 文件）；**执行选项**（`--check` 预演 / `--diff` 差异 / `-t` 标签 / `--skip-tags`）；**SSH 免密双通道**（平台托管 ed25519 密钥对：新建 VM cloud-init 直通、存量一键分发公钥，免密 VM 走私钥通道不承载口令文件）；cron 新增 playbook 动作（调度 × 引擎缝合））
+- [x] **Dockerfile 构建（v4，平台侧造镜像）**（构建上下文管理 `data/docker-builds/<name>/`：在线编辑 Dockerfile / 建目录 / 上传二进制上下文文件（jar 等）；一键构建走 `image_build` 异步任务，构建日志节流回写任务结果实时可见；镜像标签白名单 + `-f` 路径守卫（防参数劫持与上下文逃逸）。平台此前只能拉镜像不能造镜像，补齐「写 Dockerfile → 构建 → 得到本地镜像」这条主线）
 - [x] **声明式部署栈 / 栈商店（v4）**（内置 compose 栈目录八个：ELK 单机 / ES 集群 / Zabbix / Jumpserver / MySQL 主从 / Nginx 负载均衡 / Prometheus 监控栈 / Tomcat，清单 + 部署说明 + 一键部署；清单 operator 可读、部署 admin 专属）
 - [x] **镜像版本检测（v4）**（本地镜像 digest 对比镜像代理源远端 digest，镜像管理页「检查更新」一键比对）
 - [x] **VM 导出/导入（v3）**（tar.gz 全量包 = 域 XML + 系统盘卷；导出 gzip/tar 两级 writer 管道直写响应体，不落临时盘不整载内存；导入失败按副作用逆序清理）
@@ -332,6 +333,8 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 
 - Docker（viewer 403）：`GET /api/docker/containers` `POST /api/docker/containers/:id/:action`（start/stop/restart/pause/unpause） `POST /api/docker/containers/:id/update`（docker update：动态改资源限制/健康检查） `POST /api/docker/containers/:id/networks`（接入网络） `DELETE /api/docker/containers/:id/networks/:name`（断开网络） `DELETE /api/docker/containers/:id` `GET .../logs`（`?follow/&tail/`） `GET .../inspect` `GET .../stats`、`GET /api/docker/stats`（全量统计）、`GET /api/docker/containers/:id/terminal`（容器终端 WS）
 - Docker 镜像/网络/卷/编排：`GET|POST /api/docker/images` `DELETE /api/docker/images/:id` `POST /api/docker/images/pull` `POST /api/docker/prune`、`GET|POST|DELETE /api/docker/networks*`、`GET|POST /api/docker/volumes*` `POST /api/docker/volumes/prune`、`GET /api/docker/compose` `POST /api/docker/compose/:name/:action`
+- Dockerfile 构建（平台侧造镜像）：构建上下文 `GET|POST /api/docker/builds` `DELETE /api/docker/builds/:name`（目录 `data/docker-builds/<name>/`，路径过词法守卫）；上下文文件 `GET /api/docker/builds/:name/files?path=` `GET|PUT /api/docker/builds/:name/file` `POST /api/docker/builds/:name/upload`（二进制，如 jar） `DELETE .../file?path=`；`POST /api/docker/builds/:name/build`（202 `image_build` 任务，`{tag*, dockerfile?, build_args?, no_cache?}`，构建日志节流回写任务结果）。tag 过白名单（挡 `-t --flag` 式参数劫持），`-f` 限上下文内相对路径
+- Ansible playbook 库：`GET /api/ansible/playbooks`（单文件与**目录形态**混排，含 `is_dir`）`GET|POST /api/ansible/playbooks[/:id]` `PUT|DELETE /api/ansible/playbooks/:id` `POST /api/ansible/playbooks/check`（只校验不保存）；**目录形态（role 结构）**文件管理 `GET /api/ansible/playbooks/:id/files` `GET|PUT /api/ansible/playbooks/:id/file?path=` `POST /api/ansible/playbooks/:id/upload` `DELETE .../file?path=`——`<id>/site.yml` + `roles/ templates/ files/ handlers/` 可在线增删改，保存时整目录复制到临时目录再 `--syntax-check`（roles 相对引用可见，不再误报「角色不存在」）
 - 应用商店：`GET /api/appstore`（目录，登录可看） `GET /api/appstore/status` `POST /api/appstore/:key/install` `POST /api/appstore/:key/uninstall`（安装走异步任务）
 - VM 应用：`GET /api/apps`（SSH 脚本应用目录） `POST /api/vms/apps/install`（挂 `/vms` 前缀，operator 可用——往自己 VM 装软件属操作语义）
 - AI 助手（viewer 403）：`GET /api/ai/status` `POST /api/ai/chat`（SSE 流式；`with_context=true` 注入平台摘要）
@@ -364,10 +367,11 @@ vmops/
 │   ├── virt/            # libvirt 封装（domain/spec/device/storage/network/snapshot/console/stats/clone/cloudinit）
 │   │                    #   clone.go：增量克隆（backingStore）+ buildCloneSpec 纯函数（UUID/MAC 重生成）
 │   │                    #   storage.go：ListBackingRefs（父卷→子卷依赖表，删卷守卫用）
-│   ├── tasks/           # 异步任务队列（4 worker，有界入队 + 两层 recover；VM 全生命周期 + 镜像下载 + 商店安装/卸载等 executor）
+│   ├── tasks/           # 异步任务队列（4 worker，有界入队 + 两层 recover；VM 全生命周期 + 镜像下载 + Dockerfile 构建 + 商店安装/卸载等 executor）
 │   ├── console/         # 会话注册表（WS 持有/强制断开/VNC 映射/过期清扫）
 │   │                    #   conn.go：写锁串行化的 WS 包装（VM 终端与容器终端共用）
-│   ├── dockerx/         # Docker CLI / Engine API 封装（容器/镜像/网络/卷/compose/统计，数组参数 + 统一超时）
+│   ├── dockerx/         # Docker CLI / Engine API 封装（容器/镜像/网络/卷/compose/统计/构建，数组参数 + 统一超时）
+│   ├── dockerbuild/     # Docker 构建上下文管理（data/docker-builds/<name>/，safePath 守卫 + 上传/编辑/删除）
 │   ├── apps/            # VM 内 SSH 脚本应用目录（10 个内置，幂等安装）
 │   ├── vmssh/           # SSH 短连接封装（文件管理/VM 应用安装，命令经 ShellQuote）
 │   ├── secretbox/       # AES-256-GCM 凭据加解密（标准库实现，主密钥运行时注入）
@@ -380,7 +384,7 @@ vmops/
 │   ├── dbx/             # 持久化重试助手（Persist/PersistBestEffort，杜绝静默吞错）
 │   ├── notify/          # 告警出站通知（飞书/钉钉机器人 webhook）
 │   ├── jumpd/           # SSH 跳板入口（资产菜单/连接重验/命令黑名单）
-│   └── ansible/         # Ansible 引擎封装（inventory 生成/adhoc/Playbook 执行）
+│   └── ansible/         # Ansible 引擎封装（inventory 生成/adhoc/Playbook 执行/目录形态 role 文件管理）
 ├── scripts/             # init-db.sql（手工建库）/ smoke.sh（E2E 回归）/ credential-rekey、purge-task-secrets（密钥运维，独立 main 包）
 ├── deploy/              # prometheus.yml(.example) / alerts.yml / alertmanager.yml(.example) / gen-monitor-conf.sh / docker-compose
 ├── web/                 # Vue3 + Vite 前端（21 个路由页面组件：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/

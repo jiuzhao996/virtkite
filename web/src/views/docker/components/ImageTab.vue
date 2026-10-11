@@ -3,6 +3,7 @@
       <el-button type="primary" @click="openPull">拉取镜像</el-button>
 	<el-button :icon="RefreshRight" :loading="vcLoading" @click="checkVersions">检查更新</el-button>
       <el-button type="warning" plain :loading="pruneLoading" @click="pruneImages">清理悬空镜像</el-button>
+      <el-button type="success" plain @click="buildDrawerRef?.open()">构建镜像</el-button>
       <el-input
         v-model="imageKeyword"
         class="ct-search"
@@ -97,6 +98,7 @@
 
     <!-- 从镜像运行：复用容器页的创建抽屉，预填 Repository:Tag -->
     <ContainerCreateDrawer ref="createDrawerRef" @created="onContainerCreated" />
+    <DockerBuildDrawer ref="buildDrawerRef" @built="refresh" />
 </template>
 
 <script setup>
@@ -109,6 +111,7 @@ import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { shortId, dockerSize, imageTime } from '../../../utils/docker-format'
 import ContainerCreateDrawer from './ContainerCreateDrawer.vue'
+import DockerBuildDrawer from './DockerBuildDrawer.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')
@@ -277,6 +280,7 @@ async function removeImage(row) {
 // ── 从镜像运行：复用容器页创建抽屉，预填 Repository:Tag ──
 
 const createDrawerRef = ref(null)
+const buildDrawerRef = ref(null)
 
 function runImage(row) {
   createDrawerRef.value.open(`${row.Repository}:${row.Tag || 'latest'}`)

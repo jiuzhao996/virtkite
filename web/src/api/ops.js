@@ -44,6 +44,12 @@ export const ops = {
   ansiblePlaybookUpdate: (id, payload) => unwrap(http.put(`/ansible/playbooks/${id}`, payload)),
   ansiblePlaybookDelete: (id) => unwrap(http.delete(`/ansible/playbooks/${id}`)),
   ansiblePlaybookCheck: (payload) => unwrap(http.post('/ansible/playbooks/check', payload)),
+  // 目录形态 playbook（role 结构）的文件管理
+  ansiblePlaybookFiles: (id) => unwrap(http.get(`/ansible/playbooks/${id}/files`)),
+  ansiblePlaybookReadFile: (id, path) => unwrap(http.get(`/ansible/playbooks/${id}/file`, { params: { path } })),
+  ansiblePlaybookWriteFile: (id, path, content) => unwrap(http.put(`/ansible/playbooks/${id}/file`, { path, content })),
+  ansiblePlaybookUploadFile: (id, formData) => unwrap(http.post(`/ansible/playbooks/${id}/upload`, formData, { timeout: 0 })),
+  ansiblePlaybookDeleteFile: (id, path) => unwrap(http.delete(`/ansible/playbooks/${id}/file`, { params: { path } })),
 
   // 镜像市场（云镜像 + 官方安装 ISO；下载转后台任务，202 返回 task_id）
   imageMarket: () => unwrap(http.get('/images/market')),

@@ -72,6 +72,7 @@ var slowTaskTypes = map[string]bool{
 	"ansible_run":     true, // playbook 分钟级
 	"stack_upgrade":   true, // compose pull + up（大栈拉镜像可达数十分钟）
 	"image_finalize":  true, // virt-sysprep + customize + sparsify（分钟级 IO）
+	"image_build":     true, // docker build（拉基础镜像 + 逐层构建，分钟级）
 }
 
 // taskTimeouts 任务级执行超时（防 executor 挂死占死 worker，见 run）。
@@ -87,6 +88,7 @@ var taskTimeouts = map[string]time.Duration{
 	"app_install":     15 * time.Minute, // compose pull 不可控
 	"stack_upgrade":   30 * time.Minute, // compose pull 大栈（ELK/Zabbix）可达数十分钟
 	"image_finalize":  45 * time.Minute, // sysprep + customize + sparsify（全盘拷贝慢）
+	"image_build":     30 * time.Minute, // docker build（含拉基础镜像）
 	"stop_vm":         5 * time.Minute,  // ACPI 关机 + 兜底 destroy 本应分钟内
 }
 

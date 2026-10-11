@@ -112,7 +112,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	terminalHandler := NewTerminalHandler(deps.DB, deps.Sessions)
 	monitorHandler := NewMonitorHandler(deps.DB, deps.AlertmanagerURL)
 	historyHandler := NewHistoryHandler(deps.DB, deps.PrometheusURL)
-	dockerHandler := NewDockerHandler()
+	dockerHandler := NewDockerHandler(deps.Tasks)
 	containerLogsHandler := NewContainerLogsHandler()
 	appsHandler := NewAppsHandler(deps.DB, deps.Tasks)
 	vmFilesHandler := NewVMFilesHandler(deps.DB)
@@ -388,6 +388,16 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		docker.POST("/compose/:name/services/:service/:action", dockerHandler.ComposeServiceAction)
 		docker.GET("/images", dockerHandler.ListImages)
 		docker.DELETE("/images/:id", dockerHandler.RemoveImage)
+		// Dockerfile 构建：构建上下文管理（data/docker-builds/<name>/）+ 提交 image_build 任务
+		docker.GET("/builds", dockerHandler.ListBuildContexts)
+		docker.POST("/builds", dockerHandler.CreateBuildContext)
+		docker.DELETE("/builds/:name", dockerHandler.DeleteBuildContext)
+		docker.GET("/builds/:name/files", dockerHandler.ListBuildFiles)
+		docker.GET("/builds/:name/file", dockerHandler.ReadBuildFile)
+		docker.PUT("/builds/:name/file", dockerHandler.WriteBuildFile)
+		docker.POST("/builds/:name/upload", dockerHandler.UploadBuildFile)
+		docker.DELETE("/builds/:name/file", dockerHandler.DeleteBuildFile)
+		docker.POST("/builds/:name/build", dockerHandler.BuildImage)
 	}
 
 	// AI 运维助手（viewer 403：消耗 API 配额且注入平台上下文属资产信息）
@@ -423,6 +433,12 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		ansibleGroup.POST("/deploy-key", ansibleHandler.DeployKey)
 		ansibleGroup.GET("/playbooks", ansibleHandler.ListPlaybooks)
 		ansibleGroup.GET("/playbooks/:id", ansibleHandler.GetPlaybook)
+		// 目录形态 playbook（role 结构）的文件管理
+		ansibleGroup.GET("/playbooks/:id/files", ansibleHandler.ListPlaybookFiles)
+		ansibleGroup.GET("/playbooks/:id/file", ansibleHandler.ReadPlaybookFile)
+		ansibleGroup.PUT("/playbooks/:id/file", ansibleHandler.WritePlaybookFile)
+		ansibleGroup.POST("/playbooks/:id/upload", ansibleHandler.UploadPlaybookFile)
+		ansibleGroup.DELETE("/playbooks/:id/file", ansibleHandler.DeletePlaybookFile)
 		ansibleGroup.POST("/playbooks", ansibleHandler.CreatePlaybook)
 		ansibleGroup.POST("/playbooks/check", ansibleHandler.CheckPlaybook)
 		ansibleGroup.PUT("/playbooks/:id", ansibleHandler.UpdatePlaybook)

@@ -77,12 +77,21 @@ func EnsureSeedPlaybooks() {
 	}
 	copied := 0
 	for _, e := range entries {
-		if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".yml" {
-			continue
-		}
 		dst := filepath.Join(playbookDir(), e.Name())
 		if _, err := os.Stat(dst); err == nil {
 			continue // 用户区已有（含改过的），不覆盖
+		}
+		if e.IsDir() {
+			// 目录形态种子（role 结构：site.yml + roles/ templates/ …），整树复制
+			if err := copySeedTree(filepath.Join(seedPlaybookDir(), e.Name()), dst); err != nil {
+				log.Printf("[ansible] 种子 playbook 目录落盘失败 %s: %v", e.Name(), err)
+				continue
+			}
+			copied++
+			continue
+		}
+		if strings.ToLower(filepath.Ext(e.Name())) != ".yml" {
+			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(seedPlaybookDir(), e.Name()))
 		if err != nil {
@@ -107,6 +116,7 @@ type playbookMeta struct {
 	Targets   string   `json:"targets"`
 	Vars      []string `json:"vars,omitempty"`
 	BuiltIn   bool     `json:"built_in"`
+	IsDir     bool     `json:"is_dir"` // 目录形态（role 结构：<id>/site.yml + roles/ templates/ …）
 	SizeBytes int64    `json:"size_bytes"`
 	UpdatedAt string   `json:"updated_at"`
 }
@@ -158,12 +168,24 @@ func (h *AnsibleHandler) ListPlaybooks(c *gin.Context) {
 	}
 	items := []playbookMeta{}
 	for _, e := range entries {
-		if e.IsDir() || strings.ToLower(filepath.Ext(e.Name())) != ".yml" {
-			continue
+		// 单文件 <id>.yml 或目录 <id>/（role 形态，主文件 site.yml）
+		isDir := e.IsDir()
+		var id, mainFile string
+		if isDir {
+			id = e.Name()
+			p, _, ok := ansible.ResolvePlaybook(playbookDir(), id)
+			if !ok {
+				continue // 空目录（无任何 yml）跳过
+			}
+			mainFile = p
+		} else {
+			if strings.ToLower(filepath.Ext(e.Name())) != ".yml" {
+				continue
+			}
+			id = strings.TrimSuffix(e.Name(), ".yml")
+			mainFile = filepath.Join(playbookDir(), e.Name())
 		}
-		id := strings.TrimSuffix(e.Name(), ".yml")
-		full := filepath.Join(playbookDir(), e.Name())
-		raw, err := os.ReadFile(full)
+		raw, err := os.ReadFile(mainFile)
 		if err != nil {
 			continue
 		}
@@ -174,7 +196,7 @@ func (h *AnsibleHandler) ListPlaybooks(c *gin.Context) {
 		}
 		items = append(items, playbookMeta{
 			ID: id, Name: name, Desc: desc, Targets: targets, Vars: pvars,
-			BuiltIn: isSeedFile(e.Name()), SizeBytes: info.Size(),
+			BuiltIn: isSeedFile(e.Name()), IsDir: isDir, SizeBytes: info.Size(),
 			UpdatedAt: info.ModTime().Format(time.DateTime),
 		})
 	}
@@ -188,6 +210,28 @@ func isSeedFile(name string) bool {
 	return err == nil
 }
 
+// copySeedTree 递归复制种子目录（目录 0755 / 文件 0644）。
+func copySeedTree(src, dst string) error {
+	return filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, rerr := filepath.Rel(src, p)
+		if rerr != nil {
+			return rerr
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		return os.WriteFile(target, b, 0o644)
+	})
+}
+
 // GetPlaybook GET /api/ansible/playbooks/:id —— 原文（编辑器用）。
 func (h *AnsibleHandler) GetPlaybook(c *gin.Context) {
 	id := c.Param("id")
@@ -195,12 +239,17 @@ func (h *AnsibleHandler) GetPlaybook(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "playbook ID 非法")
 		return
 	}
-	raw, err := os.ReadFile(filepath.Join(playbookDir(), id+".yml"))
+	p, _, ok := ansible.ResolvePlaybook(playbookDir(), id)
+	if !ok {
+		Fail(c, http.StatusNotFound, "playbook 不存在")
+		return
+	}
+	raw, err := os.ReadFile(p)
 	if err != nil {
 		Fail(c, http.StatusNotFound, "playbook 不存在")
 		return
 	}
-	Success(c, gin.H{"id": id, "content": string(raw)})
+	Success(c, gin.H{"id": id, "content": string(raw), "is_dir": ansible.IsDirPlaybook(playbookDir(), id)})
 }
 
 // CreatePlaybook POST /api/ansible/playbooks —— 新建（先语法校验后落盘）。
@@ -236,14 +285,15 @@ func (h *AnsibleHandler) CreatePlaybook(c *gin.Context) {
 }
 
 // UpdatePlaybook PUT /api/ansible/playbooks/:id —— 覆盖更新（先语法校验）。
+// 目录形态写回主文件（site.yml），不会在目录旁另建 <id>.yml。
 func (h *AnsibleHandler) UpdatePlaybook(c *gin.Context) {
 	id := c.Param("id")
 	if !playbookIDRe.MatchString(id) {
 		Fail(c, http.StatusBadRequest, "playbook ID 非法")
 		return
 	}
-	dst := filepath.Join(playbookDir(), id+".yml")
-	if _, err := os.Stat(dst); err != nil {
+	dst, isDir, ok := ansible.ResolvePlaybook(playbookDir(), id)
+	if !ok {
 		Fail(c, http.StatusNotFound, "playbook 不存在")
 		return
 	}
@@ -254,8 +304,15 @@ func (h *AnsibleHandler) UpdatePlaybook(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "参数格式非法")
 		return
 	}
-	if err := ansible.SyntaxCheck(req.Content); err != nil {
-		Fail(c, http.StatusBadRequest, err.Error())
+	// 目录形态：整目录可见才能校验 roles 相对引用；单文件：临时单文件校验
+	var verr error
+	if isDir {
+		verr = ansible.SyntaxCheckContentInDir(dst, req.Content)
+	} else {
+		verr = ansible.SyntaxCheck(req.Content)
+	}
+	if verr != nil {
+		Fail(c, http.StatusBadRequest, verr.Error())
 		return
 	}
 	if err := os.WriteFile(dst, []byte(req.Content), 0o644); err != nil {
@@ -265,15 +322,31 @@ func (h *AnsibleHandler) UpdatePlaybook(c *gin.Context) {
 	Success(c, gin.H{"id": id, "saved": true})
 }
 
-// DeletePlaybook DELETE /api/ansible/playbooks/:id。
+// DeletePlaybook DELETE /api/ansible/playbooks/:id（单文件 <id>.yml 或目录 <id>/）。
 func (h *AnsibleHandler) DeletePlaybook(c *gin.Context) {
 	id := c.Param("id")
 	if !playbookIDRe.MatchString(id) {
 		Fail(c, http.StatusBadRequest, "playbook ID 非法")
 		return
 	}
-	if err := os.Remove(filepath.Join(playbookDir(), id+".yml")); err != nil {
+	single := filepath.Join(playbookDir(), id+".yml")
+	dir := filepath.Join(playbookDir(), id)
+	// 存在性判定必须显式做：os.RemoveAll 对不存在的路径返回 nil，
+	// 直接调会把「删不存在的 playbook」变成 200 假成功。
+	if _, err := os.Stat(single); err == nil {
+		if err := os.Remove(single); err != nil {
+			ErrorWithMessage(c, http.StatusInternalServerError, "删除失败", err)
+			return
+		}
+		Success(c, gin.H{"id": id, "deleted": true})
+		return
+	}
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		Fail(c, http.StatusNotFound, "playbook 不存在")
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "删除失败", err)
 		return
 	}
 	Success(c, gin.H{"id": id, "deleted": true})
@@ -473,7 +546,7 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 			Fail(c, http.StatusBadRequest, "playbook ID 非法")
 			return
 		}
-		if _, err := os.Stat(filepath.Join(playbookDir(), req.Playbook+".yml")); err != nil {
+		if _, _, ok := ansible.ResolvePlaybook(playbookDir(), req.Playbook); !ok {
 			Fail(c, http.StatusNotFound, "playbook 不存在")
 			return
 		}
@@ -518,4 +591,84 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 	log.Printf("[ansible] 提交批量执行 playbook=%q module=%q targets=%d group=%d user=%s from=%s",
 		req.Playbook, req.Module, len(req.Targets), req.GroupID, username, c.ClientIP())
 	Accepted(c, "批量执行任务已提交", gin.H{"task_id": task.ID})
+}
+
+// ListPlaybookFiles GET /api/ansible/playbooks/:id/files —— 目录形态 playbook 的文件清单（递归）。
+func (h *AnsibleHandler) ListPlaybookFiles(c *gin.Context) {
+	files, err := ansible.ListPlaybookFiles(playbookDir(), c.Param("id"))
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	Success(c, gin.H{"items": files})
+}
+
+// ReadPlaybookFile GET /api/ansible/playbooks/:id/file?path=roles/x/tasks/main.yml
+func (h *AnsibleHandler) ReadPlaybookFile(c *gin.Context) {
+	content, err := ansible.ReadPlaybookFile(playbookDir(), c.Param("id"), c.Query("path"))
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	Success(c, gin.H{"content": content})
+}
+
+// WritePlaybookFile PUT /api/ansible/playbooks/:id/file body {path, content}
+// 写后对目录做一次语法校验（roles 相对引用需整目录可见）；校验失败仍保存，但回 warning 提示。
+func (h *AnsibleHandler) WritePlaybookFile(c *gin.Context) {
+	id := c.Param("id")
+	var req struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+		Fail(c, http.StatusBadRequest, "缺少 path 参数")
+		return
+	}
+	if err := ansible.WritePlaybookFile(playbookDir(), id, req.Path, req.Content); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	warning := ""
+	if main, _, ok := ansible.ResolvePlaybook(playbookDir(), id); ok {
+		if err := ansible.SyntaxCheckDir(main); err != nil {
+			warning = err.Error()
+		}
+	}
+	Success(c, gin.H{"saved": true, "warning": warning})
+}
+
+// UploadPlaybookFile POST /api/ansible/playbooks/:id/upload（multipart：file + path=相对路径）
+func (h *AnsibleHandler) UploadPlaybookFile(c *gin.Context) {
+	id := c.Param("id")
+	rel := strings.TrimSpace(c.PostForm("path"))
+	fh, err := c.FormFile("file")
+	if err != nil {
+		Fail(c, http.StatusBadRequest, "缺少上传文件")
+		return
+	}
+	if rel == "" {
+		rel = fh.Filename
+	}
+	src, err := fh.Open()
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "读取上传文件失败", err)
+		return
+	}
+	defer src.Close()
+	n, err := ansible.SavePlaybookUpload(playbookDir(), id, rel, src)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	Success(c, gin.H{"message": "已上传", "size": n})
+}
+
+// DeletePlaybookFile DELETE /api/ansible/playbooks/:id/file?path=
+func (h *AnsibleHandler) DeletePlaybookFile(c *gin.Context) {
+	if err := ansible.DeletePlaybookFile(playbookDir(), c.Param("id"), c.Query("path")); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	Success(c, gin.H{"message": "已删除"})
 }
