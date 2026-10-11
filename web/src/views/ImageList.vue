@@ -138,6 +138,62 @@
           </el-table>
         </el-card>
       </el-tab-pane>
+      <!-- Tab 模板制作：ISO → 制作机 → 固化模板 的引导入口（operator+；模板就是「自己的云镜像」） -->
+      <el-tab-pane v-if="canOperate" label="模板制作" name="build" lazy>
+        <el-card shadow="never">
+          <el-alert
+            type="info" :closable="false" show-icon style="margin-bottom: 16px"
+            title="流程：① 选一个已下载的 ISO 建「制作机」→ ② 用控制台（VNC）进系统装 OS 并配置 → ③ 关机后点「固化为模板」，平台清洗镜像、注入基础优化与平台公钥、登记为模板。之后即可在创建向导「云镜像」方式下批量克隆。"
+          />
+
+          <h4 class="build-h">① 建制作机</h4>
+          <el-form label-width="72px" inline>
+            <el-form-item label="名称">
+              <el-input v-model="buildForm.name" placeholder="如 ubuntu2404-builder" style="width: 190px" />
+            </el-form-item>
+            <el-form-item label="ISO">
+              <el-select v-model="buildForm.isoPath" placeholder="选择已下载的 ISO" filterable style="width: 300px" v-loading="isoLoading">
+                <el-option v-for="i in isoItems" :key="i.path" :label="i.name + '（' + i.pool + '）'" :value="i.path" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="磁盘">
+              <el-input-number v-model="buildForm.diskGb" :min="5" :max="500" />
+            </el-form-item>
+            <el-form-item label="池">
+              <el-select v-model="buildForm.pool" style="width: 120px">
+                <el-option v-for="p in poolNames" :key="p" :label="p" :value="p" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="网络">
+              <el-select v-model="buildForm.network" style="width: 140px">
+                <el-option v-for="n in netNames" :key="n" :label="n" :value="n" />
+              </el-select>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :icon="Plus" :loading="buildBusy" @click="createBuilder">创建制作机</el-button>
+            </el-form-item>
+          </el-form>
+          <div class="build-tip">建好后是关机态：去「虚拟机 → 详情 → 控制台（VNC）」装系统，装完关机再回来固化。</div>
+
+          <h4 class="build-h">② 固化为模板（关机态制作机）</h4>
+          <el-table :data="buildVMs" v-loading="buildVMLoading" size="small" stripe style="width: 100%">
+            <template #empty><el-empty description="没有关机态的制作机（新建或关机后出现在这里）" :image-size="60" /></template>
+            <el-table-column prop="name" label="制作机" min-width="200" />
+            <el-table-column label="磁盘 (GB)" width="110">
+              <template #default="{ row }">{{ row.disk_gb }}</template>
+            </el-table-column>
+            <el-table-column label="创建时间" width="180">
+              <template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="{ row }">
+                <el-button text type="primary" size="small" :icon="Files" @click="openFinalizeFor(row)">固化为模板</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+        <VmFinalizeDialog ref="finalizeRef" v-model="finalizeDlg" :vm-id="finalizeVM?.id || 0" :vm-name="finalizeVM?.name || ''" @done="loadBuildVMs" />
+      </el-tab-pane>
       <!-- Tab 3 容器镜像（Docker 资源拆分批次）：operator+ 可见（viewer 不出 tab）；
            lazy 首次激活才挂载（避免未激活时打 docker 接口）；门控重试接 ImageTab.refresh
            （2026-10-04 用户拍板：容器镜像前调、镜像市场殿后） -->
@@ -242,11 +298,12 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Upload, Delete, Star, StarFilled, Cpu, Search } from '@element-plus/icons-vue'
+import { Refresh, Upload, Delete, Star, StarFilled, Cpu, Search, Plus, Files } from '@element-plus/icons-vue'
 import ImageMarketHome from './images/components/ImageMarketHome.vue'
 import ImageMarket from './images/components/ImageMarket.vue'
 import ImageIsoMarket from './images/components/ImageIsoMarket.vue'
 import DockerGate from '../components/DockerGate.vue'
+import VmFinalizeDialog from '../components/VmFinalizeDialog.vue'
 import ImageTab from './docker/components/ImageTab.vue'
 const dockerTabRef = ref(null)
 import PageHead from '../components/PageHead.vue'
@@ -350,6 +407,87 @@ function onTabChange(name) {
     isoLoaded.value = true
     loadIso()
   }
+  if (name === 'build' && !buildLoaded.value) {
+    buildLoaded.value = true
+    loadBuild()
+  }
+}
+
+/* ── 模板制作 tab：ISO → 制作机 → 固化模板 ── */
+const buildLoaded = ref(false)
+const buildForm = reactive({ name: '', isoPath: '', diskGb: 20, pool: 'base', network: 'default' })
+const buildBusy = ref(false)
+const buildVMs = ref([])
+const buildVMLoading = ref(false)
+const poolNames = ref(['base', 'images', 'exten'])
+const netNames = ref(['default'])
+const finalizeDlg = ref(false)
+const finalizeRef = ref(null)
+const finalizeVM = ref(null)
+
+async function loadBuild() {
+  if (!isoLoaded.value) {
+    isoLoaded.value = true
+    loadIso()
+  }
+  try {
+    const r = await api.listStoragePools()
+    const names = ((r.data && r.data.items) || []).map((p) => p.name)
+    if (names.length) poolNames.value = names
+  } catch (e) {
+    /* 保持内置候选 */
+  }
+  try {
+    const r = await api.listNetworks()
+    const list = (r.data && (r.data.items || r.data)) || []
+    netNames.value = [...new Set(['default', ...list.map((n) => n.name || n).filter(Boolean)])]
+  } catch (e) {
+    /* 保持 default */
+  }
+  await loadBuildVMs()
+}
+
+async function loadBuildVMs() {
+  buildVMLoading.value = true
+  try {
+    const r = await api.listVMs()
+    buildVMs.value = ((r.data && r.data.items) || []).filter((v) => v.status === 'shut off')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取虚拟机列表失败'))
+  } finally {
+    buildVMLoading.value = false
+  }
+}
+
+async function createBuilder() {
+  if (!buildForm.name.trim()) return ElMessage.warning('请填写制作机名称')
+  if (!buildForm.isoPath) return ElMessage.warning('请选择 ISO（可先在「ISO 安装镜像」tab 下载）')
+  buildBusy.value = true
+  try {
+    const payload = {
+      name: buildForm.name.trim(),
+      storage_pool: buildForm.pool,
+      vcpu: 2,
+      memory_mb: 2048,
+      disks: [{ create_gb: buildForm.diskGb }],
+      iso_path: buildForm.isoPath,
+      network: buildForm.network,
+      interfaces: [{ type: 'network', source: buildForm.network, model: 'virtio' }]
+    }
+    await pollTask(extractTaskId(await api.createVM(payload)))
+    ElMessage.success('制作机已创建（关机态）；请去「虚拟机 → 详情 → 控制台」装系统，装完关机再回来固化')
+    await loadBuildVMs()
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '创建制作机失败'))
+  } finally {
+    buildBusy.value = false
+  }
+}
+
+function openFinalizeFor(row) {
+  finalizeVM.value = row
+  finalizeRef.value?.prepare()
+  finalizeDlg.value = true
 }
 
 /* ── 存储池容量区（质感专项）── */
@@ -612,5 +750,17 @@ onMounted(() => {
   text-align: right;
   font-size: 0.8rem;
   font-weight: 700;
+}
+
+/* ── 模板制作 tab ── */
+.build-h {
+  margin: 6px 0 14px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.build-tip {
+  margin: -4px 0 20px;
+  color: var(--color-muted-foreground);
+  font-size: 0.82rem;
 }
 </style>
