@@ -297,6 +297,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, Delete, Star, StarFilled, Cpu, Search, Plus, Files } from '@element-plus/icons-vue'
 import ImageMarketHome from './images/components/ImageMarketHome.vue'
@@ -314,6 +315,7 @@ import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
 import { fmtSizeGB, fmtSizeBytes, fmtDateTime, errMsg, isCancel, clampPct } from '../utils/format'
 
 const { isAdmin, canOperate } = useAuth()
+const route = useRoute()
 
 const activeTab = ref('images')
 // 镜像市场 tab 懒加载：组件 onMounted 自拉数据，无需额外处理
@@ -664,6 +666,11 @@ async function remove(img) {
 }
 
 onMounted(() => {
+  // 深链 ?tab=xxx（任务中心「查看镜像库/查看容器镜像」等出口用）：白名单内才采纳，
+  // 非法值回落默认 tab；build/docker 两个 tab 是 v-if=canOperate，viewer 深链不生效
+  const t = route.query.tab
+  const allowed = canOperate.value ? ['images', 'iso', 'build', 'docker', 'market'] : ['images', 'iso', 'market']
+  if (typeof t === 'string' && allowed.includes(t)) activeTab.value = t
   load()
   loadPools()
 })

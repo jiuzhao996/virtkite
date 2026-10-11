@@ -264,13 +264,15 @@ const q = ref({ status: '' })
 
 // format.js 的 TASK_TYPE_TEXT 只覆盖 5 种 VM 类任务；这里补齐 service/tasks 里其余注册类型
 // （vm_tasks.go 的 cleanup_volumes、app_tasks.go 的 app_install、image_download.go 的 image_download、
-//   ansible_tasks.go 的 ansible_run），本表优先命中，其余回落共享映射，后端新增类型原样兜底
+//   ansible_tasks.go 的 ansible_run、image_build.go 的 image_build），本表优先命中，
+// 其余回落共享映射，后端新增类型原样兜底
 const EXTRA_TASK_TYPE_TEXT = {
   cleanup_volumes: '清理孤儿卷',
   app_install: '安装应用',
   image_download: '下载镜像',
   ansible_run: '执行 Playbook',
-  image_finalize: '镜像清洗'
+  image_finalize: '镜像清洗',
+  image_build: '构建镜像'
 }
 
 /** 任务类型中文：补齐表优先，未命中回落 utils/format 的共享映射 */
@@ -445,6 +447,7 @@ const taskObjectLink = computed(() => {
   if (d.type === 'app_install') return { text: '查看应用商店 →', to: '/apps' }
   if (d.type === 'image_download') return { text: '查看镜像库 →', to: '/images' }
   if (d.type === 'image_finalize') return { text: '查看镜像库 →', to: '/images' }
+  if (d.type === 'image_build') return { text: '查看容器镜像 →', to: '/images?tab=docker' }
   return null
 })
 
