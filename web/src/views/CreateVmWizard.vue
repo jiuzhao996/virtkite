@@ -111,11 +111,11 @@ const options = reactive({
 const vms = ref([])
 
 const form = reactive({ name: '', storagePool: '', vcpu: 2, memoryMb: 2048, diskGb: 20, machine: '', sysVolName: '' })
-const iso = reactive({ osName: '', isoPath: '', pick: null, manual: false })
+const iso = reactive({ osName: '', isoPath: '', pick: null, manual: false, installUrl: '' })
 const cloudImage = reactive({ imageId: null, osName: '' })
 const cloneVm = reactive({ sourceVmId: null })
 const extraDisks = reactive([])
-const nics = reactive([{ id: 1, source: '' }])
+const nics = reactive([{ id: 1, type: 'network', source: '', mode: 'bridge' }])
 
 const cloudInitEnabled = ref(false)
 // 自动初始化：建机后自动开机 → 等 IP → 托管凭据（与设计器落地同一套 create_vm provision）。
@@ -383,11 +383,16 @@ function buildPayload() {
   if (form.machine) payload.machine = form.machine
   if (installMode.value === 'iso') {
     payload.disks = buildDisks()
-    payload.iso_path = isoPathLabel.value
+    if (iso.installUrl.trim()) {
+      // 网络安装源（FTP/HTTP）：不挂 ISO，直接内核引导（等价 virt-install --location）
+      payload.install_url = iso.installUrl.trim()
+    } else {
+      payload.iso_path = isoPathLabel.value
+    }
   } else if (installMode.value === 'cloudimage') {
     payload.disks = buildDisks()
   }
-  payload.interfaces = nics.map((n) => ({ type: 'network', source: n.source || 'default', model: nicModel.value }))
+  payload.interfaces = nics.map((n) => ({ type: n.type || 'network', source: n.source || 'default', model: nicModel.value, mode: n.mode || '' }))
   payload.network = primaryNet.value
   if (cloudInitEnabled.value) {
     payload.cloud_init = buildCloudInit()
@@ -416,7 +421,7 @@ function next() {
   if (step.value === 0) {
     if (installMode.value === 'iso') {
       if (!iso.osName) return ElMessage.warning({ message: '请选择操作系统', grouping: true })
-      if (!iso.isoPath) return ElMessage.warning('请选择安装介质（存储池 → ISO，或勾选手动输入路径）')
+      if (!iso.isoPath && !iso.installUrl.trim()) return ElMessage.warning('请选择安装介质（存储池 → ISO / 手动输入路径 / 网络安装源 URL）')
     } else if (installMode.value === 'cloudimage') {
       if (!cloudImage.imageId) return ElMessage.warning('请选择云镜像')
     } else if (installMode.value === 'clone') {

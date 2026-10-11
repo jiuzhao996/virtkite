@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/virt"
 )
@@ -239,6 +240,8 @@ func execDeleteVM(ctx *ExecContext) error {
 	if seedDir := taskSeedDir(); seedDir != "" {
 		_ = os.Remove(filepath.Join(seedDir, vm.Name+"-seed.iso"))
 	}
+	// 4b. 清理网络安装源缓存（data/install/<vm名>/，仅「网络安装源」方式建机才有）
+	_ = os.RemoveAll(config.DataPath("install", vm.Name))
 
 	// 5. 软删除数据库记录，并回收该 VM 的全部授权（授权随资产消亡，不悬挂）。
 	if err := ctx.DB.Delete(&vm).Error; err != nil {

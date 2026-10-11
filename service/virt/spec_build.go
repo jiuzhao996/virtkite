@@ -44,6 +44,8 @@ type interfaceSourceXML struct {
 	Network string `xml:"network,attr,omitempty"`
 	Bridge  string `xml:"bridge,attr,omitempty"`
 	Dev     string `xml:"dev,attr,omitempty"`
+	// Mode 仅 direct（macvtap）用：bridge / private / vepa / passthrough
+	Mode string `xml:"mode,attr,omitempty"`
 }
 
 type interfaceModelXML struct {
@@ -87,6 +89,10 @@ type bootXML struct {
 type osXML struct {
 	Type osTypeXML `xml:"type"`
 	Boot []bootXML `xml:"boot"`
+	// 直接内核引导（网络安装源 FTP/HTTP）：<kernel>/<initrd>/<cmdline>
+	Kernel  string `xml:"kernel,omitempty"`
+	Initrd  string `xml:"initrd,omitempty"`
+	Cmdline string `xml:"cmdline,omitempty"`
 }
 
 type featuresXML struct {
@@ -250,7 +256,12 @@ func interfaceXMLFromSpec(i InterfaceSpec) interfaceXML {
 	case "bridge":
 		ifx.Source = &interfaceSourceXML{Bridge: i.Source}
 	case "direct":
-		ifx.Source = &interfaceSourceXML{Dev: i.Source}
+		// macvtap 直连物理网卡：<source dev='eth0' mode='bridge'/>（mode 缺省 bridge）
+		mode := i.Mode
+		if mode == "" {
+			mode = "bridge"
+		}
+		ifx.Source = &interfaceSourceXML{Dev: i.Source, Mode: mode}
 	default:
 		ifx.Source = &interfaceSourceXML{Network: i.Source}
 	}
@@ -318,6 +329,10 @@ func BuildDomainXML(spec *DomainSpec) (string, error) {
 		arch = "x86_64"
 	}
 	dx.OS.Type = osTypeXML{Arch: arch, Machine: spec.Machine, Value: ostype}
+	// 网络安装源（直接内核引导）：kernel/initrd 已由调用方下载到本地，cmdline 形如 inst.repo=<url>
+	dx.OS.Kernel = spec.Kernel
+	dx.OS.Initrd = spec.Initrd
+	dx.OS.Cmdline = spec.Cmdline
 
 	boots := spec.Boot.Devices
 	if len(boots) == 0 {

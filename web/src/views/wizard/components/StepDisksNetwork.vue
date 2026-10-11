@@ -52,7 +52,22 @@
     </div>
     <div v-for="(nic, idx) in nics" :key="nic.id" class="nic-row">
       <span class="nic-index">网卡 {{ idx + 1 }}</span>
-      <el-select v-model="nic.source" placeholder="选择网络" style="width: 260px">
+      <el-select v-model="nic.type" style="width: 132px" @change="onNicTypeChange(nic)">
+        <el-option label="虚拟网络" value="network" />
+        <el-option label="直连物理网卡" value="direct" />
+      </el-select>
+      <template v-if="nic.type === 'direct'">
+        <el-select v-model="nic.source" placeholder="选择物理网卡（macvtap）" style="width: 200px">
+          <el-option v-for="h in hostNics" :key="h.name" :label="h.name + (h.ip ? '（' + h.ip + '）' : '')" :value="h.name" />
+        </el-select>
+        <el-select v-model="nic.mode" style="width: 150px" title="macvtap 模式">
+          <el-option label="bridge（桥接）" value="bridge" />
+          <el-option label="private" value="private" />
+          <el-option label="vepa" value="vepa" />
+          <el-option label="passthrough" value="passthrough" />
+        </el-select>
+      </template>
+      <el-select v-else v-model="nic.source" placeholder="选择网络" style="width: 260px">
         <!-- 按 libvirt 转发类型分组：NAT / 桥接 / 隔离，附网关提示 -->
         <el-option-group v-for="g in networkGroups" :key="g.label" :label="g.label">
           <el-option
@@ -103,9 +118,10 @@
 <script setup>
 // 向导第 3 步「磁盘与网络」：磁盘表（含添加磁盘弹窗，本组件自持弹窗状态）与多网卡编辑。
 // nics/extraDisks 由壳持有（草稿持久化与提交装配都依赖），props 传入后成员变更/push 写回共享实例。
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
+import { api } from '../../../api'
 
 const props = defineProps({
   installMode: { type: String, required: true },
@@ -140,8 +156,27 @@ function findImage(id) {
 }
 
 function addNic() {
-  props.nics.push({ id: Date.now(), source: props.options.networks.length ? props.options.networks[0] : '' })
+  props.nics.push({ id: Date.now(), type: 'network', source: props.options.networks.length ? props.options.networks[0] : '', mode: 'bridge' })
 }
+
+// 切换网卡类型：清空来源，避免「网络名」残留成物理网卡名
+function onNicTypeChange(nic) {
+  nic.source = nic.type === 'direct' ? (hostNics.value[0]?.name || '') : (props.options.networks.length ? props.options.networks[0] : '')
+  if (!nic.mode) nic.mode = 'bridge'
+}
+
+// 宿主机物理网卡（macvtap 直连选卡用）：首次用到时拉一次
+const hostNics = ref([])
+async function loadHostNics() {
+  if (hostNics.value.length) return
+  try {
+    const res = await api.listHostInterfaces()
+    hostNics.value = (res.data && res.data.items) || []
+  } catch (e) {
+    hostNics.value = []
+  }
+}
+onMounted(loadHostNics)
 
 function removeNic(idx) {
   if (props.nics.length > 1) props.nics.splice(idx, 1)

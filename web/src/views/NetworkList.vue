@@ -22,7 +22,7 @@
       <Toolbar gap="var(--space-lg)" right-gap="var(--space-lg)">
         <template #left>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-          <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">新建 NAT 网络</el-button>
+          <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openCreate">新建网络</el-button>
         </template>
         <template #right>
           <el-tag type="success" effect="plain" size="small">运行 {{ activeCount }}</el-tag>
@@ -93,14 +93,29 @@
     <!-- 虚拟网络详情抽屉（概要 + 成员表 + XML）-->
     <NetworkDetailDrawer ref="netDetailRef" @open-topology="activeTab = 'topology'" />
 
-    <!-- 新建 NAT 网络 -->
-    <el-dialog :close-on-click-modal="false" v-model="createDialog" title="新建 NAT 网络" width="460px">
-      <el-form :model="createForm" label-width="80px">
+    <!-- 新建虚拟网络（NAT / 隔离 / 桥接） -->
+    <el-dialog :close-on-click-modal="false" v-model="createDialog" title="新建虚拟网络" width="500px">
+      <el-form :model="createForm" label-width="96px">
         <el-form-item label="名称" required>
           <el-input v-model="createForm.name" placeholder="仅字母、数字、_、-" />
         </el-form-item>
-        <el-form-item label="网关">
-          <el-input v-model="createForm.gateway" placeholder="如 192.168.100.1" />
+        <el-form-item label="转发模式">
+          <el-radio-group v-model="createForm.mode">
+            <el-radio-button value="nat">NAT</el-radio-button>
+            <el-radio-button value="isolated">隔离</el-radio-button>
+            <el-radio-button value="bridge">桥接</el-radio-button>
+          </el-radio-group>
+          <div class="nc-mode-tip">
+            <template v-if="createForm.mode === 'nat'">借宿主机出网（内置 DHCP，默认）</template>
+            <template v-else-if="createForm.mode === 'isolated'">仅本网络内互通，不出网（内置 DHCP）</template>
+            <template v-else>直接接已存在的宿主机网桥（IP/DHCP 由宿主网桥提供）</template>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="createForm.mode === 'bridge'" label="宿主网桥" required>
+          <el-input v-model="createForm.hostBridge" placeholder="已存在的网桥名，如 br0（须先用 nmcli 建好）" />
+        </el-form-item>
+        <el-form-item v-else label="网关">
+          <el-input v-model="createForm.gateway" placeholder="如 192.168.100.1（留空用默认）" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -144,7 +159,7 @@ const rowBusy = ref(new Set())
 const autostartBusy = ref(new Set())
 const createDialog = ref(false)
 
-const createForm = ref({ name: '', gateway: '' })
+const createForm = ref({ name: '', mode: 'nat', gateway: '', hostBridge: '' })
 
 const activeCount = computed(() => networks.value.filter((n) => n.active).length)
 const autostartCount = computed(() => networks.value.filter((n) => n.autostart).length)
@@ -171,7 +186,7 @@ function openDetail(row) {
 }
 
 function openCreate() {
-  createForm.value = { name: '', gateway: '' }
+  createForm.value = { name: '', mode: 'nat', gateway: '', hostBridge: '' }
   createDialog.value = true
 }
 
@@ -182,7 +197,12 @@ async function createNetwork() {
   }
   saving.value = true
   try {
-    await api.createNetwork({ ...createForm.value })
+    await api.createNetwork({
+      name: createForm.value.name,
+      mode: createForm.value.mode,
+      gateway: createForm.value.gateway,
+      host_bridge: createForm.value.hostBridge
+    })
     ElMessage.success('网络已创建')
     createDialog.value = false
     await load()
@@ -266,6 +286,11 @@ onMounted(load)
 .net-card {
   margin-bottom: 16px;
   cursor: pointer;
+}
+.nc-mode-tip {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--color-muted-foreground);
 }
 .net-card.inactive {
   opacity: 0.75;

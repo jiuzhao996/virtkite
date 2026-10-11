@@ -36,14 +36,14 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] 宿主机管理（纳管 / 连通性测试回写状态 / /proc 实时状态 + 中文时长）
 - [x] 虚拟机生命周期（卡片列表 / 详情 / 真实 KVM 建机 / 启停重启 / 暂停恢复 / 删除带存储清理；IP 经 DHCP 租约 + qemu-guest-agent 双通道自动回填）
 - [x] **异步任务系统**（创建/删除/克隆/优雅关机走后台 worker，202 + 轮询，任务中心可见；入队有界 + 两层 panic 兜底）
-- [x] **创建向导**（四步：安装方式 → 计算资源 → 磁盘与网络 → 确认创建；三种安装方式：本地 ISO（介质平铺选择 + 按 ISO 文件名自动识别操作系统）/ 云镜像 + cloud-init / 克隆现有 VM）
+- [x] **创建向导**（四步：安装方式 → 计算资源 → 磁盘与网络 → 确认创建；三种安装方式：本地 ISO（介质平铺选择 + 按 ISO 文件名自动识别操作系统）/ **网络安装源（FTP/HTTP 安装树，等价 `virt-install --location`：下载内核+initrd 直接内核引导，免下载 ISO）** / 云镜像 + cloud-init / 克隆现有 VM；网卡可选**虚拟网络**或 **macvtap 直连物理网卡**（bridge/private/vepa/passthrough））
 - [x] **向导云镜像方式**（前置条件检查与直达链接、存储池可用空间显示与超额红字预警、增量盘标注（qcow2 backing 不复制镜像文件）、cloud-init 折叠配置（主机名/用户/密码/SSH 公钥/网络模式）、网络按 forward 类型分组）
 - [x] **硬件热管理**（磁盘/网卡热插拔、一键建盘挂载与补齐标准设备（guest-agent 通道 + virtio-rng）、调核/调内存、自启、整域 XML 编辑）
 - [x] **增量克隆**（真 linked clone：子卷 XML 声明 `<backingStore>` 指向父盘，等价 `qemu-img create -f qcow2 -F qcow2 -b`，`qemu-img info` 可见 `backing file`；克隆机 UUID 与**每块网卡 MAC** 均重新生成）
 - [x] **删除保护**（三重守卫：池外文件 / 镜像库登记的共享基镜像 / 仍被子卷依赖的增量克隆父盘一律不删，保留的卷经任务结果 `kept_volumes` 与服务端日志给出中文原因）
 - [x] **cloud-init**（纯 Go 生成 seed ISO，用户/密码/SSH key/静态 IP）
 - [x] 存储池管理（池/卷 CRUD + 建盘多池选择 + 池路径/卷格式校验 + **本池血缘图谱**（点开池即见卷级 backing 链与跨池克隆对端，虚拟/实际占用一目了然，克隆家谱同款渲染））
-- [x] 网络管理（CRUD / 启停 / XML 编辑 / DHCP 范围 / NAT 模板 + **通信流量图**（TCP 连接按网段归聚的力导向图 + 接口实时速率 + 通信路径 TOP，3s 轮询——宿主机/虚拟网络/Docker 网络流量走向一图看懂））
+- [x] 网络管理（CRUD / 启停 / XML 编辑 / DHCP 范围 / **新建 NAT / 隔离 / 桥接三种转发模式**（桥接接已存在的宿主机网桥）+ **通信流量图**（TCP 连接按网段归聚的力导向图 + 接口实时速率 + 通信路径 TOP，3s 轮询——宿主机/虚拟网络/Docker 网络流量走向一图看懂）；`GET /api/networks/host-interfaces` 列宿主物理网卡供 macvtap 选卡）
 - [x] 网页控制台（admin/operator 三入口：VNC 图形 / SSH 终端 / 免 IP 串口；viewer 仅 VNC 只读；页内一键开机闭环；SSH 参数记忆）
 - [x] **控制台会话跟踪**（谁连了哪台 VM，SSH/串口可服务端强制断开；WS 写入经 `console.Conn` 串行化）
 - [x] 快照管理（名称+描述 / 列表含时间状态 / 删除 / 回滚）
@@ -251,6 +251,7 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 - `GET /api/hosts` `POST /api/hosts` `PUT /api/hosts/:id` `DELETE /api/hosts/:id`（`ssh_ip` 须为 IP 或主机名，该值会作为 argv 传给 `ping`）
 - `POST /api/hosts/:id/test` — 连通性测试（回写 reachable 状态）
 - `GET  /api/hosts/:id/stats` — 宿主机状态（/proc 直读 + 中文时长）
+- `GET /api/host-kvm/nested` `POST /api/host-kvm/nested`（admin）— 宿主机嵌套虚拟化（VM 里再跑 VM）状态 / 开关：读 `kvm_intel|kvm_amd` 的 nested 参数，开启写 `modprobe.d` 持久化并尝试运行时重载（需所有 VM 关机，否则重启生效）
 
 ### 虚拟机管理
 

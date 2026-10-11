@@ -473,3 +473,57 @@ func TestNetworkXMLFromParamsBridgeNameCollision(t *testing.T) {
 		}
 	})
 }
+
+// TestNetworkXMLForMode 覆盖三种转发模式的 XML 生成（nat / isolated / bridge）。
+func TestNetworkXMLForMode(t *testing.T) {
+	// NAT：<forward mode='nat'> + <nat> + 内置 DHCP
+	nat, err := NetworkXMLForMode("n1", "nat", "10.10.0.1", "")
+	if err != nil {
+		t.Fatalf("nat 生成失败: %v", err)
+	}
+	for _, want := range []string{`mode="nat"`, "<nat>", "<dhcp>", "10.10.0.1"} {
+		if !strings.Contains(nat, want) {
+			t.Errorf("nat XML 缺 %q：%s", want, nat)
+		}
+	}
+
+	// 隔离：无 <forward>，但有内置 DHCP
+	iso, err := NetworkXMLForMode("n2", "isolated", "", "")
+	if err != nil {
+		t.Fatalf("isolated 生成失败: %v", err)
+	}
+	if strings.Contains(iso, "<forward") {
+		t.Errorf("isolated 不应含 <forward>：%s", iso)
+	}
+	if !strings.Contains(iso, "<dhcp>") {
+		t.Errorf("isolated 应含内置 DHCP：%s", iso)
+	}
+
+	// 桥接：<forward mode='bridge'> + 宿主网桥名，无 IP/DHCP
+	br, err := NetworkXMLForMode("n3", "bridge", "", "br0")
+	if err != nil {
+		t.Fatalf("bridge 生成失败: %v", err)
+	}
+	for _, want := range []string{`mode="bridge"`, `name="br0"`} {
+		if !strings.Contains(br, want) {
+			t.Errorf("bridge XML 缺 %q：%s", want, br)
+		}
+	}
+	if strings.Contains(br, "<ip ") || strings.Contains(br, "<dhcp>") {
+		t.Errorf("bridge 不应含 IP/DHCP（由宿主网桥提供）：%s", br)
+	}
+
+	// 缺宿主网桥名 / 未知模式 → 报错
+	if _, err := NetworkXMLForMode("n4", "bridge", "", ""); err == nil {
+		t.Error("bridge 缺宿主网桥名应报错")
+	}
+	if _, err := NetworkXMLForMode("n5", "bogus", "", ""); err == nil {
+		t.Error("未知模式应报错")
+	}
+
+	// 空模式回落 nat（保持旧调用方行为）
+	def, err := NetworkXMLForMode("n6", "", "", "")
+	if err != nil || !strings.Contains(def, `mode="nat"`) {
+		t.Errorf("空模式应回落 nat，got err=%v xml=%s", err, def)
+	}
+}

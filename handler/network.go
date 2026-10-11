@@ -7,8 +7,19 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/service/hostnet"
 	"github.com/jiuzhao/vmops/service/virt"
 )
+
+// HostInterfaces GET /api/networks/host-interfaces —— 宿主机物理网卡列表（macvtap 直连选卡用）。
+func (h *NetworkHandler) HostInterfaces(c *gin.Context) {
+	nics, err := hostnet.Interfaces()
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "获取宿主机网卡失败", err)
+		return
+	}
+	Success(c, gin.H{"items": nics})
+}
 
 // NetworkMember 挂在该网络上的虚拟机网卡（详情抽屉成员表）。
 type NetworkMember struct {
@@ -95,11 +106,13 @@ func (h *NetworkHandler) networkMembers(info *virt.NetworkInfo) []NetworkMember 
 	return members
 }
 
-// CreateNetwork 创建 NAT 网络
+// CreateNetwork 创建虚拟网络（mode：nat 默认 / isolated 隔离 / bridge 桥接宿主网桥）
 func (h *NetworkHandler) CreateNetwork(c *gin.Context) {
 	var req struct {
-		Name    string `json:"name" binding:"required"`
-		Gateway string `json:"gateway"`
+		Name       string `json:"name" binding:"required"`
+		Mode       string `json:"mode"`        // nat（默认）/ isolated / bridge
+		Gateway    string `json:"gateway"`     // nat / isolated 用
+		HostBridge string `json:"host_bridge"` // bridge 模式：已存在的宿主机网桥名（如 br0）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
@@ -114,14 +127,22 @@ func (h *NetworkHandler) CreateNetwork(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "网关必须是合法的 IPv4 地址")
 		return
 	}
+	if req.Mode == virt.NetModeBridge && strings.TrimSpace(req.HostBridge) == "" {
+		Fail(c, http.StatusBadRequest, "桥接网络需指定宿主机网桥名（如 br0，须已存在）")
+		return
+	}
 
-	xml := virt.NetworkXMLFromParams(req.Name, "", req.Gateway)
+	xml, err := virt.NetworkXMLForMode(req.Name, req.Mode, req.Gateway, req.HostBridge)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := h.Virt.DefineNetwork(xml); err != nil {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	Success(c, gin.H{"name": req.Name, "gateway": req.Gateway})
+	Success(c, gin.H{"name": req.Name, "gateway": req.Gateway, "mode": req.Mode})
 }
 
 // SetNetworkAutostart 设置网络自启动 PUT /api/networks/:name/autostart（body: {autostart: bool}）。

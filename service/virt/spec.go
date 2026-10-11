@@ -19,9 +19,10 @@ type DiskSpec struct {
 // InterfaceSpec 网卡（对应 virsh dumpxml 的 <interface> 元素）。
 type InterfaceSpec struct {
 	Type   string `json:"type"`   // network / bridge / direct
-	Source string `json:"source"` // 网络名或桥名
+	Source string `json:"source"` // 网络名 / 桥名 / 物理网卡名（direct）
 	MAC    string `json:"mac"`    // 网卡 MAC 地址
 	Model  string `json:"model"`  // virtio / e1000 / rtl8139
+	Mode   string `json:"mode"`   // 仅 direct（macvtap）用：bridge / private / vepa / passthrough
 }
 
 // GraphicsSpec 显示设备（当前仅支持 VNC）。
@@ -52,7 +53,11 @@ type DomainSpec struct {
 	Graphics   GraphicsSpec    `json:"graphics"`
 	Autostart  bool            `json:"autostart"`
 	CloudInit  *CloudInitSpec  `json:"cloud_init,omitempty"`
-	RawXML     string          `json:"raw_xml,omitempty"` // dumpxml 原文（编辑回显）
+	// 网络安装源（FTP/HTTP 直接内核引导）：kernel/initrd 本地路径 + 内核 cmdline
+	Kernel  string `json:"kernel,omitempty"`
+	Initrd  string `json:"initrd,omitempty"`
+	Cmdline string `json:"cmdline,omitempty"`
+	RawXML  string `json:"raw_xml,omitempty"` // dumpxml 原文（编辑回显）
 }
 
 // GetDomainSpec 返回虚拟机完整配置模型（对应 virsh dumpxml + autostart）。

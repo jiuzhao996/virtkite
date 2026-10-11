@@ -103,6 +103,11 @@ export const core = {
 
   // 网络
   listNetworks: () => unwrap(http.get('/networks')),
+  // 宿主机物理网卡（macvtap 直连选卡用）
+  listHostInterfaces: () => unwrap(http.get('/networks/host-interfaces')),
+  // 宿主机 KVM 内核层：嵌套虚拟化（VM 里再跑 VM）
+  nestedKVMStatus: () => unwrap(http.get('/host-kvm/nested')),
+  setNestedKVM: (payload) => unwrap(http.post('/host-kvm/nested', payload)),
   // 镜像版本检测（P3：digest 对比，按钮触发非轮询）
   versionCheck: () => unwrap(http.get('/docker/version-check')),
 

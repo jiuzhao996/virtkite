@@ -158,6 +158,27 @@
       <p class="tip">公告对全部用户公开（含未登录的登录页），请勿填写敏感信息；清空内容并保存即撤下公告。仪表盘对同一内容仅提示一次，内容变更后重新提示。</p>
     </el-card>
 
+    <!-- 嵌套虚拟化（VM 里再跑 VM）：宿主内核层开关，独立保存 -->
+    <el-card shadow="never" class="mb" v-loading="nestedLoading">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">嵌套虚拟化</span>
+          <el-button type="primary" :loading="nestedBusy" @click="toggleNested(!nested.enabled)">
+            {{ nested.enabled ? '关闭' : '开启' }}
+          </el-button>
+        </div>
+      </template>
+      <div class="nested-row">
+        <el-tag :type="nested.enabled ? 'success' : 'info'" effect="light">{{ nested.enabled ? '已开启' : '未开启' }}</el-tag>
+        <span class="tip">
+          内核模块 {{ nested.module || '—' }} · 当前值 {{ nested.value || '—' }}
+          <template v-if="nested.persisted"> · 已持久化（重启后仍生效）</template>
+          <template v-if="nested.reason"> · {{ nested.reason }}</template>
+        </span>
+      </div>
+      <p class="tip">开启后可在虚拟机内再运行虚拟机（需 CPU 支持 VT-x/AMD-V）。会写入 modprobe.d 持久化；运行时重载需所有虚拟机已关机，否则重启宿主机后生效。</p>
+    </el-card>
+
     <!-- cloud-init 模板（IA 精简批次并入）：创建向导「云镜像 + cloud-init」面板一键套用的初始化模板 -->
     <div class="ci-wrap">
       <CloudInitTemplates embedded />
@@ -194,8 +215,36 @@ const loading = ref(false)
 const saving = ref(false)
 
 // 可写配置表单（默认值兜底，后端 GET /settings 的 writable 节回填）
-const writable = reactive({
-  default_storage_pool: 'vmops',
+/* ── 嵌套虚拟化（宿主内核层，独立保存）── */
+const nested = ref({ supported: false, module: '', enabled: false, value: '', persisted: false, reason: '' })
+const nestedLoading = ref(false)
+const nestedBusy = ref(false)
+
+async function loadNested() {
+  nestedLoading.value = true
+  try {
+    nested.value = (await api.nestedKVMStatus()).data || {}
+  } catch (e) {
+    // 探测失败静默（卡片展示空态）
+  } finally {
+    nestedLoading.value = false
+  }
+}
+
+async function toggleNested(enable) {
+  nestedBusy.value = true
+  try {
+    const res = await api.setNestedKVM({ enable })
+    nested.value = res.data.status || {}
+    ElMessage.success('已' + (enable ? '开启' : '关闭') + '嵌套虚拟化' + (res.data.note ? '：' + res.data.note : ''))
+  } catch (e) {
+    ElMessage.error(errMsg(e, '设置失败'))
+  } finally {
+    nestedBusy.value = false
+  }
+}
+
+const writable = reactive({  default_storage_pool: 'vmops',
   vnc_token_ttl_min: 5,
   vnc_stale_min: 60,
   jumpd_cmd_blacklist: ''
@@ -398,10 +447,17 @@ async function saveAnnouncement() {
 onMounted(() => {
   load()
   loadKeys()
+  loadNested()
 })
 </script>
 
 <style scoped>
+.nested-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
 .sub-section-title {
   margin: 0 0 12px;
   font-size: 0.95rem;

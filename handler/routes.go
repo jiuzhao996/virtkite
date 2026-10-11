@@ -190,6 +190,14 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		hosts.GET("/:id/stats", hostHandler.GetHostStats)
 	}
 
+	// 宿主机 KVM 内核层（嵌套虚拟化开关）：admin 专属，独立前缀避免与 hosts 的 /:id 冲突
+	hostKVM := api.Group("/host-kvm")
+	hostKVM.Use(middleware.AdminMiddleware())
+	{
+		hostKVM.GET("/nested", hostHandler.NestedStatus)
+		hostKVM.POST("/nested", hostHandler.SetNested)
+	}
+
 	// 虚拟机管理（仅管理员）
 	vms := api.Group("/vms")
 	vms.Use(middleware.OperatorMiddleware())
@@ -301,6 +309,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	networks.Use(middleware.OperatorMiddleware())
 	{
 		networks.GET("", networkHandler.ListNetworks)
+		// 宿主机物理网卡（macvtap 直连选卡用）
+		networks.GET("/host-interfaces", networkHandler.HostInterfaces)
 		// 网络通信流量视图（P1：ss 归网连接边 + 接口速率，前端 3s 轮询）
 		networks.GET("/flows", networkFlowHandler.Flows)
 		// 全局网络拓扑（N1：宿主机 → 桥/虚拟网络 → VM/容器 三层关系图）

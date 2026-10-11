@@ -1,10 +1,12 @@
 package tasks
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -44,6 +46,11 @@ func execCreateVM(ctx *ExecContext, masterSecret string) error {
 	storagePool, _ := strParam(payload, "storage_pool")
 	network, _ := strParam(payload, "network")
 	isoPath, _ := strParam(payload, "iso_path")
+	// 网络安装源（FTP/HTTP 直接内核引导，等价 virt-install --location）
+	installURL, _ := strParam(payload, "install_url")
+	installKernel, _ := strParam(payload, "install_kernel")
+	installInitrd, _ := strParam(payload, "install_initrd")
+	installCmdline, _ := strParam(payload, "install_cmdline")
 	machine, _ := strParam(payload, "machine")
 	cpuMode, _ := strParam(payload, "cpu_mode")
 	vcpu, _ := intParam(payload, "vcpu")
@@ -254,8 +261,26 @@ func execCreateVM(ctx *ExecContext, masterSecret string) error {
 	}
 	reportProgress(ctx, 30, "磁盘落地完成")
 
-	// 兼容旧 iso_path：挂只读 cdrom 安装盘，引导优先光驱。
-	if isoPath != "" {
+	// 网络安装源（FTP/HTTP）：下载内核与 initrd 到本地，直接内核引导（等价 virt-install --location）。
+	// 与 iso_path 互斥：给了安装源就不再挂 ISO 光驱。
+	if installURL != "" {
+		reportProgress(ctx, 32, "下载安装源内核与 initrd…")
+		kp, ip, kerr := fetchInstallKernel(ctx, name, installURL, installKernel, installInitrd)
+		if kerr != nil {
+			cleanup()
+			return kerr
+		}
+		spec.Kernel = kp
+		spec.Initrd = ip
+		cmdline := installCmdline
+		if cmdline == "" {
+			cmdline = "inst.repo=" + installURL // RHEL/Rocky 系；Debian 系可用 install_cmdline 覆盖为 url=<url>
+		}
+		spec.Cmdline = cmdline + " console=ttyS0,115200n8"
+		spec.Boot.Devices = []string{"hd"}
+		reportProgress(ctx, 38, "安装源就绪（直接内核引导）")
+	} else if isoPath != "" {
+		// 兼容旧 iso_path：挂只读 cdrom 安装盘，引导优先光驱。
 		spec.Disks = append(spec.Disks, virt.DiskSpec{
 			Type: "file", Device: "cdrom", Driver: "raw", Bus: "ide",
 			Source: isoPath, ReadOnly: true,
@@ -529,6 +554,57 @@ func leaseIPByMAC(ctx *ExecContext, mac string) string {
 		}
 	}
 	return ""
+}
+
+// fetchInstallKernel 从网络安装源下载内核与 initrd 到本地（等价 virt-install --location 的准备工作）。
+// 默认按 RHEL/Rocky 树布局 images/pxeboot/{vmlinuz,initrd.img}，可用 payload 覆盖相对路径。
+// 落盘 data/install/<vm名>/，VM 删除时一并清理。
+func fetchInstallKernel(ctx *ExecContext, vmName, baseURL, kernelRel, initrdRel string) (string, string, error) {
+	if kernelRel == "" {
+		kernelRel = "images/pxeboot/vmlinuz"
+	}
+	if initrdRel == "" {
+		initrdRel = "images/pxeboot/initrd.img"
+	}
+	dir := config.DataPath("install", vmName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", "", fmt.Errorf("创建安装源缓存目录失败: %w", err)
+	}
+	kp := filepath.Join(dir, "vmlinuz")
+	ip := filepath.Join(dir, "initrd.img")
+	if err := downloadViaCurl(ctx, joinURL(baseURL, kernelRel), kp); err != nil {
+		return "", "", fmt.Errorf("下载安装内核失败: %w", err)
+	}
+	if err := downloadViaCurl(ctx, joinURL(baseURL, initrdRel), ip); err != nil {
+		return "", "", fmt.Errorf("下载安装 initrd 失败: %w", err)
+	}
+	return kp, ip, nil
+}
+
+// joinURL 拼接基础 URL 与相对路径（去掉多余斜杠）。
+func joinURL(base, rel string) string {
+	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(rel, "/")
+}
+
+// downloadViaCurl 用 curl 下载（支持 ftp/http/https——Go 标准库无 FTP 客户端）。
+// 数组参数、20 分钟超时；失败把 curl 的 stderr 带进错误链。
+func downloadViaCurl(ctx *ExecContext, rawURL, target string) error {
+	base := context.Background()
+	if ctx != nil && ctx.Ctx != nil {
+		base = ctx.Ctx
+	}
+	cctx, cancel := context.WithTimeout(base, 20*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "curl", "-fsSL", "--retry", "2", "-o", target, rawURL)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return fmt.Errorf("%s: %w", msg, err)
+		}
+		return fmt.Errorf("curl 下载失败: %w", err)
+	}
+	return nil
 }
 
 // upsertVMCredential 写入/覆盖 VM 的托管凭据（密文落库）。
