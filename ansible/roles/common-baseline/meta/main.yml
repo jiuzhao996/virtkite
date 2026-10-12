@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: common-baseline
+  description: 节点基线（时区/时间同步/基础工具/MOTD）
+  license: MIT
+  min_ansible_version: "2.9"
+  platforms:
+    - name: EL
+      versions: [all]
+    - name: Debian
+      versions: [all]
+dependencies: []

@@ -416,7 +416,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		apps.GET("/:id", appsHandler.Get)
 	}
 
-	// 运维自动化（P4）：引擎状态 + 批量执行（adhoc/playbook）+ playbook CRUD
+	// 运维自动化（P4）：引擎状态 + 批量执行（adhoc/playbook）+ playbook CRUD + 共享 role 库
+	EnsureSeedRoles()     // 共享 role 种子落盘，并把库路径注入 ansible 包（语法校验与执行共用同一值）
 	EnsureSeedPlaybooks() // 内置种子 playbook 落盘（缺哪个补哪个，用户改过的不覆盖）
 	ansibleHandler := NewAnsibleHandler(deps.DB, deps.Tasks, CredentialMasterSecret())
 	ansibleGroup := api.Group("/ansible")
@@ -442,6 +443,16 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		ansibleGroup.POST("/playbooks", ansibleHandler.CreatePlaybook)
 		ansibleGroup.POST("/playbooks/check", ansibleHandler.CheckPlaybook)
 		ansibleGroup.PUT("/playbooks/:id", ansibleHandler.UpdatePlaybook)
+		// 共享 role 库（data/ansible/roles/）：一个 role 对全部 playbook 可见，
+		// 不必每个 playbook 复制一份；playbook 本地同名 role 覆盖共享库（优先级已实测）
+		ansibleGroup.GET("/roles", ansibleHandler.ListRoles)
+		ansibleGroup.POST("/roles", ansibleHandler.CreateRole)
+		ansibleGroup.DELETE("/roles/:name", ansibleHandler.DeleteRole)
+		ansibleGroup.GET("/roles/:name/files", ansibleHandler.ListRoleFiles)
+		ansibleGroup.GET("/roles/:name/file", ansibleHandler.ReadRoleFile)
+		ansibleGroup.PUT("/roles/:name/file", ansibleHandler.WriteRoleFile)
+		ansibleGroup.POST("/roles/:name/upload", ansibleHandler.UploadRoleFile)
+		ansibleGroup.DELETE("/roles/:name/file", ansibleHandler.DeleteRoleFile)
 		ansibleGroup.DELETE("/playbooks/:id", ansibleHandler.DeletePlaybook)
 	}
 

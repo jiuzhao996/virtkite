@@ -17,6 +17,7 @@
 //   1. 登录表单真实提交（不是塞 token）
 //   2. 17 个主页面逐个进入：断言页面标志文案渲染 + 无 JS 异常 + 无 4xx/5xx
 //   3. ?tab= 深链与旧地址重定向（先绕一跳再进，专测「同路由内只改 query」这个坑）
+//      含「Role 库」tab —— 共享 role 是独立于 playbook 的一等资产，入口必须可达
 //   4. 建机向导走到底（云镜像 → 计算资源 → 磁盘与网络 → 确认创建），
 //      断言 DomainSpec 预览能生成 —— 到「确认创建」为止，不点创建按钮（无副作用）
 import { spawn } from 'node:child_process'
@@ -66,6 +67,7 @@ const DEEPLINKS = [
   ['#/images?tab=iso', 'ISO 安装镜像'],
   ['#/images?tab=docker', '容器镜像'],
   ['#/automation?tab=cron', '计划任务'],
+  ['#/automation?tab=roles', 'Role 库'],
   ['#/dashboard?tab=monitor', '监控'],
   ['#/dashboard?tab=topology', '拓扑'],
   ['#/crons', '计划任务'], // 旧地址重定向 → /automation?tab=cron
@@ -128,6 +130,19 @@ function connect(wsUrl) {
   return { ws, ready, send, events }
 }
 
+// killChromeTree 整组带走 Chrome（detached 启动才有独立进程组；拿不到组就退回杀主进程）
+function killChromeTree(chrome) {
+  try {
+    process.kill(-chrome.pid, 'SIGKILL')
+  } catch (_) {
+    try {
+      chrome.kill('SIGKILL')
+    } catch (_) {
+      /* 已经退了 */
+    }
+  }
+}
+
 async function main() {
   // 预检：BASE 不可达时先报清楚，别等 Chrome 起来后卡在 about:blank 上报个莫名的 SecurityError
   try {
@@ -152,7 +167,9 @@ async function main() {
       '--disable-extensions',
       'about:blank'
     ],
-    { stdio: 'ignore', detached: false }
+    // detached：让 Chrome 自成一个进程组，收摊时能整组带走——只 kill 主进程的话
+    // zygote/renderer 子进程还活着，会继续往 user-data-dir 里写，临时目录删不干净
+    { stdio: 'ignore', detached: true }
   )
 
   let cdp
@@ -336,11 +353,12 @@ async function main() {
     } catch (_) {
       /* ignore */
     }
-    chrome.kill('SIGKILL')
+    killChromeTree(chrome)
+    await sleep(400) // 给子进程一点退场时间，否则刚删完又被写回
     try {
       rmSync(profile, { recursive: true, force: true })
     } catch (_) {
-      /* ignore */
+      console.warn(`提示：临时 profile 未删净，可手动清理 ${profile}`)
     }
   }
 

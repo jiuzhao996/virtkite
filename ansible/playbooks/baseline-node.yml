@@ -1,0 +1,12 @@
+# vmops-playbook: name=baseline-node | desc=节点基线（引用共享 role common-baseline，演示跨 playbook 复用） | targets=linux
+---
+# 本 playbook 自己一行任务都不写：全部能力来自共享 role 库里的 common-baseline。
+# 这正是共享 role 的价值——同一份基线实现被任意多个 playbook 引用，改一处全部生效，
+# 不必在每个 playbook 目录下复制一份 roles/common-baseline/。
+- name: 节点基线
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - common-baseline

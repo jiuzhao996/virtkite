@@ -50,6 +50,15 @@ export const ops = {
   ansiblePlaybookWriteFile: (id, path, content) => unwrap(http.put(`/ansible/playbooks/${id}/file`, { path, content })),
   ansiblePlaybookUploadFile: (id, formData) => unwrap(http.post(`/ansible/playbooks/${id}/upload`, formData, { timeout: 0 })),
   ansiblePlaybookDeleteFile: (id, path) => unwrap(http.delete(`/ansible/playbooks/${id}/file`, { params: { path } })),
+  // 共享 role 库（data/ansible/roles/）：一个 role 对全部 playbook 可见，无需复制
+  ansibleRoles: () => unwrap(http.get('/ansible/roles')),
+  ansibleRoleCreate: (payload) => unwrap(http.post('/ansible/roles', payload)),
+  ansibleRoleDelete: (name) => unwrap(http.delete(`/ansible/roles/${name}`)),
+  ansibleRoleFiles: (name) => unwrap(http.get(`/ansible/roles/${name}/files`)),
+  ansibleRoleReadFile: (name, path) => unwrap(http.get(`/ansible/roles/${name}/file`, { params: { path } })),
+  ansibleRoleWriteFile: (name, path, content) => unwrap(http.put(`/ansible/roles/${name}/file`, { path, content })),
+  ansibleRoleUploadFile: (name, formData) => unwrap(http.post(`/ansible/roles/${name}/upload`, formData, { timeout: 0 })),
+  ansibleRoleDeleteFile: (name, path) => unwrap(http.delete(`/ansible/roles/${name}/file`, { params: { path } })),
 
   // 镜像市场（云镜像 + 官方安装 ISO；下载转后台任务，202 返回 task_id）
   imageMarket: () => unwrap(http.get('/images/market')),

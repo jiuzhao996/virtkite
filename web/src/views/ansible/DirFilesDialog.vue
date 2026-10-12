@@ -1,6 +1,12 @@
 <template>
-  <!-- 目录形态 playbook（role 结构）的文件管理：roles/ templates/ files/ handlers/ 等 -->
-  <el-dialog v-model="visible" :title="'文件 — ' + pbId" width="900px" :close-on-click-modal="false" append-to-body>
+  <!-- 受管目录文件管理器：playbook 目录（role 结构）与共享 role 库共用同一套交互 -->
+  <el-dialog
+    v-model="visible"
+    :title="(kind === 'role' ? '文件 — role ' : '文件 — ') + name"
+    width="900px"
+    :close-on-click-modal="false"
+    append-to-body
+  >
     <div class="pf-body">
       <div class="pf-list">
         <div class="pf-list-head">
@@ -12,13 +18,17 @@
         <el-table :data="files" size="small" height="420" @row-click="openFile">
           <template #empty><el-empty description="空目录" :image-size="50" /></template>
           <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
-          <el-table-column label="大小" width="90"><template #default="{ row }">{{ row.size }}</template></el-table-column>
+          <el-table-column label="大小" width="90"><template #default="{ row }">{{ fmtSize(row.size) }}</template></el-table-column>
           <el-table-column label="" width="50">
             <template #default="{ row }">
               <el-button text type="danger" size="small" :icon="Delete" @click.stop="removeFile(row)" />
             </template>
           </el-table-column>
         </el-table>
+        <div v-if="kind === 'role'" class="pf-hint">
+          role 的标准结构：tasks/ handlers/ defaults/ vars/ meta/ templates/ files/。
+          任何 playbook 都能 <code>roles: [{{ name }}]</code> 引用它，无需复制。
+        </div>
       </div>
       <div class="pf-editor">
         <div class="pf-editor-head">
@@ -34,15 +44,20 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Upload } from '@element-plus/icons-vue'
 import { api } from '../../api'
-import { errMsg } from '../../utils/format'
+import { errMsg, fmtFileSize } from '../../utils/format'
+
+const props = defineProps({
+  // playbook：目录形态 playbook（role 结构）的文件；role：共享 role 库里的 role
+  kind: { type: String, default: 'playbook' }
+})
 
 const emit = defineEmits(['changed'])
 const visible = ref(false)
-const pbId = ref('')
+const name = ref('')
 const files = ref([])
 const editPath = ref('')
 const editContent = ref('')
@@ -50,9 +65,30 @@ const saving = ref(false)
 const warning = ref('')
 const uploadInput = ref(null)
 
+// 两种 kind 的 API 形状完全一致，只换一组函数
+const apiSet = computed(() =>
+  props.kind === 'role'
+    ? {
+        list: api.ansibleRoleFiles,
+        read: api.ansibleRoleReadFile,
+        write: api.ansibleRoleWriteFile,
+        upload: api.ansibleRoleUploadFile,
+        remove: api.ansibleRoleDeleteFile
+      }
+    : {
+        list: api.ansiblePlaybookFiles,
+        read: api.ansiblePlaybookReadFile,
+        write: api.ansiblePlaybookWriteFile,
+        upload: api.ansiblePlaybookUploadFile,
+        remove: api.ansiblePlaybookDeleteFile
+      }
+)
+
+const fmtSize = (n) => fmtFileSize(n)
+
 async function loadFiles() {
   try {
-    const res = await api.ansiblePlaybookFiles(pbId.value)
+    const res = await apiSet.value.list(name.value)
     files.value = (res.data && res.data.items) || []
   } catch (e) {
     ElMessage.error(errMsg(e, '读取文件列表失败'))
@@ -61,7 +97,7 @@ async function loadFiles() {
 
 async function openFile(row) {
   try {
-    const res = await api.ansiblePlaybookReadFile(pbId.value, row.path)
+    const res = await apiSet.value.read(name.value, row.path)
     editPath.value = row.path
     editContent.value = (res.data && res.data.content) || ''
     warning.value = ''
@@ -71,15 +107,20 @@ async function openFile(row) {
 }
 
 async function newFile() {
-  let name = ''
+  const preset = props.kind === 'role' ? 'tasks/' : 'roles/'
+  let p = ''
   try {
-    const r = await ElMessageBox.prompt('文件相对路径（如 roles/nginx/tasks/main.yml）', '新建文件', { inputValue: 'roles/' })
-    name = (r.value || '').trim()
+    const r = await ElMessageBox.prompt(
+      props.kind === 'role' ? '文件相对路径（如 tasks/main.yml）' : '文件相对路径（如 roles/nginx/tasks/main.yml）',
+      '新建文件',
+      { inputValue: preset }
+    )
+    p = (r.value || '').trim()
   } catch (e) {
     return
   }
-  if (!name) return
-  editPath.value = name
+  if (!p) return
+  editPath.value = p
   editContent.value = '---\n'
   warning.value = ''
 }
@@ -88,7 +129,7 @@ async function saveFile() {
   if (!editPath.value) return
   saving.value = true
   try {
-    const res = await api.ansiblePlaybookWriteFile(pbId.value, editPath.value, editContent.value)
+    const res = await apiSet.value.write(name.value, editPath.value, editContent.value)
     warning.value = (res.data && res.data.warning) || ''
     ElMessage.success('已保存')
     await loadFiles()
@@ -111,7 +152,7 @@ async function doUpload(ev) {
   fd.append('path', file.name)
   fd.append('file', file)
   try {
-    await api.ansiblePlaybookUploadFile(pbId.value, fd)
+    await apiSet.value.upload(name.value, fd)
     ElMessage.success('已上传 ' + file.name)
     await loadFiles()
     emit('changed')
@@ -129,7 +170,7 @@ async function removeFile(row) {
     return
   }
   try {
-    await api.ansiblePlaybookDeleteFile(pbId.value, row.path)
+    await apiSet.value.remove(name.value, row.path)
     ElMessage.success('已删除')
     if (editPath.value === row.path) {
       editPath.value = ''
@@ -142,8 +183,9 @@ async function removeFile(row) {
   }
 }
 
-function open(id) {
-  pbId.value = id
+// 打开：kind 由父组件绑定，name 是被管理的 playbook id / role 名
+function open(target) {
+  name.value = target
   editPath.value = ''
   editContent.value = ''
   warning.value = ''
@@ -165,6 +207,17 @@ defineExpose({ open })
   gap: 8px;
   margin-bottom: 6px;
   font-weight: 600;
+}
+.pf-hint {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--color-muted-foreground);
+}
+.pf-hint code {
+  background: var(--el-fill-color-light);
+  padding: 1px 4px;
+  border-radius: 3px;
 }
 .pf-editor-head {
   display: flex;

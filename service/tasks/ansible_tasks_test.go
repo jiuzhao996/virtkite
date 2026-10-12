@@ -1,9 +1,12 @@
 package tasks
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 )
 
@@ -78,6 +81,55 @@ func TestAnsibleSSHUser(t *testing.T) {
 	for _, tc := range cases {
 		if got := ansibleSSHUser(tc.vm); got != tc.want {
 			t.Errorf("%s: ansibleSSHUser=%q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestWriteRunAnsibleConfigAbsolutePaths 生成的 ansible.cfg 里 roles_path / fact 缓存
+// 必须是绝对路径。
+//
+// 风险点：ansible 解析配置文件里的相对路径是按「配置文件所在目录」算的，而 run 级
+// ansible.cfg 就放在 run 目录里、DATA_DIR 默认又是相对的 "data"——于是
+// `roles_path = data/ansible/roles` 会被解析成 <run 目录>/data/ansible/roles，
+// 共享 role 直接「not found」，fact 缓存也静默写到别处。实测踩过一次。
+func TestWriteRunAnsibleConfigAbsolutePaths(t *testing.T) {
+	old := config.GlobalConfig
+	dir := t.TempDir()
+	config.GlobalConfig = &config.Config{DataDir: dir}
+	defer func() { config.GlobalConfig = old }()
+
+	// 故意用相对 DATA_DIR，复现真实部署（.env 里 DATA_DIR 缺省即 "data"）
+	config.GlobalConfig.DataDir = "data"
+
+	runDir := t.TempDir()
+	path := writeRunAnsibleConfig(runDir)
+	if path == "" {
+		t.Fatal("未生成 ansible.cfg")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(raw)
+
+	rolesLine := ""
+	cacheLine := ""
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "roles_path") {
+			rolesLine = line
+		}
+		if strings.HasPrefix(line, "fact_caching_connection") {
+			cacheLine = line
+		}
+	}
+	if rolesLine == "" || cacheLine == "" {
+		t.Fatalf("cfg 缺 roles_path / fact_caching_connection：\n%s", content)
+	}
+	for _, line := range []string{rolesLine, cacheLine} {
+		_, val, _ := strings.Cut(line, "=")
+		val = strings.TrimSpace(val)
+		if !filepath.IsAbs(val) {
+			t.Errorf("配置项必须是绝对路径，实际 %q（%s）", val, line)
 		}
 	}
 }

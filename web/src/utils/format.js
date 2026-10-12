@@ -267,6 +267,20 @@ export function fmtSizeBytes(bytes) {
 }
 
 /**
+ * 文件尺寸格式化，**入参单位是字节**，按 B/KB/MB 逐级进位。
+ * 与 fmtSizeBytes 的分工：那个是给存储池/卷容量用的，恒以 GB 为单位显示
+ * （512.0 GB）；文件是 KB 量级，套过去会一律显示成 0.0 GB。
+ * @param {number} n 字节数
+ * @returns {string} 形如 '812 B' / '12.4 KB' / '3.1 MB'；空值返回 '—'
+ */
+export function fmtFileSize(n) {
+  if (n === null || n === undefined || n === '') return '—'
+  if (n < 1024) return n + ' B'
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+  return (n / 1024 / 1024).toFixed(1) + ' MB'
+}
+
+/**
  * 吞吐格式化，**入参单位是字节/秒**（VM 实时统计的 disk_read_bps、net_rx_bps 等）。
  * @param {number} bps 速率，单位 Byte/s
  * @returns {string} 自动进位的速率串，形如 '0 B/s' / '1.2 MB/s'

@@ -1,0 +1,14 @@
+  ____   ____             _     _       _ _        _____ _      _
+ |  _ \ / ___|      __   _(_)___| |_   | | |      |_   _(_)_ __| | _____
+ | | | | |     ____\ \ / / / __| __|  | | |  ___   | | | | '__| |/ / _ \
+ | |_| | |___|_____\ V /| \__ \ |_   | | | |___|  | | | | |  |   <  __/
+ |____/ \____|      \_/ |_|___/\__|  |_|_|        |_| |_|_|  |_|\_\___|
+
+ 主机      {{ ansible_hostname }}
+ 系统      {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_architecture }})
+ 内核      {{ ansible_kernel }}
+ 内网地址  {{ ansible_default_ipv4.address | default('—') }}
+ 时区      {{ ansible_date_time.tz | default(baseline_timezone) }}
+
+ 本机基线由鸢航 VirtKite 的共享 role「common-baseline」下发。
+ 要改这台机器的基线配置，请改 role 而不是改这里——改了会被下一次 apply 覆盖回去。

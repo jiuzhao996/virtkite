@@ -105,8 +105,8 @@ func TestSafePlaybookPath(t *testing.T) {
 		"a/../../../b",
 	}
 	for _, rel := range bad {
-		if _, err := safePlaybookPath(base, "pb", rel); err == nil {
-			t.Errorf("safePlaybookPath(%q) 未拒绝越界路径", rel)
+		if _, err := safeDirPath(base, "pb", rel); err == nil {
+			t.Errorf("safeDirPath(%q) 未拒绝越界路径", rel)
 		}
 	}
 	good := map[string]string{
@@ -116,17 +116,17 @@ func TestSafePlaybookPath(t *testing.T) {
 		"roles/../site.yml":      "site.yml", // 词法上仍落在根内，允许
 	}
 	for rel, want := range good {
-		got, err := safePlaybookPath(base, "pb", rel)
+		got, err := safeDirPath(base, "pb", rel)
 		if err != nil {
-			t.Errorf("safePlaybookPath(%q) 意外失败: %v", rel, err)
+			t.Errorf("safeDirPath(%q) 意外失败: %v", rel, err)
 			continue
 		}
 		if got != filepath.Join(root, filepath.FromSlash(want)) {
-			t.Errorf("safePlaybookPath(%q)=%q, want %q", rel, got, filepath.Join(root, filepath.FromSlash(want)))
+			t.Errorf("safeDirPath(%q)=%q, want %q", rel, got, filepath.Join(root, filepath.FromSlash(want)))
 		}
 	}
 	// id 本身非法时一并拒绝（防止 base/id 拼接被污染）
-	if _, err := safePlaybookPath(base, "../pb", "site.yml"); err == nil {
+	if _, err := safeDirPath(base, "../pb", "site.yml"); err == nil {
 		t.Error("safePlaybookPath 未拒绝非法 id")
 	}
 }
@@ -136,7 +136,7 @@ func TestPlaybookFileCRUD(t *testing.T) {
 	base := t.TempDir()
 	seedDirTree(t, base)
 
-	files, err := ListPlaybookFiles(base, "web-stack")
+	files, err := ListDirFiles(base, "web-stack")
 	if err != nil {
 		t.Fatalf("ListPlaybookFiles: %v", err)
 	}
@@ -151,10 +151,10 @@ func TestPlaybookFileCRUD(t *testing.T) {
 	}
 
 	// 写新文件（自动建父目录）
-	if err := WritePlaybookFile(base, "web-stack", "roles/nginx/vars/main.yml", "---\nport: 80\n"); err != nil {
+	if err := WriteDirFile(base, "web-stack", "roles/nginx/vars/main.yml", "---\nport: 80\n"); err != nil {
 		t.Fatalf("WritePlaybookFile: %v", err)
 	}
-	got, err := ReadPlaybookFile(base, "web-stack", "roles/nginx/vars/main.yml")
+	got, err := ReadDirFile(base, "web-stack", "roles/nginx/vars/main.yml")
 	if err != nil {
 		t.Fatalf("ReadPlaybookFile: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestPlaybookFileCRUD(t *testing.T) {
 	}
 
 	// 越界写必须被拒
-	if err := WritePlaybookFile(base, "web-stack", "../evil.yml", "x"); err == nil {
+	if err := WriteDirFile(base, "web-stack", "../evil.yml", "x"); err == nil {
 		t.Error("WritePlaybookFile 未拒绝越界路径")
 	}
 	if _, err := os.Stat(filepath.Join(base, "evil.yml")); err == nil {
@@ -171,14 +171,14 @@ func TestPlaybookFileCRUD(t *testing.T) {
 	}
 
 	// 根目录不可删
-	if err := DeletePlaybookFile(base, "web-stack", "."); err == nil {
+	if err := DeleteDirFile(base, "web-stack", "."); err == nil {
 		t.Error("DeletePlaybookFile 未拒绝删除根目录")
 	}
 	// 删文件
-	if err := DeletePlaybookFile(base, "web-stack", "roles/nginx/vars/main.yml"); err != nil {
+	if err := DeleteDirFile(base, "web-stack", "roles/nginx/vars/main.yml"); err != nil {
 		t.Fatalf("DeletePlaybookFile: %v", err)
 	}
-	if _, err := ReadPlaybookFile(base, "web-stack", "roles/nginx/vars/main.yml"); err == nil {
+	if _, err := ReadDirFile(base, "web-stack", "roles/nginx/vars/main.yml"); err == nil {
 		t.Error("删除后仍可读到文件")
 	}
 }

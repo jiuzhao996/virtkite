@@ -1,0 +1,7 @@
+---
+# handler：仅在对应任务真的改了东西时才触发，且一轮 play 内只跑一次。
+- name: restart chronyd
+  ansible.builtin.service:
+    name: chronyd
+    state: restarted
+  ignore_errors: true

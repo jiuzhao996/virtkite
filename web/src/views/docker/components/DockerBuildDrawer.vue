@@ -87,7 +87,7 @@ import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, Refresh, Upload, Tools, Folder, Document, Top } from '@element-plus/icons-vue'
 import { api } from '../../../api'
-import { errMsg } from '../../../utils/format'
+import { errMsg, fmtFileSize } from '../../../utils/format'
 import { pollTask, extractTaskId, taskErrorMessage } from '../../../utils/task'
 
 const emit = defineEmits(['built'])
@@ -119,12 +119,7 @@ function goUp() {
   loadFiles()
 }
 
-function fmtSize(n) {
-  if (n == null) return '—'
-  if (n < 1024) return n + ' B'
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
-  return (n / 1024 / 1024).toFixed(1) + ' MB'
-}
+const fmtSize = (n) => fmtFileSize(n)
 
 async function loadContexts() {
   try {

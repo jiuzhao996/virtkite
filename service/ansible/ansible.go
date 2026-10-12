@@ -299,9 +299,37 @@ func scanInto(r io.Reader, lines chan<- string) {
 	}
 }
 
+// SharedRolesDir 共享 role 库目录（data/ansible/roles）。装配层在启动时注入
+// （与 cron.NotifyURL 同一手法：包级 var + main.go 赋值）。
+//
+// 两处都要用它，缺一处就会出现「保存时校验不过、执行时却能跑」的割裂：
+//   - 执行：写进 run 级 ansible.cfg 的 roles_path
+//   - 保存前 --syntax-check：经 ANSIBLE_ROLES_PATH 环境变量传给子进程
+//
+// 为空则不设置（退回 ansible 默认发现，此时共享 role 不可见）。
+var SharedRolesDir string
+
+// rolesEnv 共享 role 库对应的子进程环境（未配置时返回 nil，即不改动环境）。
+func rolesEnv() []string {
+	if SharedRolesDir == "" {
+		return nil
+	}
+	return []string{"ANSIBLE_ROLES_PATH=" + SharedRolesDir}
+}
+
 // execCombined 跑命令并合并 stdout/stderr（SyntaxCheck 等短命令用）。
+// 只用于 ansible-playbook：带上共享 role 库搜索路径，否则引用了共享 role 的 playbook
+// 会在保存阶段被误判为「角色不存在」（实测：本地 roles/ 与 roles_path 都可见才判得对）。
 func execCombined(ctx context.Context, name string, args ...string) (string, error) {
+	return execCombinedEnv(ctx, rolesEnv(), name, args...)
+}
+
+// execCombinedEnv 同上，但由调用方指定追加的环境变量（共享 role 校验要指向自己的库目录）。
+func execCombinedEnv(ctx context.Context, extraEnv []string, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

@@ -1,0 +1,46 @@
+# vmops-role: name=common-baseline | desc=节点基线（时区/时间同步/基础工具/MOTD）
+---
+# 共享 role：任何 playbook 都能 `roles: [common-baseline]` 引用，无需复制。
+# 全部任务幂等——基线会被反复 apply，必须可重入。
+- name: 设置时区
+  community.general.timezone:
+    name: "{{ baseline_timezone }}"
+  when: baseline_manage_timezone | bool
+
+- name: 安装基础工具包
+  ansible.builtin.package:
+    name: "{{ baseline_packages }}"
+    state: present
+  ignore_errors: true # 包名跨发行版有差异，缺一个不该让整条基线失败
+
+- name: 启用时间同步服务
+  ansible.builtin.service:
+    name: "{{ baseline_ntp_service }}"
+    state: started
+    enabled: true
+  ignore_errors: true
+
+- name: 渲染登录欢迎语
+  ansible.builtin.template:
+    src: motd.j2
+    dest: /etc/motd
+    owner: root
+    group: root
+    mode: "0644"
+  when: baseline_manage_motd | bool
+
+- name: RedHat 系补 firewalld 的 python 绑定
+  ansible.builtin.package:
+    name: python3-firewall
+    state: present
+  when: ansible_os_family == "RedHat"
+  ignore_errors: true # 极简镜像可能没有该包，缺了只是下面那条放行失败
+
+- name: RedHat 系放行 SSH
+  ansible.posix.firewalld:
+    service: ssh
+    permanent: true
+    immediate: true
+    state: enabled
+  when: ansible_os_family == "RedHat"
+  ignore_errors: true # 上一步没装上时跳过（放行失败不该阻断基线）

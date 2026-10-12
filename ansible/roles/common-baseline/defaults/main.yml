@@ -1,0 +1,14 @@
+---
+# 默认变量：优先级最低，调用方在 playbook 的 vars 段或 -e 里能覆盖。
+# 按平台约定统一加 baseline_ 前缀，避免与调用方的变量撞名。
+baseline_timezone: Asia/Shanghai
+baseline_manage_timezone: true
+baseline_manage_motd: true
+baseline_ntp_service: "{{ 'chronyd' if ansible_os_family == 'RedHat' else 'systemd-timesyncd' }}"
+baseline_packages:
+  - vim
+  - curl
+  - wget
+  - tar
+  - lsof
+  - net-tools

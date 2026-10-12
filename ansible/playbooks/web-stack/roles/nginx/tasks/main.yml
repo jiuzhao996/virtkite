@@ -20,6 +20,13 @@
     state: started
     enabled: true
 
+- name: RedHat 系补 firewalld 的 python 绑定
+  ansible.builtin.package:
+    name: python3-firewall
+    state: present
+  when: ansible_os_family == "RedHat"
+  ignore_errors: true # 极简镜像可能没有该包，缺了只是下面那条放行失败
+
 - name: RedHat 系放行 http
   ansible.posix.firewalld:
     service: http

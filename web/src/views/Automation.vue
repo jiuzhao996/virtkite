@@ -122,7 +122,46 @@
         </el-card>
       </el-tab-pane>
 
-      <!-- Tab 3 执行历史 -->
+      <!-- Tab 3 Role 库（共享 role：一个 role 对全部 playbook 可见，无需复制） -->
+      <el-tab-pane :label="'Role 库（' + roles.length + '）'" name="roles">
+        <el-card shadow="never">
+          <div class="auto-pb-bar">
+            <el-button size="small" :icon="Refresh" @click="loadRoles">刷新</el-button>
+            <el-button type="primary" size="small" :icon="Plus" @click="createRole">新建 Role</el-button>
+            <span class="auto-hint">
+              存在 data/ansible/roles/，任何 playbook 都能 <code>roles: [名称]</code> 引用，不必各自复制一份；
+              playbook 本地同名 role 会覆盖共享库里的（想单独特化某个 playbook 时用）
+            </span>
+          </div>
+          <el-table :data="roles" v-loading="roleLoading" size="small" @row-dblclick="(row) => openRoleFiles(row)">
+            <el-table-column prop="name" label="名称" width="200">
+              <template #default="{ row }"><span class="mono">{{ row.name }}</span></template>
+            </el-table-column>
+            <el-table-column prop="desc" label="说明" min-width="300" show-overflow-tooltip />
+            <el-table-column label="文件" width="80">
+              <template #default="{ row }">{{ row.file_count }}</template>
+            </el-table-column>
+            <el-table-column label="标识" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.built_in ? 'primary' : 'success'" effect="plain">{{ row.built_in ? '内置' : '自建' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="updated_at" label="更新时间" width="170" />
+            <el-table-column label="操作" width="160" fixed="right">
+              <template #default="{ row }">
+                <el-button text size="small" :icon="Folder" @click="openRoleFiles(row)">文件</el-button>
+                <el-popconfirm title="删除该 role？引用它的 playbook 会报「role 不存在」" confirm-button-text="删除" @confirm="removeRole(row.name)">
+                  <template #reference>
+                    <el-button text size="small" type="danger" :icon="Delete">删除</el-button>
+                  </template>
+                </el-popconfirm>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-tab-pane>
+
+      <!-- Tab 4 执行历史 -->
       <el-tab-pane label="执行历史" name="history">
         <el-card shadow="never">
           <div class="auto-pb-bar">
@@ -209,8 +248,29 @@
       </div>
     </el-drawer>
 
-    <!-- Playbook 目录文件管理（role 结构：roles/ templates/ handlers/ …） -->
-    <PlaybookFilesDialog ref="filesDialog" @changed="loadPlaybooks" />
+    <!-- 新建 Role：名称 + 说明一个表单收齐（连开两个 ElMessageBox.prompt 的写法既脆又难用） -->
+    <el-dialog v-model="roleDialogOpen" title="新建 Role" width="480px" append-to-body>
+      <el-form label-width="72px">
+        <el-form-item label="名称">
+          <el-input v-model="roleForm.name" placeholder="字母数字开头，可含 _ . -（如 web-baseline）" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="roleForm.desc" placeholder="一句话说明，写进 role 头部与清单页" />
+        </el-form-item>
+      </el-form>
+      <div class="auto-hint">
+        会生成标准 role 骨架（tasks/ handlers/ defaults/ vars/ meta/ templates/ files/），
+        建完直接进文件编辑；任何 playbook 都能 <code>roles: [名称]</code> 引用它。
+      </div>
+      <template #footer>
+        <el-button @click="roleDialogOpen = false">取消</el-button>
+        <el-button type="primary" :loading="roleCreating" @click="submitRole">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 受管目录文件管理：playbook 目录（role 结构）与共享 role 库共用同一组件 -->
+    <DirFilesDialog ref="filesDialog" kind="playbook" @changed="loadPlaybooks" />
+    <DirFilesDialog ref="roleFilesDialog" kind="role" @changed="loadRoles" />
 
     <!-- Playbook 执行对话框 -->
     <el-dialog v-model="runDialogOpen" :title="'执行 Playbook — ' + (runPb?.id || '')" width="560px" :append-to-body="true">
@@ -324,18 +384,27 @@ import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import { useAuth } from '../store/auth'
 import CronList from './CronList.vue'
-import PlaybookFilesDialog from './ansible/PlaybookFilesDialog.vue'
+import DirFilesDialog from './ansible/DirFilesDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const { isAdmin } = useAuth()
-// 深链支持：/crons 重定向到 /automation?tab=cron（仅管理员生效，否则落默认 tab）
-const activeTab = ref(route.query.tab === 'cron' && isAdmin.value ? 'cron' : 'adhoc')
-// ?tab= 深链（/crons 重定向、任务中心等出口用）：同路由内只改 query 不会重挂组件，
-// 必须监听——只读一次初始值会让「已在自动化页时点 /automation?tab=cron」没反应。
+// ?tab= 深链（/crons 重定向、任务中心出口、Role 库直达等用）。
+// 两条路径都要覆盖，少一条就有一半场景「点了没反应」：
+//   - 冷加载/换路由进来 → 组件重挂，取初始值（ref 初始化里判）
+//   - 已在自动化页内只改 query → 组件不重挂，靠 watch
+// 白名单校验：非法 tab 值一律回落默认，避免 URL 被塞垃圾时页面白屏。
+const TAB_NAMES = ['adhoc', 'playbooks', 'roles', 'history', 'cron']
+function queryTabName() {
+  const t = route.query.tab
+  if (typeof t !== 'string' || !TAB_NAMES.includes(t)) return ''
+  if (t === 'cron' && !isAdmin.value) return '' // 计划任务 tab 仅管理员可见
+  return t
+}
+const activeTab = ref(queryTabName() || 'adhoc')
 function applyQueryTab() {
-  if (route.query.tab === 'cron' && isAdmin.value) activeTab.value = 'cron'
-  else if (route.query.tab && route.query.tab !== 'cron') activeTab.value = route.query.tab
+  const t = queryTabName()
+  if (t) activeTab.value = t
 }
 watch(() => route.query.tab, applyQueryTab)
 const engine = ref({})
@@ -361,6 +430,13 @@ const editorOpen = ref(false)
 const editorId = ref('')
 const newId = ref('')
 const filesDialog = ref(null)
+const roleFilesDialog = ref(null)
+// 共享 role 库（data/ansible/roles/）
+const roles = ref([])
+const roleLoading = ref(false)
+const roleDialogOpen = ref(false)
+const roleCreating = ref(false)
+const roleForm = reactive({ name: '', desc: '' })
 const editorContent = ref('')
 const checking = ref(false)
 const saving = ref(false)
@@ -655,6 +731,60 @@ async function runPlaybook() {
   }
 }
 
+// ── 共享 role 库 ──
+
+async function loadRoles() {
+  roleLoading.value = true
+  try {
+    const res = await api.ansibleRoles()
+    roles.value = (res.data && res.data.items) || []
+  } catch (e) {
+    ElMessage.error(errMsg(e, '读取 role 库失败'))
+  } finally {
+    roleLoading.value = false
+  }
+}
+
+function createRole() {
+  roleForm.name = ''
+  roleForm.desc = ''
+  roleDialogOpen.value = true
+}
+
+async function submitRole() {
+  const name = roleForm.name.trim()
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) {
+    return ElMessage.warning('名称非法：字母数字开头，可含 _ . -，≤64 字符')
+  }
+  roleCreating.value = true
+  try {
+    await api.ansibleRoleCreate({ name, desc: roleForm.desc.trim() })
+    roleDialogOpen.value = false
+    ElMessage.success('已创建，可在「文件」里编辑任务')
+    await loadRoles()
+    const created = roles.value.find((x) => x.name === name)
+    if (created) openRoleFiles(created)
+  } catch (e) {
+    ElMessage.error(errMsg(e, '创建失败'))
+  } finally {
+    roleCreating.value = false
+  }
+}
+
+async function removeRole(name) {
+  try {
+    await api.ansibleRoleDelete(name)
+    ElMessage.success('已删除')
+    loadRoles()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '删除失败'))
+  }
+}
+
+function openRoleFiles(row) {
+  roleFilesDialog.value?.open(row.name)
+}
+
 // 编辑器
 function openFiles(row) {
   filesDialog.value?.open(row.id)
@@ -764,7 +894,7 @@ function scrollToBottom() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadStatus(), loadVMs(), loadPlaybooks(), loadHistory(), loadHostGroups()])
+  await Promise.all([loadStatus(), loadVMs(), loadPlaybooks(), loadRoles(), loadHistory(), loadHostGroups()])
 })
 onUnmounted(stopPolling)
 </script>
