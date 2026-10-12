@@ -22,7 +22,7 @@
       <el-empty v-else :description="engine.hint || '正在探测宿主机引擎…'" :image-size="60" />
     </el-card>
 
-    <el-tabs v-model="activeTab">
+    <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- Tab 1 快速执行 -->
       <el-tab-pane label="快速执行" name="adhoc">
         <el-card shadow="never">
@@ -379,6 +379,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, VideoPlay, Edit, Delete, Close, Setting, Folder, Document } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
+import { syncTabToUrl } from '../utils/tab-url'
 import { api } from '../api'
 import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
@@ -407,6 +408,10 @@ function applyQueryTab() {
   if (t) activeTab.value = t
 }
 watch(() => route.query.tab, applyQueryTab)
+// 反向：点 tab 时把 URL 也改过来，链接才可分享（快速执行是默认 tab，不写 query）
+function onTabChange(name) {
+  syncTabToUrl(router, route, name, 'adhoc')
+}
 const engine = ref({})
 const statusLoading = ref(true)
 const vms = ref([])

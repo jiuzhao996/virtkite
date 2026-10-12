@@ -111,7 +111,8 @@ import VmPerfTable from './dashboard/components/VmPerfTable.vue'
 import ActivityFeedCard from './dashboard/components/ActivityFeedCard.vue'
 import AdminPanelCards from './dashboard/components/AdminPanelCards.vue'
 import { api } from '../api'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { syncTabToUrl } from '../utils/tab-url'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAuth } from '../store/auth'
 import {
@@ -219,6 +220,7 @@ const topoTick = ref(0)
 // 概览 tab 重激活信号：机制同 topoTick，方向反过来——图表逻辑在 HostResourceCard 内
 const overviewTick = ref(0)
 const route = useRoute()
+const router = useRouter()
 function onTabChange(name) {
   if (name === 'monitor') visitedTabs.add('monitor')
   else if (name === 'topology') {
@@ -228,6 +230,8 @@ function onTabChange(name) {
   } else overviewTick.value++
   // 概览轮询表随 tab 启停：切走全停（概览不可见不该打后端），切回重启
   setOverviewTimers(name === 'overview')
+  // URL 跟着 tab 走，深链可分享（概览是默认 tab，不写 query）
+  syncTabToUrl(router, route, name, 'overview')
 }
 
 // 概览三张轮询表（宿主机 / VM / 告警）的统一启停。

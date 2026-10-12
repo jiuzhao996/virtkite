@@ -423,9 +423,27 @@ func (h *VMRecycleHandler) Purge(c *gin.Context) {
 	})
 }
 
+// domainHoldingVol 返回仍把 volPath 当磁盘源挂着的域名（空串=无人挂载，可删）。
+// 抽成纯函数是为了能单测：这是「回收站连盘彻底清除」路径上唯一能挡住误删在用磁盘的判定。
+func domainHoldingVol(disks map[string][]string, volPath string) string {
+	for domName, paths := range disks {
+		for _, p := range paths {
+			if p == volPath {
+				return domName
+			}
+		}
+	}
+	return ""
+}
+
 // purgeVolFile 清理回收站 VM 在存储池里的系统盘文件（<vm名>.qcow2）。
-// 返回删除数与保留原因列表。守卫与 execDeleteVM 的 shouldKeepVol 同一立场：
-// 池路径拿不到 / 文件被镜像库登记 / 仍被子卷当 backing 父盘，一律不删。
+// 返回删除数与保留原因列表。四重守卫，任一命中即保留并给出中文原因：
+//  1. 池路径拿不到（无法判定文件确属该池）
+//  2. 文件被镜像库登记为共享基镜像
+//  3. 文件仍是其他卷的 backing 父盘（增量克隆链）
+//  4. 文件仍被某个域当磁盘源挂着——回收站场景特有的那条，见下方注释
+//
+// 立场与 execDeleteVM 的 shouldKeepVol 一致：宁可留一个垃圾文件，不可损坏在用磁盘。
 func (h *VMRecycleHandler) purgeVolFile(c *gin.Context, vm model.VM) (removed int, kept []string) {
 	pool := vm.StoragePool
 	if pool == "" {
@@ -468,6 +486,23 @@ func (h *VMRecycleHandler) purgeVolFile(c *gin.Context, vm model.VM) (removed in
 	if children := refs[volPath]; len(children) > 0 {
 		kept = append(kept, vm.Name+".qcow2（是增量克隆父盘，仍被 "+
 			strings.Join(children, "、")+" 依赖）")
+		return 0, kept
+	}
+
+	// 守卫：该路径仍被**某个域**当磁盘源挂着。
+	// VolumeGuard 刻意没有这一条——删 VM 时它自己的域磁盘当然不该算「在用」；但回收站
+	// 场景不同：记录是软删的、域多半已经没了，而「删掉同名 VM 后又建了一台同名 VM」
+	// 是正常操作，后者的磁盘路径与前者完全相同（<池>/<名>.qcow2）。少了这条守卫，
+	// 彻底清除旧记录会把正在运行的新 VM 的磁盘 unlink 掉——QEMU 还握着已删除的 inode
+	// 继续写，重启即数据全失。宁可留一个垃圾文件。
+	disks, derr := h.Virt.ListAllDomainDiskSources()
+	if derr != nil {
+		LogError(c, derr)
+		kept = append(kept, vm.Name+".qcow2（域磁盘清单枚举失败，保守跳过）")
+		return 0, kept
+	}
+	if domName := domainHoldingVol(disks, volPath); domName != "" {
+		kept = append(kept, vm.Name+".qcow2（仍被虚拟机 "+domName+" 挂载，不可删除）")
 		return 0, kept
 	}
 

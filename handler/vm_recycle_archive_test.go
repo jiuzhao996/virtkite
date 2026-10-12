@@ -68,3 +68,33 @@ func TestRestoreOutcomeModes(t *testing.T) {
 		t.Errorf("restoreOutcome 字段不符：%+v", o)
 	}
 }
+
+// TestDomainHoldingVol 回收站「连盘彻底清除」路径上的在用磁盘守卫。
+//
+// 风险点：这是该路径上唯一能挡住「删掉在用磁盘」的判定。场景不罕见——删掉 VM「web1」
+// 后又建了一台也叫「web1」的机器（旧记录是软删的，同名不冲突），两者磁盘路径完全
+// 相同（<池>/<名>.qcow2）。此时彻底清除旧记录若直接 os.Remove，删掉的是**正在运行
+// 的那台机器**的磁盘：QEMU 仍握着已 unlink 的 inode 继续写，重启即数据全失。
+// VolumeGuard 的三重守卫刻意不含这条（删 VM 时自己的域磁盘不该算在用），所以必须在这里单列。
+func TestDomainHoldingVol(t *testing.T) {
+	disks := map[string][]string{
+		"web1": {"/pool/web1.qcow2", "/pool/web1-data.qcow2"},
+		"db1":  {"/pool/db1.qcow2"},
+	}
+	if got := domainHoldingVol(disks, "/pool/web1.qcow2"); got != "web1" {
+		t.Errorf("命中挂载时应返回域名，实际 %q", got)
+	}
+	if got := domainHoldingVol(disks, "/pool/web1-data.qcow2"); got != "web1" {
+		t.Errorf("第二块盘也要命中，实际 %q", got)
+	}
+	if got := domainHoldingVol(disks, "/pool/orphan.qcow2"); got != "" {
+		t.Errorf("无人挂载应返回空串（可删），实际 %q", got)
+	}
+	// 前缀相似但不同路径不能误判为命中（否则会永久留下清不掉的垃圾）
+	if got := domainHoldingVol(disks, "/pool/web1.qcow2.bak"); got != "" {
+		t.Errorf("近似路径不应命中，实际 %q", got)
+	}
+	if got := domainHoldingVol(nil, "/pool/any.qcow2"); got != "" {
+		t.Errorf("空清单应返回空串，实际 %q", got)
+	}
+}

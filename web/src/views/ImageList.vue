@@ -297,7 +297,8 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { syncTabToUrl } from '../utils/tab-url'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, Delete, Star, StarFilled, Cpu, Search, Plus, Files } from '@element-plus/icons-vue'
 import ImageMarketHome from './images/components/ImageMarketHome.vue'
@@ -316,6 +317,7 @@ import { fmtSizeGB, fmtSizeBytes, fmtDateTime, errMsg, isCancel, clampPct } from
 
 const { isAdmin, canOperate } = useAuth()
 const route = useRoute()
+const router = useRouter()
 
 const activeTab = ref('images')
 // 镜像市场 tab 懒加载：组件 onMounted 自拉数据，无需额外处理
@@ -413,6 +415,8 @@ function onTabChange(name) {
     buildLoaded.value = true
     loadBuild()
   }
+  // URL 跟着 tab 走，深链可分享（云镜像是默认 tab，不写 query）
+  syncTabToUrl(router, route, name, 'images')
 }
 
 /* ── 模板制作 tab：ISO → 制作机 → 固化模板 ── */

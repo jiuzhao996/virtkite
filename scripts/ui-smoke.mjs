@@ -280,6 +280,27 @@ async function main() {
       await shot(hash.replace(/[#/?=&]+/g, '_'))
     }
 
+    // ---------- 3.5) 点 tab 时 URL 要跟着变（反向同步）----------
+    // 页面原本只做「URL → tab」单向，用户点 tab 后地址栏不变——复制给别人打开的是
+    // 另一个 tab，刷新也回不到刚才那页。这半边补上了，深链才真的可分享。
+    await goto('#/images', 2200)
+    const clickTab = async (label) => {
+      const ok = await ev(`(() => {
+        const el = Array.from(document.querySelectorAll('.el-tabs__item')).find((e) => e.textContent.trim() === ${JSON.stringify(label)})
+        if (!el) return false
+        el.click()
+        return true
+      })()`)
+      await sleep(1200)
+      return ok
+    }
+    const toIso = await clickTab('ISO 安装镜像')
+    const hashIso = await ev('location.hash')
+    check('点 tab 同步 URL', toIso && hashIso.includes('tab=iso'), `点了=${toIso} hash=${hashIso}`)
+    const backDefault = await clickTab('云镜像 / 模板盘')
+    const hashDefault = await ev('location.hash')
+    check('回默认 tab 清掉 query', backDefault && !hashDefault.includes('tab='), `hash=${hashDefault}`)
+
     // ---------- 4) 建机向导走到底（不点创建，无副作用）----------
     step = '建机向导'
     await ev(`sessionStorage.clear()`) // 向导有 sessionStorage 草稿，先清掉保证从第 1 步开始
