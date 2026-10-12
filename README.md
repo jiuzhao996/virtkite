@@ -318,8 +318,20 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 ### 任务 / 会话
 
 - `GET /api/tasks`（`page`/`page_size` 真分页，旧 `limit` 兼容；`?status=` 筛选） `GET /api/tasks/:id` `DELETE /api/tasks/:id`（仅 finished 可删）
+- **任务日志**：`GET /api/tasks/:id/logs`（首屏全量；响应含 `structured` 标志——老任务回落纯文本 `result`）`GET /api/tasks/:id/logs/ws?since=<seq>`（WS 增量，按 `seq` 幂等去重）`POST /api/tasks/:id/ws-ticket`（一次性票据，30s 单次有效、绑定 `task:<id>`）
 - `GET /api/sessions`（`type`/`vm_name`/`username` 过滤 + `page`/`page_size` 真分页）
 - `POST /api/sessions/:id/disconnect` — 强制断开（SSH/串口；VNC 中转无法强断）
+
+### 架构设计器（拓扑即代码）
+
+- `GET /api/designer/templates` `GET|POST /api/designer/plans` `DELETE /api/designer/plans/:id`
+- `GET /api/designer/plans/:id/export`（YAML）`GET /api/designer/plans/:id/export-ansible`
+- `POST /api/designer/plans/:id/apply`（一键落地，202 task）`GET /api/designer/plans/:id/apply-status`
+- `GET /api/designer/plans/:id/drift`（漂移：每条差异带 `action` + `side` + `reason`）
+- `GET /api/designer/plans/:id/reconcile-plan`（收敛预演，只读）`POST /api/designer/plans/:id/reconcile`（按差异收敛，202 task；admin）
+  - 漂移是**三方对比**：`JSON 计划`=期望 / `基线`=上次期望（只在落地成功时由落地器覆盖）/ `DB+libvirt`=实际
+  - 每条差异带 `side`：`pending`（画布改了没落地）｜`external`（现实被外部改了）
+  - 收敛只对差异部分执行，且**只删本计划创建过的资源**（现实里凭空多出的不动）
 
 ### 仪表盘 / 审计 / 设置 / 监控
 
