@@ -309,6 +309,8 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 
 ### 存储 / 网络
 
+- **IPAM（IP 分配）**：`GET /api/networks/ipam` — 每个网段返回 `free_ranges`（连续空闲区间）+ `next_free`（下一可用）。空闲区间是**区间差集现算**（不逐 IP 遍历、不落库），前端把「已用行」与「空闲区间行」按地址升序**交错成一张表**
+
 - 存储池：`GET /api/storage/pools`（响应含 seed_dir/default_pool/pool_roles） `GET /api/storage/pools/:name`（含卷，卷含 `backing_file`） `POST /api/storage/pools` `DELETE /api/storage/pools/:name`
   - 池元数据：`PUT /api/storage/pools/:name/meta`（平台侧 role/description）
   - 卷引用与保护：`GET /api/storage/pools/:name/volume-refs`（池级一次算全）；`DELETE .../volumes/:vol` 删除前算引用，任一命中返回 409 中文原因；`POST /api/storage/pools/:name/orphan-cleanup`（202 转 `cleanup_volumes` 任务，零引用才删）
@@ -353,6 +355,9 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 
 - Docker（viewer 403）：`GET /api/docker/containers` `POST /api/docker/containers/:id/:action`（start/stop/restart/pause/unpause） `POST /api/docker/containers/:id/update`（docker update：动态改资源限制/健康检查） `POST /api/docker/containers/:id/networks`（接入网络） `DELETE /api/docker/containers/:id/networks/:name`（断开网络） `DELETE /api/docker/containers/:id` `GET .../logs`（`?follow/&tail/`） `GET .../inspect` `GET .../stats`、`GET /api/docker/stats`（全量统计）、`GET /api/docker/containers/:id/terminal`（容器终端 WS）
 - Docker 镜像/网络/卷/编排：`GET|POST /api/docker/images` `DELETE /api/docker/images/:id` `POST /api/docker/images/pull` `POST /api/docker/prune`、`GET|POST|DELETE /api/docker/networks*`、`GET|POST /api/docker/volumes*` `POST /api/docker/volumes/prune`、`GET /api/docker/compose` `POST /api/docker/compose/:name/:action`
+- compose 编辑与栈状态：`POST /api/docker/compose/validate`（服务端权威解析 `docker compose config`，返回结构化 `{line,message}`——前端**不引 YAML 库**）`GET /api/docker/compose/states`（5 态含 **`created_file` 草稿态**：`data/stacks` 有文件但未部署）
+- 容器内文件浏览（只读）：`GET /api/docker/containers/:id/files?path=` `GET /api/docker/containers/:id/file?path=`（`docker exec` 数组传参无 shell；`head -c` 给内存封顶 1MB；路径限容器内绝对路径）
+  - 栈级锁：同栈串行、异栈并行；冲突返回 **409**（「稍后再试」而非「服务端故障」）
 - Dockerfile 构建（平台侧造镜像）：构建上下文 `GET|POST /api/docker/builds` `DELETE /api/docker/builds/:name`（目录 `data/docker-builds/<name>/`，路径过词法守卫）；上下文文件 `GET /api/docker/builds/:name/files?path=` `GET|PUT /api/docker/builds/:name/file` `POST /api/docker/builds/:name/upload`（二进制，如 jar） `DELETE .../file?path=`；`POST /api/docker/builds/:name/build`（202 `image_build` 任务，`{tag*, dockerfile?, build_args?, no_cache?}`，构建日志节流回写任务结果）。tag 过白名单（挡 `-t --flag` 式参数劫持），`-f` 限上下文内相对路径
 - Ansible playbook 库：`GET /api/ansible/playbooks`（单文件与**目录形态**混排，含 `is_dir`）`GET|POST /api/ansible/playbooks[/:id]` `PUT|DELETE /api/ansible/playbooks/:id` `POST /api/ansible/playbooks/check`（只校验不保存）；**目录形态（role 结构）**文件管理 `GET /api/ansible/playbooks/:id/files` `GET|PUT /api/ansible/playbooks/:id/file?path=` `POST /api/ansible/playbooks/:id/upload` `DELETE .../file?path=`——`<id>/site.yml` + `roles/ templates/ files/ handlers/` 可在线增删改，保存时整目录复制到临时目录再 `--syntax-check`（roles 相对引用可见，不再误报「角色不存在」）
 - Ansible 共享 role 库（`data/ansible/roles/`）：`GET|POST /api/ansible/roles` `DELETE /api/ansible/roles/:name`（整目录）；文件 `GET /api/ansible/roles/:name/files` `GET|PUT /api/ansible/roles/:name/file?path=` `POST /api/ansible/roles/:name/upload` `DELETE .../file?path=`。一个 role 对**全部 playbook** 可见（执行时写进 run 级 `ansible.cfg` 的 `roles_path`，保存前校验经 `ANSIBLE_ROLES_PATH` 注入），不必每个 playbook 复制一份；**playbook 本地 `roles/<同名>` 覆盖共享库**（已实测），要特化单个 playbook 时用它。新建按标准骨架生成（tasks/handlers/defaults/vars/meta/templates/files + README）
