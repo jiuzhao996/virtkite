@@ -26,6 +26,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/dbx"
 	"github.com/jiuzhao/vmops/service/dockerx"
 	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/tasks"
@@ -35,11 +36,9 @@ import (
 
 // DesignerHandler 架构设计器处理器。
 type DesignerHandler struct {
-	Docker   *dockerx.Dockerx
-	Tasks    *tasks.Manager
-	DB       *gorm.DB
-	UserID   uint
-	Username string
+	Docker *dockerx.Dockerx
+	Tasks  *tasks.Manager
+	DB     *gorm.DB
 	// VMCred 凭据托管：app_install 的 use_saved 通道需要；MasterSecret 供设计器
 	// 就地加密 VM 节点的 SSH 口令（与 AppsHandler 同口径，明文不落库）
 	VMCred *VMCredentialHandler
@@ -84,6 +83,10 @@ type dsgPlan struct {
 	Nodes     []dsgNode `json:"nodes"`
 	Links     []dsgLink `json:"links"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// DeployedAt 基线建立时间（RFC3339）：只由落地/收敛成功时的快照写入，计划文件里为空。
+	// 它把「快照 = 已落地基线」的语义显式化——快照不是用户点「保存」时的版本，而是
+	// 「上一次成功落地/收敛那一刻的期望」，三方对比里作为基线一侧（上次期望）。
+	DeployedAt string `json:"deployed_at,omitempty"`
 }
 
 func designerDir() string { return config.DataPath("designer") }
@@ -233,25 +236,51 @@ func (h *DesignerHandler) ExportYAML(c *gin.Context) {
 	c.Data(http.StatusOK, "text/yaml; charset=utf-8", b)
 }
 
-// ── 快照与漂移（DE2）────────────────────────────────────
+// ── 快照 = 已落地基线（DE2）────────────────────────────────
 
-// snapshotDir 快照目录：data/designer/snapshots/。<plan>.latest.json 是漂移对比
-// 基准（落地成功覆盖写）；<plan>-<unixts>.json 为历史存档（不可变，保留追溯）。
+// snapshotDir 快照目录：data/designer/snapshots/。<plan>.latest.json 是当前基线
+// （上次成功落地/收敛时的期望——由落地器写，前端点「保存」不写）；<plan>-<unixts>.json
+// 为历史存档（不可变，保留追溯）。
+//
+// 为什么基线必须与「期望」同源：三方对比要拿基线直接与 JSON 计划、与平台现实逐节点
+// 比较。基线存的就是一份 dsgPlan（nodes+links），与计划文件结构完全一致，才能零转换 diff。
 func snapshotDir() string { return config.DataPath("designer", "snapshots") }
 
-// saveSnapshot 落地成功后存快照：latest（对比基准）+ 带时间戳历史档。
+// saveSnapshot 落地/收敛成功后覆盖基线：latest（当前基线）+ 带时间戳历史档。
+// 只在 Apply/Reconcile 成功路径调用——这就是「快照语义 = 已落地基线」的落点。
+//
+// 写盘前强制剥离 VM 口令：Apply/Reconcile 的 plan 里带着请求体 overlay 进来的明文口令，
+// 直接 Marshal 会把明文落到快照文件（与计划文件写盘前剥离同一口径的兜底）。
+// 用副本再剥离，避免改动调用方共享的 Nodes 切片底层数组。
 func (h *DesignerHandler) saveSnapshot(p dsgPlan) {
-	raw, err := json.MarshalIndent(p, "", "  ")
+	snap := p
+	snap.DeployedAt = time.Now().Format(time.RFC3339)
+	snap.Nodes = make([]dsgNode, len(p.Nodes))
+	copy(snap.Nodes, p.Nodes)
+	for i := range snap.Nodes {
+		snap.Nodes[i].SSHSecret = ""
+	}
+	raw, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
+		log.Printf("[designer] 快照序列化失败 plan=%s err=%v", p.ID, err)
 		return
 	}
-	_ = os.MkdirAll(snapshotDir(), 0o755)
+	if err := os.MkdirAll(snapshotDir(), 0o755); err != nil {
+		log.Printf("[designer] 快照目录创建失败 plan=%s err=%v", p.ID, err)
+		return
+	}
 	ts := time.Now().Unix()
-	_ = os.WriteFile(filepath.Join(snapshotDir(), fmt.Sprintf("%s-%d.json", p.ID, ts)), raw, 0o644)
-	_ = os.WriteFile(filepath.Join(snapshotDir(), p.ID+".latest.json"), raw, 0o644)
+	hist := filepath.Join(snapshotDir(), fmt.Sprintf("%s-%d.json", p.ID, ts))
+	latest := filepath.Join(snapshotDir(), p.ID+".latest.json")
+	if err := os.WriteFile(hist, raw, 0o644); err != nil {
+		log.Printf("[designer] 历史快照写入失败 plan=%s err=%v", p.ID, err)
+	}
+	if err := os.WriteFile(latest, raw, 0o644); err != nil {
+		log.Printf("[designer] 基线快照写入失败 plan=%s err=%v", p.ID, err)
+	}
 }
 
-// loadLatestSnapshot 读某计划的最近快照；无快照返回 nil。
+// loadLatestSnapshot 读某计划的当前基线；无基线（从未落地）返回 nil。
 func loadLatestSnapshot(planID string) *dsgPlan {
 	raw, err := os.ReadFile(filepath.Join(snapshotDir(), planID+".latest.json"))
 	if err != nil {
@@ -264,100 +293,349 @@ func loadLatestSnapshot(planID string) *dsgPlan {
 	return &p
 }
 
-// DriftItem 单条漂移：计划里有现实没有=missing（收敛=落地）；现实有计划没有=
-// extra（接纳=导入或拆除）；规格/状态不符=mismatch。
-type DriftItem struct {
-	Kind   string `json:"kind"`   // missing | extra | mismatch
-	Node   string `json:"node"`   // 节点名
-	Detail string `json:"detail"` // 人读描述
+// loadPlanFile 读计划文件（= 期望 / intended）；不存在或解析失败返回 nil（无画布）。
+func loadPlanFile(planID string) *dsgPlan {
+	raw, err := os.ReadFile(filepath.Join(designerDir(), planID+".json"))
+	if err != nil {
+		return nil
+	}
+	var p dsgPlan
+	if json.Unmarshal(raw, &p) != nil {
+		return nil
+	}
+	return &p
 }
 
-// DriftResult 一个计划的漂移对比结果。
+// 收敛动作枚举（对齐 containerlab 的 reconcile 动作集）。每个差异项都要带「为什么是
+// 这个动作」的理由，而不是只给动作名——理由才是用户判断要不要收敛的依据。
+const (
+	dsgActionAdded     = "added"     // 期望有、现实无：创建
+	dsgActionDeleted   = "deleted"   // 计划已移除、现实仍在（本计划创建）：下线
+	dsgActionRecreated = "recreated" // 现实存在但规格与期望不符：重建（破坏性）
+	dsgActionRestarted = "restarted" // 现实存在、规格相符但运行态异常：重启
+	dsgActionNone      = "none"      // 无需动作（一致，或现实资源非本计划管理）
+)
+
+// 漂移侧别：区分「画布改了还没落地」与「现实被外部改了」——这两种漂移的处理方式
+// 完全不同，必须在数据里分清，前端也要分组展示。
+const (
+	dsgSidePending  = "pending"  // 计划 vs 基线：用户改了画布但还没落地，收敛动作=落地
+	dsgSideExternal = "external" // 基线 vs 现实：现实被外部改动，收敛动作=修复现实
+)
+
+// DriftItem 单条差异。三方对比的产物：
+//   - Kind：差异分类（missing 计划/基线有现实无 | extra 现实有期望无 | mismatch 存在但规格/态不符）
+//   - Action：收敛动作（containerlab 枚举），Reason 说明为什么是该动作
+//   - Side：pending（画布改动未落地）| external（现实被外部改动）
+type DriftItem struct {
+	Kind     string `json:"kind"`               // missing | extra | mismatch
+	Node     string `json:"node"`               // 资源名（VM 名 / 栈 id / 网络名）
+	Name     string `json:"name,omitempty"`     // 展示名
+	Resource string `json:"resource,omitempty"` // vm | container | net
+	Action   string `json:"action"`             // added | deleted | recreated | restarted | none
+	Reason   string `json:"reason"`             // 为什么是这个动作
+	Side     string `json:"side"`               // pending | external
+	Detail   string `json:"detail"`             // 人读描述
+}
+
+// DriftResult 一个计划的三方对比结果。
 type DriftResult struct {
 	PlanID    string      `json:"plan_id"`
 	HasSnap   bool        `json:"has_snap"` // false=从未落地，无从谈漂移
 	Drifted   bool        `json:"drifted"`
+	Pending   int         `json:"pending"`  // 未落地改动条数（画布改了没落地）
+	External  int         `json:"external"` // 外部漂移条数（现实被外部改了）
 	Items     []DriftItem `json:"items"`
 	CheckedAt time.Time   `json:"checked_at"`
 }
 
-// ComputeDrift 对比「最近快照」与「平台现实」。现实来自 DB 的 VM 名单与已部署栈
-// （与从现状导入同一套口径）；libvirt 网络经 Virt 列举。h.DB/h.Virt 为空时按空现实处理。
-func (h *DesignerHandler) ComputeDrift(planID string) DriftResult {
-	res := DriftResult{PlanID: planID, HasSnap: false, Items: []DriftItem{}, CheckedAt: time.Now()}
-	snap := loadLatestSnapshot(planID)
-	if snap == nil {
-		return res
-	}
-	res.HasSnap = true
+// dsgDiff 单条三方对比结果：Item 给前端展示，Node 供收敛执行时定位要操作的资源。
+type dsgDiff struct {
+	Item DriftItem
+	Node dsgNode // 要操作的计划/基线节点（deleted 用基线节点，其余用计划节点）
+}
 
-	// 现实集合
-	realVMs := map[string]bool{}
-	realStacks := map[string]bool{}
+// dsgSlot 三方对比的逐资源槽位：同一资源键在 计划/基线/现实 三侧的存在与规格。
+type dsgSlot struct {
+	kind        string
+	res         string
+	plan        *dsgNode
+	base        *dsgNode
+	real        bool
+	vm          model.VM
+	stackStatus string
+}
+
+// dsgReality 平台现实（DB + docker + libvirt）——三方对比的「实际」一侧。
+type dsgReality struct {
+	VMs    map[string]model.VM // VM 名 → 记录
+	Stacks map[string]string   // compose 项目名 → 状态串
+	Nets   map[string]bool     // libvirt 网络名
+}
+
+// loadReality 采集平台现实。任一侧不可用（DB/Docker/Virt 为 nil 或调用失败）按空处理，
+// 与旧口径一致：拿不到的现实不臆造，只报「现实为空」。
+func (h *DesignerHandler) loadReality() dsgReality {
+	r := dsgReality{VMs: map[string]model.VM{}, Stacks: map[string]string{}, Nets: map[string]bool{}}
 	if h.DB != nil {
 		var vms []model.VM
 		if err := h.DB.Find(&vms).Error; err == nil {
 			for _, v := range vms {
-				realVMs[v.Name] = true
+				r.VMs[v.Name] = v
 			}
 		}
 	}
-	// 已部署栈以 compose 项目为准（与栈页「已部署」同口径）
 	if h.Docker != nil {
 		if projects, err := h.Docker.ComposeList(); err == nil {
 			for _, pr := range projects {
-				realStacks[pr.Name] = true
+				r.Stacks[pr.Name] = pr.Status
 			}
 		}
 	}
-	realNets := map[string]bool{}
 	if h.Virt != nil {
 		if nets, err := h.Virt.ListNetworks(); err == nil {
 			for _, n := range nets {
-				realNets[n.Name] = true
+				r.Nets[n.Name] = true
 			}
 		}
+	}
+	return r
+}
+
+// nodeResource 节点在现实里的资源名：VM/网络用 Name，容器栈用 Ref（= compose 项目名）。
+func nodeResource(n dsgNode) string {
+	if n.Kind == "container" {
+		return n.Ref
+	}
+	return n.Name
+}
+
+// nodeKey 资源唯一键：kind + 资源名（同名不同类型不混淆）。
+func nodeKey(kind, res string) string { return kind + "\x00" + res }
+
+// dsgKindLabel 资源类型的中文名（拼理由文案用）。
+func dsgKindLabel(kind string) string {
+	switch kind {
+	case "vm":
+		return "虚拟机"
+	case "container":
+		return "容器栈"
+	case "net":
+		return "网络"
+	default:
+		return "资源"
+	}
+}
+
+// specDrift 判断「现实已存在且计划也期望」的资源是否发生规格/运行态漂移。
+// 只对能拿到确凿规格的资源判定（VM 的 vcpu/内存、容器栈的运行态），拿不准不报，
+// 避免把「用户主动关机」这类正常态误报成需要重启。
+func specDrift(want dsgNode, s *dsgSlot) (action, reason string, ok bool) {
+	switch want.Kind {
+	case "vm":
+		vcpu := want.VCPU
+		if vcpu <= 0 {
+			vcpu = 1
+		}
+		mem := want.MemoryMB
+		if mem <= 0 {
+			mem = 1024
+		}
+		if vcpu != s.vm.VCPU || mem != s.vm.MemoryMB {
+			return dsgActionRecreated, fmt.Sprintf("规格与期望不符（期望 %dC/%dMB，现实 %dC/%dMB）：需重建（破坏性，会删除并重建该虚拟机）", vcpu, mem, s.vm.VCPU, s.vm.MemoryMB), true
+		}
+		// 仅 paused/error 视为需重启的异常态；shut off 是合法态（用户可能主动关机），不报
+		if s.vm.Status == model.VMStatusPaused || s.vm.Status == model.VMStatusError {
+			return dsgActionRestarted, "虚拟机处于异常状态（" + s.vm.Status + "）：需重启恢复", true
+		}
+	case "container":
+		if s.stackStatus != "" && !strings.Contains(s.stackStatus, "running") {
+			return dsgActionRestarted, "容器栈未在运行（" + s.stackStatus + "）：需重启", true
+		}
+	}
+	return "", "", false
+}
+
+// mkDiff 组装一条差异项（Node 由调用方按场景补齐）。
+func mkDiff(s *dsgSlot, action, side, kind, reason string) *dsgDiff {
+	return &dsgDiff{
+		Item: DriftItem{
+			Kind: kind, Node: s.res, Name: s.res, Resource: s.kind,
+			Action: action, Reason: reason, Side: side, Detail: reason,
+		},
+	}
+}
+
+// computeDiff 三方对比：JSON 计划(期望) / 基线(上次期望) / 现实(DB+libvirt)。
+//
+// 为什么三方：只看「计划 vs 现实」会把两种成因混为一谈——
+//   - 画布新增/删除但还没落地（side=pending）：收敛动作是「落地」；
+//   - 现实被外部改了（side=external）：收敛动作是「修复现实」。
+//
+// 二者对用户的操作完全不同，故逐项标注 Side。
+//
+// plan 为 nil（计划文件缺失）时按 plan=baseline 处理——没有画布时「期望」即上次落地的
+// 基线，这样纯外部漂移仍能检出，也兼容无画布的历史快照（旧测试即此路径）。
+func computeDiff(plan, baseline *dsgPlan, reality dsgReality) []dsgDiff {
+	if baseline == nil {
+		return nil
+	}
+	if plan == nil {
+		plan = baseline
+	}
+	slots := map[string]*dsgSlot{}
+	get := func(kind, res string) *dsgSlot {
+		k := nodeKey(kind, res)
+		s := slots[k]
+		if s == nil {
+			s = &dsgSlot{kind: kind, res: res}
+			slots[k] = s
+		}
+		return s
+	}
+	for i := range plan.Nodes {
+		n := plan.Nodes[i]
+		nn := n
+		get(n.Kind, nodeResource(n)).plan = &nn
+	}
+	for i := range baseline.Nodes {
+		n := baseline.Nodes[i]
+		nn := n
+		get(n.Kind, nodeResource(n)).base = &nn
+	}
+	for name, vm := range reality.VMs {
+		s := get("vm", name)
+		s.real = true
+		s.vm = vm
+	}
+	for name, status := range reality.Stacks {
+		s := get("container", name)
+		s.real = true
+		s.stackStatus = status
+	}
+	for name := range reality.Nets {
+		get("net", name).real = true
 	}
 
-	for _, n := range snap.Nodes {
-		switch n.Kind {
-		case "vm":
-			if !realVMs[n.Name] {
-				res.Items = append(res.Items, DriftItem{Kind: "missing", Node: n.Name, Detail: "快照中的虚拟机已不存在（被删除？）"})
+	keys := make([]string, 0, len(slots))
+	for k := range slots {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // 稳定输出顺序（map 迭代无序）
+
+	out := []dsgDiff{}
+	for _, k := range keys {
+		s := slots[k]
+		p, b := s.plan, s.base
+		var d *dsgDiff
+		switch {
+		case p != nil && !s.real:
+			// 期望有、现实无
+			if b == nil {
+				d = mkDiff(s, dsgActionAdded, dsgSidePending, "missing", "画布新增，尚未落地：将创建"+dsgKindLabel(s.kind))
+			} else {
+				d = mkDiff(s, dsgActionAdded, dsgSideExternal, "missing", "已落地资源在现实中不存在（被外部删除）：需重建")
 			}
-		case "container":
-			if !realStacks[n.Ref] {
-				res.Items = append(res.Items, DriftItem{Kind: "missing", Node: n.Ref, Detail: "快照中的容器栈未在部署表（已下线？）"})
+			d.Node = *p
+		case p != nil && s.real:
+			// 期望有、现实也有
+			if b == nil {
+				d = mkDiff(s, dsgActionNone, dsgSidePending, "mismatch", "画布新增但现实已有同名资源：落地将复用/跳过（VM 同名会失败）")
+				d.Node = *p
+			} else if act, reason, ok := specDrift(*p, s); ok {
+				d = mkDiff(s, act, dsgSideExternal, "mismatch", reason)
+				d.Node = *p
 			}
-		case "net":
-			if !realNets[n.Name] {
-				res.Items = append(res.Items, DriftItem{Kind: "missing", Node: n.Name, Detail: "快照中的网络不存在（被 undefine？）"})
-			}
+		case p == nil && b != nil && s.real:
+			// 画布已移除该节点，但现实仍在：本计划创建的资源，收敛=下线
+			d = mkDiff(s, dsgActionDeleted, dsgSidePending, "extra", "画布已移除该节点，现实仍在：收敛将下线"+dsgKindLabel(s.kind))
+			d.Node = *b
+		case p == nil && b == nil && s.real:
+			// 现实有、计划/基线都没有：非本计划管理，收敛忽略（不做无差别删除）
+			d = mkDiff(s, dsgActionNone, dsgSideExternal, "extra", "现实存在但非本计划创建/管理：收敛忽略（可用「从现状导入」纳入画布）")
+		}
+		// 其余分支（p==nil && b!=nil && !s.real：画布已删且现实已无）净效果已一致，不报
+		if d != nil {
+			out = append(out, *d)
 		}
 	}
-	// extra：现实有、快照没有（只报 VM/栈，网络是平台底座噪音大不报）
-	snapVMs := map[string]bool{}
-	snapStacks := map[string]bool{}
-	for _, n := range snap.Nodes {
-		if n.Kind == "vm" {
-			snapVMs[n.Name] = true
-		}
-		if n.Kind == "container" {
-			snapStacks[n.Ref] = true
-		}
+	return out
+}
+
+// ComputeDrift 三方对比入口：读计划(期望)、基线(上次期望)、现实，逐资源产出差异项。
+// h.DB/h.Docker/h.Virt 为空时按空现实处理。
+func (h *DesignerHandler) ComputeDrift(planID string) DriftResult {
+	res := DriftResult{PlanID: planID, HasSnap: false, Items: []DriftItem{}, CheckedAt: time.Now()}
+	baseline := loadLatestSnapshot(planID)
+	if baseline == nil {
+		return res
 	}
-	for name := range realVMs {
-		if !snapVMs[name] {
-			res.Items = append(res.Items, DriftItem{Kind: "extra", Node: name, Detail: "现实中存在但快照没有的虚拟机"})
-		}
-	}
-	for id := range realStacks {
-		if !snapStacks[id] {
-			res.Items = append(res.Items, DriftItem{Kind: "extra", Node: id, Detail: "现实中存在但快照没有的容器栈"})
+	res.HasSnap = true
+	plan := loadPlanFile(planID) // 期望；无画布时为 nil（按 plan=baseline 处理）
+	for _, d := range computeDiff(plan, baseline, h.loadReality()) {
+		res.Items = append(res.Items, d.Item)
+		switch d.Item.Side {
+		case dsgSidePending:
+			res.Pending++
+		case dsgSideExternal:
+			res.External++
 		}
 	}
 	res.Drifted = len(res.Items) > 0
 	return res
+}
+
+// ReconcileAction 一条收敛动作（收敛预演的列表项 + 执行依据）。
+type ReconcileAction struct {
+	Action string `json:"action"` // added | deleted | recreated | restarted
+	Node   string `json:"node"`   // 资源名
+	Name   string `json:"name,omitempty"`
+	Kind   string `json:"kind"` // vm | container | net
+	Side   string `json:"side"` // pending | external
+	Reason string `json:"reason"`
+}
+
+// ReconcileResult 收敛计划：先列现状 → 算出需要 added/deleted/recreated/restarted 的集合。
+type ReconcileResult struct {
+	PlanID    string            `json:"plan_id"`
+	HasSnap   bool              `json:"has_snap"` // false=从未落地，收敛退化为全量落地
+	Actions   []ReconcileAction `json:"actions"`
+	Counts    map[string]int    `json:"counts"` // 动作 → 条数
+	CheckedAt time.Time         `json:"checked_at"`
+}
+
+// reconcilePlan 由三方对比算出收敛动作集合与可执行 ops。
+//   - baseline 为 nil（从未落地）：退化为全量落地，所有节点视作 added；
+//   - 否则逐条取 computeDiff 里 action != none 的项。VMID 已在 computeDiff 里带出。
+func reconcilePlan(plan, baseline *dsgPlan, reality dsgReality, planID string) (ReconcileResult, []dsgOp) {
+	res := ReconcileResult{PlanID: planID, HasSnap: baseline != nil, Actions: []ReconcileAction{}, Counts: map[string]int{}, CheckedAt: time.Now()}
+	ops := []dsgOp{}
+	if plan == nil {
+		return res, ops
+	}
+	if baseline == nil {
+		for _, n := range orderNodes(plan.Nodes, plan.Links) {
+			reason := "首次落地：创建" + dsgKindLabel(n.Kind)
+			ops = append(ops, dsgOp{Action: dsgActionAdded, Node: n, Reason: reason})
+			res.Actions = append(res.Actions, ReconcileAction{Action: dsgActionAdded, Node: nodeResource(n), Name: n.Name, Kind: n.Kind, Side: dsgSidePending, Reason: reason})
+			res.Counts[dsgActionAdded]++
+		}
+		return res, ops
+	}
+	for _, d := range computeDiff(plan, baseline, reality) {
+		if d.Item.Action == "" || d.Item.Action == dsgActionNone {
+			continue
+		}
+		ops = append(ops, dsgOp{Action: d.Item.Action, Node: d.Node, Reason: d.Item.Reason})
+		res.Actions = append(res.Actions, ReconcileAction{Action: d.Item.Action, Node: d.Item.Node, Name: d.Item.Name, Kind: d.Item.Resource, Side: d.Item.Side, Reason: d.Item.Reason})
+		res.Counts[d.Item.Action]++
+	}
+	return res, ops
+}
+
+// computeReconcile 从磁盘计划读期望并算出收敛集合（收敛预演用）。
+func (h *DesignerHandler) computeReconcile(planID string) (ReconcileResult, []dsgOp) {
+	return reconcilePlan(loadPlanFile(planID), loadLatestSnapshot(planID), h.loadReality(), planID)
 }
 
 // DriftSummary 遍历全部快照逐计划对比，汇总给人读摘要（DE2 的 cron 巡检入口）。
@@ -551,15 +829,17 @@ func (h *DesignerHandler) ExportAnsible(c *gin.Context) {
 	})
 }
 
-// ── 应用（M3：容器栈实际落地）──────────────────────────────
+// ── 落地 / 收敛（M3：容器栈与 VM 实际落地；DE3：按差异收敛）──────────
 
+// dsgApplyState 一次落地/收敛的运行态（内存 + tasks 表双写）。
 type dsgApplyState struct {
 	Status  string   `json:"status"` // running | success | failed
 	Steps   []string `json:"steps"`
 	Error   string   `json:"error,omitempty"`
+	Mode    string   `json:"mode,omitempty"` // apply（全量落地）| reconcile（按差异收敛）
 	Started time.Time
 	TaskID  uint // 关联 tasks 表记录（AD1：任务中心可见 + 重启后状态可查）
-	// ExpectedSteps 进度粗估分母（节点数×2 + 1），running 时按 len(Steps)/它折算
+	// ExpectedSteps 进度粗估分母（操作数×2 + 1），running 时按 len(Steps)/它折算
 	ExpectedSteps int
 }
 
@@ -568,8 +848,306 @@ var (
 	dsgApplyRuns = map[string]*dsgApplyState{}
 )
 
-// Apply POST /api/designer/plans/:id/apply（admin）——顺序落地计划内的容器栈与
-// VM 节点。VM 凭据随请求体一次性携带（不落计划文件）。
+// dsgOp 一个落地/收敛操作单元。Action 用 containerlab 枚举；Node 是期望节点；
+// Reason 是「为什么做这个动作」的人读理由（进步骤日志与任务结果）。
+type dsgOp struct {
+	Action string
+	Node   dsgNode
+	Reason string
+}
+
+// loadPlanForApply 读计划文件并把请求体里的 VM 口令按节点 id overlay 上去（不落盘）。
+// 请求体可选（纯容器栈计划可无 body）。失败时已写好响应，返回 ok=false。
+func (h *DesignerHandler) loadPlanForApply(c *gin.Context, id string) (dsgPlan, bool) {
+	raw, err := os.ReadFile(filepath.Join(designerDir(), id+".json"))
+	if err != nil {
+		Fail(c, http.StatusNotFound, "计划不存在")
+		return dsgPlan{}, false
+	}
+	var p dsgPlan
+	if json.Unmarshal(raw, &p) != nil {
+		Fail(c, http.StatusInternalServerError, "计划解析失败")
+		return dsgPlan{}, false
+	}
+	var credBody struct {
+		Credentials map[string]struct {
+			SSHUser   string `json:"ssh_user"`
+			SSHSecret string `json:"ssh_secret"`
+		} `json:"credentials"`
+	}
+	if body, rerr := c.GetRawData(); rerr == nil && len(body) > 0 {
+		if json.Unmarshal(body, &credBody) != nil {
+			Fail(c, http.StatusBadRequest, "请求体格式非法（应为 {credentials:{节点id:{ssh_user,ssh_secret}}}）")
+			return dsgPlan{}, false
+		}
+	}
+	for i := range p.Nodes {
+		if cred, ok := credBody.Credentials[p.Nodes[i].ID]; ok {
+			if cred.SSHUser != "" {
+				p.Nodes[i].SSHUser = cred.SSHUser
+			}
+			p.Nodes[i].SSHSecret = cred.SSHSecret
+		}
+	}
+	return p, true
+}
+
+// startRun 落地/收敛的公共入口：登记运行态（内存 + tasks 表）后起 goroutine 执行 ops。
+// 同一计划已有 running 任务时返回 409（apply 与 reconcile 共用一把运行位，互斥）。
+// 用户归属在提交时从 HTTP 上下文取定并传进 goroutine，不在共享 handler 上回写字段
+// （避免两个计划并发落地时对 h.UserID 的数据竞争）。goroutine 自带 recover（AGENTS 并发规范）。
+func (h *DesignerHandler) startRun(c *gin.Context, p dsgPlan, ops []dsgOp, taskType, title, mode string) {
+	id := p.ID
+	userID, username := taskUserFromContext(c)
+	if username == "" {
+		username = "designer"
+	}
+	dsgApplyMu.Lock()
+	if st := dsgApplyRuns[id]; st != nil && st.Status == "running" {
+		dsgApplyMu.Unlock()
+		Fail(c, http.StatusConflict, "该计划正在落地/收敛中")
+		return
+	}
+	st := &dsgApplyState{Status: "running", Mode: mode, Started: time.Now(), ExpectedSteps: len(ops)*2 + 1}
+	// AD1：落地同时落 tasks 表（不排队，仅记录）——任务中心可见，服务重启后
+	// apply-status 回退查这条记录，进度不再随进程丢失
+	if h.DB != nil {
+		pl, _ := json.Marshal(map[string]string{"plan_id": id})
+		t := model.Task{Type: taskType, Title: title, Status: "running", Payload: string(pl), UserID: userID, Username: username}
+		if err := h.DB.Create(&t).Error; err == nil {
+			st.TaskID = t.ID
+		}
+	}
+	dsgApplyRuns[id] = st
+	dsgApplyMu.Unlock()
+
+	go func(plan dsgPlan, ops []dsgOp, st *dsgApplyState) {
+		defer func() {
+			if r := recover(); r != nil {
+				st.Status = "failed"
+				st.Error = "应用协程异常（详见服务日志）"
+				log.Printf("[designer] 计划 %s %s panic: %v\n%s", plan.ID, st.Mode, r, debug.Stack())
+			}
+			// AD1：goroutine 收口时把最终状态同步进 tasks 表（正常/失败/panic 三路都走这）。
+			// 不依赖前端轮询触发的懒同步——用户中途关页面也要有终态落库。
+			h.syncApplyTask(st)
+		}()
+		h.runOps(&plan, ops, st, userID, username)
+	}(p, ops, st)
+
+	Accepted(c, title+"已启动", gin.H{"id": id, "mode": mode, "actions": len(ops)})
+}
+
+// runOps 执行操作序列：先删除（释放资源、为重建腾位）→ 再新增（按依赖排序）→ 最后重启。
+//
+// 幂等/可重入：任何一步失败即置 failed 并返回，已完成的步骤与内存态保留，前端可重试。
+// 重试时收敛会重新 computeDiff——已完成的 added 不再出现在差异里，deleted 的资源现实
+// 已无也不再出现，天然幂等；recreated 的「先删后建」中途失败，重试时会看到「现实已无 →
+// added」，等价于继续把建做下去。
+func (h *DesignerHandler) runOps(plan *dsgPlan, ops []dsgOp, st *dsgApplyState, userID *uint, username string) {
+	// 前置守卫：要落地（非删除/重启）的 VM 节点若配了应用/playbook，必须有口令——
+	// 两类动作都要用口令（app 加密入 payload / playbook 托管后走凭据通道），否则建出
+	// 空口令机器必然失败。fail-fast 比半途失败省资源。
+	for _, op := range ops {
+		n := op.Node
+		if n.Kind == "vm" && op.Action != dsgActionDeleted && op.Action != dsgActionRestarted &&
+			(len(n.Apps) > 0 || len(n.Playbooks) > 0) && n.SSHSecret == "" {
+			st.Status = "failed"
+			st.Error = "VM「" + n.Name + "」配了应用/playbook 但未提供 SSH 口令（落地时需在页面填入）"
+			return
+		}
+	}
+
+	var dels, adds, restarts []dsgOp
+	for _, op := range ops {
+		switch op.Action {
+		case dsgActionDeleted:
+			dels = append(dels, op)
+		case dsgActionRecreated:
+			dels = append(dels, op) // 重建 = 先删
+			adds = append(adds, op) // 再建
+		case dsgActionAdded:
+			adds = append(adds, op)
+		case dsgActionRestarted:
+			restarts = append(restarts, op)
+		}
+	}
+
+	// 1) 删除
+	for _, op := range dels {
+		st.Steps = append(st.Steps, "下线 "+nodeResource(op.Node)+"（"+dsgKindLabel(op.Node.Kind)+"）："+op.Reason)
+		if err := h.teardownNode(op, st, userID, username); err != nil {
+			st.Status = "failed"
+			st.Error = "下线 " + nodeResource(op.Node) + " 失败：" + err.Error()
+			return
+		}
+	}
+
+	// 2) 新增（按依赖排序：net → vm → container）
+	addNodes := make([]dsgNode, 0, len(adds))
+	for _, op := range adds {
+		addNodes = append(addNodes, op.Node)
+	}
+	for _, n := range orderNodes(addNodes, plan.Links) {
+		if err := h.provisionNode(plan, n, st, userID, username); err != nil {
+			st.Status = "failed"
+			st.Error = dsgKindLabel(n.Kind) + " " + nodeResource(n) + " 落地失败：" + err.Error()
+			return
+		}
+	}
+
+	// 3) 重启
+	for _, op := range restarts {
+		st.Steps = append(st.Steps, "重启 "+nodeResource(op.Node)+"："+op.Reason)
+		if err := h.restartNode(op, st); err != nil {
+			st.Status = "failed"
+			st.Error = "重启 " + nodeResource(op.Node) + " 失败：" + err.Error()
+			return
+		}
+	}
+
+	st.Status = "success"
+	// DE2：成功即覆盖基线——「已落地基线」= 本次落地/收敛时的期望。下次三方对比的
+	// 基线一侧即此；手改画布（未落地）不会动它。
+	h.saveSnapshot(*plan)
+}
+
+// provisionNode 落地单个节点（net/vm/container）。原 Apply 内联循环抽出，供全量落地
+// 与按差异收敛共用；本身对已存在的网络幂等（provisionNet 同名跳过）。
+func (h *DesignerHandler) provisionNode(p *dsgPlan, n dsgNode, st *dsgApplyState, userID *uint, username string) error {
+	switch n.Kind {
+	case "container":
+		st.Steps = append(st.Steps, "部署栈 "+n.Ref+"（"+n.Name+"）…")
+		meta, sraw, err := parseStackMeta(filepath.Join(stacksDir(), n.Ref+".yml"))
+		if err != nil {
+			return fmt.Errorf("栈不存在：%s", n.Ref)
+		}
+		target := config.DataPath("stacks", n.Ref)
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			return fmt.Errorf("创建部署目录失败: %w", err)
+		}
+		_ = os.WriteFile(filepath.Join(target, "docker-compose.yml"), sraw, 0o644)
+		if err := h.Docker.ComposeUpFromFile(target); err != nil {
+			return fmt.Errorf("栈 %s 部署失败: %w", n.Ref, err)
+		}
+		st.Steps = append(st.Steps, "✓ "+n.Ref+" 完成（"+meta.Desc+"）")
+	case "vm":
+		vmID, err := h.provisionVM(p, n, st, userID, username)
+		if err != nil {
+			return err
+		}
+		st.Steps = append(st.Steps, "✓ VM "+n.Name+" 就绪（id="+strconv.FormatUint(uint64(vmID), 10)+"）")
+	case "net":
+		created, nerr := h.provisionNet(n)
+		if nerr != nil {
+			return nerr
+		}
+		if created {
+			st.Steps = append(st.Steps, "✓ 网络 "+n.Name+" 已创建（NAT）")
+		} else {
+			st.Steps = append(st.Steps, "· 网络 "+n.Name+" 已存在，跳过")
+		}
+	default:
+		st.Steps = append(st.Steps, "跳过 "+n.Name+"（未知节点类型）")
+	}
+	return nil
+}
+
+// teardownNode 下线单个节点：VM 走 delete_vm 任务（异步 + 等终态），容器栈 compose down，
+// 网络 undefine。资源已不存在视为成功（幂等，供收敛重入）。
+func (h *DesignerHandler) teardownNode(op dsgOp, st *dsgApplyState, userID *uint, username string) error {
+	n := op.Node
+	switch n.Kind {
+	case "vm":
+		var vm model.VM
+		if err := h.DB.Where("name = ?", n.Name).First(&vm).Error; err != nil {
+			st.Steps = append(st.Steps, "· VM "+n.Name+" 已不存在，跳过下线")
+			return nil
+		}
+		vmID := vm.ID
+		task, err := h.Tasks.Submit("delete_vm", "设计器下线 VM "+vm.Name, map[string]interface{}{"vm_id": vm.ID}, userID, username, vm.Name, &vmID)
+		if err != nil {
+			return fmt.Errorf("提交删除任务失败: %w", err)
+		}
+		st.Steps = append(st.Steps, "删除任务已提交（task="+strconv.FormatUint(uint64(task.ID), 10)+"），等待完成…")
+		if _, err := h.waitTask(task.ID, 15*time.Minute); err != nil {
+			return err
+		}
+		st.Steps = append(st.Steps, "✓ VM "+vm.Name+" 已删除")
+	case "container":
+		if h.Docker == nil {
+			return fmt.Errorf("容器服务不可用")
+		}
+		if err := h.Docker.ComposeAction(n.Ref, "down"); err != nil {
+			return err
+		}
+		st.Steps = append(st.Steps, "✓ 栈 "+n.Ref+" 已下线")
+	case "net":
+		if h.Virt == nil {
+			return fmt.Errorf("虚拟化服务不可用")
+		}
+		if nets, err := h.Virt.ListNetworks(); err == nil {
+			found := false
+			for _, e := range nets {
+				if e.Name == n.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				st.Steps = append(st.Steps, "· 网络 "+n.Name+" 已不存在，跳过")
+				return nil
+			}
+		}
+		if err := h.Virt.DeleteNetwork(n.Name); err != nil {
+			return err
+		}
+		st.Steps = append(st.Steps, "✓ 网络 "+n.Name+" 已删除")
+	}
+	return nil
+}
+
+// restartNode 重启单个节点：VM 运行中走 reboot，异常态（paused/error）走 destroy+start
+// 兜底；容器栈走 compose restart。用于收敛里的 restarted 动作。
+func (h *DesignerHandler) restartNode(op dsgOp, st *dsgApplyState) error {
+	n := op.Node
+	switch n.Kind {
+	case "vm":
+		var vm model.VM
+		if err := h.DB.Where("name = ?", n.Name).First(&vm).Error; err != nil {
+			st.Steps = append(st.Steps, "· VM "+n.Name+" 已不存在，跳过重启")
+			return nil
+		}
+		if vm.Status == model.VMStatusRunning {
+			if err := h.Virt.RebootDomain(vm.Name); err != nil {
+				return err
+			}
+		} else {
+			// paused/error 下 start 会失败，先硬停再起（恢复异常态）
+			_ = h.Virt.DestroyDomain(vm.Name)
+			if err := h.Virt.StartDomain(vm.Name); err != nil {
+				return err
+			}
+		}
+		// 状态回写失败留痕（AGENTS：DB 写不静默吞）——重启已由 libvirt 生效
+		dbx.PersistBestEffort(h.DB, "designer 收敛重启 VM 回写状态", func() error {
+			return h.DB.Model(&model.VM{}).Where("id = ?", vm.ID).Update("status", model.VMStatusRunning).Error
+		})
+		st.Steps = append(st.Steps, "✓ VM "+vm.Name+" 已重启")
+	case "container":
+		if h.Docker == nil {
+			return fmt.Errorf("容器服务不可用")
+		}
+		if err := h.Docker.ComposeAction(n.Ref, "restart"); err != nil {
+			return err
+		}
+		st.Steps = append(st.Steps, "✓ 栈 "+n.Ref+" 已重启")
+	}
+	return nil
+}
+
+// Apply POST /api/designer/plans/:id/apply（admin）——全量落地：把计划内所有节点按依赖
+// 顺序落地（net→vm→container）。VM 凭据随请求体一次性携带（不落计划文件）。
 // 进度内存态（GET /apply-status 轮询）；goroutine 自带 recover（AGENTS 并发规范）。
 func (h *DesignerHandler) Apply(c *gin.Context) {
 	if !roleIsAdmin(c) {
@@ -581,149 +1159,55 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "计划 ID 非法")
 		return
 	}
-	raw, err := os.ReadFile(filepath.Join(designerDir(), id+".json"))
-	if err != nil {
-		Fail(c, http.StatusNotFound, "计划不存在")
+	p, ok := h.loadPlanForApply(c, id)
+	if !ok {
 		return
 	}
-	var p dsgPlan
-	if json.Unmarshal(raw, &p) != nil {
-		Fail(c, http.StatusInternalServerError, "计划解析失败")
+	// 全量落地 = 每个节点都当作「需要落地」（provisionNet 对已存在网络幂等跳过）
+	ops := make([]dsgOp, 0, len(p.Nodes))
+	for _, n := range p.Nodes {
+		ops = append(ops, dsgOp{Action: dsgActionAdded, Node: n, Reason: "全量落地"})
+	}
+	h.startRun(c, p, ops, "designer_apply", "落地架构 "+p.Name, "apply")
+}
+
+// Reconcile POST /api/designer/plans/:id/reconcile（admin）——按差异收敛：先算三方差异，
+// 只对 added/deleted/recreated/restarted 的资源执行，不动未变化的资源（deploy 即 reconcile，
+// 不是每次全量重建）。收敛走与落地同一套异步任务管线与运行位（apply/reconcile 互斥）；
+// 失败保留状态可重试。
+func (h *DesignerHandler) Reconcile(c *gin.Context) {
+	if !roleIsAdmin(c) {
+		Fail(c, http.StatusForbidden, "按差异收敛仅管理员可用")
 		return
 	}
-	// VM 凭据随本次请求体一次性携带（计划文件里没有）：按节点 id overlay。
-	// 请求体可选——纯容器栈计划可以不带 body。
-	var credBody struct {
-		Credentials map[string]struct {
-			SSHUser   string `json:"ssh_user"`
-			SSHSecret string `json:"ssh_secret"`
-		} `json:"credentials"`
-	}
-	if body, rerr := c.GetRawData(); rerr == nil && len(body) > 0 {
-		if json.Unmarshal(body, &credBody) != nil {
-			Fail(c, http.StatusBadRequest, "请求体格式非法（应为 {credentials:{节点id:{ssh_user,ssh_secret}}}）")
-			return
-		}
-	}
-	for i := range p.Nodes {
-		if cred, ok := credBody.Credentials[p.Nodes[i].ID]; ok {
-			if cred.SSHUser != "" {
-				p.Nodes[i].SSHUser = cred.SSHUser
-			}
-			p.Nodes[i].SSHSecret = cred.SSHSecret
-		}
-	}
-
-	dsgApplyMu.Lock()
-	if st := dsgApplyRuns[id]; st != nil && st.Status == "running" {
-		dsgApplyMu.Unlock()
-		Fail(c, http.StatusConflict, "该计划正在应用中")
+	id := c.Param("id")
+	if !dsgIDRe.MatchString(id) {
+		Fail(c, http.StatusBadRequest, "计划 ID 非法")
 		return
 	}
-	st := &dsgApplyState{Status: "running", Started: time.Now()}
-	// AD1：落地同时落 tasks 表（不排队，仅记录）——任务中心可见，服务重启后
-	// apply-status 回退查这条记录，进度不再随进程丢失
-	if h.DB != nil {
-		pl, _ := json.Marshal(map[string]string{"plan_id": id})
-		st.ExpectedSteps = len(p.Nodes)*2 + 1
-		t := model.Task{Type: "designer_apply", Title: "落地架构 " + p.Name, Status: "running", Payload: string(pl)}
-		if uid, name := h.taskUser(); uid != nil {
-			t.UserID = uid
-			t.Username = name
-		}
-		if err := h.DB.Create(&t).Error; err == nil {
-			st.TaskID = t.ID
-		}
+	p, ok := h.loadPlanForApply(c, id)
+	if !ok {
+		return
 	}
-	dsgApplyRuns[id] = st
-	if uid, ok := c.Get("user_id"); ok {
-		if v, ok := uid.(uint); ok {
-			h.UserID = v
-		}
+	// 用带凭据的计划重算差异（凭据来自请求体，磁盘计划里没有）
+	_, ops := reconcilePlan(&p, loadLatestSnapshot(id), h.loadReality(), id)
+	if len(ops) == 0 {
+		Success(c, gin.H{"message": "已与现实一致，无需收敛", "actions": 0})
+		return
 	}
-	if u, ok := c.Get("username"); ok {
-		if v, ok := u.(string); ok {
-			h.Username = v
-		}
-	}
-	dsgApplyMu.Unlock()
+	h.startRun(c, p, ops, "designer_reconcile", "收敛架构 "+p.Name, "reconcile")
+}
 
-	go func(plan dsgPlan, st *dsgApplyState) {
-		defer func() {
-			if r := recover(); r != nil {
-				st.Status = "failed"
-				st.Error = "应用协程异常（详见服务日志）"
-				log.Printf("[designer] 计划 %s 应用 panic: %v\n%s", plan.ID, r, debug.Stack())
-			}
-			// AD1：goroutine 收口时把最终状态同步进 tasks 表（正常/失败/panic 三路都走这）。
-			// 不依赖前端轮询触发的懒同步——用户中途关页面也要有终态落库。
-			h.syncApplyTask(st)
-		}()
-		// 前置守卫：配了应用或 playbook 的 VM 节点必须拿到口令（凭据随请求体来，
-		// 计划文件里没有）——两类动作都要用口令（app 加密入 payload / playbook 托管
-		// 后走凭据通道），否则建出空口令机器必然失败——fail-fast 比半途失败省资源
-		for _, n := range plan.Nodes {
-			if n.Kind == "vm" && (len(n.Apps) > 0 || len(n.Playbooks) > 0) && n.SSHSecret == "" {
-				st.Status = "failed"
-				st.Error = "VM「" + n.Name + "」配了应用/playbook 但未提供 SSH 口令（落地时需在页面填入）"
-				return
-			}
-		}
-		// 依赖排序后逐节点落地：net 先建（VM/容器要接入），vm 再建，container 最后。
-		for _, n := range orderNodes(plan.Nodes, plan.Links) {
-			switch n.Kind {
-			case "container":
-				st.Steps = append(st.Steps, "部署栈 "+n.Ref+"（"+n.Name+"）…")
-				meta, sraw, err := parseStackMeta(filepath.Join(stacksDir(), n.Ref+".yml"))
-				if err != nil {
-					st.Status = "failed"
-					st.Error = "栈不存在：" + n.Ref
-					return
-				}
-				target := config.DataPath("stacks", n.Ref)
-				if err := os.MkdirAll(target, 0o755); err != nil {
-					st.Status = "failed"
-					st.Error = "创建部署目录失败"
-					return
-				}
-				_ = os.WriteFile(filepath.Join(target, "docker-compose.yml"), sraw, 0o644)
-				if err := h.Docker.ComposeUpFromFile(target); err != nil {
-					st.Status = "failed"
-					st.Error = "栈 " + n.Ref + " 部署失败：" + err.Error()
-					return
-				}
-				st.Steps = append(st.Steps, "✓ "+n.Ref+" 完成（"+meta.Desc+"）")
-			case "vm":
-				vmID, err := h.provisionVM(&plan, n, st)
-				if err != nil {
-					st.Status = "failed"
-					st.Error = "VM " + n.Name + " 落地失败：" + err.Error()
-					return
-				}
-				st.Steps = append(st.Steps, "✓ VM "+n.Name+" 就绪（id="+strconv.FormatUint(uint64(vmID), 10)+"）")
-			case "net":
-				created, nerr := h.provisionNet(n)
-				if nerr != nil {
-					st.Status = "failed"
-					st.Error = "网络 " + n.Name + " 落地失败：" + nerr.Error()
-					return
-				}
-				if created {
-					st.Steps = append(st.Steps, "✓ 网络 "+n.Name+" 已创建（NAT）")
-				} else {
-					st.Steps = append(st.Steps, "· 网络 "+n.Name+" 已存在，跳过")
-				}
-			default:
-				st.Steps = append(st.Steps, "跳过 "+n.Name+"（未知节点类型）")
-			}
-		}
-		st.Status = "success"
-		// DE2：落地成功即存不可变快照——漂移检测的 intended 基准（InfraHub 心智：
-		// 计划即分支，落地即打 tag）。快照与活计划分开存，手改画布不影响基准。
-		h.saveSnapshot(p)
-	}(p, st)
-
-	Accepted(c, "计划应用已启动", gin.H{"id": id})
+// ReconcilePlan GET /api/designer/plans/:id/reconcile-plan（operator+）——收敛预演：
+// 不执行，只返回「先列现状 → 算出的动作集合」（containerlab planApply 的 plan 阶段）。
+func (h *DesignerHandler) ReconcilePlan(c *gin.Context) {
+	id := c.Param("id")
+	if !dsgIDRe.MatchString(id) {
+		Fail(c, http.StatusBadRequest, "计划 ID 非法")
+		return
+	}
+	res, _ := h.computeReconcile(id)
+	Success(c, res)
 }
 
 // provisionNet 网络节点落地（D3）：libvirt 已存在同名网络则跳过（不覆盖用户网络），
@@ -863,10 +1347,17 @@ func resolveVMNetwork(p *dsgPlan, n dsgNode) string {
 // provisionVM VM 节点落地：create_vm 建机（云镜像 + cloud-init + 设计网络 + provision 块）→
 // 由 create_vm executor 统一完成「开机 → 等 IP → 托管凭据」→ 本函数再逐个装应用 / 跑 playbook。
 // create_vm / app_install / ansible_run 均复用既有 executor（与页面操作同一套链路），本函数只做编排。
-func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState) (uint, error) {
-	// 前置校验：云镜像必须存在于镜像库（images 表按 id）
+// userID/username 由调用方（goroutine 起手时）从 HTTP 上下文取定传入，不再读共享 handler 字段。
+func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, userID *uint, username string) (uint, error) {
+	// 前置校验：云镜像必须存在于镜像库（images 表按 id）。
+	// n.Ref 来自计划文件（用户可控的字符串），必须先解析成 uint 再交给 GORM——
+	// 直传非纯数字字符串会被 GORM 当原始 SQL 片段拼进 WHERE（注入面，见 AGENTS 第 8 条）。
+	imgID, ok := parseID(n.Ref)
+	if !ok {
+		return 0, fmt.Errorf("云镜像 ID 非法（%s）", n.Ref)
+	}
 	var img model.Image
-	if err := h.DB.First(&img, n.Ref).Error; err != nil {
+	if err := h.DB.First(&img, imgID).Error; err != nil {
 		return 0, fmt.Errorf("云镜像不存在（id=%s）", n.Ref)
 	}
 	pool := n.Pool
@@ -919,7 +1410,6 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState) 
 		"cloud_init":   ciSpec,
 		"provision":    prov,
 	}
-	userID, username := h.taskUser()
 	task, err := h.Tasks.Submit("create_vm", "设计器创建 VM "+n.Name, createPayload, userID, username, n.Name, nil)
 	if err != nil {
 		return 0, fmt.Errorf("提交建机任务失败: %w", err)
@@ -1020,18 +1510,8 @@ func (h *DesignerHandler) waitTask(taskID uint, timeout time.Duration) (string, 
 	return "", fmt.Errorf("任务超时（%s）", timeout)
 }
 
-// taskUser 设计器任务的用户归属（apply 无 HTTP 上下文：Apply 提交时把登录人
-// 记到 handler 字段，goroutine 内取用；未登录场景兜底 designer）。
-func (h *DesignerHandler) taskUser() (*uint, string) {
-	if h.UserID != 0 {
-		id := h.UserID
-		return &id, h.Username
-	}
-	return nil, "designer"
-}
-
 // syncApplyTask 把内存态同步进 tasks 表（AD1）。progress 按「步骤行数」粗估：
-// 节点数×2 为满分母（每节点大约「开始+完成」两行），封顶 95 留终态写 100。
+// 操作数×2 为满分母（每操作大约「开始+完成」两行），封顶 95 留终态写 100。
 func (h *DesignerHandler) syncApplyTask(st *dsgApplyState) {
 	if h.DB == nil || st.TaskID == 0 {
 		return
@@ -1059,7 +1539,8 @@ func (h *DesignerHandler) syncApplyTask(st *dsgApplyState) {
 
 // ApplyStatus GET /api/designer/plans/:id/apply-status。
 // 内存命中优先并懒同步进 tasks 表（轮询天然节流）；内存未命中（服务重启）回退
-// 查 tasks 表最近一条该计划的 designer_apply 记录——重启后状态与步骤不再丢失。
+// 查 tasks 表最近一条该计划的 designer_apply / designer_reconcile 记录——重启后
+// 状态与步骤不再丢失（落地与收敛共用同一状态端点）。
 func (h *DesignerHandler) ApplyStatus(c *gin.Context) {
 	id := c.Param("id")
 	dsgApplyMu.Lock()
@@ -1067,12 +1548,12 @@ func (h *DesignerHandler) ApplyStatus(c *gin.Context) {
 	dsgApplyMu.Unlock()
 	if st != nil {
 		h.syncApplyTask(st)
-		Success(c, gin.H{"id": id, "status": st.Status, "steps": st.Steps, "error": st.Error})
+		Success(c, gin.H{"id": id, "status": st.Status, "steps": st.Steps, "error": st.Error, "mode": st.Mode})
 		return
 	}
-	// 回退：查该计划最近一条落地任务（payload 含 plan_id）
+	// 回退：查该计划最近一条落地/收敛任务（payload 含 plan_id）
 	var t model.Task
-	q := h.DB.Where("type = ? AND payload LIKE ?", "designer_apply", `%"plan_id":"`+id+`"%`).
+	q := h.DB.Where("type IN ? AND payload LIKE ?", []string{"designer_apply", "designer_reconcile"}, `%"plan_id":"`+id+`"%`).
 		Order("id DESC").First(&t)
 	if q.Error != nil {
 		Success(c, gin.H{"id": id, "status": "idle"})

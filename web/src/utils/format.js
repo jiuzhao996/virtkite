@@ -325,7 +325,17 @@ export function fmtGBSum(list, key = 'capacity_gb') {
  * 它在本函数逻辑之上额外识别 pollTask 抛出的 Error（任务 error 字段）。
  */
 export function errMsg(e, fallback = '操作失败') {
-  return (e && e.response && e.response.data && e.response.data.message) || fallback
+  // 后端统一响应 {code,message,data}：有 message 就用它（后端保证是中文友好文案）
+  const m = e && e.response && e.response.data && e.response.data.message
+  if (m) return m
+  // 没有响应体时补一个可分辨的原因。此前一律回落成调用方传的 fallback，
+  // 于是「后端 500」「超时」「根本没连上」在界面上长得一模一样——用户只能报
+  // 「操作失败」，排查时也分不清该看后端日志还是看网络。
+  // 保留 fallback 作主体（调用方给的上下文更有用），只在后面补原因。
+  if (e && e.code === 'ECONNABORTED') return `${fallback}（请求超时）`
+  if (e && e.response) return `${fallback}（服务异常 HTTP ${e.response.status}）`
+  if (e && e.request) return `${fallback}（无法连接服务器）`
+  return fallback
 }
 
 /**

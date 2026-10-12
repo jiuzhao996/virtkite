@@ -1,6 +1,7 @@
 <template>
   <div v-loading="loading">
     <PageHead title="系统设置" subtitle="平台运行参数，保存进数据库、立即生效无需重启；生效配置的只读快照见仪表盘「平台信息」卡，界面轮询偏好已移至顶栏「个人中心」，cloud-init 模板管理亦在本页">
+      <el-tag v-if="dirtyForms" type="warning" effect="plain" class="dirty-tag">有未保存的改动</el-tag>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </PageHead>
 
@@ -201,7 +202,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, QuestionFilled } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -210,9 +211,24 @@ import CloudInitTemplates from './CloudInitTemplates.vue'
 import HostList from './HostList.vue'
 import CronList from './CronList.vue'
 import PageHead from '../components/PageHead.vue'
+import { onBeforeRouteLeave } from 'vue-router'
 
 const loading = ref(false)
 const saving = ref(false)
+
+// ── 「有未保存改动」追踪 ──
+// 设置页是分卡片「改完点保存」的表单，用户很容易改了几项就直接切走——此前是静默丢失，
+// 界面上没有任何痕迹。这里在每次成功读取/保存后拍一份表单快照，之后比对差异。
+// 只做提示与拦截，不改变「攒一批再保存」的交互：这几个字段多是文本框，逐字符即时
+// 提交反而是错的（1Panel 那种逐控件即时生效只适用于单选/开关）。
+const formSnapshot = ref('')
+function formState() {
+  return JSON.stringify({ writable, sec, ai, ann, notify })
+}
+function markSaved() {
+  formSnapshot.value = formState()
+}
+const dirtyForms = computed(() => formSnapshot.value !== '' && formSnapshot.value !== formState())
 
 // 可写配置表单（默认值兜底，后端 GET /settings 的 writable 节回填）
 /* ── 嵌套虚拟化（宿主内核层，独立保存）── */
@@ -310,6 +326,7 @@ async function saveNotify() {
   try {
     await api.updateSettings({ alert_notify_url: notify.url.trim() })
     ElMessage.success(notify.url.trim() ? '告警通知已保存并生效' : '告警通知已关闭')
+    markSaved()
     load()
   } catch (e) {
     ElMessage.error(errMsg(e, '保存告警通知失败'))
@@ -339,12 +356,26 @@ async function load() {
     if (w.announcement !== undefined) ann.content = w.announcement
     // 告警通知地址：键未上线（后端未加白名单）时保持空串，不误清用户输入
     if (w.alert_notify_url !== undefined) notify.url = w.alert_notify_url || ''
+    markSaved()
   } catch (e) {
     ElMessage.error('获取系统设置失败')
   } finally {
     loading.value = false
   }
 }
+
+// 离开页面时拦一下未保存的改动（浏览器内路由跳转；直接关标签页由 beforeunload 兜）
+onBeforeRouteLeave(async () => {
+  if (!dirtyForms.value) return true
+  try {
+    await ElMessageBox.confirm('当前有未保存的改动，离开将丢失。确定离开？', '未保存的改动', {
+      type: 'warning', confirmButtonText: '放弃改动并离开', cancelButtonText: '留下'
+    })
+    return true
+  } catch (e) {
+    return false
+  }
+})
 
 async function saveWritable() {
   if (!writable.default_storage_pool) {
@@ -444,10 +475,20 @@ async function saveAnnouncement() {
   }
 }
 
+// 关闭/刷新标签页的兜底：路由守卫拦不住这种情况（浏览器只允许弹原生确认框）
+function onBeforeUnload(e) {
+  if (!dirtyForms.value) return
+  e.preventDefault()
+  e.returnValue = ''
+}
 onMounted(() => {
+  window.addEventListener('beforeunload', onBeforeUnload)
   load()
   loadKeys()
   loadNested()
+})
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload)
 })
 </script>
 
@@ -496,5 +537,8 @@ onMounted(() => {
   color: var(--color-muted-foreground);
   cursor: help;
   vertical-align: -1px;
+}
+.dirty-tag {
+  margin-right: 8px;
 }
 </style>

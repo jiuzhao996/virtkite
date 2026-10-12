@@ -98,6 +98,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	hostHandler := NewHostHandler(deps.DB)
 	imageHandler := NewImageHandler(deps.DB, deps.Tasks)
 	taskHandler := NewTaskHandler(deps.DB, deps.Tasks)
+	taskHandler.Tickets = deps.WSTickets // 任务日志 WS 的一次性票据（与 AuthMiddleware 校验侧同实例）
 	sessionHandler := NewSessionHandler(deps.DB, deps.Sessions)
 	settingsHandler := NewSettingsHandler(deps.DB, deps.SettingMgr)
 	auditHandler := NewAuditHandler(deps.DB)
@@ -550,6 +551,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		designer.GET("/plans/:id/drift", designerHandler.Drift)
 		designer.POST("/plans/:id/apply", designerHandler.Apply)
 		designer.GET("/plans/:id/apply-status", designerHandler.ApplyStatus)
+		// 漂移收敛：预演只读（operator+），执行在方法内二次收 admin 闸
+		designer.GET("/plans/:id/reconcile-plan", designerHandler.ReconcilePlan)
+		designer.POST("/plans/:id/reconcile", designerHandler.Reconcile)
 	}
 
 	// 站内通知（告警到人）：所有登录角色可见自己的通知（viewer 也收告警——被授权资产的故障他们必须知道）
@@ -605,6 +609,12 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		taskRoutes.GET("/:id", taskHandler.GetTask)
 		taskRoutes.POST("/:id/cancel", taskHandler.CancelTask)
 		taskRoutes.DELETE("/:id", taskHandler.DeleteTask)
+		// 任务日志：GET 全量（首屏）+ WS 增量（按 seq 追平）+ 一次性票据签发。
+		// 票据走 POST 是既有约定（与 VM 终端/Docker 一致），代价是 OperatorMiddleware
+		// 会挡下 viewer——viewer 本就能 GET 全量日志，不构成越权，只是看不到实时流。
+		taskRoutes.GET("/:id/logs", taskHandler.GetTaskLogs)
+		taskRoutes.GET("/:id/logs/ws", taskHandler.StreamLogs)
+		taskRoutes.POST("/:id/ws-ticket", taskHandler.MintLogWSTicket)
 	}
 
 	// 控制台会话（仅管理员）：谁连了哪台 VM、强制断开

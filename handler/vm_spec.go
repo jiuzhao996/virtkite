@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/service/virt"
 )
 
@@ -37,6 +38,9 @@ func (h *VMHandler) SetVcpu(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusBadRequest, "vCPU 数量必须大于 0", err)
 		return
 	}
+	// 审计快照：中间件只看得到 method/path，拿不到对象，所以由这里显式拍前后值。
+	// 记「从多少改到多少」比只记「改过 vCPU」有用得多——排查配置漂移时这是第一手证据。
+	middleware.SetAuditDiff(c, gin.H{"vcpu": vm.VCPU}, gin.H{"vcpu": req.VCPU})
 
 	// 停机态：读取 spec → 改 vcpu → 重建 XML → 重 define
 	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != virt.StatusRunning {
@@ -99,6 +103,7 @@ func (h *VMHandler) SetMemory(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusBadRequest, "内存大小必须大于 0", err)
 		return
 	}
+	middleware.SetAuditDiff(c, gin.H{"memory_mb": vm.MemoryMB}, gin.H{"memory_mb": req.MemoryMB})
 
 	if state, err := h.Virt.GetDomainState(vm.Name); err == nil && state != virt.StatusRunning {
 		spec, err := h.Virt.GetDomainSpec(vm.Name)

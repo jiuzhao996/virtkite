@@ -28,9 +28,6 @@ const (
 	// ansiblePlaybookTimeout playbook 兜底超时：装包类（docker/nginx）分钟级，
 	// 20 分钟兜底。
 	ansiblePlaybookTimeout = 20 * time.Minute
-	// ansibleFlushInterval 输出节流落库间隔：ansible 逐行输出可能很快，
-	// 每行一次 UPDATE 会打爆 DB，按间隔攒批。
-	ansibleFlushInterval = 2 * time.Second
 )
 
 // ansiblePlaybookIDRe playbook 文件 id 白名单（与 handler playbookIDRe 同规，executor
@@ -45,6 +42,8 @@ func RegisterAnsibleTasks(m *Manager, masterSecret string) {
 	if m == nil {
 		return
 	}
+	// 注入主密钥：worker 构建任务日志脱敏器时用它解密本任务相关 VM 的托管凭据
+	m.SetMasterSecret(masterSecret)
 	m.Register("ansible_run", func(ctx *ExecContext) error {
 		return execAnsibleRun(ctx, masterSecret)
 	})
@@ -188,7 +187,8 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		return err
 	}
 
-	// 4) 执行：逐行回调攒输出，节流刷任务 Result（前端轮询任务即见实时日志）
+	// 4) 执行：组装运行参数。逐行回调写结构化日志（前端经日志 WS 即见实时输出；
+	//    落库节流由 TaskLogger 统一承担，不再在这里自建 2s 攒批刷 result）。
 	var runOpts ansible.RunOpts
 	if isPlaybook {
 		// playbook 分支：id 在 handler 轻校验过，这里按白名单正则后再拼路径（纵深防御）
@@ -213,50 +213,41 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	runOpts.Diff, _ = boolParam(ctx.Payload, "diff")
 	runOpts.Tags, _ = strParam(ctx.Payload, "tags")
 	runOpts.SkipTags, _ = strParam(ctx.Payload, "skip_tags")
-	if raw, ok := ctx.Payload["extra_vars"].(map[string]interface{}); ok && len(raw) > 0 {
-		ev := map[string]string{}
-		for k, v := range raw {
-			ev[k] = fmt.Sprintf("%v", v)
+	// survey 执行参数分流（安全要点）：定义从 playbook 头部解析，答案按类型走不同通道——
+	//   - 非 secret → 写成 YAML 文件走 --extra-vars @file（字符串打 !unsafe 防 Jinja 注入）
+	//   - secret    → payload 里存的是密文，此处解密后经环境变量注入（不进 extra-vars）
+	// 命令行只出现文件路径，用户填的值永不进 argv。无 survey 定义时按旧 vars= 语义全量落盘。
+	if ef, ev, aerr := ansible.ApplySurveyAnswers(runOpts.Playbook, runDir, ctx.Payload, masterSecret); aerr != nil {
+		return aerr
+	} else {
+		if ef != "" {
+			runOpts.ExtraVarsFile = ef
 		}
-		runOpts.ExtraVars = ev
+		if len(ev) > 0 {
+			runOpts.EnvVars = ev
+		}
 	}
+
+	// 内存 buf 仅用于拼装终态业务结果里的 output 字段（保持既有结果结构不变）。
+	// 实时日志走 ctx.Log（结构化条目 + 落库节流 + WS 推送），这里不再做中间 result 刷库。
 	var (
-		mu    sync.Mutex
-		buf   []string
-		dirty bool
+		mu  sync.Mutex
+		buf []string
 	)
-	flush := func() {
-		mu.Lock()
-		defer mu.Unlock()
-		if !dirty {
-			return
-		}
-		text := truncate(strings.Join(buf, "\n"), 60_000)
-		if err := ctx.DB.Model(&model.Task{}).Where("id = ?", ctx.Task.ID).Update("result", text).Error; err != nil {
-			// 中间刷新失败不致命（终态由 worker 收口），留痕即可
-			log.Printf("[ansible] 任务 %d 中间结果落库失败: %v", ctx.Task.ID, err)
-		}
-		ctx.Task.Result = text
-		dirty = false
-	}
-	stopFlusher := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(ansibleFlushInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				flush()
-			case <-stopFlusher:
-				return
-			}
-		}
-	}()
 	runOpts.OnLine = func(line string) {
 		mu.Lock()
 		buf = append(buf, line)
-		dirty = true
 		mu.Unlock()
+		if ctx.Log != nil {
+			ctx.Log.AppendLine(line)
+		}
+	}
+	if ctx.Log != nil {
+		if isPlaybook {
+			ctx.Log.Command("ansible-playbook " + playbook)
+		} else {
+			ctx.Log.Command("ansible -m " + module + " " + moduleArgs)
+		}
 	}
 	// AU2 取消：ctx 来自 Manager（用户取消时子进程被 kill，Run 返回 ctx.Canceled）
 	runCtx := ctx.Ctx
@@ -264,8 +255,6 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		runCtx = context.Background()
 	}
 	recap, err := eng.Run(runCtx, runOpts)
-	close(stopFlusher)
-	flush()
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}

@@ -318,9 +318,22 @@
         <el-form-item v-if="runPb" label="说明">
           <span class="auto-hint">{{ runPb.desc || '（无说明）' }}</span>
         </el-form-item>
-        <template v-if="runPb && (runPb.vars || []).length">
-          <el-form-item v-for="v in runPb.vars" :key="v" :label="v">
-            <el-input v-model="extraVars[v]" :placeholder="v + ' 的值（经 -e 注入，覆盖 playbook 默认值）'" class="mono" />
+        <!-- 执行参数（Survey Var）：按类型渲染控件——select/enum 下拉、int 数字、text 多行、
+             secret 密码框（不回显、不落前端持久化）、str 单行；必填项前端先挡一道 -->
+        <template v-if="runSurvey.length">
+          <el-divider content-position="left"><span class="auto-survey-title">执行参数</span></el-divider>
+          <el-form-item v-for="v in runSurvey" :key="v.name" :label="surveyLabel(v)" :required="v.required">
+            <div class="auto-survey-field">
+              <el-select v-if="v.type === 'select' || v.type === 'enum'" v-model="extraVars[v.name]" clearable :placeholder="'请选择' + surveyLabel(v)" style="width: 260px">
+                <el-option v-for="c in (v.values || [])" :key="c.value" :label="c.name" :value="c.value" />
+              </el-select>
+              <el-input-number v-else-if="v.type === 'int'" v-model="extraVars[v.name]" :controls="false" class="mono" style="width: 200px" placeholder="整数" />
+              <el-input v-else-if="v.type === 'text'" v-model="extraVars[v.name]" type="textarea" :rows="3" class="mono" :placeholder="v.description || ''" />
+              <el-input v-else-if="v.type === 'secret'" v-model="extraVars[v.name]" type="password" autocomplete="new-password" class="mono" :placeholder="v.description || '敏感值：加密存储，不回显，执行时经环境变量注入'" />
+              <el-input v-else v-model="extraVars[v.name]" class="mono" :placeholder="v.description || ''" />
+              <span v-if="v.description && v.type !== 'text' && v.type !== 'secret'" class="auto-hint">{{ v.description }}</span>
+              <el-tag v-if="v.type === 'secret'" size="small" type="warning" effect="plain" class="auto-secret-tag">密钥</el-tag>
+            </div>
           </el-form-item>
         </template>
       </el-form>
@@ -447,6 +460,14 @@ const checking = ref(false)
 const saving = ref(false)
 const runDialogOpen = ref(false)
 const runPb = ref(null)
+// 执行参数定义（Survey）：优先用后端解析的带类型定义；无则回落旧 vars= 清单（全按 str）
+const runSurvey = computed(() => {
+  const pb = runPb.value
+  if (!pb) return []
+  if (Array.isArray(pb.survey) && pb.survey.length) return pb.survey
+  return (pb.vars || []).map((name) => ({ name, type: 'str' }))
+})
+const surveyLabel = (v) => v.title || v.name
 // playbook 执行选项：预演 / 差异 / 标签过滤
 const runCheck = ref(false)
 const runDiff = ref(false)
@@ -699,6 +720,11 @@ function openRunDialog(pb) {
   runPb.value = pb
   targets.value = []
   Object.keys(extraVars).forEach((k) => delete extraVars[k])
+  // 预填默认值（Survey DefaultValue）：int 转数字，其余按字符串
+  for (const v of (pb.survey || [])) {
+    if (v.default_value === undefined || v.default_value === null || v.default_value === '') continue
+    extraVars[v.name] = v.type === 'int' ? Number(v.default_value) : v.default_value
+  }
   runCheck.value = false
   runDiff.value = false
   runTags.value = ''
@@ -707,9 +733,19 @@ function openRunDialog(pb) {
 }
 
 async function runPlaybook() {
+  // 必填校验（前端先挡一道；服务端 Run 还会按 survey 定义强校验）
+  for (const v of runSurvey.value) {
+    const val = extraVars[v.name]
+    if (v.required && (val === '' || val === null || val === undefined)) {
+      return ElMessage.warning(`请填写「${surveyLabel(v)}」`)
+    }
+  }
+  // 只提交 survey 声明过的参数（值经 -e @file 注入；secret 由服务端加密后走环境变量）
   const ev = {}
-  for (const [k, v] of Object.entries(extraVars)) {
-    if (v !== '' && v != null) ev[k] = v
+  for (const v of runSurvey.value) {
+    const val = extraVars[v.name]
+    if (val === '' || val === null || val === undefined) continue
+    ev[v.name] = val
   }
   const payload = { playbook: runPb.value.id, extra_vars: ev }
   if (runCheck.value) payload.check = true
@@ -988,4 +1024,14 @@ onUnmounted(stopPolling)
   flex-wrap: wrap;
   gap: 8px 12px;
 }
+/* Survey 执行参数：控件 + 说明 + 密钥标记横排 */
+.auto-survey-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.auto-survey-title { font-weight: 600; font-size: 0.82rem; }
+.auto-secret-tag { flex: none; }
 </style>

@@ -90,6 +90,10 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 			status = "failed"
 		}
 
+		// 变更前后快照：由写操作经 SetAuditDiff 挂在上下文里（中间件拿不到对象上下文，
+		// 详见 audit_diff.go 顶部注释）。未调用的操作留空。
+		beforeData, afterData := takeAuditDiff(c)
+
 		// 记录审计日志
 		auditLog := model.AuditLog{
 			UserID:     userID,
@@ -98,6 +102,8 @@ func AuditMiddleware(db *gorm.DB) gin.HandlerFunc {
 			ObjectType: objectType,
 			SourceIP:   sourceIP,
 			Status:     status,
+			BeforeData: beforeData,
+			AfterData:  afterData,
 			// Detail 带路径：全站活动流要按路径判断「跳哪个对象页」，审计列表的
 			// 可读性也依赖它（此前只有耗时，同一 action 的行长得一模一样）
 			Detail: path + " · 耗时 " + duration.String(),

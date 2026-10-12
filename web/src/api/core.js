@@ -183,6 +183,10 @@ export const core = {
   // 异步任务（耗时操作转后台：createVM/deleteVM/cloneVM/cloneImage/stopVM 返回 202 {task_id}，再轮询任务）
   getTask: (id) => unwrap(http.get('/tasks/' + id)),
   listTasks: (params) => unwrap(http.get('/tasks', { params })),
+  // 任务日志：首屏 GET 全量（含 structured 标志，老任务回落纯文本 result）；
+  // 实时增量走 WS —— 票据一次性（POST 签发，30s 内单次有效、绑定 task:<id>）
+  getTaskLogs: (id) => unwrap(http.get('/tasks/' + id + '/logs')),
+  mintTaskLogTicket: (id) => unwrap(http.post(`/tasks/${id}/ws-ticket`)),
   deleteTask: (id) => unwrap(http.delete('/tasks/' + id)),
   cancelTask: (id) => unwrap(http.post(`/tasks/${id}/cancel`)),
 
@@ -226,6 +230,9 @@ export const core = {
   // 一次性携带，不随计划保存（后端写盘前也会强制剥离 ssh_secret 兜底）
   applyDesignerPlan: (id, payload) => unwrap(http.post(`/designer/plans/${id}/apply`, payload || {})),
   designerApplyStatus: (id) => unwrap(http.get(`/designer/plans/${id}/apply-status`)),
+  // 漂移收敛：先预演（只读，列出 added/deleted/recreated/restarted 集合），确认后再执行
+  designerReconcilePlan: (id) => unwrap(http.get(`/designer/plans/${id}/reconcile-plan`)),
+  reconcileDesignerPlan: (id, payload) => unwrap(http.post(`/designer/plans/${id}/reconcile`, payload || {})),
 
   // 系统公告（公开接口，无需认证——登录页也展示）；写入口走 updateSettings 的 announcement 键
   getAnnouncement: () => unwrap(http.get('/announcement'))

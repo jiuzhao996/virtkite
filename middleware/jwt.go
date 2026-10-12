@@ -135,6 +135,8 @@ func wsTicketResource(c *gin.Context) string {
 	case strings.HasPrefix(full, "/api/docker/") &&
 		(strings.HasSuffix(full, "/terminal") || strings.HasSuffix(full, "/logs/ws")):
 		return wsticket.DockerResource(c.Param("id"))
+	case strings.HasPrefix(full, "/api/tasks/") && strings.HasSuffix(full, "/logs/ws"):
+		return wsticket.TaskResource(c.Param("id"))
 	}
 	return ""
 }

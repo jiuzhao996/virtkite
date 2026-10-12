@@ -66,6 +66,36 @@ func TestBuildInventory(t *testing.T) {
 	}
 }
 
+// TestBuildInventoryInjection 覆盖 inventory 注入面硬化：来自数据库的 user / 组名若含
+// 空白或换行，就能往 inventory 里塞额外键（伪造 ansible_ssh_pass）或注入新 [段]。
+//
+// 风险点：凭据 user 仅按长度校验、主机组 name 仅按非空+长度校验，两者都是可写入数据库的
+// 用户输入——拼行前必须挡下，否则运维执行器变成 inventory 注入入口。
+func TestBuildInventoryInjection(t *testing.T) {
+	dir := t.TempDir()
+	// 恶意 user：带换行伪造 ansible_ssh_pass 覆盖真实口令
+	badUser := HostEntry{Name: "web-1", IP: "10.0.0.1", User: "root\nansible_ssh_pass='pwned'", Port: 22, Pass: "real"}
+	if _, err := BuildInventory(dir, []HostEntry{badUser}, nil); err == nil {
+		t.Error("含换行的登录用户应被拒绝")
+	}
+	// 恶意组名：含 ] 与换行注入新段
+	okHost := HostEntry{Name: "web-1", IP: "10.0.0.1", User: "root", Port: 22, Pass: "p"}
+	inv, err := BuildInventory(dir, []HostEntry{okHost}, map[string][]string{
+		"evil]\n[all": {"web-1"}, // 非法组名应被跳过
+	})
+	if err != nil {
+		t.Fatalf("合法主机不应因坏组名而失败：%v", err)
+	}
+	raw, _ := os.ReadFile(inv)
+	if strings.Contains(string(raw), "evil") {
+		t.Errorf("非法组名不应出现在 inventory：\n%s", raw)
+	}
+	// 合法 IPv6 与用户名不应被误拒
+	if _, err := BuildInventory(dir, []HostEntry{{Name: "v6", IP: "fe80::1", User: "ubuntu", Port: 22, Pass: "p"}}, nil); err != nil {
+		t.Errorf("合法 IPv6 主机不应被拒：%v", err)
+	}
+}
+
 // TestSyntaxCheckRules 覆盖语法校验的纯规则段（空内容 / 缺 --- 分隔符 /
 // 元数据注释行在 --- 前属合法惯例）。真实 --syntax-check 实跑用例在检测到
 // 宿主机引擎存在时补一条，无引擎则跳过（CI 环境可能没装 ansible）。

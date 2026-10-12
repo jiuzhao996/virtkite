@@ -154,6 +154,22 @@
           <el-link type="primary" :underline="false" @click="goRelated">{{ relatedLink.text }}</el-link>
         </template>
 
+        <!-- 变更内容（前后快照）：只有显式拍过快照的写操作才有值（改规格/授权等）。
+             按**字段级 diff** 展示而不是把两坨 JSON 并排贴——看的人要的是
+             「哪个字段从什么变成了什么」，并排两段 JSON 得自己找。 -->
+        <template v-if="changeRows.length">
+          <h4 class="detail-sec">变更内容</h4>
+          <el-table :data="changeRows" size="small" border class="dt-diff">
+            <el-table-column prop="label" label="字段" width="140" />
+            <el-table-column label="变更前">
+              <template #default="{ row }"><span class="mono dt-before">{{ row.before }}</span></template>
+            </el-table-column>
+            <el-table-column label="变更后">
+              <template #default="{ row }"><span class="mono dt-after">{{ row.after }}</span></template>
+            </el-table-column>
+          </el-table>
+        </template>
+
         <h4 class="detail-sec">详情原文</h4>
         <pre class="detail-text">{{ current.detail || '—' }}</pre>
       </template>
@@ -193,6 +209,56 @@ const items = ref([])
 const range = ref(null)
 const drawerOpen = ref(false)
 const current = ref(null)
+
+// 前后快照的字段中文名：审计是给人看的，字段名保持后端原样（vcpu/memory_mb）读起来费劲。
+const DIFF_FIELD_LABELS = {
+  vcpu: 'vCPU 核数',
+  memory_mb: '内存 (MB)',
+  disk_gb: '磁盘 (GB)',
+  vm: '虚拟机',
+  user: '用户',
+  granted: '已授权',
+  expires_at: '有效期至',
+  status: '状态',
+  name: '名称',
+  ip: 'IP',
+  autostart: '开机自启'
+}
+
+function diffVal(v) {
+  if (v === undefined) return '—'
+  if (v === null) return 'null'
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
+}
+
+// 前后快照 → 字段级 diff。取两边键的并集，**只列真正变了的字段**（没变的占版面没意义）。
+// 比较前统一字符串化：布尔/数字/字符串混排时直接比会误判。
+// JSON 解析失败按空对象处理（后端字段是 text，历史行可能为空或非 JSON），不抛错。
+const changeRows = computed(() => {
+  const c = current.value
+  if (!c || (!c.before_data && !c.after_data)) return []
+  const parse = (raw) => {
+    if (!raw) return {}
+    try {
+      const v = JSON.parse(raw)
+      return v && typeof v === 'object' ? v : {}
+    } catch (e) {
+      return {}
+    }
+  }
+  const b = parse(c.before_data)
+  const a = parse(c.after_data)
+  const keys = [...new Set([...Object.keys(b), ...Object.keys(a)])]
+  return keys
+    .filter((k) => diffVal(b[k]) !== diffVal(a[k]))
+    .map((k) => ({
+      field: k,
+      label: DIFF_FIELD_LABELS[k] || k,
+      before: diffVal(b[k]),
+      after: diffVal(a[k])
+    }))
+})
 
 // 对象类型中文映射：取值集合核实自 middleware/audit.go determineObjectType（vm/host/image/user/docker/app/cron/system）
 // + 任务指定的 storage/network/task 预留位；未知类型显原文不臆造
@@ -708,5 +774,16 @@ onMounted(() => {
 /* tooltip 内容 teleport 到 body，scoped 下用 :deep 穿透；超长 detail 不把 tooltip 撑出视口 */
 :deep(.audit-detail-popper) {
   max-width: 480px;
+}
+.dt-diff {
+  margin-bottom: 4px;
+}
+.dt-before {
+  color: var(--color-muted-foreground);
+  text-decoration: line-through;
+}
+.dt-after {
+  color: var(--el-color-primary);
+  font-weight: 600;
 }
 </style>

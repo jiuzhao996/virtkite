@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/middleware"
 	"github.com/jiuzhao/vmops/model"
 	"gorm.io/gorm"
 )
@@ -173,6 +174,12 @@ func (h *VMHandler) GrantVM(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "有效期不能早于当前时间")
 		return
 	}
+
+	// 审计快照：授权是「谁把哪台机器给了谁、给到什么时候」——这条记进审计才有追溯价值，
+	// 中间件自己拿不到这些对象字段（详见 middleware/audit_diff.go）
+	middleware.SetAuditDiff(c,
+		gin.H{"vm": vm.Name, "user": user.Username, "granted": false},
+		gin.H{"vm": vm.Name, "user": user.Username, "expires_at": req.ExpiresAt, "granted": true})
 
 	adminID, _ := taskUserFromContext(c)
 	grantedBy := uint(0)

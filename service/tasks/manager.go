@@ -140,6 +140,10 @@ type ExecContext struct {
 	// Ctx 取消信号（AU2）：用户取消时触发；不响应它的 executor 也能跑完，
 	// 但任务状态以 cancelled 为准。nil 时按 context.Background() 使用。
 	Ctx context.Context
+	// Log 结构化任务日志器（worker 创建，落库进 tasks.log_entries 并实时推给日志 WS）。
+	// executor 通过它写日志：Log.Info / Log.Command / Log.AppendLine / Log.Debug。
+	// 可为 nil（如直接构造 ExecContext 的单测），调用方需容错。
+	Log *TaskLogger
 }
 
 // Executor 任务执行函数：返回 nil=成功（可写 ctx.Task.Result），error=失败（中文友好，写 Task.Error）。
@@ -158,9 +162,16 @@ type Manager struct {
 	mu        sync.RWMutex
 	// cancels 运行中任务的取消函数表（taskID → context.CancelFunc），AU2 用户取消。
 	cancels sync.Map
+	// masterSecret 凭据主密钥（由 Register* 注入，与 handler.CredentialMasterSecret() 同源）。
+	// 用于构建任务日志脱敏器：解密本任务相关 VM 的托管凭据以纳入脱敏集合。
+	masterSecret string
+	// loggers 运行中任务的日志器登记表（taskID → *TaskLogger），供日志 WS 查找实时增量源。
+	// 用普通 map + 锁（而非 sync.Map）：注销时要按「值相等」判定，避免把重试后的新日志器误删。
+	logMu   sync.Mutex
+	loggers map[uint]*TaskLogger
 }
 
-// NewManager 创建任务管理器：virt.New() 惰性连接，起快慢两组 worker goroutine。
+// NewManager 创建任务管理器：virt.New() 惰性连接，起快慢两组 worker goroutine 与重试扫描协程。
 // worker 只读各自队列，随进程一起退出，不做优雅关闭。
 func NewManager(db *gorm.DB) *Manager {
 	m := &Manager{
@@ -169,6 +180,7 @@ func NewManager(db *gorm.DB) *Manager {
 		queueFast: make(chan uint, queueBufferSize),
 		queueSlow: make(chan uint, queueBufferSize),
 		executors: map[string]Executor{},
+		loggers:   map[uint]*TaskLogger{},
 	}
 	for i := 0; i < fastWorkerCount; i++ {
 		go m.loop(m.queueFast)
@@ -177,15 +189,63 @@ func NewManager(db *gorm.DB) *Manager {
 		go m.loop(m.queueSlow)
 	}
 	m.sweepOrphanRunning()
+	m.StartRetryScanner()
 	return m
+}
+
+// SetMasterSecret 注入凭据主密钥（Register* 调用时传入）。空串表示未配置，脱敏跳过凭据解密。
+func (m *Manager) SetMasterSecret(secret string) {
+	m.mu.Lock()
+	m.masterSecret = secret
+	m.mu.Unlock()
+}
+
+// secret 读凭据主密钥（worker 构建日志脱敏器时用）。
+func (m *Manager) secret() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.masterSecret
+}
+
+// registerLogger 登记运行中任务的日志器（日志 WS 据此找到实时增量源）。
+// 容忍 loggers 未初始化（手工构造 Manager 的单测不走 NewManager）——懒建 map。
+func (m *Manager) registerLogger(taskID uint, lg *TaskLogger) {
+	m.logMu.Lock()
+	if m.loggers == nil {
+		m.loggers = map[uint]*TaskLogger{}
+	}
+	m.loggers[taskID] = lg
+	m.logMu.Unlock()
+}
+
+// unregisterLogger 注销日志器：仅当登记的正是该实例时才删（重试后新日志器可能已覆盖）。
+func (m *Manager) unregisterLogger(taskID uint, lg *TaskLogger) {
+	m.logMu.Lock()
+	if cur, ok := m.loggers[taskID]; ok && cur == lg {
+		delete(m.loggers, taskID)
+	}
+	m.logMu.Unlock()
+}
+
+// TaskLog 返回该任务当前运行中的日志器（不存在返回 nil：任务未启动/已结束/进程重启）。
+func (m *Manager) TaskLog(taskID uint) *TaskLogger {
+	m.logMu.Lock()
+	defer m.logMu.Unlock()
+	return m.loggers[taskID]
 }
 
 // sweepOrphanRunning 启动时把上一进程遗留的 running/pending 任务置为 failed：
 // 任务队列只在内存中（channel），进程重启后这些行永远不会被执行，不扫就是僵尸任务。
+// 同时把 retry_state 置 aborted：被中断的任务不参与自动重试（重试只针对「执行完并失败」的任务，
+// 进程重启中断的语义完全不同，自动重投可能落在半完成的状态上）。
 func (m *Manager) sweepOrphanRunning() {
 	res := m.DB.Model(&model.Task{}).
 		Where("status IN ?", []string{statusRunning, statusPending}).
-		Updates(map[string]interface{}{"status": statusFailed, "error": "服务重启，任务已中断"})
+		Updates(map[string]interface{}{
+			"status":      statusFailed,
+			"error":       "服务重启，任务已中断",
+			"retry_state": retryStateAborted,
+		})
 	if res.Error != nil {
 		log.Printf("[tasks] 清扫遗留任务失败 err=%v", res.Error)
 		return
@@ -228,6 +288,9 @@ func (m *Manager) Submit(
 		Username: username,
 		VMID:     vmID,
 		VMName:   vmName,
+		// MaxRetry 按重试白名单在提交时固化：只有幂等安全的类型才 > 0，重试扫描器据此重投
+		//（见 retry.go 的 retryableTypes 取舍）。非白名单类型恒为 0 = 永不自动重试。
+		MaxRetry: maxRetryFor(taskType),
 	}
 	if err := m.DB.Create(task).Error; err != nil {
 		return nil, fmt.Errorf("创建任务记录失败: %w", err)
@@ -383,11 +446,19 @@ func (m *Manager) run(id uint) {
 		return
 	}
 
+	// 结构化日志器：所有任务统一挂一个（落库 tasks.log_entries + 实时推日志 WS）。
+	// 刻意在 executor 之外创建：这样「未知类型/参数损坏」这类在 executor 之前就失败的任务
+	// 也有日志可看；executor 通过 ctx.Log 写日志，无需各自实现攒批/脱敏/推送。
+	lg := newTaskLogger(m.DB, id, m.secret(), m)
+	defer lg.Close()
+	lg.Info("任务开始执行")
+
 	m.mu.RLock()
 	fn, ok := m.executors[task.Type]
 	m.mu.RUnlock()
 	if !ok {
 		// 终态写入失败会导致任务永久卡 running（全量审计 P1），走重试 + 留痕
+		lg.Info("未知任务类型: " + task.Type)
 		m.updateTaskFields(id, map[string]interface{}{
 			"status": statusFailed,
 			"error":  fmt.Sprintf("未知任务类型: %s", task.Type),
@@ -400,6 +471,7 @@ func (m *Manager) run(id uint) {
 		if err := json.Unmarshal([]byte(task.Payload), &payload); err != nil {
 			// 原始解析错误只进日志，DB 只存用户友好文案
 			log.Printf("[tasks] 任务参数损坏 id=%d type=%s err=%v", id, task.Type, err)
+			lg.Info("任务参数损坏，无法执行")
 			m.updateTaskFields(id, map[string]interface{}{
 				"status": statusFailed,
 				"error":  "任务参数损坏，无法执行",
@@ -419,6 +491,7 @@ func (m *Manager) run(id uint) {
 		Payload: payload,
 		Report:  m.reporter(id),
 		Ctx:     ctx,
+		Log:     lg,
 	}
 	// 执行级超时：executor 挂死（libvirt RPC 无响应 / 下载僵死 / 死循环）时，
 	// 任务永久停在 running——worker 白白少一个，四角全卡死时整个任务系统瘫痪，
@@ -440,6 +513,7 @@ func (m *Manager) run(id uint) {
 		if err != nil {
 			// 原始错误链（含 libvirt 具体报错）只进日志，DB 只存 friendly 中文（该字段回显前端）
 			log.Printf("[tasks] 任务失败 id=%d type=%s vm=%s err=%v", id, task.Type, task.VMName, err)
+			lg.Info("任务执行失败: " + friendlyError(err))
 			// executor 在失败路径设置的 Result（如删除任务失败时写明的已执行步骤与
 			// 残留状态）一并落库：失败原因 Task.Error 只有脱敏短句，运维定位
 			//「删到哪一步、能不能重试」靠这段上下文，不写就只剩翻日志一条路。
@@ -459,6 +533,7 @@ func (m *Manager) run(id uint) {
 			return
 		}
 		log.Printf("[tasks] !!! 任务执行超时 id=%d type=%s vm=%s timeout=%s", id, task.Type, task.VMName, timeout)
+		lg.Info(fmt.Sprintf("任务执行超时（上限 %s）", timeout))
 		m.markFailed(id, fmt.Sprintf("任务执行超时（上限 %s），已自动终止，请检查环境后重试", timeout))
 		return
 	}
@@ -466,6 +541,7 @@ func (m *Manager) run(id uint) {
 	if m.isCancelled(id) {
 		return
 	}
+	lg.Info("任务执行成功")
 	m.updateTaskFields(id, map[string]interface{}{
 		"status":   statusSuccess,
 		"progress": 100,

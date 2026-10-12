@@ -1,7 +1,7 @@
 // image_build.go：Dockerfile 构建 executor（docker build）——平台从「只能拉镜像」补到「能造镜像」。
 //
 // payload：{context*, tag*, dockerfile?, build_args?{K:V}, no_cache?}。
-// 构建日志流式回写任务结果（前端轮询任务即见实时构建输出）。
+// 构建日志实时写入结构化任务日志（ctx.Log → tasks.log_entries + 日志 WS 推送）。
 // 约束：executor 运行在 worker goroutine，禁止引用 gin/handler。
 package tasks
 
@@ -10,18 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/dockerbuild"
 	"github.com/jiuzhao/vmops/service/dockerx"
 )
-
-// imageBuildFlushInterval 构建日志节流落库间隔（每行一次 UPDATE 会打爆 DB）。
-const imageBuildFlushInterval = 2 * time.Second
 
 // RegisterImageBuild 注册 Dockerfile 构建 executor。
 func RegisterImageBuild(m *Manager) {
@@ -59,31 +52,18 @@ func execImageBuild(ctx *ExecContext) error {
 	}
 	reportProgress(ctx, 5, "开始构建镜像 "+tag)
 
-	// 日志节流落库：攒行 + 2s 刷一次（与 ansible_run 同款取舍）。
-	// 必须加锁：dockerx.Build 对 stdout/stderr 各起一个 goroutine 读管道，OnLine 是并发调用的，
-	// 裸 slice 追加会数据竞争（-race 可复现），严重时 slice 头被写坏。
-	var (
-		mu   sync.Mutex
-		buf  []string
-		last = time.Now()
-	)
-	flush := func() {
-		text := truncate(strings.Join(buf, "\n"), 60_000)
-		if err := ctx.DB.Model(&model.Task{}).Where("id = ?", ctx.Task.ID).Update("result", text).Error; err != nil {
-			// 中间刷新失败不致命（终态由 worker 收口），留痕即可
-			log.Printf("[image_build] 任务 %d 中间日志落库失败: %v", ctx.Task.ID, err)
-		}
-		ctx.Task.Result = text
-	}
+	// 构建日志实时写入结构化日志器：落库节流（2s 攒批）与 WS 推送由 TaskLogger 统一承担，
+	// 不再在这里自建 buf/节流刷 result。AppendLine 会对 docker pull/build 的进度噪音行
+	// 自动折叠（hidden=true），前端默认收起、可展开。
+	// 注意：dockerx.Build 对 stdout/stderr 各起一个读协程，onLine 会被并发调用——
+	// TaskLogger.append 内部持锁，天然并发安全。
 	onLine := func(line string) {
-		mu.Lock()
-		defer mu.Unlock()
-		buf = append(buf, line)
-		if time.Since(last) < imageBuildFlushInterval {
-			return
+		if ctx.Log != nil {
+			ctx.Log.AppendLine(line)
 		}
-		last = time.Now()
-		flush()
+	}
+	if ctx.Log != nil {
+		ctx.Log.Command("docker build -t " + strings.TrimSpace(tag))
 	}
 
 	out, err := dockerx.New().Build(base, dir, dockerx.BuildOpts{
@@ -93,10 +73,6 @@ func execImageBuild(ctx *ExecContext) error {
 		NoCache:    noCache,
 		OnLine:     onLine,
 	})
-	// 收尾刷一次：最后不足一个节流窗口的日志不能丢
-	mu.Lock()
-	flush()
-	mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("镜像构建失败: %w", err)
 	}

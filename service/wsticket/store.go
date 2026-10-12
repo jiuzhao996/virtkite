@@ -90,3 +90,6 @@ func VMResource(id string) string { return "vm:" + id }
 
 // DockerResource 容器终端 / 日志流的资源标识。
 func DockerResource(id string) string { return "docker:" + id }
+
+// TaskResource 任务日志 WS 的票据资源标识（口径须与 handler.taskWSResource 一致）。
+func TaskResource(id string) string { return "task:" + id }

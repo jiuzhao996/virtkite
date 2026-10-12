@@ -52,6 +52,8 @@ func RegisterAppTasks(m *Manager, masterSecret string) {
 	if m == nil {
 		return
 	}
+	// 注入主密钥：worker 构建任务日志脱敏器时用它解密本任务相关 VM 的托管凭据
+	m.SetMasterSecret(masterSecret)
 	m.Register("app_install", func(ctx *ExecContext) error {
 		return execAppInstall(ctx, masterSecret)
 	})

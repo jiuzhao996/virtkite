@@ -158,15 +158,45 @@ func EnsureSeedPlaybooks() {
 
 // playbookMeta 列表条目：头部机器可读行解析（# vmops-playbook: name=x | desc=y | targets=z）。
 type playbookMeta struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Desc      string   `json:"desc"`
-	Targets   string   `json:"targets"`
-	Vars      []string `json:"vars,omitempty"`
-	BuiltIn   bool     `json:"built_in"`
-	IsDir     bool     `json:"is_dir"` // 目录形态（role 结构：<id>/site.yml + roles/ templates/ …）
-	SizeBytes int64    `json:"size_bytes"`
-	UpdatedAt string   `json:"updated_at"`
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Desc    string   `json:"desc"`
+	Targets string   `json:"targets"`
+	Vars    []string `json:"vars,omitempty"`
+	// Survey 带类型的执行参数定义（survey 块优先；无块时由 vars= 清单按 str 兜底）。
+	// 前端执行对话框按它渲染控件（下拉/密码/数字/多行），不再只有裸输入框。
+	Survey    []ansible.SurveyVar `json:"survey,omitempty"`
+	BuiltIn   bool                `json:"built_in"`
+	IsDir     bool                `json:"is_dir"` // 目录形态（role 结构：<id>/site.yml + roles/ templates/ …）
+	SizeBytes int64               `json:"size_bytes"`
+	UpdatedAt string              `json:"updated_at"`
+}
+
+// playbookSurvey 组装清单/执行用的参数定义：优先解析头部 survey 块；没有则把旧的
+// `vars=a,b` 逗号清单按 str 兜底（向后兼容：旧 playbook 一行不改照常可用）。
+// 解析失败（块写坏了）不阻断列表——回落 vars= 兜底，等保存/执行时再报明确错误。
+func playbookSurvey(raw []byte, headerVars []string) []ansible.SurveyVar {
+	if sv, present, err := ansible.ParseSurvey(raw); err == nil && present {
+		return sv
+	}
+	out := make([]ansible.SurveyVar, 0, len(headerVars))
+	for _, v := range headerVars {
+		out = append(out, ansible.SurveyVar{Name: v, Type: ansible.SurveyTypeStr})
+	}
+	return out
+}
+
+// validatePlaybookSurvey 解析并强校验内容里的 survey 定义（保存/语法校验入口调用）。
+// 无 survey 块 = 合法（走旧 vars= 语义）；块存在但定义非法 → 返回中文错误，拒绝保存。
+func validatePlaybookSurvey(content string) error {
+	sv, present, err := ansible.ParseSurvey([]byte(content))
+	if err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
+	return ansible.ValidateSurvey(sv)
 }
 
 // parsePlaybookHeader 读文件头部找 vmops-playbook 元数据行（只看前 8 行）。
@@ -244,6 +274,7 @@ func (h *AnsibleHandler) ListPlaybooks(c *gin.Context) {
 		}
 		items = append(items, playbookMeta{
 			ID: id, Name: name, Desc: desc, Targets: targets, Vars: pvars,
+			Survey:  playbookSurvey(raw, pvars),
 			BuiltIn: isSeedFile(e.Name()), IsDir: isDir, SizeBytes: info.Size(),
 			UpdatedAt: info.ModTime().Format(time.DateTime),
 		})
@@ -325,6 +356,10 @@ func (h *AnsibleHandler) CreatePlaybook(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := validatePlaybookSurvey(req.Content); err != nil {
+		Fail(c, http.StatusBadRequest, "执行参数定义有误："+err.Error())
+		return
+	}
 	if err := os.WriteFile(dst, []byte(req.Content), 0o644); err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "保存失败", err)
 		return
@@ -361,6 +396,10 @@ func (h *AnsibleHandler) UpdatePlaybook(c *gin.Context) {
 	}
 	if verr != nil {
 		Fail(c, http.StatusBadRequest, verr.Error())
+		return
+	}
+	if err := validatePlaybookSurvey(req.Content); err != nil {
+		Fail(c, http.StatusBadRequest, "执行参数定义有误："+err.Error())
 		return
 	}
 	if err := os.WriteFile(dst, []byte(req.Content), 0o644); err != nil {
@@ -411,6 +450,10 @@ func (h *AnsibleHandler) CheckPlaybook(c *gin.Context) {
 	}
 	if err := ansible.SyntaxCheck(req.Content); err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validatePlaybookSurvey(req.Content); err != nil {
+		Fail(c, http.StatusBadRequest, "执行参数定义有误："+err.Error())
 		return
 	}
 	Success(c, gin.H{"valid": true})
@@ -537,16 +580,16 @@ func (h *AnsibleHandler) DeployKey(c *gin.Context) {
 // playbook：body {targets*[vm_id], playbook*(id)}（S2）
 func (h *AnsibleHandler) Run(c *gin.Context) {
 	var req struct {
-		Targets   []uint            `json:"targets"`
-		GroupID   uint              `json:"group_id"`
-		Module    string            `json:"module"`
-		Args      string            `json:"args"`
-		Playbook  string            `json:"playbook"`
-		ExtraVars map[string]string `json:"extra_vars"`
-		Check     bool              `json:"check"`     // 预演（--check，仅 playbook）
-		Diff      bool              `json:"diff"`      // 差异（--diff，仅 playbook）
-		Tags      string            `json:"tags"`      // 只跑指定标签（-t，仅 playbook）
-		SkipTags  string            `json:"skip_tags"` // 跳过指定标签（仅 playbook）
+		Targets   []uint                 `json:"targets"`
+		GroupID   uint                   `json:"group_id"`
+		Module    string                 `json:"module"`
+		Args      string                 `json:"args"`
+		Playbook  string                 `json:"playbook"`
+		ExtraVars map[string]interface{} `json:"extra_vars"` // survey 答案（值可为字符串或数字）
+		Check     bool                   `json:"check"`      // 预演（--check，仅 playbook）
+		Diff      bool                   `json:"diff"`       // 差异（--diff，仅 playbook）
+		Tags      string                 `json:"tags"`       // 只跑指定标签（-t，仅 playbook）
+		SkipTags  string                 `json:"skip_tags"`  // 跳过指定标签（仅 playbook）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "参数格式非法")
@@ -595,13 +638,56 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 			Fail(c, http.StatusBadRequest, "playbook ID 非法")
 			return
 		}
-		if _, _, ok := ansible.ResolvePlaybook(playbookDir(), req.Playbook); !ok {
+		pbPath, _, ok := ansible.ResolvePlaybook(playbookDir(), req.Playbook)
+		if !ok {
 			Fail(c, http.StatusNotFound, "playbook 不存在")
 			return
 		}
 		payload["playbook"] = req.Playbook
-		if len(req.ExtraVars) > 0 {
-			payload["extra_vars"] = req.ExtraVars
+		// survey 参数处理：强校验答案 + secret 加密分流。
+		//   - 非 secret → payload.extra_vars（executor 落盘为 --extra-vars @file）
+		//   - secret    → 经 secretbox 加密后进 payload.secret_vars，明文不落库、不进命令行，
+		//     执行时解密走环境变量（见 ansible.ApplySurveyAnswers）
+		var surveyVars []ansible.SurveyVar
+		if raw, rerr := os.ReadFile(pbPath); rerr == nil {
+			if sv, present, perr := ansible.ParseSurvey(raw); perr == nil && present {
+				surveyVars = sv
+			}
+		}
+		answers := map[string]string{}
+		for k, v := range req.ExtraVars {
+			answers[k] = fmt.Sprintf("%v", v)
+		}
+		if len(surveyVars) > 0 {
+			if verr := ansible.ValidateAnswers(surveyVars, answers); verr != nil {
+				Fail(c, http.StatusBadRequest, verr.Error())
+				return
+			}
+		}
+		byName := ansible.SurveyByName(surveyVars)
+		extraOut := map[string]string{}
+		secretOut := map[string]map[string]string{}
+		for name, val := range answers {
+			if v, declared := byName[name]; declared && v.Type == ansible.SurveyTypeSecret {
+				if h.MasterSecret == "" {
+					Fail(c, http.StatusServiceUnavailable, "凭据加密未初始化，无法安全保存 secret 参数")
+					return
+				}
+				enc, salt, eerr := secretbox.SealWithMaster(h.MasterSecret, val)
+				if eerr != nil {
+					ErrorWithMessage(c, http.StatusInternalServerError, "加密执行参数失败", eerr)
+					return
+				}
+				secretOut[name] = map[string]string{"enc": enc, "salt": salt}
+				continue
+			}
+			extraOut[name] = val
+		}
+		if len(extraOut) > 0 {
+			payload["extra_vars"] = extraOut
+		}
+		if len(secretOut) > 0 {
+			payload["secret_vars"] = secretOut
 		}
 		if req.Check {
 			payload["check"] = true
@@ -683,12 +769,24 @@ func (h *AnsibleHandler) WritePlaybookFile(c *gin.Context) {
 	warning := ""
 	if main, _, ok := ansible.ResolvePlaybook(playbookDir(), id); ok {
 		target := main
+		isYml := false
 		if ext := strings.ToLower(filepath.Ext(req.Path)); ext == ".yml" || ext == ".yaml" {
 			// 写的是入口文件：校验它本身（路径已被 WritePlaybookFile 的守卫校验过）
 			target = filepath.Join(playbookDir(), id, filepath.FromSlash(req.Path))
+			isYml = true
 		}
 		if err := ansible.SyntaxCheckFileInDir(main, target, req.Content); err != nil {
 			warning = err.Error()
+		}
+		// 主文件的 survey 定义也要校验：这里是绕过「保存前校验」的第二条写入口，
+		// 定义写坏会让执行对话框失效（与语法校验同口径：不阻断保存，回 warning）。
+		if isYml && target == main {
+			if verr := validatePlaybookSurvey(req.Content); verr != nil {
+				if warning != "" {
+					warning += "；"
+				}
+				warning += "执行参数定义有误：" + verr.Error()
+			}
 		}
 	}
 	Success(c, gin.H{"saved": true, "warning": warning})

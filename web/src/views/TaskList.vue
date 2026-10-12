@@ -19,6 +19,25 @@
             :prefix-icon="Search"
             style="width: 220px"
           />
+          <!-- 批量操作（XXL-JOB 手感）：按钮按选中数自动启停，未选中/不满足条件即置灰。
+               查看详情=selectOnlyOne（恰好选 1 条）；批量取消/删除=selectAny（选中里有可处理项即可） -->
+          <el-button :icon="View" :disabled="!selectOnlyOne" @click="openSelectedDetail">查看详情</el-button>
+          <el-button
+            type="warning"
+            plain
+            :disabled="!canBatchCancel"
+            :loading="batchBusy"
+            @click="batchCancel"
+          >批量取消</el-button>
+          <el-button
+            v-if="isAdmin"
+            type="danger"
+            plain
+            :icon="Delete"
+            :disabled="!canBatchDelete"
+            :loading="batchBusy"
+            @click="batchDelete"
+          >批量删除</el-button>
           <el-button
             v-if="isAdmin"
             type="danger"
@@ -27,23 +46,26 @@
             @click="clearFinished"
           >清理本页已完成 ({{ finishedCount }})</el-button>
         </template>
-        <span class="count">共 {{ total }} 个任务<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span></span>
+        <span class="count">共 {{ total }} 个任务<span v-if="activeCount" class="running-hint"> · 本页 {{ activeCount }} 个进行中</span><span v-if="selectedRows.length" class="running-hint"> · 已选 {{ selectedRows.length }}</span></span>
       </Toolbar>
 
       <!-- 行点击钻取：整行可点开任务详情抽屉；行内按钮/链接一律 .stop 防止误触发钻取 -->
-      <el-table :data="filteredItems" stripe border style="width: 100%" row-class-name="task-row" @row-click="openDetail">
+      <el-table :data="filteredItems" stripe border style="width: 100%" row-class-name="task-row" @row-click="openDetail" @selection-change="onSelectionChange">
         <template #empty><el-empty description="暂无任务" :image-size="80" /></template>
+        <el-table-column type="selection" width="46" />
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="title" label="任务" min-width="200" show-overflow-tooltip />
         <el-table-column label="类型" width="130">
           <template #default="{ row }">{{ taskTypeText(row.type) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="104">
           <template #default="{ row }">
             <el-tag :type="taskStatusTag(row.status)" effect="light">
               <span v-if="row.status === 'running' || row.status === 'pending'" class="pulse-dot" />
               {{ taskStatusText(row.status) }}
             </el-tag>
+            <!-- 自动重试可见性：只有重试白名单内的类型才有 max_retry，重试过才显示进度 -->
+            <div v-if="row.max_retry && row.retry_count" class="retry-hint">重试 {{ row.retry_count }}/{{ row.max_retry }}</div>
           </template>
         </el-table-column>
         <el-table-column label="进度" min-width="150">
@@ -169,6 +191,28 @@
 
         <div v-if="detail.status === 'failed' && detail.error" class="detail-error">{{ detail.error }}</div>
 
+        <!-- 结构化执行日志（条目数组）：首屏 GET 全量 → WS 追平增量；hidden 调试/噪音行默认折叠、可展开 -->
+        <template v-if="logStructured">
+          <h4 class="detail-sec log-head">
+            <span>执行日志<span v-if="logLive" class="log-live">● 实时</span></span>
+            <span v-if="hiddenCount" class="log-toggle" @click="showDebug = !showDebug">
+              {{ showDebug ? '隐藏' : '显示' }} {{ hiddenCount }} 行调试
+            </span>
+          </h4>
+          <div ref="logViewRef" class="log-view mono">
+            <div v-if="!visibleLogEntries.length" class="log-empty">（暂无日志输出）</div>
+            <div
+              v-for="e in visibleLogEntries"
+              :key="e.seq"
+              class="log-line"
+              :class="'log-' + e.kind"
+            >
+              <span class="log-ts">{{ fmtLogTs(e.ts) }}</span>
+              <span class="log-text">{{ e.text }}</span>
+            </div>
+          </div>
+        </template>
+
         <!-- 任务参数 payload：后端 model.Task.Payload 为 json:"-" 不下发，本块仅在接口放开后自动生效；
              键名含 password/passwd/secret/token/key（大小写不敏感）时值一律以 ****** 展示 -->
         <template v-if="payloadKVs.length">
@@ -231,10 +275,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Delete, Search, Monitor } from '@element-plus/icons-vue'
+import { Refresh, Delete, Search, Monitor, View } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import PageHead from '../components/PageHead.vue'
@@ -307,6 +351,224 @@ async function cancelTask(row) {
   }
 }
 const detail = ref(null)
+
+// ==================== 结构化执行日志 + 实时增量 WS ====================
+
+// logEntries：结构化日志条目 [{seq,ts,kind,text,hidden}]；
+// logStructured：true 走日志面板，false（老任务 result 是纯文本/业务 JSON）回退到既有 result 渲染。
+const logEntries = ref([])
+const logStructured = ref(false)
+const logLive = ref(false)
+const showDebug = ref(false)
+const logViewRef = ref(null)
+let logWs = null
+let logRetryTimer = null
+let logRetry = 0
+let logManualClose = false
+let logLastSeq = 0
+let logTaskId = null
+
+const hiddenCount = computed(() => logEntries.value.filter((e) => e.hidden).length)
+const visibleLogEntries = computed(() =>
+  showDebug.value ? logEntries.value : logEntries.value.filter((e) => !e.hidden)
+)
+
+/** 毫秒时间戳 → HH:MM:SS（日志行前缀）。 */
+function fmtLogTs(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+/** 按 seq 去重追加：GET 首屏全量与 WS 增量可能重叠，seq 保证幂等。 */
+function appendLogEntries(list) {
+  if (!Array.isArray(list) || !list.length) return
+  const have = new Set(logEntries.value.map((e) => e.seq))
+  let added = false
+  for (const e of list) {
+    if (!e || have.has(e.seq)) continue
+    have.add(e.seq)
+    logEntries.value.push(e)
+    if (e.seq > logLastSeq) logLastSeq = e.seq
+    added = true
+  }
+  if (added) scrollLogToBottom()
+}
+
+function scrollLogToBottom() {
+  nextTick(() => {
+    const el = logViewRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+function closeLogStream() {
+  logManualClose = true
+  if (logRetryTimer) {
+    clearTimeout(logRetryTimer)
+    logRetryTimer = null
+  }
+  if (logWs) {
+    try {
+      logWs.close()
+    } catch (e) {
+      /* 已关闭 */
+    }
+    logWs = null
+  }
+  logLive.value = false
+}
+
+/** 打开任务日志：首屏 GET 全量 → 记下最大 seq → 非终态则连 WS 追平增量。 */
+async function openLogStream(task) {
+  closeLogStream()
+  logManualClose = false
+  logEntries.value = []
+  logStructured.value = false
+  showDebug.value = false
+  logLastSeq = 0
+  logRetry = 0
+  logTaskId = task.id
+  try {
+    const res = await api.getTaskLogs(task.id)
+    // 请求期间用户可能已切换任务/关闭抽屉：过期响应不得写入新详情
+    if (logTaskId !== task.id) return
+    const data = (res && res.data) || {}
+    logStructured.value = !!data.structured
+    if (logStructured.value) appendLogEntries(data.entries)
+  } catch (e) {
+    // 日志端点不可用（如后端未上线）：静默回退到既有 result 渲染，不打扰用户
+    logStructured.value = false
+    return
+  }
+  if (!logStructured.value) return
+  if (!isTaskActive(task)) return // 终态任务：首屏全量已足够，无需连 WS
+  connectLogWS(task.id)
+}
+
+/** 连接日志增量 WS（票据一次性，重连会重新取票）。 */
+async function connectLogWS(id) {
+  let ticket = ''
+  try {
+    const res = await api.mintTaskLogTicket(id)
+    ticket = (res.data && res.data.ticket) || ''
+  } catch (e) {
+    return // 取票失败：降级为「仅首屏全量」，不空转重连
+  }
+  if (logManualClose || logTaskId !== id) return // 取票期间抽屉已关/已切换任务
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const url = `${proto}//${location.host}/api/tasks/${id}/logs/ws?since=${logLastSeq}&ticket=${encodeURIComponent(ticket)}`
+  logWs = new WebSocket(url)
+  const openTimer = setTimeout(() => {
+    try {
+      logWs.close()
+    } catch (e) {
+      /* 已关闭 */
+    }
+  }, 10000)
+  logWs.onopen = () => clearTimeout(openTimer)
+  logWs.onmessage = (ev) => {
+    let msg
+    try {
+      msg = JSON.parse(ev.data)
+    } catch (e) {
+      return
+    }
+    if (msg.type === 'ready') {
+      clearTimeout(openTimer)
+      logLive.value = true
+    } else if (msg.type === 'entries') {
+      appendLogEntries(msg.entries)
+    } else if (msg.type === 'done') {
+      logLive.value = false
+      if (detailDrawer.value) refreshDetail() // 终态：让抽屉里的进度/状态走到终点
+      closeLogStream()
+    } else if (msg.type === 'error') {
+      closeLogStream()
+    }
+  }
+  logWs.onclose = () => {
+    clearTimeout(openTimer)
+    logLive.value = false
+    if (logManualClose || logTaskId !== id) return
+    if (logRetry >= 3) return
+    logRetry++
+    logRetryTimer = setTimeout(() => connectLogWS(id), 1000 * 2 ** (logRetry - 1))
+  }
+  logWs.onerror = () => clearTimeout(openTimer)
+}
+
+// ==================== 批量操作（XXL-JOB 手感：按选中数自动启停）====================
+
+const selectedRows = ref([])
+const batchBusy = ref(false)
+const selectAny = computed(() => selectedRows.value.length > 0)
+const selectOnlyOne = computed(() => selectedRows.value.length === 1)
+const canBatchCancel = computed(() => selectedRows.value.some((t) => t.status === 'running'))
+const canBatchDelete = computed(() => selectedRows.value.some((t) => isFinal(t.status)))
+
+function onSelectionChange(rows) {
+  selectedRows.value = rows || []
+}
+
+function openSelectedDetail() {
+  if (selectOnlyOne.value) openDetail(selectedRows.value[0])
+}
+
+async function batchCancel() {
+  const targets = selectedRows.value.filter((t) => t.status === 'running')
+  if (!targets.length) return
+  try {
+    await ElMessageBox.confirm(`取消选中的 ${targets.length} 个运行中任务？`, '批量取消', {
+      type: 'warning',
+      confirmButtonText: '取消任务'
+    })
+  } catch (e) {
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))
+    return
+  }
+  batchBusy.value = true
+  let failed = 0
+  for (const t of targets) {
+    try {
+      await api.cancelTask(t.id)
+    } catch (e) {
+      failed++
+    }
+  }
+  batchBusy.value = false
+  if (failed) ElMessage.warning(`已取消 ${targets.length - failed} 个，${failed} 个失败`)
+  else ElMessage.success('已发出取消')
+  await load()
+}
+
+async function batchDelete() {
+  const targets = selectedRows.value.filter((t) => isFinal(t.status))
+  if (!targets.length) return
+  try {
+    await ElMessageBox.confirm(`删除选中的 ${targets.length} 条已完成任务记录？`, '批量删除', {
+      type: 'warning',
+      confirmButtonClass: 'el-button--danger'
+    })
+  } catch (e) {
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))
+    return
+  }
+  batchBusy.value = true
+  let failed = 0
+  for (const t of targets) {
+    try {
+      await api.deleteTask(t.id)
+    } catch (e) {
+      failed++
+    }
+  }
+  batchBusy.value = false
+  if (failed) ElMessage.warning(`已删除 ${targets.length - failed} 条，${failed} 条失败`)
+  else ElMessage.success('已删除')
+  await load()
+}
 
 // result / payload 都是 JSON 字符串，解析失败按无数据处理（与原 detailParsed 行为一致）
 function parseJSONField(s) {
@@ -553,12 +815,21 @@ const detailTimeline = computed(() => {
   return nodes
 })
 
-function openDetail(row) {
+function openDetail(row, column) {
+  // 勾选列的点击不应触发行钻取（否则点复选框会弹抽屉）
+  if (column && column.type === 'selection') return
   detail.value = row
   detailDrawer.value = true
   // 列表行是轮询快照：活动态任务打开抽屉时立刻单查一次，随后跟随 tick 心跳跟进终态
   if (isTaskActive(row)) refreshDetail()
+  // 首屏 GET 全量日志 + 非终态接 WS 追平增量
+  openLogStream(row)
 }
+
+// 抽屉关闭即断开日志 WS（否则后台持续占着一个连接）
+watch(detailDrawer, (open) => {
+  if (!open) closeLogStream()
+})
 
 // 详情单查（api.getTask → {code,message,data:task}）：抽屉开着且任务在跑时跟随轮询刷新，
 // 让时间线/进度条在抽屉里就地走到终态，而不是停在打开那一刻的快照
@@ -708,6 +979,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   stopElapsed()
+  closeLogStream()
 })
 </script>
 
@@ -870,5 +1142,65 @@ onUnmounted(() => {
 }
 .kept-list-deleted {
   color: var(--color-muted-foreground);
+}
+/* 自动重试进度（状态列下方小字） */
+.retry-hint {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--el-color-warning-dark-2);
+}
+/* 结构化执行日志面板 */
+.log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.log-live {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--color-success);
+}
+.log-toggle {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--el-color-primary);
+  cursor: pointer;
+}
+.log-view {
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: var(--radius-sm);
+  background: var(--el-fill-color-light);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.log-empty {
+  color: var(--color-muted-foreground);
+}
+.log-line {
+  display: flex;
+  gap: 8px;
+}
+.log-ts {
+  flex: none;
+  color: var(--color-muted-foreground);
+  user-select: none;
+}
+.log-text {
+  flex: 1;
+  min-width: 0;
+}
+.log-stderr .log-text {
+  color: var(--el-color-danger);
+}
+.log-command .log-text {
+  color: var(--el-color-primary);
+}
+.log-info .log-text {
+  color: var(--color-success);
 }
 </style>

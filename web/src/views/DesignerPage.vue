@@ -1,6 +1,6 @@
 <template>
   <div>
-    <PageHead title="架构设计" subtitle="拖拽编排 → 拉线连线 → 一键落地（容器栈 compose 部署 + VM 建机装应用，口令仅落地时填写不随计划保存）" />
+    <PageHead title="架构设计" subtitle="拖拽编排 → 拉线连线 → 一键落地（容器栈 compose 部署 + VM 建机装应用，口令仅落地时填写不随计划保存）；漂移检查（画布/基线/现实三方对比）→ 按差异收敛" />
 
     <div class="ds-layout">
       <!-- 左：设备栏（拖进画布，置顶——最高频入口沉底要滚才能拖，用户实测反馈）
@@ -45,8 +45,9 @@
             <el-button size="small" :icon="Grid" @click="autoLayout" title="按 网络→虚拟机→容器栈 分层重排">一键整理</el-button>
             <el-button size="small" :icon="Connection" :loading="liveLoading" @click="loadLiveStatus">刷新状态</el-button>
             <el-button size="small" :icon="Import" :loading="importing" @click="importFromReality">从现状导入</el-button>
-            <el-button size="small" :icon="Warning" :loading="driftLoading" @click="checkDrift" title="对比最近落地快照与平台现实">漂移检查</el-button>
+            <el-button size="small" :icon="Warning" :loading="driftLoading" @click="checkDrift" title="三方对比：画布(期望) vs 基线(上次落地) vs 平台现实">漂移检查</el-button>
             <el-button type="primary" size="small" :icon="VideoPlay" :loading="applying" @click="applyPlan">一键落地</el-button>
+            <el-button size="small" :icon="Refresh" :loading="applying" @click="openReconcile" title="只对差异部分执行（新增/下线/重建/重启），不动未变化的资源">按差异收敛</el-button>
             <span class="ds-tip">拖节点编排 · 边缘拉线连线 · 框选 · Ctrl+Z 撤销 · Delete 删除</span>
           </div>
         </template>
@@ -60,14 +61,20 @@
         </div>
         <div v-if="driftResult" class="ds-drift" :class="driftResult.drifted ? 'warn' : 'ok'">
           <b>漂移检查</b>
-          <span v-if="!driftResult.has_snap">尚无快照——成功落地一次后才有对比基准</span>
-          <span v-else-if="!driftResult.drifted">与现实一致（{{ driftResult.checked_at ? '刚刚' : '' }}）</span>
-          <span v-else>发现 {{ driftResult.items.length }} 处漂移</span>
-          <div v-for="(it, i) in driftResult.items" :key="i" class="ds-drift-item mono">
-            [{{ it.kind }}] {{ it.node }} — {{ it.detail }}
+          <span v-if="!driftResult.has_snap">尚无基线——成功落地一次后才有对比基准</span>
+          <span v-else-if="!driftResult.drifted">与现实一致</span>
+          <span v-else>
+            {{ driftResult.items.length }} 处差异
+            （<b>{{ driftResult.pending || 0 }}</b> 处画布未落地 · <b>{{ driftResult.external || 0 }}</b> 处现实被外部改动）
+          </span>
+          <div v-for="(it, i) in driftResult.items" :key="i" class="ds-drift-item">
+            <el-tag size="small" :type="actionMeta(it.action).type" effect="light">{{ actionMeta(it.action).label }}</el-tag>
+            <span class="mono">{{ it.node }}</span>
+            <span class="ds-drift-side">{{ it.side === 'pending' ? '画布改动' : '外部改动' }}</span>
+            — {{ it.reason || it.detail }}
           </div>
           <div v-if="driftResult.drifted" class="ds-drift-actions">
-            <el-button size="small" type="primary" @click="applyPlan">收敛回计划（重新落地）</el-button>
+            <el-button size="small" type="primary" @click="openReconcile">按差异收敛</el-button>
             <el-button size="small" @click="importFromReality">接纳实况（按现状重画）</el-button>
           </div>
         </div>
@@ -161,26 +168,28 @@
       </el-card>
     </div>
 
-    <!-- 落地预览对话框（D3）：将创建 / 已存在 对比 -->
-    <el-dialog v-model="diffVisible" title="落地预览" width="640px">
-      <p class="ds-diff-tip">
-        对照平台现状：<b class="ds-new">将创建</b> 的节点会执行落地；<b class="ds-old">已存在</b> 的按类型跳过（VM 同名会失败、网络同名跳过、栈重新 up）。
+    <!-- 落地/收敛预览对话框（D3 + DE3）：动作枚举 + 理由 -->
+    <el-dialog v-model="diffVisible" :title="diffMode === 'reconcile' ? '按差异收敛预览' : '落地预览'" width="720px">
+      <p v-if="diffMode === 'reconcile'" class="ds-diff-tip">
+        只对下列差异执行：<b class="ds-new">将创建</b> 补齐缺失、<b class="ds-del">将下线</b> 移除画布已删的、<b class="ds-warn">将重建/重启</b> 修正规格或运行态；未变化的资源不动。
+      </p>
+      <p v-else class="ds-diff-tip">
+        全量落地：按依赖顺序落地画布内全部节点（<b class="ds-new">将创建</b> 新建，<b class="ds-old">无需动作</b> 的已存在按类型跳过/复用）。
       </p>
       <el-table :data="diffRows" size="small" max-height="360">
-        <template #empty><el-empty description="画布为空" :image-size="60" /></template>
-        <el-table-column label="名称" prop="name" min-width="180" />
-        <el-table-column label="类型" prop="kind" width="100" />
-        <el-table-column label="动作" width="120">
+        <template #empty><el-empty description="无差异 / 画布为空" :image-size="60" /></template>
+        <el-table-column label="名称" prop="name" min-width="150" />
+        <el-table-column label="类型" prop="kind" width="90" />
+        <el-table-column label="动作" width="96">
           <template #default="{ row }">
-            <el-tag :type="row.exists ? 'info' : 'success'" effect="light" size="small">
-              {{ row.exists ? '已存在·跳过' : '将创建' }}
-            </el-tag>
+            <el-tag :type="actionMeta(row.action).type" effect="light" size="small">{{ actionMeta(row.action).label }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="理由" prop="reason" min-width="240" />
       </el-table>
       <template #footer>
         <el-button @click="diffVisible = false">取消</el-button>
-        <el-button type="primary" :loading="applying" @click="confirmApply">确认落地</el-button>
+        <el-button type="primary" :loading="applying" @click="confirmApply">{{ diffMode === 'reconcile' ? '确认收敛' : '确认落地' }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -196,7 +205,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Download, VideoPlay, DocumentChecked, Aim } from '@element-plus/icons-vue'
+import { Plus, Delete, Download, VideoPlay, DocumentChecked, Aim, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, isCancel, cssVar } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
@@ -660,36 +669,48 @@ async function exportYaml() {
   a.click()
   URL.revokeObjectURL(a.href)
 }
-// ── 落地预览（D3）：节点 vs 平台现状 ──
+// ── 差异预览（D3 + DE3）：统一走后端三方对比（reconcile-plan）──
+// 动作枚举与理由由后端算（containerlab 语义：added/deleted/recreated/restarted/none），
+// 前端只做展示与标色，不再自己猜「存不存在」。
 const diffVisible = ref(false)
 const diffRows = ref([])
+const diffMode = ref('apply') // apply（一键落地预览）| reconcile（按差异收敛预览）
 const kindTextMap = { vm: '虚拟机', container: '容器栈', net: '网络' }
+const ACTION_META = {
+  added: { label: '将创建', type: 'success', color: '#3aa76d' },
+  deleted: { label: '将下线', type: 'danger', color: '#f56c6c' },
+  recreated: { label: '将重建', type: 'warning', color: '#e6a23c' },
+  restarted: { label: '将重启', type: 'warning', color: '#e6a23c' },
+  none: { label: '无需动作', type: 'info', color: '#c0c4cc' },
+}
+function actionMeta(a) { return ACTION_META[a] || { label: a || '—', type: 'info', color: '#c0c4cc' } }
+// 画布节点 ↔ 差异项的匹配键：容器栈按 ref，其余按 name（与后端 nodeResource 同口径）
+function nodeMatchKey(d) { return d.kind === 'container' ? d.ref : d.name }
+function findNodeByKey(key) {
+  return graph && graph.getNodes().find((n) => nodeMatchKey(n.getData() || {}) === key)
+}
+
+// buildDiff：拉后端收敛预演（先列现状 → 动作集合），返回带动作 + 理由的行
 async function buildDiff() {
-  const cells = graph.getNodes().map((n) => ({ cellId: n.id, d: n.getData() || {} }))
-  const [vmRes, netRes, stackRes] = await Promise.all([
-    api.listVMs(), api.listNetworks(), api.listStacks().catch(() => ({ data: {} }))
-  ])
-  const vmNames = new Set(((vmRes.data && vmRes.data.items) || []).map((v) => v.name))
-  const netNames = new Set(((netRes.data && netRes.data.items) || []).map((n) => n.name))
-  const deployedStacks = new Set(
-    (((stackRes.data && stackRes.data.items) || []).filter((s) => s.deployed).map((s) => s.id))
-  )
-  return cells.map(({ cellId, d }) => ({
-    cellId,
-    name: d.name || d.ref || '未命名',
-    kind: kindTextMap[d.kind] || d.kind,
-    exists: d.kind === 'vm' ? vmNames.has(d.name)
-      : d.kind === 'net' ? netNames.has(d.name)
-        : d.kind === 'container' ? deployedStacks.has(d.ref)
-          : false
+  const p = planPayload()
+  await api.saveDesignerPlan(p) // 后端以磁盘计划为期望，先落盘保证=当前画布
+  const res = await api.designerReconcilePlan(p.id)
+  const d = res.data || {}
+  return (d.actions || []).map((a) => ({
+    node: a.node,
+    name: a.name || a.node,
+    kind: kindTextMap[a.kind] || a.kind,
+    action: a.action,
+    side: a.side,
+    reason: a.reason,
   }))
 }
-// 画布上标色：将创建=绿、已存在=灰（silent 不进撤销栈）
+// 画布上按动作标色（silent 不进撤销栈）：将创建=绿、将下线=红、将重建/重启=橙
 function highlightDiff() {
   if (!graph) return
   for (const r of diffRows.value) {
-    const node = graph.getCellById(r.cellId)
-    if (node) node.attr('body/stroke', r.exists ? '#c0c4cc' : '#3aa76d', { silent: true })
+    const node = findNodeByKey(r.node)
+    if (node) node.attr('body/stroke', actionMeta(r.action).color, { silent: true })
   }
 }
 
@@ -728,14 +749,15 @@ function zoomFit() {
   graph?.zoomToFit({ padding: 40, maxScale: 1 })
 }
 
-// 漂移检查（DE2）：对比最近落地快照与平台现实，缺资源的节点头部描橙
+// 漂移检查（DE2/DE3）：三方对比——画布(期望) vs 基线(上次落地) vs 平台现实。
+// 逐项带动作枚举与理由，并区分「画布改动未落地(pending)」与「现实被外部改动(external)」。
 const driftLoading = ref(false)
 const driftResult = ref(null)
 async function checkDrift() {
   const p = planPayload()
   driftLoading.value = true
   try {
-    await api.saveDesignerPlan(p)
+    await api.saveDesignerPlan(p) // 后端以磁盘计划为期望，先落盘
     const res = await api.designerDrift(p.id)
     driftResult.value = res.data || {}
     applyDriftPaint()
@@ -745,17 +767,14 @@ async function checkDrift() {
     driftLoading.value = false
   }
 }
-// 橙色：快照里有、现实已无（画布节点描边）；extra 类现实有快照无——画布上不存在该节点，只进清单
+// 按动作给画布节点描边：将创建=绿、将下线=红、将重建/重启=橙（现实有画布无的项无节点可描）
 function applyDriftPaint() {
   if (!graph) return
   const items = (driftResult.value && driftResult.value.items) || []
-  const missing = new Set(items.filter((i) => i.kind === 'missing').map((i) => i.node))
-  for (const node of graph.getNodes()) {
-    const d = node.getData() || {}
-    const name = d.kind === 'container' ? d.ref : d.name
-    if (missing.has(name)) {
-      node.attr('body/stroke', '#e6a23c', { silent: true })
-    }
+  for (const it of items) {
+    if (it.action === 'none') continue
+    const node = findNodeByKey(it.node)
+    if (node) node.attr('body/stroke', actionMeta(it.action).color, { silent: true })
   }
 }
 
@@ -785,29 +804,56 @@ async function exportAnsible() {
   }
 }
 
-async function applyPlan() {
+// 落地/收敛前置校验（画布非空、VM 有镜像与必要口令）。通过返回 true。
+function preflight() {
   const { nodes } = graphToPlan()
-  if (!nodes.length) return ElMessage.warning('画布为空')
+  if (!nodes.length) { ElMessage.warning('画布为空'); return false }
   const vmDatas = graph.getNodes().map((n) => ({ gid: n.id, d: n.getData() || {} })).filter((x) => x.d.kind === 'vm')
-  // cts 必须在引用前声明（此前写成先引用后声明，点「一键落地」直接 TDZ 崩溃）
   const cts = nodes.filter((n) => n.kind === 'container')
-  if (!cts.length && !vmDatas.length) return ElMessage.warning('计划中没有可落地节点（容器栈 / VM）')
+  if (!cts.length && !vmDatas.length) { ElMessage.warning('计划中没有可落地节点（容器栈 / VM）'); return false }
   const noImg = vmDatas.filter((x) => !x.d.ref)
-  if (noImg.length) return ElMessage.warning('VM「' + noImg.map((x) => x.d.name).join('、') + '」还未选择云镜像')
+  if (noImg.length) { ElMessage.warning('VM「' + noImg.map((x) => x.d.name).join('、') + '」还未选择云镜像'); return false }
   const needCred = vmDatas.filter((x) => (x.d.apps || []).length || (x.d.playbooks || []).length)
   const noPass = needCred.filter((x) => !x.d._sshSecret)
-  if (noPass.length) return ElMessage.warning('VM「' + noPass.map((x) => x.d.name).join('、') + '」配了应用安装，需要填 SSH 口令')
-  // 落地预览（D3）：比对平台现状标注「将创建/已存在」，确认后再执行
+  if (noPass.length) { ElMessage.warning('VM「' + noPass.map((x) => x.d.name).join('、') + '」配了应用安装，需要填 SSH 口令'); return false }
+  return true
+}
+
+// 一键落地（全量）：预览动作集合后确认执行
+async function applyPlan() {
+  if (!preflight()) return
+  diffMode.value = 'apply'
   try {
     diffRows.value = await buildDiff()
   } catch (e) {
-    diffRows.value = [] // 现状拉取失败不阻断落地，预览表留空
+    diffRows.value = [] // 预演拉取失败不阻断落地，预览表留空
   }
   highlightDiff()
   diffVisible.value = true
 }
 
-// 预览确认 → 真正落地
+// 按差异收敛：先算动作集合，无差异直接提示（deploy 即 reconcile，只动差异部分）
+async function openReconcile() {
+  if (!preflight()) return
+  let rows
+  try {
+    rows = await buildDiff()
+  } catch (e) {
+    ElMessage.error(errMsg(e, '收敛预演失败'))
+    return
+  }
+  const actionable = rows.filter((r) => r.action && r.action !== 'none')
+  if (!actionable.length) {
+    ElMessage.success('已与现实一致，无需收敛')
+    return
+  }
+  diffMode.value = 'reconcile'
+  diffRows.value = actionable
+  highlightDiff()
+  diffVisible.value = true
+}
+
+// 预览确认 → 真正执行（apply 全量落地 / reconcile 按差异收敛）
 async function confirmApply() {
   diffVisible.value = false
   const idMap = nodeIdMap()
@@ -822,7 +868,11 @@ async function confirmApply() {
   applyStatus.value = { status: 'running', steps: ['已提交…'] }
   try {
     await api.saveDesignerPlan(p)
-    await api.applyDesignerPlan(p.id, { credentials })
+    if (diffMode.value === 'reconcile') {
+      await api.reconcileDesignerPlan(p.id, { credentials })
+    } else {
+      await api.applyDesignerPlan(p.id, { credentials })
+    }
     applyTimer = setInterval(async () => {
       const res = await api.designerApplyStatus(p.id)
       applyStatus.value = res.data
@@ -977,6 +1027,16 @@ onUnmounted(() => {
   margin-top: 4px;
   font-size: 0.78rem;
   color: var(--color-muted-foreground);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ds-drift-side {
+  font-size: 0.72rem;
+  color: var(--color-muted-foreground);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0 4px;
 }
 .ds-drift-actions {
   margin-top: 10px;
@@ -1006,6 +1066,12 @@ onUnmounted(() => {
 }
 .ds-diff-tip .ds-old {
   color: #909399;
+}
+.ds-diff-tip .ds-del {
+  color: #f56c6c;
+}
+.ds-diff-tip .ds-warn {
+  color: #e6a23c;
 }
 .ds-minimap {
   position: absolute;

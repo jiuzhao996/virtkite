@@ -15,16 +15,28 @@ package ansible
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+)
+
+// inventory 生成的安全白名单。inventory 是 INI 风格文本，字段值直接拼行——若 User /
+// IP / 组名含空格或换行，就能往 [all] 段里塞额外键（如伪造 ansible_ssh_pass）或
+// 注入新的 [组] 段。这些值全部来自数据库（凭据 user、主机组 name），不是硬编码，
+// 必须挡在拼接之前。合法字符集覆盖 VM 名 / SSH 用户名 / IPv4 / IPv6。
+var (
+	inventoryHostRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	// 用户名放宽到含 @ +（个别环境用 user@realm 之类），但仍挡下空白/换行/INI 特殊字符
+	inventoryUserRe  = regexp.MustCompile(`^[A-Za-z0-9._@+-]+$`)
+	inventoryIPRe    = regexp.MustCompile(`^[0-9A-Fa-f:.]+$`)
+	inventoryGroupRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
 // Engine 探测到的引擎：ansible 与 ansible-playbook 同目录（pip 布局）。
@@ -122,6 +134,16 @@ func BuildInventory(dir string, hosts []HostEntry, groups map[string][]string) (
 	var b strings.Builder
 	b.WriteString("[all]\n")
 	for _, h := range hosts {
+		// 逐字段白名单：拼行前拦下含空白/换行的值（否则可伪造 inventory 键或新段）
+		if !inventoryHostRe.MatchString(h.Name) {
+			return "", fmt.Errorf("主机名 %q 含非法字符", h.Name)
+		}
+		if !inventoryIPRe.MatchString(h.IP) {
+			return "", fmt.Errorf("主机 %s 的地址 %q 非法", h.Name, h.IP)
+		}
+		if !inventoryUserRe.MatchString(h.User) {
+			return "", fmt.Errorf("主机 %s 的登录用户 %q 含非法字符", h.Name, h.User)
+		}
 		if h.KeyFile != "" {
 			fmt.Fprintf(&b, "%s ansible_host=%s ansible_port=%d ansible_user=%s ansible_ssh_private_key_file=%s\n",
 				h.Name, h.IP, h.Port, h.User, h.KeyFile)
@@ -137,6 +159,10 @@ func BuildInventory(dir string, hosts []HostEntry, groups map[string][]string) (
 	}
 	for g, members := range groups {
 		if g == "all" || len(members) == 0 {
+			continue
+		}
+		// 组名同样来自数据库（主机组），非法名（含 ] / 换行）直接跳过而非写坏整份 inventory
+		if !inventoryGroupRe.MatchString(g) {
 			continue
 		}
 		fmt.Fprintf(&b, "\n[%s]\n", g)
@@ -160,9 +186,17 @@ type RunOpts struct {
 	Playbook   string
 	Module     string
 	ModuleArgs string
-	// ExtraVars playbook 变量注入（S4 vars 表单化）：以 JSON 走 -e，优先级高于
-	// playbook 内 vars 段（ansible 语义）
+	// ExtraVarsFile survey 答案文件（--extra-vars @file）：命令行只出现文件路径，
+	// 答案值不进 argv（此前是 -e '{"k":"v"}'，既撑爆命令行又把用户值暴露给 ps）。
+	// 文件内容由 survey.WriteExtraVarsFile 生成（字符串打 !unsafe 防 Jinja 注入）。
+	ExtraVarsFile string
+	// ExtraVars 兼容旧调用方的「无类型」答案表。Run 不再拼 -e {json}，而是把它落盘成
+	// 文件后走 @file（与 ExtraVarsFile 同一条安全路径）。新代码应直接用 ExtraVarsFile
+	// 以便携带 int 类型信息；此字段保留只为不破坏尚未迁移的调用点。
 	ExtraVars map[string]string
+	// EnvVars 经环境变量注入的 survey 变量（secret 类型与 target=env）：键名见
+	// ansible.SurveyEnvKey（带 VMOPS_ 前缀，防撞系统环境变量）。
+	EnvVars map[string]string
 	// Check 预演（--check）：只报会改什么，不真改（教学「先 check 再 apply」）
 	Check bool
 	// Diff 显示改动差异（--diff，仅 playbook；与 Check 搭配看「会改哪一行」）
@@ -199,10 +233,18 @@ func (e *Engine) Run(ctx context.Context, opts RunOpts) (string, error) {
 		if strings.TrimSpace(opts.SkipTags) != "" {
 			args = append(args, "--skip-tags", strings.TrimSpace(opts.SkipTags))
 		}
-		if len(opts.ExtraVars) > 0 {
-			if raw, jerr := json.Marshal(opts.ExtraVars); jerr == nil {
-				args = append(args, "-e", string(raw))
+		// survey 答案走 @file：命令行只带文件路径，用户值不进 argv（防 ps 泄露/撑爆参数）。
+		// 旧调用方只给 ExtraVars（无类型）时，这里现落盘再走 @file——绝不回退到 -e {json}。
+		extraFile := strings.TrimSpace(opts.ExtraVarsFile)
+		if extraFile == "" && len(opts.ExtraVars) > 0 {
+			if p, werr := WriteExtraVarsFile(filepath.Dir(opts.Inventory), nil, opts.ExtraVars); werr == nil {
+				extraFile = p
+			} else {
+				return "", werr
 			}
+		}
+		if extraFile != "" {
+			args = append(args, "-e", "@"+extraFile)
 		}
 		args = append(args, opts.Playbook)
 		cmd = exec.CommandContext(ctx, e.PlaybookPath, args...)
@@ -230,6 +272,11 @@ func (e *Engine) Run(ctx context.Context, opts RunOpts) (string, error) {
 	// 平台生成的 run 级 ansible.cfg（forks/fact_caching/roles_path 等）
 	if opts.ConfigFile != "" {
 		cmd.Env = append(cmd.Env, "ANSIBLE_CONFIG="+opts.ConfigFile)
+	}
+	// survey 的 env 注入（secret / target=env）：键名带 VMOPS_ 前缀，playbook 侧经
+	// lookup('env','VMOPS_<name>') 取用；不进 argv，也不写进 extra-vars 文件
+	for k, v := range opts.EnvVars {
+		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
 	stdout, err := cmd.StdoutPipe()
