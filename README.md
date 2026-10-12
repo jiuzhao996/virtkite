@@ -190,10 +190,18 @@ docker compose up -d prometheus alertmanager
 ### 6. 回归验证
 
 ```bash
-./scripts/smoke.sh          # E2E 23 项：只读接口 + metrics + 创建/删除 task 全链路 + 硬件管理
-go test -race ./...         # 单元测试 278 个顶层 Test 函数 / 20 个测试包（必须带 -race）
+./scripts/smoke.sh                                   # API 层 E2E：只读接口 + metrics + 创建/删除 task 全链路 + 硬件管理
+ADMIN_PASS=<口令> node scripts/ui-smoke.mjs           # UI 层 E2E：登录 → 17 个页面 → 深链/重定向 → 建机向导（零副作用）
+go test -race ./...                                  # 单元测试（必须带 -race）
 go build ./... && go vet ./... && gofmt -l .
 ```
+
+> **两层回归各管一段**：`smoke.sh` 证明接口对，`ui-smoke.mjs` 证明**点得动**。
+> 2026-10-12 那轮真实点击走查抓到的 4 个缺陷（构建日志不回填、构建抽屉进不去子目录、
+> `?tab=` 深链点了没反应、新任务类型显示裸英文名）全是「页面渲染出来了、接口也是 200，
+> 但交互是坏的」——`smoke.sh` 一个都没覆盖到，所以补了这个脚本。
+> 零依赖（Node 22 自带 `fetch` 与 `WebSocket`，直接说 CDP），自己拉起无头 Chrome、
+> 跑完自动收摊；只读不建机，可反复跑。加 `SHOTS=/tmp/ui-shots` 顺便存图。
 
 > 静态检查：`go build` / `go vet` / `gofmt -l .` / `golangci-lint run ./...` 全过（**0 发现**）；`golangci-lint` v2.5.0
 > （`.golangci.yml` 已迁移 v2 schema，规则集 govet/errcheck/staticcheck/ineffassign/revive + 格式化器 gofmt）。
@@ -385,7 +393,7 @@ vmops/
 │   ├── notify/          # 告警出站通知（飞书/钉钉机器人 webhook）
 │   ├── jumpd/           # SSH 跳板入口（资产菜单/连接重验/命令黑名单）
 │   └── ansible/         # Ansible 引擎封装（inventory 生成/adhoc/Playbook 执行/目录形态 role 文件管理）
-├── scripts/             # init-db.sql（手工建库）/ smoke.sh（E2E 回归）/ credential-rekey、purge-task-secrets（密钥运维，独立 main 包）
+├── scripts/             # init-db.sql（手工建库）/ smoke.sh（API 层 E2E）/ ui-smoke.mjs（UI 层 E2E，零依赖 CDP）/ credential-rekey、purge-task-secrets（密钥运维，独立 main 包）
 ├── deploy/              # prometheus.yml(.example) / alerts.yml / alertmanager.yml(.example) / gen-monitor-conf.sh / docker-compose
 ├── web/                 # Vue3 + Vite 前端（21 个路由页面组件：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
 │                        #   Host/Image(四 tab 含镜像市场与容器镜像)/Storage(含 Docker 卷)/Network(含 Docker 网络)/Containers(容器+编排)/Task/Audit/Settings/UserList/Profile/Login）

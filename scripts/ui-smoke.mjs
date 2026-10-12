@@ -1,0 +1,359 @@
+#!/usr/bin/env node
+// ui-smoke.mjs —— 前端 UI 冒烟回归（零依赖：Node 22 自带 fetch 与 WebSocket，直接说 CDP）。
+//
+// 为什么需要它：scripts/smoke.sh 是 API 层的，它证明不了「按钮点得动」。
+// 2026-10-12 那轮真实点击走查抓到的 4 个缺陷（构建日志不回填、构建抽屉进不去子目录、
+// ?tab= 深链点了没反应、新任务类型显示裸英文名）smoke.sh 一个都没覆盖到——
+// 它们全是「页面渲染出来了、接口也是 200，但交互是坏的」。
+//
+// 用法：
+//   ADMIN_PASS=<口令> node scripts/ui-smoke.mjs
+//   ADMIN_PASS=<口令> BASE=http://127.0.0.1:8080 node scripts/ui-smoke.mjs
+//   ADMIN_PASS=<口令> SHOTS=/tmp/ui-shots node scripts/ui-smoke.mjs   # 顺便存图
+//
+// 退出码：0 全过；1 有失败项（可直接接进 CI / 提交前自检）。
+//
+// 覆盖范围（全部只读，不建机不删机，可反复跑）：
+//   1. 登录表单真实提交（不是塞 token）
+//   2. 17 个主页面逐个进入：断言页面标志文案渲染 + 无 JS 异常 + 无 4xx/5xx
+//   3. ?tab= 深链与旧地址重定向（先绕一跳再进，专测「同路由内只改 query」这个坑）
+//   4. 建机向导走到底（云镜像 → 计算资源 → 磁盘与网络 → 确认创建），
+//      断言 DomainSpec 预览能生成 —— 到「确认创建」为止，不点创建按钮（无副作用）
+import { spawn } from 'node:child_process'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const BASE = process.env.BASE || 'http://127.0.0.1:8080'
+const USER = process.env.ADMIN_USER || 'admin'
+const PASS = process.env.ADMIN_PASS || ''
+const CDP_PORT = Number(process.env.CDP_PORT || 9333)
+const CHROME = process.env.CHROME || 'google-chrome'
+const SHOTS = process.env.SHOTS || ''
+const TOKEN_KEY = 'vmops_token' // 与 web/src/store/auth.js 的 TOKEN_KEY 保持一致
+
+if (!PASS) {
+  console.error('缺少 ADMIN_PASS。用法：ADMIN_PASS=<口令> node scripts/ui-smoke.mjs')
+  process.exit(2)
+}
+
+// ---------- 页面清单：hash → 该页必须出现的标志文案 ----------
+// 标志文案取自页面标题/空态，改版时同步这里（找不到即失败，正是我们要的灵敏度）
+const PAGES = [
+  ['#/dashboard', '仪表盘'],
+  ['#/vms', '虚拟机'],
+  ['#/containers', '容器'],
+  ['#/apps', '应用商店'],
+  ['#/designer', '架构设计'],
+  ['#/grant-requests', '资产申请'],
+  ['#/recycle-bin', '回收站'],
+  ['#/automation', '运维自动化'],
+  ['#/hosts', '宿主机'],
+  ['#/images', '镜像管理'],
+  ['#/storage', '存储'],
+  ['#/networks', '网络'],
+  ['#/tasks', '任务中心'],
+  ['#/audit', '审计中心'],
+  ['#/profile', '个人中心'],
+  ['#/users', '用户管理'],
+  ['#/settings', '系统设置']
+]
+
+// 深链与重定向：到达方式必须「先绕到别的路由再进」——同路由内只改 query 不重挂组件，
+// 组件若只在挂载时读一次 route.query，这里就会红（2026-10-12 修过一次这个坑）。
+// [目标 hash, 该页必须选中的 tab 文案]
+const DEEPLINKS = [
+  ['#/images?tab=iso', 'ISO 安装镜像'],
+  ['#/images?tab=docker', '容器镜像'],
+  ['#/automation?tab=cron', '计划任务'],
+  ['#/dashboard?tab=monitor', '监控'],
+  ['#/dashboard?tab=topology', '拓扑'],
+  ['#/crons', '计划任务'], // 旧地址重定向 → /automation?tab=cron
+  ['#/monitor', '监控'], // 旧地址重定向 → /dashboard?tab=monitor
+  ['#/topology', '拓扑'] // 旧地址重定向 → /dashboard?tab=topology
+]
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const results = []
+const pass = (name) => results.push({ ok: true, name })
+const fail = (name, why) => results.push({ ok: false, name, why })
+const check = (name, cond, why) => (cond ? pass(name) : fail(name, why))
+
+// ---------- CDP 极简客户端 ----------
+async function waitForCDP(timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)
+      if (r.ok) return
+    } catch (_) {
+      /* 还没起来 */
+    }
+    if (Date.now() > deadline) throw new Error(`Chrome 调试端口 ${CDP_PORT} 未就绪`)
+    await sleep(300)
+  }
+}
+
+function connect(wsUrl) {
+  const ws = new WebSocket(wsUrl)
+  const pending = new Map()
+  let id = 0
+  const events = []
+  ws.addEventListener('message', (ev) => {
+    const m = JSON.parse(ev.data)
+    if (m.id && pending.has(m.id)) {
+      const p = pending.get(m.id)
+      pending.delete(m.id)
+      m.error ? p.rej(new Error(JSON.stringify(m.error))) : p.res(m.result)
+    } else if (m.method) {
+      events.push(m)
+    }
+  })
+  const ready = new Promise((res, rej) => {
+    ws.addEventListener('open', res)
+    ws.addEventListener('error', () => rej(new Error('WebSocket 连接失败')))
+  })
+  const send = (method, params = {}) =>
+    new Promise((res, rej) => {
+      const i = ++id
+      pending.set(i, { res, rej })
+      ws.send(JSON.stringify({ id: i, method, params }))
+      setTimeout(() => {
+        if (pending.has(i)) {
+          pending.delete(i)
+          rej(new Error(`CDP 超时: ${method}`))
+        }
+      }, 30000)
+    })
+  return { ws, ready, send, events }
+}
+
+async function main() {
+  // 预检：BASE 不可达时先报清楚，别等 Chrome 起来后卡在 about:blank 上报个莫名的 SecurityError
+  try {
+    const r = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(5000) })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  } catch (e) {
+    console.error(`目标平台不可达：${BASE}（${e.message}）\n请先启动后端：./start.sh`)
+    process.exit(2)
+  }
+
+  const profile = mkdtempSync(join(tmpdir(), 'vmops-ui-smoke-'))
+  const chrome = spawn(
+    CHROME,
+    [
+      '--headless=new',
+      `--remote-debugging-port=${CDP_PORT}`,
+      `--user-data-dir=${profile}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--disable-extensions',
+      'about:blank'
+    ],
+    { stdio: 'ignore', detached: false }
+  )
+
+  let cdp
+  try {
+    await waitForCDP()
+    const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()
+    const page = targets.find((t) => t.type === 'page')
+    if (!page) throw new Error('没有可用的 page target')
+
+    cdp = connect(page.webSocketDebuggerUrl)
+    await cdp.ready
+    await cdp.send('Page.enable')
+    await cdp.send('Runtime.enable')
+    await cdp.send('Network.enable')
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 1680,
+      height: 1200,
+      deviceScaleFactor: 1,
+      mobile: false
+    })
+
+    const ev = async (expr) => {
+      const r = await cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })
+      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text)
+      return r.result.value
+    }
+
+    // 事件按「当前步骤」打标，报错时能指到是哪一页出的问题
+    let step = '启动'
+    const jsErrors = []
+    const httpErrors = []
+    cdp.events.length = 0
+    const drain = () => {
+      while (cdp.events.length) {
+        const m = cdp.events.shift()
+        if (m.method === 'Runtime.exceptionThrown') {
+          const d = m.params.exceptionDetails
+          jsErrors.push({ step, text: (d.exception?.description || d.text || '').split('\n')[0].slice(0, 200) })
+        } else if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') {
+          const t = (m.params.args || []).map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 200)
+          jsErrors.push({ step, text: t })
+        } else if (m.method === 'Network.responseReceived' && m.params.response.status >= 400) {
+          httpErrors.push({ step, status: m.params.response.status, url: m.params.response.url.slice(0, 160) })
+        }
+      }
+    }
+
+    const shot = async (name) => {
+      if (!SHOTS) return
+      mkdirSync(SHOTS, { recursive: true })
+      const r = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true })
+      writeFileSync(join(SHOTS, `${name}.png`), Buffer.from(r.data, 'base64'))
+    }
+    const goto = async (hash, waitMs = 2200) => {
+      step = hash
+      await ev(`location.hash = ${JSON.stringify(hash)}`)
+      await sleep(waitMs)
+      drain()
+    }
+    const text = async () => ev(`(document.querySelector('.el-main')?.innerText || document.body.innerText || '').replace(/\\s+/g, ' ')`)
+
+    // ---------- 1) 登录（真实提交表单）----------
+    step = '登录'
+    await cdp.send('Page.navigate', { url: `${BASE}/#/login` })
+    await sleep(3000)
+    drain()
+    const filled = await ev(`(() => {
+      const setVal = (el, v) => {
+        const d = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+        d.set.call(el, v)
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+        el.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+      const u = document.querySelector('input[autocomplete="username"]')
+      const p = document.querySelector('input[autocomplete="current-password"]')
+      if (!u || !p) return false
+      setVal(u, ${JSON.stringify(USER)})
+      setVal(p, ${JSON.stringify(PASS)})
+      return true
+    })()`)
+    check('登录表单渲染', filled, '找不到用户名/密码输入框')
+    if (filled) {
+      await ev(`document.querySelector('.submit-btn').click()`)
+      await sleep(3000)
+      drain()
+      const loggedIn = await ev(`!!localStorage.getItem(${JSON.stringify(TOKEN_KEY)}) && location.hash !== '#/login'`)
+      check('登录提交成功', loggedIn, '未拿到 token 或仍停在登录页')
+      await shot('00-登录后')
+    }
+
+    // ---------- 2) 主页面逐个进入 ----------
+    for (const [hash, marker] of PAGES) {
+      await goto(hash)
+      const body = await text()
+      check(`页面 ${hash}`, body.includes(marker), `未找到标志文案「${marker}」`)
+      await shot(hash.replace(/[#/?=&]+/g, '_'))
+    }
+
+    // ---------- 3) 深链 / 重定向（先绕一跳，专测同路由改 query）----------
+    for (const [hash, tab] of DEEPLINKS) {
+      await goto('#/vms', 1200) // 绕开：从别的路由进目标，才会重新挂载组件
+      await goto(hash, 2600)
+      const active = await ev(`(() => {
+        const el = document.querySelector('.el-tabs__item.is-active')
+        return el ? el.textContent.trim() : ''
+      })()`)
+      check(`深链 ${hash}`, active.includes(tab), `活动 tab 是「${active || '无'}」，期望含「${tab}」`)
+      await shot(hash.replace(/[#/?=&]+/g, '_'))
+    }
+
+    // ---------- 4) 建机向导走到底（不点创建，无副作用）----------
+    step = '建机向导'
+    await ev(`sessionStorage.clear()`) // 向导有 sessionStorage 草稿，先清掉保证从第 1 步开始
+    await goto('#/vms/new', 3000)
+    const step1 = await text()
+    check('向导第 1 步（安装方式）', step1.includes('选择安装方式'), '未渲染安装方式页')
+
+    await ev(`(() => {
+      const r = Array.from(document.querySelectorAll('.el-radio')).find((e) => e.textContent.includes('云镜像'))
+      if (r) r.querySelector('input').click()
+    })()`)
+    await sleep(1000)
+    await ev(`(() => {
+      const s = Array.from(document.querySelectorAll('.el-select')).find((e) => /云镜像/.test(e.closest('.el-form-item')?.textContent || ''))
+      if (!s) return
+      s.querySelector('input').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      s.click()
+    })()`)
+    await sleep(1000)
+    const pickedImg = await ev(`(() => {
+      const it = document.querySelector('.el-select-dropdown__item')
+      if (!it) return ''
+      const t = it.textContent.trim()
+      it.click()
+      return t
+    })()`)
+    check('向导选云镜像', !!pickedImg, '镜像下拉没有可选项（镜像库为空？）')
+    await sleep(800)
+
+    const next = async () => {
+      const r = await ev(`(() => {
+        const b = Array.from(document.querySelectorAll('button')).find((x) => /下一步/.test(x.textContent))
+        if (!b) return 'no-btn'
+        if (b.disabled) return 'disabled'
+        b.click()
+        return 'ok'
+      })()`)
+      await sleep(1600)
+      drain()
+      return r
+    }
+    check('向导→计算资源', (await next()) === 'ok', '下一步不可用（第 1 步校验未过？）')
+    const step2 = await text()
+    check('向导第 2 步（计算资源）', step2.includes('虚拟机名称'), '未渲染计算资源页')
+
+    await ev(`(() => {
+      const it = Array.from(document.querySelectorAll('.el-form-item')).find((e) =>
+        (e.querySelector('.el-form-item__label')?.textContent || '').includes('虚拟机名称'))
+      if (!it) return
+      const inp = it.querySelector('input')
+      const d = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+      d.set.call(inp, 'ui-smoke-tmp')
+      inp.dispatchEvent(new Event('input', { bubbles: true }))
+      inp.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+    await sleep(600)
+    check('向导→磁盘与网络', (await next()) === 'ok', '下一步不可用（名称未填？）')
+    check('向导→确认创建', (await next()) === 'ok', '下一步不可用')
+    const confirm = await text()
+    check('向导第 4 步生成 DomainSpec', confirm.includes('ui-smoke-tmp') && confirm.includes('配置预览'), '确认页未渲染出配置预览')
+    await shot('99-向导确认页')
+    // 到此为止：不点「创建虚拟机」——建机是 smoke.sh（API 层）的职责，UI 脚本保持零副作用
+
+    drain()
+    for (const e of jsErrors) fail(`JS 异常 @${e.step}`, e.text)
+    for (const e of httpErrors) fail(`HTTP ${e.status} @${e.step}`, e.url)
+    if (!jsErrors.length && !httpErrors.length) pass('无 JS 异常 / 无 4xx-5xx')
+  } finally {
+    try {
+      cdp?.ws.close()
+    } catch (_) {
+      /* ignore */
+    }
+    chrome.kill('SIGKILL')
+    try {
+      rmSync(profile, { recursive: true, force: true })
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  // ---------- 汇总 ----------
+  const bad = results.filter((r) => !r.ok)
+  console.log(`\n${'='.repeat(60)}`)
+  for (const r of results) console.log(`  ${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.ok ? '' : '  -- ' + r.why}`)
+  console.log(`${'='.repeat(60)}`)
+  console.log(`RESULT: PASS=${results.length - bad.length} FAIL=${bad.length}${SHOTS ? `  截图: ${SHOTS}` : ''}`)
+  process.exit(bad.length ? 1 : 0)
+}
+
+main().catch((e) => {
+  console.error('ui-smoke 运行失败:', e.message)
+  process.exit(2)
+})
