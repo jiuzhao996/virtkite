@@ -124,8 +124,18 @@ func execAppInstall(ctx *ExecContext, masterSecret string) error {
 	}
 
 	// 2) 执行安装脚本（15 分钟兜底超时）。
+	// 安装参数：payload 是持久化数据，历史/将来任何提交点都可能带着它进来，故按 schema 重新
+	// 校验归一（纵深防御），再前置成 shell 变量注入脚本（见 apps.App.RenderScript）。
+	params, err := resolveAppParams(payload, masterSecret)
+	if err != nil {
+		return err
+	}
+	normalized, err := apps.ValidateParams(app, params)
+	if err != nil {
+		return fmt.Errorf("安装参数校验失败: %w", err)
+	}
 	reportProgress(ctx, 10, "开始安装 "+app.Name+"（apt 安装耗时约 1-5 分钟）")
-	installOut, installErrOut, err := vmssh.Run(opt, app.Install, appInstallTimeout)
+	installOut, installErrOut, err := vmssh.Run(opt, app.RenderScript(normalized), appInstallTimeout)
 	if err != nil {
 		// stderr 尾部 500 字并入错误链：中文前缀给前端（friendlyError 取首个冒号前段），
 		// stderr 细节与完整 err 链进服务端日志
@@ -195,6 +205,43 @@ func resolveSSHCredential(ctx *ExecContext, masterSecret string) (user, password
 		return "", "", fmt.Errorf("SSH 口令解密失败: %w", derr)
 	}
 	return user, string(plain), nil
+}
+
+// resolveAppParams 从 payload 取应用安装参数，并合并解密后的敏感参数。
+//
+//   - payload["params"]：非敏感明文参数（键名受 apps schema 白名单约束）；
+//   - payload["params_enc"]：password 类型字段的密文+盐（handler 在 HTTP 边界加密），
+//     此处用与凭据托管同一主密钥解密。明文只在 executor 内存里流转，不入日志、不回写 DB。
+func resolveAppParams(payload map[string]interface{}, masterSecret string) (map[string]string, error) {
+	out := make(map[string]string)
+	if m, ok := payload["params"].(map[string]interface{}); ok {
+		for k, v := range m {
+			if s, ok := v.(string); ok {
+				out[k] = s
+			}
+		}
+	}
+	enc, ok := payload["params_enc"].(map[string]interface{})
+	if !ok {
+		return out, nil
+	}
+	for k, v := range enc {
+		m, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		cipherB64, _ := m["cipher"].(string)
+		saltHex, _ := m["salt"].(string)
+		if cipherB64 == "" || saltHex == "" {
+			return nil, fmt.Errorf("参数 %s 的密文缺失", k)
+		}
+		plain, err := secretbox.OpenWithMaster(masterSecret, saltHex, cipherB64)
+		if err != nil {
+			return nil, fmt.Errorf("参数 %s 解密失败: %w", k, err)
+		}
+		out[k] = string(plain)
+	}
+	return out, nil
 }
 
 // taskVMID 取任务已关联的 VM ID（Submit 时由 manager 写入；缺失回 0）。

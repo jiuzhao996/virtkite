@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/service/dockerx"
 )
 
 // DockerHandler 的 compose 编排端点（v3.2 批次 R）。单独成文件：compose 是
@@ -20,6 +22,18 @@ func (h *DockerHandler) ComposeList(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"total": len(list), "items": list})
+}
+
+// composeWriteErr 写类 compose 操作的错误映射。
+//
+// 栈级锁冲突不是「服务端故障」而是「稍后再试」——统一走 500 会让前端只能提示
+// 「操作失败」，用户不知道重试一下就好。这里把它单列成 409，语义与 VM 的 lockVM 冲突一致。
+func composeWriteErr(c *gin.Context, err error) {
+	if errors.Is(err, dockerx.ErrStackBusy) {
+		Fail(c, http.StatusConflict, "该栈正在执行其他操作，请稍后再试")
+		return
+	}
+	ErrorResponse(c, http.StatusInternalServerError, err)
 }
 
 // ComposeAction POST /api/docker/compose/:name/:action
@@ -51,7 +65,7 @@ func (h *DockerHandler) ComposeAction(c *gin.Context) {
 		return
 	}
 	if err := h.Docker.ComposeAction(name, action); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
+		composeWriteErr(c, err)
 		return
 	}
 	Success(c, gin.H{"name": name, "action": action, "message": message})
@@ -88,7 +102,7 @@ func (h *DockerHandler) ComposeServiceAction(c *gin.Context) {
 	}
 	action := c.Param("action")
 	if err := h.Docker.ComposeServiceAction(name, service, action); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
+		composeWriteErr(c, err)
 		return
 	}
 	Success(c, gin.H{"name": name, "service": service, "action": action, "message": "服务已重启"})

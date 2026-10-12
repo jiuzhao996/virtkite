@@ -51,6 +51,8 @@ func (h *AppsHandler) Get(c *gin.Context) {
 		"name":     app.Name,
 		"desc":     app.Desc,
 		"category": app.Category,
+		"version":  app.Version,
+		"fields":   app.Fields, // 参数表单 schema（无参应用为 nil/空，前端不渲染参数区）
 		"detect":   app.Detect,
 		"install":  app.Install,
 	})
@@ -77,13 +79,14 @@ func (h *AppsHandler) Install(c *gin.Context) {
 		return
 	}
 	var req struct {
-		VMID     uint   `json:"vm_id"`
-		AppID    string `json:"app_id"`
-		Host     string `json:"host"`
-		Port     int    `json:"port"`
-		User     string `json:"user"`
-		Password string `json:"password"`
-		UseSaved bool   `json:"use_saved"` // true 时使用凭据托管（user/password 忽略）
+		VMID     uint              `json:"vm_id"`
+		AppID    string            `json:"app_id"`
+		Host     string            `json:"host"`
+		Port     int               `json:"port"`
+		User     string            `json:"user"`
+		Password string            `json:"password"`
+		UseSaved bool              `json:"use_saved"` // true 时使用凭据托管（user/password 忽略）
+		Params   map[string]string `json:"params"`    // 应用安装参数（键与 schema 的 Field.Key 一致）
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
@@ -109,6 +112,37 @@ func (h *AppsHandler) Install(c *gin.Context) {
 	if !ok {
 		Fail(c, http.StatusBadRequest, "应用不存在")
 		return
+	}
+	// 安装参数服务端校验（前端校验可被绕过，这里是唯一可信关卡）：
+	// 按应用 schema 校验必填/类型/范围/正则/候选，并归一化（空值回落默认值）。
+	normalized, verr := apps.ValidateParams(app, req.Params)
+	if verr != nil {
+		ErrorResponse(c, http.StatusBadRequest, verr)
+		return
+	}
+	// 参数分流：password 类型字段的值在 HTTP 边界就地加密，payload 只存密文与盐；
+	// 其余参数明文入库（它们不是凭据，明文便于排查）。
+	paramVals := make(map[string]string)
+	paramSecrets := make(map[string]map[string]string)
+	for _, f := range app.Fields {
+		v, present := normalized[f.Key]
+		if !present {
+			continue
+		}
+		if f.Type == apps.FieldPassword {
+			if h.VMCred == nil || h.VMCred.MasterSecret == "" {
+				Fail(c, http.StatusServiceUnavailable, "凭据加密未初始化，无法安全处理敏感参数")
+				return
+			}
+			cipherB64, saltHex, err := secretbox.SealWithMaster(h.VMCred.MasterSecret, v)
+			if err != nil {
+				ErrorWithMessage(c, http.StatusInternalServerError, "敏感参数加密失败，请重试", err)
+				return
+			}
+			paramSecrets[f.Key] = map[string]string{"cipher": cipherB64, "salt": saltHex}
+			continue
+		}
+		paramVals[f.Key] = v
 	}
 	// portGiven 记录请求是否显式给了端口（后面决定凭据登记端口要不要覆盖默认值）
 	portGiven := req.Port != 0
@@ -142,6 +176,14 @@ func (h *AppsHandler) Install(c *gin.Context) {
 		"app_id": app.ID,
 		"host":   host,
 		"port":   port,
+	}
+	// 参数入库：非敏感参数明文（键名受 schema 白名单约束，不会拼出任意 shell 变量名）；
+	// 敏感参数只落密文与盐，executor 用同一主密钥解密（见 service/tasks/app_tasks.go）。
+	if len(paramVals) > 0 {
+		payload["params"] = paramVals
+	}
+	if len(paramSecrets) > 0 {
+		payload["params_enc"] = paramSecrets
 	}
 	sshUser := ""
 	if req.UseSaved || req.Password == "" {

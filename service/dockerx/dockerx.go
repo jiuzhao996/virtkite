@@ -52,6 +52,7 @@ func runTimeout(timeout time.Duration, args ...string) (string, error) {
 }
 
 // Container 容器列表条目（docker ps --format '{{json .}}'）。
+// Project/Service 来自 compose 标签（来源反查用），不在 {{json .}} 输出里，另行补取。
 type Container struct {
 	ID      string `json:"ID"`
 	Names   string `json:"Names"`
@@ -60,6 +61,10 @@ type Container struct {
 	Status  string `json:"Status"`
 	Ports   string `json:"Ports"`
 	Created string `json:"CreatedAt"`
+	// 来源反查（借 1Panel 的「关联」列）：compose 部署的容器带 com.docker.compose.project
+	// 标签，据此显示所属栈名并可跳转；两者皆空即「手工创建」。
+	Project string `json:"Project,omitempty"`
+	Service string `json:"Service,omitempty"`
 }
 
 // Containers 返回全部容器（含停止）。
@@ -80,7 +85,47 @@ func (d *Dockerx) Containers() ([]Container, error) {
 		}
 		list = append(list, c)
 	}
+	// 来源反查：compose 项目 label 不在 {{json .}} 里，单独一次 ps 拉取（快）。
+	// 失败静默降级——来源列是增强信息，不能因为它拉不到就把整个容器列表打掉。
+	if labels, err := d.containerComposeLabels(); err == nil {
+		for i := range list {
+			if src, ok := labels[list[i].ID]; ok {
+				list[i].Project, list[i].Service = src.Project, src.Service
+			}
+		}
+	}
 	return list, nil
+}
+
+// ContainerSource 容器来源（compose 项目名 + 服务名）。
+type ContainerSource struct {
+	Project string
+	Service string
+}
+
+// containerComposeLabels 用一次 ps 拉全部容器的 compose 项目/服务标签。
+// 用制表符分隔（容器名/项目名/服务名都不允许含制表符，安全）；ID 用短 ID，与列表条目对齐。
+func (d *Dockerx) containerComposeLabels() (map[string]ContainerSource, error) {
+	out, err := run("ps", "-a", "--format",
+		"{{.ID}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.service\"}}")
+	if err != nil {
+		return nil, err
+	}
+	m := map[string]ContainerSource{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 3 || parts[0] == "" {
+			continue
+		}
+		if parts[1] == "" && parts[2] == "" {
+			continue // 手工创建的容器无 compose 标签
+		}
+		m[parts[0]] = ContainerSource{Project: parts[1], Service: parts[2]}
+	}
+	return m, nil
 }
 
 // Start 启动容器。
@@ -563,6 +608,12 @@ func (d *Dockerx) ComposeAction(project, action string) error {
 	if !ok {
 		return errors.New("不支持的 compose 操作（up/start/stop/restart/down）")
 	}
+	// 栈级锁：同一栈串行、异栈并行（借 Dockge 终端名唯一性的思路）
+	release, ok := tryStackLock(project)
+	if !ok {
+		return ErrStackBusy
+	}
+	defer release()
 	args := append([]string{"compose", "-p", project}, sub...)
 	if _, err := runTimeout(2*time.Minute, args...); err != nil {
 		return fmt.Errorf("compose 项目操作失败: %w", err)
@@ -580,6 +631,12 @@ func (d *Dockerx) ComposeUpFromFile(projectDir string) error {
 	if _, err := os.Stat(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
 		return fmt.Errorf("compose 文件不存在: %w", err)
 	}
+	// 栈级锁：项目名 = 目录名，与 ComposeAction(-p) 共享同一把锁，两条入口互相串行
+	release, ok := tryStackLock(filepath.Base(projectDir))
+	if !ok {
+		return ErrStackBusy
+	}
+	defer release()
 	args := []string{"compose", "--project-directory", projectDir, "up", "-d"}
 	if _, err := runTimeout(10*time.Minute, args...); err != nil {
 		return fmt.Errorf("栈部署失败（compose up）: %w", err)
@@ -659,6 +716,12 @@ func (d *Dockerx) ComposeServiceAction(project, service, action string) error {
 	if !composeServiceActions[action] {
 		return errors.New("不支持的服务操作（restart）")
 	}
+	// 服务级操作同样锁整个栈：避免「重启某服务」与「整栈 up/down」并发互相踩
+	release, ok := tryStackLock(project)
+	if !ok {
+		return ErrStackBusy
+	}
+	defer release()
 	if _, err := runTimeout(2*time.Minute, "compose", "-p", project, action, service); err != nil {
 		return fmt.Errorf("服务操作失败: %w", err)
 	}
@@ -674,6 +737,12 @@ func (d *Dockerx) ComposePull(projectDir string) (string, error) {
 	if _, err := os.Stat(filepath.Join(projectDir, "docker-compose.yml")); err != nil {
 		return "", fmt.Errorf("compose 文件不存在: %w", err)
 	}
+	// 栈级锁：与 up/action 共享同一把锁，拉镜像期间禁止同栈其它操作
+	release, ok := tryStackLock(filepath.Base(projectDir))
+	if !ok {
+		return "", ErrStackBusy
+	}
+	defer release()
 	out, err := runTimeout(30*time.Minute, "compose", "--project-directory", projectDir, "pull")
 	if err != nil {
 		return out, fmt.Errorf("拉取镜像失败: %w", err)

@@ -65,12 +65,13 @@
 
         <el-tab-pane label="编排文件" name="file" lazy>
           <div class="sd-file-bar">
-            <el-button size="small" @click="validateFile" :loading="validating">校验</el-button>
             <el-button size="small" type="primary" @click="saveFile" :loading="saving">保存</el-button>
             <el-button size="small" plain @click="resetToTemplate" :disabled="!detail.drift">重置为模板</el-button>
             <span class="sd-file-hint">仅写部署副本（data/stacks），仓库模板不会被修改</span>
           </div>
-          <textarea v-model="fileContent" class="sd-editor" spellcheck="false" />
+          <!-- 编辑即校验：ComposeEditor 内置防抖 800ms 调服务端权威解析（docker compose config），
+               比原来那个「用保存接口干跑一次」的校验按钮更早、更准，也不会顺手把半成品存进磁盘 -->
+          <ComposeEditor v-model="fileContent" />
           <el-collapse class="sd-tmpl">
             <el-collapse-item title="仓库模板原文（只读）" name="t">
               <pre class="sd-tmpl-pre">{{ detail.template || '—' }}</pre>
@@ -93,6 +94,7 @@ import { ref, computed, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
+import ComposeEditor from '../docker/components/ComposeEditor.vue'
 import { errMsg, isCancel } from '../../utils/format'
 
 const emit = defineEmits(['changed', 'terminal'])
@@ -116,7 +118,6 @@ let logTimer = null
 // ── 编排文件 ──
 const fileContent = ref('')
 const saving = ref(false)
-const validating = ref(false)
 
 // ── 参考笔记 ──
 const docsLoading = ref(false)
@@ -239,21 +240,6 @@ function stopLogTimer() {
 }
 
 // ── 编排文件编辑 ──
-async function validateFile() {
-  validating.value = true
-  try {
-    // 用保存接口做「写入前校验」的语义等价物：后端保存前必校验，此处先干跑一次
-    await api.saveStackFile(stackId.value, fileContent.value)
-    ElMessage.success('compose 文件校验通过（已保存）')
-    await loadDetail()
-    emit('changed')
-  } catch (e) {
-    // 后端校验失败会带 docker 原生报错（含行号），直接透出对教学有价值
-    ElMessage.error(errMsg(e, 'compose 文件校验失败'))
-  } finally {
-    validating.value = false
-  }
-}
 
 async function saveFile() {
   try {

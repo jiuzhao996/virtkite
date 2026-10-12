@@ -107,7 +107,7 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	networkHandler := NewNetworkHandler()
 	networkFlowHandler := NewNetworkFlowHandler()
 	networkTopologyHandler := NewNetworkTopologyHandler()
-	networkIPAMHandler := NewNetworkIPAMHandler()
+	networkIPAMHandler := NewNetworkIPAMHandler(deps.DB)
 	// 与 RegisterPublic 内解析 handler 共用 deps.VNCTokens（同一实例是 VNC 链路存活的前提）
 	vncHandler := NewVNCHandler(deps.DB, deps.Sessions, deps.VNCTokens)
 	terminalHandler := NewTerminalHandler(deps.DB, deps.Sessions)
@@ -387,6 +387,13 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		// 服务级：列表与单服务重启（栈详情抽屉用）
 		docker.GET("/compose/:name/services", dockerHandler.ComposeServices)
 		docker.POST("/compose/:name/services/:service/:action", dockerHandler.ComposeServiceAction)
+		// compose 编辑即时校验：走服务端权威解析（docker compose config），前端不引 YAML 库
+		docker.POST("/compose/validate", dockerHandler.ValidateCompose)
+		// compose 栈状态（含「文件在但未部署」的草稿态）：compose ls ∪ data/stacks 扫描
+		docker.GET("/compose/states", dockerHandler.ComposeStates)
+		// 容器内文件浏览（只读）：docker exec ls/head，数组传参无 shell
+		docker.GET("/containers/:id/files", dockerHandler.ContainerFiles)
+		docker.GET("/containers/:id/file", dockerHandler.ContainerFileContent)
 		docker.GET("/images", dockerHandler.ListImages)
 		docker.DELETE("/images/:id", dockerHandler.RemoveImage)
 		// Dockerfile 构建：构建上下文管理（data/docker-builds/<name>/）+ 提交 image_build 任务

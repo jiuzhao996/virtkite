@@ -62,5 +62,12 @@ export const docker = {
   dockerComposeAction: (project, action) => unwrap(http.post('/docker/compose/' + encodeURIComponent(project) + '/' + action, null, { timeout: 150000 })),
   // compose 服务级：项目内服务列表 + 单服务操作（restart）
   dockerComposeServices: (project) => unwrap(http.get('/docker/compose/' + encodeURIComponent(project) + '/services')),
-  dockerComposeServiceAction: (project, service, action) => unwrap(http.post(`/docker/compose/${encodeURIComponent(project)}/services/${encodeURIComponent(service)}/${action}`, null, { timeout: 150000 }))
+  dockerComposeServiceAction: (project, service, action) => unwrap(http.post(`/docker/compose/${encodeURIComponent(project)}/services/${encodeURIComponent(service)}/${action}`, null, { timeout: 150000 })),
+  // compose 编辑即时校验（服务端权威解析 docker compose config；前端不引 YAML 库）
+  composeValidate: (content) => unwrap(http.post('/docker/compose/validate', { content })),
+  // 栈状态（含 created_file 草稿态）：compose ls ∪ data/stacks 扫描
+  composeStates: () => unwrap(http.get('/docker/compose/states')),
+  // 容器内文件浏览（只读）
+  containerFiles: (id, path) => unwrap(http.get(`/docker/containers/${encodeURIComponent(id)}/files`, { params: { path } })),
+  containerFileContent: (id, path) => unwrap(http.get(`/docker/containers/${encodeURIComponent(id)}/file`, { params: { path } }))
 }

@@ -12,13 +12,16 @@ package apps
 
 // App 应用目录条目。Detect/Install 刻意不带 json tag（默认不序列化），
 // 目录接口（List）天然不泄露脚本正文；详情接口（Get）需要脚本预览时由 handler 显式输出。
+// Fields 与脚本正文无关（只是表单声明），随目录/详情正常下发，供前端通用渲染。
 type App struct {
-	ID       string `json:"id"`       // 唯一标识：nginx / mysql / redis / php / nodejs / python3 / docker-engine / wordpress / portainer / lnmp
-	Name     string `json:"name"`     // 展示名
-	Desc     string `json:"desc"`     // 一句话描述
-	Category string `json:"category"` // web / database / cache / runtime / cms / ops
-	Detect   string `json:"-"`        // 已装检测命令（VM 内 sh 执行，退出码 0=已装），单行
-	Install  string `json:"-"`        // 安装脚本（VM 内 sh 执行）
+	ID       string  `json:"id"`                // 唯一标识：nginx / mysql / redis / php / nodejs / python3 / docker-engine / wordpress / portainer / lnmp
+	Name     string  `json:"name"`              // 展示名
+	Desc     string  `json:"desc"`              // 一句话描述
+	Category string  `json:"category"`          // web / database / cache / runtime / cms / ops
+	Version  string  `json:"version,omitempty"` // 版本/镜像标签（可选，前端在安装抽屉展示）
+	Fields   []Field `json:"fields,omitempty"`  // 安装参数表单 schema（空表示无参应用，前端不渲染参数区）
+	Detect   string  `json:"-"`                 // 已装检测命令（VM 内 sh 执行，退出码 0=已装），单行
+	Install  string  `json:"-"`                 // 安装脚本（VM 内 sh 执行）
 }
 
 // catalog 内置应用目录（只读：All/Get 均不暴露可变引用给调用方修改）。
@@ -143,7 +146,21 @@ docker --version
 		Name:     "WordPress",
 		Desc:     "博客/CMS（Docker Compose 版：WordPress + MySQL 8，宿主端口 8088；数据库口令安装时随机生成并回显一次）",
 		Category: "cms",
-		Detect:   `docker ps --format '{{.Names}}' | grep -q wordpress`,
+		Version:  "latest",
+		// 参数表单 schema：Key 与下方脚本读取的变量名一致（WP_PORT / WP_DB_NAME / WP_DB_IMAGE）。
+		// 值由 executor 前置为 `KEY='value'`，脚本用 `: "${KEY:=默认}"` 兜底，故不传参也照常安装。
+		Fields: []Field{
+			{Key: "WP_PORT", Label: "宿主端口", Type: FieldNumber, Default: "8088",
+				Min: floatPtr(1), Max: floatPtr(65535), Help: "映射到宿主机的 HTTP 端口"},
+			{Key: "WP_DB_NAME", Label: "数据库名", Type: FieldText, Default: "wordpress",
+				Pattern: `^[A-Za-z0-9_]+$`, Help: "仅允许字母、数字与下划线"},
+			{Key: "WP_DB_IMAGE", Label: "数据库镜像", Type: FieldSelect, Default: "mysql:8",
+				Options: []FieldOption{
+					{Label: "MySQL 8", Value: "mysql:8"},
+					{Label: "MariaDB 10.11", Value: "mariadb:10.11"},
+				}},
+		},
+		Detect: `docker ps --format '{{.Names}}' | grep -q wordpress`,
 		// 安全约定（新增应用请照此办理）：脚本里不得出现任何固定口令字面量——
 		// 固定口令等于所有装了该应用的虚拟机共用一把众所周知的钥匙。
 		// 这里在虚拟机内运行时随机生成，并回显到 stdout：
@@ -153,6 +170,10 @@ docker --version
 set -e
 command -v docker >/dev/null 2>&1 || { echo "未检测到 docker，请先安装 docker-engine 应用"; exit 1; }
 docker ps --format '{{.Names}}' | grep -q '^wordpress$' && exit 0
+# 参数默认值：平台按 schema 注入时会覆盖（见 App.RenderScript）；单独手工执行也有合理默认
+: "${WP_PORT:=8088}"
+: "${WP_DB_NAME:=wordpress}"
+: "${WP_DB_IMAGE:=mysql:8}"
 # 运行时随机生成数据库口令：优先 openssl，缺失时回落到 /dev/urandom。
 # 只取字母数字，避免口令里的特殊字符破坏 YAML 与 URL 解析。
 rand_pass() {
@@ -172,18 +193,18 @@ services:
     image: wordpress:latest
     container_name: wordpress
     ports:
-      - "8088:80"
+      - "${WP_PORT}:80"
     environment:
       WORDPRESS_DB_HOST: db
-      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_NAME: ${WP_DB_NAME}
       WORDPRESS_DB_USER: wordpress
       WORDPRESS_DB_PASSWORD: $WP_DB_PASSWORD
     restart: unless-stopped
   db:
-    image: mysql:8
+    image: ${WP_DB_IMAGE}
     container_name: wordpress-db
     environment:
-      MYSQL_DATABASE: wordpress
+      MYSQL_DATABASE: ${WP_DB_NAME}
       MYSQL_USER: wordpress
       MYSQL_PASSWORD: $WP_DB_PASSWORD
       MYSQL_ROOT_PASSWORD: $WP_ROOT_PASSWORD
@@ -196,7 +217,7 @@ EOF
 cd /opt/wordpress
 docker compose up -d 2>/dev/null || docker-compose up -d
 # 凭据回显（必须留在 stdout 末尾：任务结果只保留尾部，前端安装输出展示该内容）
-echo "WordPress 安装完成：http://<虚拟机IP>:8088"
+echo "WordPress 安装完成：http://<虚拟机IP>:${WP_PORT}"
 echo "⚠️ 以下口令为本次随机生成，仅显示这一次，请立即保存（后续可查 /opt/wordpress/docker-compose.yml）："
 echo "  数据库用户 wordpress 口令: $WP_DB_PASSWORD"
 echo "  数据库 root 口令: $WP_ROOT_PASSWORD"
@@ -207,10 +228,17 @@ echo "  数据库 root 口令: $WP_ROOT_PASSWORD"
 		Name:     "Portainer CE",
 		Desc:     "Docker 图形化管理面板（Docker 版，HTTPS 端口 9443）",
 		Category: "ops",
-		Detect:   `docker ps -a --format '{{.Names}}' | grep -q '^portainer$'`,
+		Version:  "latest",
+		Fields: []Field{
+			{Key: "PORTAINER_PORT", Label: "HTTPS 端口", Type: FieldNumber, Default: "9443",
+				Min: floatPtr(1), Max: floatPtr(65535), Help: "Portainer 面板的宿主 HTTPS 端口"},
+		},
+		Detect: `docker ps -a --format '{{.Names}}' | grep -q '^portainer$'`,
 		Install: `# 安装 Portainer CE（Docker 版）：挂载 docker.sock 管理本机容器，HTTPS 端口 9443
 set -e
 command -v docker >/dev/null 2>&1 || { echo "未检测到 docker，请先安装 docker-engine 应用"; exit 1; }
+# 参数默认值：平台按 schema 注入时会覆盖（见 App.RenderScript）
+: "${PORTAINER_PORT:=9443}"
 # 幂等：容器已存在（含停止态）时直接拉起
 if docker ps -a --format '{{.Names}}' | grep -q '^portainer$'; then
   docker start portainer >/dev/null 2>&1 || true
@@ -218,7 +246,7 @@ if docker ps -a --format '{{.Names}}' | grep -q '^portainer$'; then
 fi
 docker volume create portainer_data >/dev/null
 docker run -d --name portainer --restart=unless-stopped \
-  -p 9443:9443 \
+  -p "${PORTAINER_PORT}:9443" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v portainer_data:/data \
   portainer/portainer-ce:latest

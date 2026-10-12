@@ -16,7 +16,7 @@
         <div class="cp-card-head">
           <span v-if="isRunning(row)" class="cp-live-dot" title="运行中" />
           <span class="cp-card-name mono" :title="row.Name">{{ row.Name || '—' }}</span>
-          <el-tag :type="composeTag(row.Status)" effect="light" size="small">{{ row.Status || '—' }}</el-tag>
+          <el-tag :type="stateTagOf(row)" effect="light" size="small">{{ stateTextOf(row) }}</el-tag>
         </div>
         <div class="cp-services">
           <template v-if="servicesMap[row.Name]">
@@ -75,6 +75,27 @@
       </el-card>
     </div>
 
+    <!-- 草稿栈（文件在但未部署，Dockge 的 CREATED_FILE 态）：单列一节，可点进栈详情部署 -->
+    <template v-if="draftStacks.length">
+      <div class="cp-section-title">未部署（草稿）</div>
+      <div class="cp-grid">
+        <el-card
+          v-for="d in draftStacks" :key="d.name" shadow="hover"
+          class="cp-card cp-draft" title="点击进入栈详情部署"
+          @click="openStackById(d.name)"
+        >
+          <div class="cp-card-head">
+            <span class="cp-card-name mono" :title="d.name">{{ d.name }}</span>
+            <el-tag type="info" effect="light" size="small">{{ stateTextOf(d) }}</el-tag>
+          </div>
+          <div class="cp-card-meta">compose 文件已就绪，尚未部署</div>
+          <div class="cp-card-actions">
+            <span class="cp-draft-hint">点击卡片进入栈详情部署</span>
+          </div>
+        </el-card>
+      </div>
+    </template>
+
     <!-- 栈详情抽屉（商店栈专用）：服务矩阵/组合日志/在线编辑/一键升级 -->
     <StackDetailDrawer ref="stackDrawerRef" @changed="refresh" @terminal="onServiceJump" />
 </template>
@@ -84,8 +105,8 @@
 // 卡片额外并行拉取项目服务（compose ps），以服务芯片呈现 Dockge 式密度；
 // 商店部署的栈整卡可点进 StackDetailDrawer（服务矩阵/组合日志/编排编辑）。
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast）。
-import { ref, reactive, inject, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, computed, inject, watch, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { VideoPlay, VideoPause, RefreshRight, Delete } from '@element-plus/icons-vue'
 import { api } from '../../../api'
@@ -96,11 +117,14 @@ import StackDetailDrawer from '../../apps/StackDetailDrawer.vue'
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')
 const router = useRouter()
+const route = useRoute()
 
 const composeProjects = ref([])
 const loading = ref(false)
 // 服务芯片数据：{ 项目名: [ComposeService] }；undefined=加载中，[]=确无服务
 const servicesMap = reactive({})
+// 栈状态（5 态，含草稿）：{ 栈名: state }；拉取失败时为空，前端回落到 compose ls 的 Status
+const statesMap = ref({})
 
 // 首次挂载 / 壳刷新按钮 / 操作成功后 共用的重拉入口：列表 + 各项目服务并行补
 async function refresh() {
@@ -115,6 +139,19 @@ async function refresh() {
   } finally {
     loading.value = false
   }
+  loadStates() // 状态是增强信息，后台补（不阻塞列表）
+}
+
+// 拉栈状态（后端 5 态状态机，含「文件在但未部署」草稿态）
+async function loadStates() {
+  try {
+    const res = await api.composeStates()
+    const m = {}
+    for (const it of ((res.data || {}).items || [])) m[it.name] = it.state
+    statesMap.value = m
+  } catch {
+    // 增强信息，失败静默（状态标签回落 compose ls 的 Status）
+  }
 }
 
 // 并行拉各项目服务列表（compose ps 快，项目数量级个位数）；失败置 [] 不阻塞卡片
@@ -126,7 +163,10 @@ function loadAllServices() {
   }
 }
 
-onMounted(refresh)
+onMounted(async () => {
+  await refresh()
+  openStackFromQuery() // 来源跳转：挂载后按 ?stack= 打开对应栈详情
+})
 defineExpose({ refresh })
 
 // ═══════════════ 编排卡片（compose 项目）═══════════════
@@ -142,10 +182,69 @@ function stackIdOf(row) {
 }
 
 function openStack(row) {
-  const id = stackIdOf(row)
+  openStackById(stackIdOf(row))
+}
+
+// 直接按栈名打开详情（草稿卡片与 ?stack= 跳转用）
+function openStackById(id) {
   if (!id || !stackDrawerRef.value) return
   stackDrawerRef.value.open(id)
 }
+
+// 来源跳转落地：容器「来源」点击 → /containers?tab=compose&stack=<栈名>。
+// 一次性消费，避免后续刷新轮询重复弹抽屉。
+let stackQueryDone = false
+function openStackFromQuery() {
+  if (stackQueryDone) return
+  const id = route.query.stack
+  if (!id) return
+  stackQueryDone = true
+  const sid = String(id)
+  // 仅当该项目确为商店栈（ConfigFiles 指向 data/stacks）或草稿栈时才开详情，
+  // 避免对普通手工 compose 项目误开（其详情端点会 404）
+  const row = composeProjects.value.find((p) => p.Name === sid)
+  if (row) {
+    if (stackIdOf(row)) openStackById(sid)
+    return
+  }
+  if (draftStacks.value.some((d) => d.name === sid)) openStackById(sid)
+}
+watch(() => route.query.stack, (id) => {
+  if (id) { stackQueryDone = false; openStackFromQuery() }
+})
+
+// ── 栈状态（5 态，借 Dockge）与草稿栈 ──
+
+const STACK_STATE_TEXT = {
+  unknown: '未知',
+  created_file: '草稿（未部署）',
+  created_stack: '已创建',
+  running: '运行中',
+  exited: '已退出'
+}
+const STACK_STATE_TAG = {
+  unknown: 'info',
+  created_file: 'info',
+  created_stack: 'warning',
+  running: 'success',
+  exited: 'danger'
+}
+
+function stateTextOf(row) {
+  const st = statesMap.value[row.Name || row.name]
+  return st ? (STACK_STATE_TEXT[st] || st) : (row.Status || '—')
+}
+function stateTagOf(row) {
+  const st = statesMap.value[row.Name || row.name]
+  return st ? (STACK_STATE_TAG[st] || 'info') : composeTag(row.Status)
+}
+
+// 草稿栈：状态为 created_file 且不在已部署列表里（data/stacks 有文件但未 up）
+const draftStacks = computed(() =>
+  Object.entries(statesMap.value)
+    .filter(([name, st]) => st === 'created_file' && !composeProjects.value.some((p) => p.Name === name))
+    .map(([name, state]) => ({ name, state }))
+)
 
 // 栈详情里点服务的终端/日志：切回容器 tab 并由 query 自动开对应抽屉（消费方在 ContainerTab）
 function onServiceJump(svc) {
@@ -319,5 +418,23 @@ async function composeAction(row, action) {
 /* 下线钮右对齐独立：危险动作与常规操作分离（与容器卡片同款约定） */
 .cp-card-del {
   margin-left: auto;
+}
+/* 草稿栈分节标题 */
+.cp-section-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--color-foreground);
+  margin: 18px 0 10px;
+}
+.cp-draft {
+  cursor: pointer;
+  border-style: dashed;
+}
+.cp-draft:hover {
+  transform: translateY(-2px);
+}
+.cp-draft-hint {
+  font-size: 0.8rem;
+  color: var(--color-muted-foreground);
 }
 </style>

@@ -3,12 +3,16 @@ package handler
 import (
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/service/dockerx"
 	"github.com/jiuzhao/vmops/service/tasks"
 )
@@ -621,4 +625,158 @@ func (h *DockerHandler) DisconnectContainerNetwork(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"message": "已断开网络 " + name})
+}
+
+// ─────────────── 容器内文件浏览（只读，借 1Panel file-browser） ───────────────
+
+// ContainerFiles GET /api/docker/containers/:id/files?path=/ —— 列出容器内目录。
+// 只读能力：仅 ls/cat，不含上传/删除（那是另一个量级的风险面）。
+func (h *DockerHandler) ContainerFiles(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	id := c.Param("id")
+	if !safeDockerID(id) {
+		Fail(c, http.StatusBadRequest, "容器 ID 非法")
+		return
+	}
+	path := c.Query("path")
+	if path == "" {
+		path = "/"
+	}
+	if !dockerx.SafeContainerPath(path) {
+		Fail(c, http.StatusBadRequest, "路径非法（须为容器内绝对路径）")
+		return
+	}
+	// dockerx 侧的「容器未运行 / 缺 ls」已转成中文友好文案，ErrorResponse 会原样透出
+	entries, err := h.Docker.ListContainerDir(id, path)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"path": path, "total": len(entries), "items": entries})
+}
+
+// ContainerFileContent GET /api/docker/containers/:id/file?path=/etc/hosts —— 读取容器内文本文件。
+func (h *DockerHandler) ContainerFileContent(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	id := c.Param("id")
+	if !safeDockerID(id) {
+		Fail(c, http.StatusBadRequest, "容器 ID 非法")
+		return
+	}
+	path := c.Query("path")
+	if !dockerx.SafeContainerPath(path) {
+		Fail(c, http.StatusBadRequest, "路径非法（须为容器内绝对路径）")
+		return
+	}
+	content, truncated, err := h.Docker.ReadContainerFile(id, path)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, gin.H{"path": path, "content": content, "truncated": truncated, "size": len(content)})
+}
+
+// ─────────────── compose 内容校验（借 Dockge 的即时校验，服务端权威解析） ───────────────
+
+// ValidateCompose POST /api/docker/compose/validate body {"content":"..."}
+// 用 docker compose -f <临时文件> config 做真解析，返回结构化错误（行号 + 消息）。
+// 收口 admin：compose config 会解析 include/env_file 等本地引用，属文件读取面，
+// 与 stacks.File 同口径仅管理员可用（编辑 compose 本就是管理员能力）。
+func (h *DockerHandler) ValidateCompose(c *gin.Context) {
+	if !roleIsAdmin(c) {
+		Fail(c, http.StatusForbidden, "compose 校验仅管理员可用")
+		return
+	}
+	if !h.dockerAvailable(c) {
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
+		return
+	}
+	if len(body.Content) > 1<<20 {
+		Fail(c, http.StatusBadRequest, "compose 内容过大（>1MB）")
+		return
+	}
+	res, err := h.Docker.ComposeValidate(body.Content)
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	Success(c, res)
+}
+
+// ─────────────── compose 栈状态机（借 Dockge 的 5 态模型） ───────────────
+
+// ComposeStates GET /api/docker/compose/states —— 每个 compose 栈的状态。
+// 在 compose ls（已部署）基础上补上 data/stacks 下「文件在但未部署」的草稿栈，
+// 交给 dockerx.ComposeStackState 统一判定（任一服务 exited 即整栈 EXITED）。
+func (h *DockerHandler) ComposeStates(c *gin.Context) {
+	if !h.dockerAvailable(c) {
+		return
+	}
+	projects, err := h.Docker.ComposeList()
+	if err != nil {
+		ErrorResponse(c, http.StatusInternalServerError, err)
+		return
+	}
+	items := []gin.H{}
+	seen := map[string]bool{}
+	for _, p := range projects {
+		services, _ := h.Docker.ComposeServices(p.Name) // 失败按空服务降级
+		items = append(items, gin.H{
+			"name":         p.Name,
+			"state":        dockerx.ComposeStackState(true, true, services),
+			"deployed":     true,
+			"has_file":     true,
+			"status":       p.Status,
+			"config_files": p.ConfigFiles,
+		})
+		seen[p.Name] = true
+	}
+	// 草稿栈：data/stacks/<id>/docker-compose.yml 存在但不在 compose ls 里
+	for _, name := range draftStackIDs() {
+		if seen[name] {
+			continue
+		}
+		items = append(items, gin.H{
+			"name":     name,
+			"state":    dockerx.ComposeStackState(true, false, nil),
+			"deployed": false,
+			"has_file": true,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i]["name"].(string) < items[j]["name"].(string)
+	})
+	Success(c, gin.H{"total": len(items), "items": items})
+}
+
+// draftStackIDs 扫描 data/stacks 下的栈目录（含 docker-compose.yml 者），返回栈 ID 列表。
+// 目录不存在（尚未部署任何栈）时返回空，不报错。
+func draftStackIDs() []string {
+	entries, err := os.ReadDir(config.DataPath("stacks"))
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(config.DataPath("stacks", e.Name()), "docker-compose.yml")); err != nil {
+			continue
+		}
+		if safeDockerID(e.Name()) {
+			out = append(out, e.Name())
+		}
+	}
+	return out
 }

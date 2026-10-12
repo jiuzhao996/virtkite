@@ -92,6 +92,10 @@
           </template>
         </el-tab-pane>
 
+        <el-tab-pane label="文件" name="files" lazy>
+          <ContainerFilesTab v-if="row.ID" :container-id="row.ID" :running="row.State === 'running'" />
+        </el-tab-pane>
+
         <el-tab-pane label="日志" name="logs" lazy class="pane-logs">
           <div v-loading="logsLoading">
             <div v-if="logsMode === 'ws' || wsFallback" class="ls-bar">
@@ -151,6 +155,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import CopyButton from '../../../components/CopyButton.vue'
 import LogViewer from './LogViewer.vue'
+import ContainerFilesTab from './ContainerFilesTab.vue'
 import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { containerName, stateTag, stateText, dockerTime, shortId } from '../../../utils/docker-format'

@@ -46,6 +46,17 @@
         </div>
         <div class="ct-card-meta mono" :title="row.Image">{{ row.Image || '—' }}</div>
         <div class="ct-card-meta" :title="row.Status || ''">{{ row.Status || '—' }}</div>
+        <!-- 来源反查（借 1Panel 的「关联」列）：compose 容器显示所属栈名可跳转，其余标「手工创建」 -->
+        <div class="ct-card-meta ct-card-src">
+          <span class="ct-src-k">来源</span>
+          <a
+            v-if="row.Project"
+            class="ct-src-lk mono"
+            :title="'来自部署栈 ' + row.Project + (row.Service ? ' · 服务 ' + row.Service : '') + '，点击跳转编排'"
+            @click.stop="gotoStack(row)"
+          >{{ row.Project }}<span v-if="row.Service" class="ct-src-svc">/{{ row.Service }}</span></a>
+          <span v-else class="ct-src-manual">手工创建</span>
+        </div>
         <div class="ct-card-metrics">
           <span>CPU <b class="mono">{{ cpuText(row) }}</b></span>
           <span>内存 <b class="mono" :title="memTitle(row)">{{ memText(row) }}</b></span>
@@ -104,7 +115,7 @@
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast）；10s 静默轮询随本页走，
 // KeepAlive 下 onUnmounted 不触发，故用 onActivated/onDeactivated 显式启停轮询（防切走后后台空转）。
 import { ref, computed, inject, watch, onMounted, onActivated, onDeactivated } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Delete, VideoPlay, VideoPause, Monitor } from '@element-plus/icons-vue'
 import { api } from '../../../api'
@@ -422,6 +433,12 @@ function openDetail(row) {
 // 跨页跳转落地：query 带 id（可选 open=terminal|logs），列表就绪后匹配容器开对应抽屉。
 // 一次性消费（openQueryDone），刷新轮询不再重复触发。
 const route = useRoute()
+const router = useRouter()
+
+// 来源跳转：compose 容器 → 编排 tab 并打开对应栈详情（ComposeTab 消费 ?stack=）
+function gotoStack(row) {
+  router.push({ path: '/containers', query: { tab: 'compose', stack: row.Project } })
+}
 let openQueryDone = false
 watch(
   [() => route.query.id, containers],
@@ -556,6 +573,32 @@ defineExpose({ refresh })
 .ct-card-time {
   font-size: 0.76rem;
   opacity: 0.75;
+}
+/* 来源行：栈名可点击跳转编排，手工创建弱化显示 */
+.ct-card-src {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ct-src-k {
+  flex: none;
+  color: var(--color-muted-foreground);
+}
+.ct-src-lk {
+  color: var(--el-color-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ct-src-lk:hover {
+  text-decoration: underline;
+}
+.ct-src-svc {
+  color: var(--color-muted-foreground);
+}
+.ct-src-manual {
+  color: var(--color-muted-foreground);
 }
 .ct-card-metrics {
   display: flex;
