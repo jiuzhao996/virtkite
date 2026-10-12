@@ -3,6 +3,8 @@ package tasks
 import (
 	"strings"
 	"testing"
+
+	"github.com/jiuzhao/vmops/model"
 )
 
 // TestParseRecap 覆盖 PLAY RECAP 段解析。
@@ -53,5 +55,29 @@ func TestUintSliceParam(t *testing.T) {
 	}
 	if _, err := uintSliceParam(map[string]interface{}{}, "targets"); err == nil {
 		t.Error("缺键应拒绝")
+	}
+}
+
+// TestAnsibleSSHUser 免密通道登录用户的取值。
+//
+// 风险点：这里曾硬编码 root，而平台公钥是按 cloud-init 配的 user 落到那个用户家目录的。
+// 用户填 admin/rocky 时，以 root 登录会撞上镜像 root 的 forced-command 提示，
+// 提示语污染模块 stdout，ansible 报「Module result deserialization failed」——
+// 症状与原因完全不相干，排查要花很久。本测试把「公钥落点 == 登录用户」这条不变量钉死。
+func TestAnsibleSSHUser(t *testing.T) {
+	cases := []struct {
+		name string
+		vm   model.VM
+		want string
+	}{
+		{"公钥落 admin 家目录就用 admin", model.VM{AnsibleUser: "admin", AnsibleReady: true}, "admin"},
+		{"公钥落 rocky 家目录就用 rocky", model.VM{AnsibleUser: "rocky", AnsibleReady: true}, "rocky"},
+		{"空白值回落 root（存量行）", model.VM{AnsibleUser: "   "}, "root"},
+		{"空值回落 root（字段引入前的数据）", model.VM{}, "root"},
+	}
+	for _, tc := range cases {
+		if got := ansibleSSHUser(tc.vm); got != tc.want {
+			t.Errorf("%s: ansibleSSHUser=%q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

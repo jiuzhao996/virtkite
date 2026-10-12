@@ -197,11 +197,23 @@ func SyntaxCheckDir(mainFile string) error {
 // 复制整目录到临时目录，写入新内容到主文件位置，再 --syntax-check——保证 roles/
 // 相对引用可见，避免「编辑 site.yml 时误报角色不存在」。
 func SyntaxCheckContentInDir(mainFile, newContent string) error {
+	return SyntaxCheckFileInDir(mainFile, mainFile, newContent)
+}
+
+// SyntaxCheckFileInDir 目录形态 playbook 的「指定文件」校验：以 anchor 定位 playbook 目录
+// （整目录复制到临时目录保证 roles/ 相对引用可见），把 newContent 写进 target 对应位置再
+// --syntax-check。编辑的若不是主文件（如目录下另一个入口 yml），校验的必须是被编辑的那个
+// 文件——否则写坏一个副入口 playbook 会静默通过，跑起来才炸。
+func SyntaxCheckFileInDir(anchor, target, newContent string) error {
 	eng, err := Detect()
 	if err != nil {
 		return err
 	}
-	srcDir := filepath.Dir(mainFile)
+	srcDir := filepath.Dir(anchor)
+	rel, rerr := filepath.Rel(srcDir, target)
+	if rerr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New("校验目标越出 playbook 目录")
+	}
 	tmp, err := os.MkdirTemp("", "vmops-pbdir-*")
 	if err != nil {
 		return fmt.Errorf("创建临时目录失败: %w", err)
@@ -210,17 +222,22 @@ func SyntaxCheckContentInDir(mainFile, newContent string) error {
 	if err := copyTree(srcDir, tmp); err != nil {
 		return err
 	}
-	base := filepath.Base(mainFile)
-	target := filepath.Join(tmp, base)
-	if err := os.WriteFile(target, []byte(newContent), 0o600); err != nil {
+	dst := filepath.Join(tmp, rel)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("创建临时目录失败: %w", err)
+	}
+	if err := os.WriteFile(dst, []byte(newContent), 0o600); err != nil {
 		return fmt.Errorf("写入临时文件失败: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	out, err := execCombined(ctx, eng.PlaybookPath, "--syntax-check", "-i", "localhost,", target)
+	out, err := execCombined(ctx, eng.PlaybookPath, "--syntax-check", "-i", "localhost,", dst)
 	if err == nil {
 		return nil
 	}
+	// ansible 报错里会带上我们复制到的临时目录（/tmp/vmops-pbdir-xxx/），对用户是噪音：
+	// 换成 playbook 目录标记，报错位置仍可读（如 roles:/tmp/xxx/roles → roles:<playbook>/roles）
+	out = strings.ReplaceAll(out, tmp, "<playbook>")
 	msg := strings.TrimSpace(out)
 	if msg == "" {
 		msg = err.Error()

@@ -296,7 +296,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Upload, Delete, Star, StarFilled, Cpu, Search, Plus, Files } from '@element-plus/icons-vue'
@@ -665,12 +665,18 @@ async function remove(img) {
   }
 }
 
-onMounted(() => {
-  // 深链 ?tab=xxx（任务中心「查看镜像库/查看容器镜像」等出口用）：白名单内才采纳，
-  // 非法值回落默认 tab；build/docker 两个 tab 是 v-if=canOperate，viewer 深链不生效
+// 深链 ?tab=xxx（任务中心「查看镜像库/查看容器镜像」等出口用）：白名单内才采纳，
+// 非法值回落默认 tab；build/docker 两个 tab 是 v-if=canOperate，viewer 深链不生效。
+// 监听而非只读一次：同路由内只改 query 不会重挂组件，漏掉监听就会「点了没反应」。
+function applyQueryTab() {
   const t = route.query.tab
   const allowed = canOperate.value ? ['images', 'iso', 'build', 'docker', 'market'] : ['images', 'iso', 'market']
   if (typeof t === 'string' && allowed.includes(t)) activeTab.value = t
+}
+watch(() => route.query.tab, applyQueryTab)
+
+onMounted(() => {
+  applyQueryTab()
   load()
   loadPools()
 })

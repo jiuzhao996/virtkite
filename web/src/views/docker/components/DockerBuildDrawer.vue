@@ -11,7 +11,13 @@
       <span class="bd-hint">上下文目录：data/docker-builds/&lt;名称&gt;/；Dockerfile 与需 COPY 的文件都放这里</span>
     </div>
 
-    <div v-if="ctxName" class="bd-body">
+    <div v-if="!ctxName" class="bd-empty">
+      <el-empty description="还没有构建上下文。构建上下文是一个目录，放 Dockerfile 和需要 COPY 进镜像的文件。" :image-size="70">
+        <el-button type="primary" :icon="Plus" @click="createCtx">新建上下文</el-button>
+      </el-empty>
+    </div>
+
+    <div v-else class="bd-body">
       <div class="bd-files">
         <div class="bd-files-head">
           <span>上下文文件</span>
@@ -287,6 +293,22 @@ function parseBuildArgs(text) {
   return out
 }
 
+// 任务 result 两种形态：构建中的节流中间态是纯文本，终态是 {context,tag,output} 的 JSON。
+// 统一取成可展示的文本，避免终态回填时把 JSON 原样糊到日志框里。
+function taskLogText(raw) {
+  if (!raw) return ''
+  const s = String(raw)
+  if (s.startsWith('{')) {
+    try {
+      const o = JSON.parse(s)
+      return o.output || ''
+    } catch (_) {
+      /* 非法 JSON：原样展示 */
+    }
+  }
+  return s
+}
+
 async function startBuild() {
   if (!buildForm.tag.trim()) {
     ElMessage.warning('请填写镜像标签（如 myapp:1.0）')
@@ -300,12 +322,16 @@ async function startBuild() {
     const ba = parseBuildArgs(buildArgsText.value)
     if (Object.keys(ba).length) payload.build_args = ba
     ElMessage.info('构建任务已提交，日志将实时显示…')
-    await pollTask(extractTaskId(await api.dockerBuildRun(ctxName.value, payload)), {
+    const done = await pollTask(extractTaskId(await api.dockerBuildRun(ctxName.value, payload)), {
       timeout: 30 * 60 * 1000, // 拉基础镜像 + 装包是分钟级，5 分钟默认超时不够
       onProgress: (t) => {
-        buildLog.value = (t.result || '').slice(-6000)
+        buildLog.value = taskLogText(t.result).slice(-6000)
       }
     })
+    // 终态回填：基础镜像已在本地时整个构建可能不到一个节流窗口（2s），
+    // 中间态永远为空——不回填终态输出，用户就只看得到一句「构建完成」。
+    const final = taskLogText(done && done.result).slice(-6000)
+    if (final) buildLog.value = final
     ElMessage.success('镜像构建完成')
     emit('built')
   } catch (e) {
@@ -333,6 +359,9 @@ defineExpose({ open })
 .bd-hint {
   font-size: 0.8rem;
   color: var(--color-muted-foreground);
+}
+.bd-empty {
+  padding: 12px 0 4px;
 }
 .bd-body {
   display: grid;

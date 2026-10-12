@@ -292,6 +292,7 @@ func execCreateVM(ctx *ExecContext, masterSecret string) error {
 	// cloud-init：顶层缺失时从磁盘项中查找，生成 seed ISO 落到 seed 目录，挂为只读 cdrom。
 	cfg := cloudInit
 	keyInjected := false
+	ansibleUser := "root" // 平台公钥实际落在哪个用户家目录（见 model.VM.AnsibleUser 注释）
 	if cfg == nil {
 		for i := range disks {
 			if disks[i].CloudInit != nil {
@@ -310,6 +311,10 @@ func execCreateVM(ctx *ExecContext, masterSecret string) error {
 		if _, pub, kerr := ansible.EnsureKeyPair(config.DataPath("ansible")); kerr == nil {
 			cfg.SSHKeys = append(cfg.SSHKeys, pub)
 			keyInjected = true
+			// 公钥写进的是 cloud-init 配的那个用户家目录，ansible 免密必须用它登录
+			if u := strings.TrimSpace(cfg.User); u != "" {
+				ansibleUser = u
+			}
 		} else {
 			log.Printf("[tasks] 警告: 平台密钥不可用，VM %s 降级口令通道: %v", name, kerr)
 		}
@@ -396,6 +401,7 @@ func execCreateVM(ctx *ExecContext, masterSecret string) error {
 		MACAddress:   nicMAC,
 		Status:       model.VMStatusShutOff,
 		AnsibleReady: keyInjected,
+		AnsibleUser:  ansibleUser,
 	}
 	if err := ctx.DB.Create(&vm).Error; err != nil {
 		cleanup()

@@ -315,7 +315,7 @@
 // 运维自动化（P4 S2）：三 tab——快速执行（adhoc）/ Playbook 库（CRUD + 语法校验）/
 // 执行历史（RECAP 矩阵）。执行全走 ansible_run 异步任务：提交得 task_id → 轮询
 // 任务详情（executor 端 2s 节流落库 Result，前端 1.5s 轮询即实时日志）。
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, VideoPlay, Edit, Delete, Close, Setting, Folder, Document } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -331,6 +331,13 @@ const router = useRouter()
 const { isAdmin } = useAuth()
 // 深链支持：/crons 重定向到 /automation?tab=cron（仅管理员生效，否则落默认 tab）
 const activeTab = ref(route.query.tab === 'cron' && isAdmin.value ? 'cron' : 'adhoc')
+// ?tab= 深链（/crons 重定向、任务中心等出口用）：同路由内只改 query 不会重挂组件，
+// 必须监听——只读一次初始值会让「已在自动化页时点 /automation?tab=cron」没反应。
+function applyQueryTab() {
+  if (route.query.tab === 'cron' && isAdmin.value) activeTab.value = 'cron'
+  else if (route.query.tab && route.query.tab !== 'cron') activeTab.value = route.query.tab
+}
+watch(() => route.query.tab, applyQueryTab)
 const engine = ref({})
 const statusLoading = ref(true)
 const vms = ref([])

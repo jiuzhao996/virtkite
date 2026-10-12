@@ -165,11 +165,7 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		}
 		vmHostName[vm.ID] = name
 		if vm.AnsibleReady && keyFile != "" {
-			user := "root"
-			if cred, ok := credByVM[vm.ID]; ok && cred.User != "" {
-				user = cred.User
-			}
-			hosts = append(hosts, ansible.HostEntry{Name: name, IP: vm.IP, User: user, Port: 22, KeyFile: keyFile})
+			hosts = append(hosts, ansible.HostEntry{Name: name, IP: vm.IP, User: ansibleSSHUser(vm), Port: 22, KeyFile: keyFile})
 			continue
 		}
 		cred := credByVM[vm.ID]
@@ -307,6 +303,19 @@ func sanitizeInventory(path string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ansibleSSHUser 免密通道的登录用户：必须是平台公钥当初写进谁家目录的那个用户
+// （model.VM.AnsibleUser）。历史上这里硬编码 root，而 cloud-init 建机时运维常把 user
+// 填成 admin/rocky——公钥在那边却以 root 登录，撞上镜像 root authorized_keys 的
+// forced-command 提示（"Please login as the user ..."），提示语污染模块 stdout，
+// ansible 报成「Module result deserialization failed」，与真实原因毫不相干。
+// 空值回落 root（该字段引入前的存量行）。
+func ansibleSSHUser(vm model.VM) string {
+	if u := strings.TrimSpace(vm.AnsibleUser); u != "" {
+		return u
+	}
+	return "root"
 }
 
 // resolveHostGroupVMIDs 解析主机组成员为 VM id 列表（VMIDs 是 JSON 文本数组）。

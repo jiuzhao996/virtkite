@@ -39,11 +39,18 @@ type VM struct {
 	DomainXML string `gorm:"type:text" json:"-"`
 	// AnsibleReady 平台公钥已注入该 VM（cloud-init 建机直通或分发动作补注）——
 	// ansible 对它走私钥免密通道，inventory 不再瞬时承载口令文件（P4-S4）
-	AnsibleReady bool           `gorm:"default:false" json:"ansible_ready"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-	Host         Host           `gorm:"foreignKey:HostID" json:"host,omitempty"`
+	AnsibleReady bool `gorm:"default:false" json:"ansible_ready"`
+	// AnsibleUser 平台公钥写进了哪个用户的 authorized_keys（ansible 免密连接必须用它登录）。
+	// 曾经这里是隐式的 root：cloud-init 建机时运维把 user 填成 admin/rocky 是常态，
+	// 公钥进的是那个用户的家目录，而 executor 仍以 root 登录——镜像里 root 的
+	// authorized_keys 常带 forced-command（"Please login as the user ..."），
+	// 模块 stdout 被这句提示污染，报成「Module result deserialization failed」这种
+	// 与真实原因毫不相干的错。空值按 root 处理（存量数据兼容）。
+	AnsibleUser string         `gorm:"size:50;default:root" json:"ansible_user"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	Host        Host           `gorm:"foreignKey:HostID" json:"host,omitempty"`
 }
 
 // TableName 指定表名

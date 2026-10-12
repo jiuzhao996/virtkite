@@ -126,6 +126,47 @@ func TestPlaybookFilesEndpoints(t *testing.T) {
 		}
 	})
 
+	t.Run("写副入口 yml 坏引用必须回 warning", func(t *testing.T) {
+		if _, err := ansible.Detect(); err != nil {
+			t.Skipf("宿主机未安装 ansible，跳过：%v", err)
+		}
+		// 校验目标必须是被写的那个文件：此前只校验主文件（site.yml），
+		// 目录下另写一个引用不存在 role 的入口 yml 会静默通过，等执行才炸。
+		c, rec := jsonCtx(t, http.MethodPut, "/api/ansible/playbooks/web-stack/file",
+			gin.Params{{Key: "id", Value: "web-stack"}},
+			map[string]string{"path": "bad-entry.yml", "content": "---\n- hosts: all\n  roles:\n    - no-such-role\n"})
+		h.WritePlaybookFile(c)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("期望 200（校验失败不阻断保存），实际 %d：%s", rec.Code, rec.Body.String())
+		}
+		body := decodeBody(t, rec)
+		data, _ := body["data"].(map[string]interface{})
+		if w, _ := data["warning"].(string); w == "" {
+			t.Error("写坏副入口 yml 未回 warning（校验目标可能仍指向主文件）")
+		}
+		// 合法的副入口 yml 不应产生 warning
+		c2, rec2 := jsonCtx(t, http.MethodPut, "/api/ansible/playbooks/web-stack/file",
+			gin.Params{{Key: "id", Value: "web-stack"}},
+			map[string]string{"path": "good-entry.yml", "content": "---\n- hosts: all\n  roles:\n    - nginx\n"})
+		h.WritePlaybookFile(c2)
+		if rec2.Code != http.StatusOK {
+			t.Fatalf("期望 200，实际 %d：%s", rec2.Code, rec2.Body.String())
+		}
+		b2 := decodeBody(t, rec2)
+		d2, _ := b2["data"].(map[string]interface{})
+		if w, _ := d2["warning"].(string); w != "" {
+			t.Errorf("合法副入口 yml 不应报 warning：%s", w)
+		}
+		// 非 yml（模板）跳过校验，也不应报 warning
+		c3, rec3 := jsonCtx(t, http.MethodPut, "/api/ansible/playbooks/web-stack/file",
+			gin.Params{{Key: "id", Value: "web-stack"}},
+			map[string]string{"path": "roles/nginx/templates/x.j2", "content": "{{ broken"})
+		h.WritePlaybookFile(c3)
+		if rec3.Code != http.StatusOK {
+			t.Fatalf("期望 200，实际 %d：%s", rec3.Code, rec3.Body.String())
+		}
+	})
+
 	t.Run("写非法路径被拒", func(t *testing.T) {
 		c, rec := jsonCtx(t, http.MethodPut, "/api/ansible/playbooks/web-stack/file",
 			gin.Params{{Key: "id", Value: "web-stack"}},

@@ -474,7 +474,8 @@ func (h *AnsibleHandler) DeployKey(c *gin.Context) {
 			failed = append(failed, gin.H{"name": vm.Name, "reason": "SSH 注入失败"})
 			continue
 		}
-		if uerr := h.DB.Model(&model.VM{}).Where("id = ?", vm.ID).Update("ansible_ready", true).Error; uerr != nil {
+		if uerr := h.DB.Model(&model.VM{}).Where("id = ?", vm.ID).
+			Updates(map[string]interface{}{"ansible_ready": true, "ansible_user": cred.User}).Error; uerr != nil {
 			log.Printf("[ansible] 标记 ansible_ready 失败 vm=%s: %v", vm.Name, uerr)
 		}
 		okCnt++
@@ -615,6 +616,8 @@ func (h *AnsibleHandler) ReadPlaybookFile(c *gin.Context) {
 
 // WritePlaybookFile PUT /api/ansible/playbooks/:id/file body {path, content}
 // 写后对目录做一次语法校验（roles 相对引用需整目录可见）；校验失败仍保存，但回 warning 提示。
+// 校验目标 = 刚写的那个文件（若它是 yml/yaml 入口），否则退回主文件——否则写坏一个副入口
+// playbook 会静默通过，等执行时才炸。
 func (h *AnsibleHandler) WritePlaybookFile(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
@@ -631,7 +634,12 @@ func (h *AnsibleHandler) WritePlaybookFile(c *gin.Context) {
 	}
 	warning := ""
 	if main, _, ok := ansible.ResolvePlaybook(playbookDir(), id); ok {
-		if err := ansible.SyntaxCheckDir(main); err != nil {
+		target := main
+		if ext := strings.ToLower(filepath.Ext(req.Path)); ext == ".yml" || ext == ".yaml" {
+			// 写的是入口文件：校验它本身（路径已被 WritePlaybookFile 的守卫校验过）
+			target = filepath.Join(playbookDir(), id, filepath.FromSlash(req.Path))
+		}
+		if err := ansible.SyntaxCheckFileInDir(main, target, req.Content); err != nil {
 			warning = err.Error()
 		}
 	}

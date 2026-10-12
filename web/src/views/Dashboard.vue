@@ -100,7 +100,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, reactive } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, reactive, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import MonitorView from './Monitor.vue'
 import TopologyView from './Topology.vue'
@@ -340,12 +340,20 @@ async function prefillHostHistory() {
   }
 }
 
-onMounted(async () => {
-  // 兼容旧书签：/monitor、/topology 重定向到 /dashboard?tab=xx 时直达对应 tab
-  if (route.query.tab === 'monitor' || route.query.tab === 'topology') {
-    activeTab.value = route.query.tab
-    visitedTabs.add(route.query.tab)
+// 兼容旧书签：/monitor、/topology 重定向到 /dashboard?tab=xx 时直达对应 tab。
+// 同时监听 query 变化——同路由内只改 query 不会重挂组件，只读一次 onMounted 会漏掉
+// （页面内跳 /dashboard?tab=monitor 这类链接会「点了没反应」）。
+function applyQueryTab() {
+  const t = route.query.tab
+  if (t === 'monitor' || t === 'topology') {
+    activeTab.value = t
+    visitedTabs.add(t)
   }
+}
+watch(() => route.query.tab, applyQueryTab)
+
+onMounted(async () => {
+  applyQueryTab()
   await loadAll()
   // 概览轮询表（宿主机/VM/告警）统一由 setOverviewTimers 托管：
   // 切到监控/拓扑 tab 时概览不可见，停表不空转（监控 tab 由内嵌 Monitor 自己轮询，
