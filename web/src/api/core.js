@@ -211,6 +211,9 @@ export const core = {
   listStacks: () => unwrap(http.get('/stacks')),
   deployStack: (id) => unwrap(http.post(`/stacks/${id}/deploy`)),
   stackDocs: (id, path) => http.get(`/stacks/${id}/docs`, { params: { path } }).then((r) => r.data),
+  // 版本历史与回滚（回滚走 stack_rollback 异步任务，需 admin）
+  stackVersions: (id) => unwrap(http.get(`/stacks/${id}/versions`)),
+  rollbackStack: (id, versionId) => unwrap(http.post(`/stacks/${id}/rollback`, { version_id: versionId })),
   // 栈详情（服务列表 + 部署副本内容 + 漂移标志）/ 编辑部署副本（admin）/ 升级（admin，异步任务）
   stackDetail: (id) => unwrap(http.get(`/stacks/${id}/detail`)),
   saveStackFile: (id, content) => unwrap(http.put(`/stacks/${id}/file`, { content })),

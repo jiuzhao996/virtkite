@@ -22,6 +22,24 @@ var ErrStackBusy = errors.New("该栈正在执行其他操作，请稍后再试"
 // 远小于引入引用计数与删除竞态的复杂度（与 vmlock 同一取舍）。
 var stackLocks sync.Map // map[string]*sync.Mutex
 
+// IsStackBusy 探测某栈当前是否有操作在进行（非阻塞试锁后立即释放）。
+//
+// 供 handler 在提交异步栈任务（如回滚）前给用户即时 409 反馈，语义与 handler 的
+// composeWriteErr 一致；真正把操作串行化的是任务内 ComposePull / ComposeUpFromFile
+// 各自的持锁调用，本函数只是「先看一眼忙不忙」的尽力而为判定（检查与真正执行之间存在
+// 微小时间窗，属可接受——窗口内若被别的操作抢锁，任务会以 ErrStackBusy 明确失败）。
+func (d *Dockerx) IsStackBusy(name string) bool {
+	if !safeDockerName(name) {
+		return false
+	}
+	release, ok := tryStackLock(name)
+	if ok {
+		release()
+		return false
+	}
+	return true
+}
+
 // tryStackLock 非阻塞获取栈名锁。成功返回 release（必须调用，建议 defer）与 true；
 // 已被占用返回 (nil, false)。
 func tryStackLock(name string) (release func(), ok bool) {

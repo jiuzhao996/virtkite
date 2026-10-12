@@ -4,11 +4,14 @@
 //
 // GET  /api/stacks          栈清单（含部署状态：compose ls 比对项目名）
 // GET  /api/stacks/:id/docs 栈的参考笔记原文（markdown，NOTES_DIR 环境变量可配）
+// GET  /api/stacks/:id/versions 版本历史（部署/升级/回滚的 compose 快照）
 // POST /api/stacks/:id/deploy（admin）同步部署（拉镜像可达分钟级，dockerx 侧 10 分钟超时）
+// POST /api/stacks/:id/rollback（admin）回滚到指定历史版本（异步任务，复用升级管线）
 package handler
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,19 +20,26 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/config"
+	"github.com/jiuzhao/vmops/database"
 	"github.com/jiuzhao/vmops/service/dockerx"
 	"github.com/jiuzhao/vmops/service/tasks"
+	"gorm.io/gorm"
 )
 
-// StackHandler 声明式部署栈处理器。Tasks 用于栈升级（stack_upgrade 异步任务）。
+// StackHandler 声明式部署栈处理器。
+//   - Tasks 用于栈升级 / 回滚（stack_upgrade / stack_rollback 异步任务）；
+//   - DB 用于版本历史（Deploy 成功后记快照、回滚目标校验）。
 type StackHandler struct {
 	Docker *dockerx.Dockerx
 	Tasks  *tasks.Manager
+	DB     *gorm.DB
 }
 
 // NewStackHandler 创建栈处理器。
+// DB 回落到 main 启动时初始化的进程级 DB（本批次 routes.go 未接线，禁止改动该文件）；
+// 一旦 routes.go 改为 NewStackHandler(deps.Tasks, deps.DB)，此回落分支可删。
 func NewStackHandler(tm *tasks.Manager) *StackHandler {
-	return &StackHandler{Docker: dockerx.New(), Tasks: tm}
+	return &StackHandler{Docker: dockerx.New(), Tasks: tm, DB: database.GetDB()}
 }
 
 // stacksDir 栈目录定位：cwd/stacks（与 locateWebRoot 同形约定，仓库根运行即命中）。
@@ -160,6 +170,15 @@ func (h *StackHandler) Deploy(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusInternalServerError, "创建部署目录失败", err)
 		return
 	}
+	uid, uname := taskUserFromContext(c)
+	// 部署会用仓库模板覆盖部署副本：先把「被覆盖的旧内容」存档（存在且与最新版本不同才新增），
+	// 保证用户手工改过、尚未升级的内容不会因一次「重新部署」而永久丢失。非致命：快照失败
+	// 不阻断部署，仅留痕。
+	if old, rerr := os.ReadFile(filepath.Join(target, "docker-compose.yml")); rerr == nil {
+		if _, _, err := tasks.RecordStackVersion(h.DB, id, string(old), "部署前快照", uname, uid, nil); err != nil {
+			LogError(c, err)
+		}
+	}
 	if err := os.WriteFile(filepath.Join(target, "docker-compose.yml"), raw, 0o644); err != nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "写入 compose 文件失败", err)
 		return
@@ -168,7 +187,14 @@ func (h *StackHandler) Deploy(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusInternalServerError, "部署失败："+err.Error(), err)
 		return
 	}
-	Success(c, gin.H{"id": id, "deployed": true, "desc": meta.Desc})
+	// 部署成功后把本次生效的编排内容记入历史（去重：内容没变则不新增）。
+	// 记录失败不判部署失败（部署本身已成功），但必须留痕（AGENTS：DB 写失败禁止静默吞），
+	// 并把标记回给前端。raw 即刚写入的模板内容。
+	_, _, recErr := tasks.RecordStackVersion(h.DB, id, string(raw), "部署", uname, uid, nil)
+	if recErr != nil {
+		LogError(c, recErr)
+	}
+	Success(c, gin.H{"id": id, "deployed": true, "desc": meta.Desc, "version_recorded": recErr == nil})
 }
 
 // Detail GET /api/stacks/:id/detail —— 栈详情：服务列表 + 部署副本内容 + 漂移标志。
@@ -293,6 +319,75 @@ func (h *StackHandler) Upgrade(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"id": id, "task_id": t.ID, "message": "升级任务已提交，可在任务中心查看进度"})
+}
+
+// Versions GET /api/stacks/:id/versions —— 栈的 compose 版本历史（含内容，供前端「查看内容」直显）。
+// 每次成功部署/升级/回滚记一条快照，最多保留最近 N 个（N 见 service/tasks 的 stackVersionKeepN）。
+func (h *StackHandler) Versions(c *gin.Context) {
+	id := c.Param("id")
+	if !dockerx.SafeStackID(id) {
+		Fail(c, http.StatusBadRequest, "栈 ID 非法（仅允许字母数字与 -_.）")
+		return
+	}
+	items, err := tasks.ListStackVersions(h.DB, id)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "获取版本历史失败", err)
+		return
+	}
+	Success(c, gin.H{"items": items, "total": len(items)})
+}
+
+// Rollback POST /api/stacks/:id/rollback（admin）——提交 stack_rollback 异步任务：
+// 把指定历史版本内容写回部署副本并重新起栈（复用 stack_upgrade 的 pull + up 管线）。
+// body：{version_id}（stack_versions 行 id）。
+func (h *StackHandler) Rollback(c *gin.Context) {
+	if !roleIsAdmin(c) {
+		Fail(c, http.StatusForbidden, "栈回滚仅管理员可用")
+		return
+	}
+	id := c.Param("id")
+	if !dockerx.SafeStackID(id) {
+		Fail(c, http.StatusBadRequest, "栈 ID 非法（仅允许字母数字与 -_.）")
+		return
+	}
+	dir := config.DataPath("stacks", id)
+	if _, err := os.Stat(filepath.Join(dir, "docker-compose.yml")); err != nil {
+		Fail(c, http.StatusNotFound, "该栈尚未部署，无法回滚")
+		return
+	}
+	var body struct {
+		VersionID uint `json:"version_id"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.VersionID == 0 {
+		Fail(c, http.StatusBadRequest, "请指定回滚目标版本")
+		return
+	}
+	// 目标版本必须存在且属于本栈（executor 侧会再校一次，此处先给即时反馈）。
+	ver, err := tasks.GetStackVersion(h.DB, body.VersionID)
+	if err != nil || ver.StackID != id {
+		Fail(c, http.StatusNotFound, "回滚目标版本不存在或不属于该栈")
+		return
+	}
+	if h.Tasks == nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "任务系统未就绪", nil)
+		return
+	}
+	// 栈级锁预检：与 composeWriteErr 同语义，冲突即时 409（真正串行化由任务内持锁调用完成）。
+	if h.Docker.IsStackBusy(id) {
+		Fail(c, http.StatusConflict, "该栈正在执行其他操作，请稍后再试")
+		return
+	}
+	uid, uname := taskUserFromContext(c)
+	t, err := h.Tasks.Submit("stack_rollback", fmt.Sprintf("回滚栈 %s 到 v%d", id, ver.Version),
+		gin.H{"stack_id": id, "dir": dir, "version_id": body.VersionID}, uid, uname, "", nil)
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "提交回滚任务失败", err)
+		return
+	}
+	Success(c, gin.H{
+		"id": id, "task_id": t.ID,
+		"message": fmt.Sprintf("回滚任务已提交（目标 v%d），可在任务中心查看进度", ver.Version),
+	})
 }
 
 // Docs GET /api/stacks/:id/docs?path=xx.md —— 栈参考笔记原文（前端 markdown 渲染）。

@@ -79,6 +79,41 @@
           </el-collapse>
         </el-tab-pane>
 
+        <el-tab-pane label="历史版本" name="versions" lazy>
+          <div class="sd-file-bar">
+            <el-button size="small" :icon="Refresh" :loading="versionsLoading" @click="loadVersions">刷新</el-button>
+            <span class="sd-file-hint">每次成功部署/升级/回滚后自动记录 compose 快照，最多保留最近 10 个版本</span>
+          </div>
+          <el-empty v-if="!versions.length" description="暂无历史版本（部署或升级后自动生成）" :image-size="70" />
+          <el-table v-else :data="versions" size="small" stripe class="sd-table">
+            <el-table-column label="版本" width="90">
+              <template #default="{ row }"><span class="mono">v{{ row.version }}</span></template>
+            </el-table-column>
+            <el-table-column label="时间" min-width="160">
+              <template #default="{ row }">{{ fmtTime(row.created_at) }}</template>
+            </el-table-column>
+            <el-table-column label="操作人" min-width="110">
+              <template #default="{ row }">{{ row.username || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="摘要" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span>{{ row.summary || '—' }}</span>
+                <el-tag v-if="row.rollback_from" size="small" type="warning" effect="plain" class="sd-ver-tag">自 v{{ row.rollback_from }} 回滚</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="180" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" text type="primary" @click="viewVersion(row)">查看内容</el-button>
+                <el-button size="small" text type="danger" :loading="rollingBack === row.id" @click="rollbackTo(row)">回滚到此版本</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <!-- 版本内容查看（只读）：抽屉内再弹对话框，append-to-body 避免与抽屉层级打架 -->
+          <el-dialog v-model="verDialog" :title="'版本内容 — v' + (viewingVer.version || '')" width="60%" append-to-body>
+            <pre class="sd-ver-pre">{{ viewingVer.content || '（空）' }}</pre>
+          </el-dialog>
+        </el-tab-pane>
+
         <el-tab-pane v-if="detail.docs && detail.docs.length" label="参考笔记" name="docs" lazy>
           <div v-loading="docsLoading" class="markdown-body" v-html="docsHtml" />
         </el-tab-pane>
@@ -96,6 +131,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'
 import ComposeEditor from '../docker/components/ComposeEditor.vue'
 import { errMsg, isCancel } from '../../utils/format'
+import { pollTask, taskErrorMessage } from '../../utils/task.js'
 
 const emit = defineEmits(['changed', 'terminal'])
 
@@ -108,6 +144,13 @@ const services = ref([])
 const upgrading = ref(false)
 const redeploying = ref(false)
 const svcActing = ref('')
+
+// ── 历史版本（部署/升级/回滚快照 + 回滚）──
+const versions = ref([])
+const versionsLoading = ref(false)
+const rollingBack = ref(0) // 正在回滚的版本行 id（0=空闲）
+const verDialog = ref(false)
+const viewingVer = ref({})
 
 // ── 组合日志 ──
 const logsFollow = ref(false)
@@ -153,6 +196,7 @@ async function open(id) {
   combinedLogs.value = []
   fileContent.value = ''
   docsHtml.value = ''
+  versions.value = []
   visible.value = true
   await loadDetail()
 }
@@ -322,6 +366,61 @@ async function redeploy() {
   }
 }
 
+// ── 历史版本（部署/升级/回滚快照 + 回滚）──
+function fmtTime(t) {
+  if (!t) return '—'
+  const d = new Date(t)
+  if (Number.isNaN(d.getTime())) return '—'
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+async function loadVersions() {
+  versionsLoading.value = true
+  try {
+    const res = await api.stackVersions(stackId.value)
+    versions.value = (res.data && res.data.items) || []
+  } catch (e) {
+    ElMessage.error(errMsg(e, '获取版本历史失败'))
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+function viewVersion(row) {
+  viewingVer.value = row
+  verDialog.value = true
+}
+
+// 回滚是破坏性操作（当前运行的服务会被替换），二次确认里讲清后果；
+// 提交后轮询任务到终态（pollTask 会 reject 失败任务的中文文案）。
+async function rollbackTo(row) {
+  try {
+    await ElMessageBox.confirm(
+      `将把编排文件回滚到 v${row.version}（${row.summary || '历史版本'}）并重新部署：当前运行的服务会被替换，容器会短暂中断。回滚前的当前版本已自动存档，可再次回滚回来。确定回滚？`,
+      '回滚到此版本',
+      { type: 'warning', confirmButtonText: '确认回滚', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch (e) {
+    if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))
+    return
+  }
+  rollingBack.value = row.id
+  try {
+    const res = await api.rollbackStack(stackId.value, row.id)
+    const taskId = (res.data && res.data.task_id) || (res && res.task_id)
+    await pollTask(taskId)
+    ElMessage.success(`已回滚到 v${row.version}`)
+    await loadDetail()
+    await loadVersions()
+    emit('changed')
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '回滚失败'))
+  } finally {
+    rollingBack.value = 0
+  }
+}
+
 // ── 参考笔记 ──
 async function loadDocs() {
   const docs = detail.value.docs || []
@@ -349,6 +448,7 @@ function onTabChange(t) {
     stopLogTimer()
   }
   if (t === 'docs' && !docsHtml.value) loadDocs()
+  if (t === 'versions') loadVersions()
 }
 
 watch(tab, onTabChange)
@@ -491,5 +591,24 @@ defineExpose({ open })
 .markdown-body {
   font-size: 0.9rem;
   line-height: 1.7;
+}
+/* 版本内容查看：深底等宽，与组合日志同源观感 */
+.sd-ver-pre {
+  margin: 0;
+  padding: 12px;
+  max-height: 60vh;
+  overflow: auto;
+  background: #0d1b2a;
+  color: #cfe8ff;
+  border-radius: var(--radius-md, 8px);
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+.sd-ver-tag {
+  margin-left: 6px;
 }
 </style>

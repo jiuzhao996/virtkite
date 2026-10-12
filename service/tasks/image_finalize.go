@@ -110,9 +110,21 @@ func execImageFinalize(ctx *ExecContext) error {
 	}
 
 	// 5) virt-sysprep 清洗（去 SSH 主机密钥 / bash 历史 / machine-id / udev 持久网卡等）
+	// guestfs 的清洗/优化/压缩是分钟级操作，输出此前只进服务端日志——用户在任务详情里
+	// 一片空白，会以为卡死。这里同时喂给结构化任务日志器（ctx.Log 内部持锁，天然扛得住
+	// guestfs 的 stdout/stderr 双读协程并发回调）。
+	guestfsOnLine := func(tag string) func(string) {
+		return func(line string) {
+			log.Printf("[image-finalize] %s: %s", tag, line)
+			if ctx.Log != nil {
+				ctx.Log.AppendLine(line)
+			}
+		}
+	}
+
 	reportProgress(ctx, 10, "清洗镜像（virt-sysprep）…")
 	if _, err := guestfs.Sysprep(baseCtx, disk, nil, guestfs.RunOpts{
-		OnLine: func(line string) { log.Printf("[image-finalize] sysprep: %s", line) },
+		OnLine: guestfsOnLine("sysprep"),
 	}); err != nil {
 		return fmt.Errorf("镜像清洗失败: %w", err)
 	}
@@ -126,7 +138,7 @@ func execImageFinalize(ctx *ExecContext) error {
 		}
 		defer func() { _ = os.Remove(scriptPath) }()
 		if _, err := guestfs.Customize(baseCtx, disk, scriptPath, ansiblePubKeyPath(), guestfs.RunOpts{
-			OnLine: func(line string) { log.Printf("[image-finalize] customize: %s", line) },
+			OnLine: guestfsOnLine("customize"),
 		}); err != nil {
 			return fmt.Errorf("注入基础优化失败: %w", err)
 		}
@@ -139,7 +151,7 @@ func execImageFinalize(ctx *ExecContext) error {
 	if sparsify {
 		reportProgress(ctx, 62, "压缩镜像（virt-sparsify）…")
 		if _, err := guestfs.Sparsify(baseCtx, disk, guestfs.RunOpts{
-			OnLine: func(line string) { log.Printf("[image-finalize] sparsify: %s", line) },
+			OnLine: guestfsOnLine("sparsify"),
 		}); err != nil {
 			return fmt.Errorf("压缩镜像失败: %w", err)
 		}

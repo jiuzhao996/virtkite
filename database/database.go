@@ -73,6 +73,7 @@ func Init() {
 		&model.CloudInitTemplate{},
 		&model.HostKey{},
 		&model.HostGroup{},
+		&model.StackVersion{}, // 部署栈 compose 版本历史（回滚用）
 		&model.Notification{},
 	)
 	if err != nil {

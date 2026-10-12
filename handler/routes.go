@@ -530,6 +530,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		stacksGroup.GET("", stackHandler.List)
 		stacksGroup.GET("/:id/docs", stackHandler.Docs)
 		stacksGroup.POST("/:id/deploy", stackHandler.Deploy)
+		// 版本历史与回滚：每次部署/回滚成功记一份生效内容（去重），保留最近 10 个版本
+		stacksGroup.GET("/:id/versions", stackHandler.Versions)
+		stacksGroup.POST("/:id/rollback", stackHandler.Rollback) // 方法内二次收 admin 闸
 		// 栈详情（服务列表 + 部署副本 + 漂移）与文件编辑（admin）、升级（admin，异步任务）
 		stacksGroup.GET("/:id/detail", stackHandler.Detail)
 		stacksGroup.PUT("/:id/file", stackHandler.File)

@@ -29,6 +29,29 @@ func TestTryStackLockExclusive(t *testing.T) {
 	}
 }
 
+// TestIsStackBusy 忙探测：持锁期间为 true，释放后为 false，非法名不误报。
+func TestIsStackBusy(t *testing.T) {
+	d := New()
+	if d.IsStackBusy("busy-probe") {
+		t.Fatal("无锁时应为 false")
+	}
+	release, ok := tryStackLock("busy-probe")
+	if !ok {
+		t.Fatal("获取锁失败")
+	}
+	if !d.IsStackBusy("busy-probe") {
+		t.Fatal("持锁期间应为 true")
+	}
+	release()
+	if d.IsStackBusy("busy-probe") {
+		t.Fatal("释放后应恢复 false")
+	}
+	// 非法名（空串/含非法字符）不误报为「忙」
+	if d.IsStackBusy("") || d.IsStackBusy("bad name") {
+		t.Fatal("非法名不应判为忙")
+	}
+}
+
 // TestTryStackLockConcurrent 并发抢占同一栈：任意时刻只能一人持有（无死锁、有胜者）。
 func TestTryStackLockConcurrent(t *testing.T) {
 	const n = 50
