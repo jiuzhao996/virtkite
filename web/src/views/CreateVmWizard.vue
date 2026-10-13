@@ -76,7 +76,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, Check } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { errMsg } from '../utils/format.js'
+import { errMsg, isValidInstallTreeUrl } from '../utils/format.js'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import StepInstallMode from './wizard/components/StepInstallMode.vue'
@@ -172,7 +172,9 @@ function gbText(bytes) {
   return (gb >= 100 ? gb.toFixed(0) : gb.toFixed(1).replace(/\.0$/, '')) + ' GB'
 }
 function poolLabel(p) {
-  return p.name + '（可用 ' + gbText(p.available) + '）'
+  // 只显示池名：dir 型池的「可用」都是同一文件系统的剩余空间，多个池并排全一样，
+  // 逐项重复反成噪音（用户反馈）。真正有用的是「装不下」时的预警（见 diskOverPool）。
+  return p.name
 }
 function poolAvailText(name) {
   const p = (options.storagePools || []).find((x) => x.name === name)
@@ -327,11 +329,18 @@ function pickDefaultPool(d) {
   const infos = d.storage_pools || []
   const byName = {}
   for (const p of infos) byName[p.name] = p
+  // 优先用平台配置的默认池（系统设置 default_storage_pool），且须真实存在且已激活。
+  // 此前忽略该设置、只按路径猜，导致明明配了 images 却默认落到 base（验收反馈）。
+  const configured = d.default_storage_pool
+  if (configured && names.includes(configured) && byName[configured] && byName[configured].active) {
+    return configured
+  }
+  // 退化：挑一个不在 /var/lib 下的可写池（独立盘），否则第一个
   const writable = names.filter((n) => {
     const p = byName[n]
     return p && p.path && !p.path.startsWith('/var/lib')
   })
-  return writable[0] || names[0] || 'vmops'
+  return writable[0] || names[0] || 'images'
 }
 
 // 当前 cloud-init 表单 → spec 对象（只带非空字段；模板保存与建机 payload 共用的裁剪逻辑）
@@ -423,8 +432,8 @@ function next() {
       if (!iso.osName) return ElMessage.warning({ message: '请选择操作系统', grouping: true })
       if (!iso.isoPath && !iso.installUrl.trim()) return ElMessage.warning('请选择安装介质（存储池 → ISO / 手动输入路径 / 网络安装源 URL）')
       // 网络安装源格式校验：后端只在 curl 下载内核时才失败（任务已启动才发现），前端先拦一道。
-      // 要求 scheme + 主机 + 安装树路径（后端在其后拼 /images/pxeboot/vmlinuz），如 ftp://host/rocky10/
-      if (iso.installUrl.trim() && !/^(ftp|https?):\/\/[^\s/]+\/.+/i.test(iso.installUrl.trim())) {
+      // 校验口径与 StepInstallMode 的必填星号一致（共享 isValidInstallTreeUrl）。
+      if (iso.installUrl.trim() && !isValidInstallTreeUrl(iso.installUrl)) {
         return ElMessage.warning('网络安装源格式不正确：需 ftp:// 或 http(s):// 开头并含安装树路径，如 ftp://192.168.219.1/rocky10/')
       }
     } else if (installMode.value === 'cloudimage') {

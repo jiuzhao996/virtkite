@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 )
 
@@ -203,6 +204,9 @@ func (h *VMHandler) GetVMOptions(c *gin.Context) {
 		"network_info":  netInfos,
 		"cloud_images":  images,
 		"os_list":       virt.OSList,
+		// 平台配置的默认存储池（系统设置 default_storage_pool）：建机向导据此预选，
+		// 尊重用户设定，而非让前端按路径猜（此前向导忽略该设置、默认落到首个池）。
+		"default_storage_pool": tasks.DefaultStoragePoolResolver(),
 	})
 }
 

@@ -382,3 +382,12 @@ export function usageColor(percent) {
 export function clampPct(percent) {
   return Math.max(0, Math.min(100, Math.round(Number(percent) || 0)))
 }
+
+/**
+ * 网络安装源（FTP/HTTP 安装树）URL 校验：要求 scheme(ftp/http/https) + 主机 + 安装树路径。
+ * 后端会在其后拼 /images/pxeboot/{vmlinuz,initrd.img} 下载内核，故必须指向安装树**目录**
+ * （如 ftp://host/rocky10/），而非 ISO 文件。前后端共用同一口径（见 CreateVmWizard 的下一步校验）。
+ */
+export function isValidInstallTreeUrl(url) {
+  return /^(ftp|https?):\/\/[^\s/]+\/.+/i.test((url || '').trim())
+}

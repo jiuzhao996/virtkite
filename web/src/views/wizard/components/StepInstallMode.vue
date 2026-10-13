@@ -17,7 +17,7 @@
 
     <el-form v-if="installMode === 'iso'" label-width="110px" class="step-form">
       <!-- 先选介质，再按 ISO 文件名自动识别系统（识别不出可手动改）——对齐 virt-manager 的介质优先顺序 -->
-      <el-form-item label="安装介质" :required="!iso.installUrl.trim()">
+      <el-form-item label="安装介质" :required="!installUrlValid">
         <div class="iso-pick">
           <el-select
             v-if="!iso.manual"
@@ -42,7 +42,14 @@
       </el-form-item>
       <el-form-item label="网络安装源">
         <el-input v-model="iso.installUrl" placeholder="可选，如 ftp://192.168.219.1/rocky10/" />
-        <div class="os-hint">网络安装源（FTP/HTTP 安装树）：填了则免下载 ISO、直接内核引导，等价 virt-install --location——平台下载该树下的内核与 initrd 引导安装，cmdline 默认 inst.repo=&lt;url&gt;</div>
+        <div class="os-hint">
+          与上方「安装介质」二选一：填了就不必选 ISO——平台从该树下载内核与 initrd 直接引导安装
+          （等价 virt-install --location，cmdline 默认 inst.repo=&lt;url&gt;）。须填安装树「目录」（不是 ISO 文件），
+          且适用于 RHEL 系（Rocky / CentOS 等）默认布局（内核在其 images/pxeboot/ 下）。
+        </div>
+        <div v-if="iso.installUrl.trim() && !installUrlValid" class="os-hint" style="color: var(--el-color-danger)">
+          格式不正确：需 ftp:// 或 http(s):// 开头并含安装树路径，如 ftp://192.168.219.1/rocky10/
+        </div>
       </el-form-item>
       <el-form-item label="操作系统" required>
         <el-select v-model="iso.osName" filterable placeholder="选择操作系统（可按 ISO 文件名自动识别）" style="width: 380px" @change="isoAutoDetected = false">
@@ -178,7 +185,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, Plus, Monitor, Cloudy, CopyDocument } from '@element-plus/icons-vue'
 import { api } from '../../../api'
-import { errMsg, fmtSizeBytes } from '../../../utils/format.js'
+import { errMsg, fmtSizeBytes, isValidInstallTreeUrl } from '../../../utils/format.js'
 
 const props = defineProps({
   form: { type: Object, required: true },
@@ -198,6 +205,10 @@ const props = defineProps({
 
 const installMode = defineModel('installMode', { type: String, required: true })
 const cloudInitEnabled = defineModel('cloudInitEnabled', { type: Boolean, default: false })
+
+// 网络安装源是否「有效」：填了且格式正确才算提供了安装介质——安装介质的必填星号据此消失
+// （此前只看非空，填个错 URL 星号也消失，误导；校验口径与 CreateVmWizard 下一步一致）
+const installUrlValid = computed(() => isValidInstallTreeUrl(props.iso.installUrl))
 
 const router = useRouter()
 
