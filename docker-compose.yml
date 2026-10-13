@@ -130,6 +130,50 @@ services:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
 
+  # ── 日志栈（VictoriaLogs + Vector）──
+  # 轻量日志采集与检索，替代 ELK 三件套（ES+Kibana+Filebeat 约 2GB，本栈约 150MB）。
+  # 默认随 up -d 启动（用户拍板：轻量件不藏 profile）。
+  # VictoriaLogs：存储 + 查询 + 自带 Web UI，无 Kibana/Grafana/ES。
+  victoria-logs:
+    image: victoriametrics/victoria-logs:v1.53.0
+    container_name: vmops-victoria-logs
+    restart: unless-stopped
+    ports:
+      # UI/查询/写入入口：绑回环，不裸奔公网（远程看用 SSH 隧道或反代加认证）
+      - "127.0.0.1:9428:9428"
+    volumes:
+      - vlogs-data:/victoria-logs-data
+    command:
+      - "-storageDataPath=/victoria-logs-data"
+      # 本地保留 30 天；需要更长改这里（如 90d）
+      - "-retentionPeriod=30d"
+
+  # Vector：日志采集器。4 类源 → VictoriaLogs（配置见 deploy/vector.toml）：
+  #   ① 平台自身 ./vmops.log（混合形态 app 原生直跑，start.sh 重定向 stdout/stderr 到此）
+  #   ② 基础设施容器日志（走 Docker API，自动带容器名/镜像/标签元数据）
+  #   ③ 宿主 syslog/auth/kern（libvirtd、SSH 认证、内核 OOM/磁盘）
+  #   ④ libvirt/qemu 每台 VM 的底层日志
+  vector:
+    image: timberio/vector:latest-alpine
+    container_name: vmops-vector
+    restart: unless-stopped
+    depends_on:
+      - victoria-logs
+    # 官方镜像默认找 /etc/vector/vector.yaml；我们的配置是 TOML，显式指过去
+    command: ["--config", "/etc/vector/vector.toml"]
+    volumes:
+      # ① 平台自身日志（仓库根，只读）
+      - ./vmops.log:/host/vmops.log:ro
+      # ② Docker 容器日志：挂 socket 用 Docker API 采集（带容器元数据）。
+      #    ⚠️ 挂 docker.sock = 该容器等同宿主机 root；自管单机平台可接受、也是日志采集通行做法。
+      #    不放心可去掉本行，改为挂 /var/lib/docker/containers:ro（需 root，且丢容器元数据）。
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # ③④ 宿主系统与 libvirt 日志（只读）
+      - /var/log:/host/var/log:ro
+      - ./deploy/vector.toml:/etc/vector/vector.toml:ro
+      # Vector 采集位点（重启后从断点续采，不重不漏）
+      - vector-data:/var/lib/vector
+
   # Grafana 已退役（2026-10 原生化批次）：看板由平台 ECharts 直连 Prometheus 历史重画
   # （监控中心原生看板），不再需要独立 Grafana 进程/口令/数据卷；iframe 相关探活端点同步删除。
 
@@ -137,3 +181,5 @@ volumes:
   mysql-data:
   prometheus-data:
   alertmanager-data:
+  vlogs-data:
+  vector-data:

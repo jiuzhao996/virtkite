@@ -33,6 +33,22 @@
 - 云端入口安全：nginx 8081 TLS + Basic Auth（VM 二进制 v1.150 已移除 -httpAuthKey 旗标，改在 nginx 层认证）；
   VM 本体只绑回环 8428。凭据见家里 `deploy/tls/.vm_basic.secret`（不入库）。
 
+## 日志栈（VictoriaLogs + Vector，✅ 已上线）
+
+轻量日志采集与检索：**VictoriaLogs**（存储 + 查询 + 自带 Web UI）+ **Vector**（采集器），
+替代 ELK 三件套（ES+Kibana+Filebeat 约 2GB，本栈约 150MB）。随 `docker compose up -d` 默认启动。
+
+- **查询 UI**：http://127.0.0.1:9428/select/vmui （绑回环，远程看请走 SSH 隧道或反代加认证）。
+- **采集 4 类源**（配置 `deploy/vector.toml`）：
+  ① 平台自身 `./vmops.log`（混合形态 app 原生直跑，start.sh 重定向 stdout/stderr）；
+  ② 基础设施容器日志（Docker API，带容器名/镜像元数据）；
+  ③ 宿主 `syslog` / `auth.log` / `kern.log`（libvirtd、SSH 认证、内核 OOM/磁盘）；
+  ④ `libvirt/qemu/*.log`（每台 VM 底层输出）。
+- **不采**：宿主机指标（CPU/内存/IO）——那是 Prometheus 的职责，采进来只会冗余。
+- **保留 30 天**（`docker-compose.yml` 的 `-retentionPeriod`；改长改短在此）。
+- **安全提示**：vector 容器挂了 `docker.sock`（等同宿主机 root）；不放心可去掉该挂载、
+  改为挂 `/var/lib/docker/containers:ro`（需 root，且丢容器元数据）。
+- **未纳入**：被管 VM 的应用日志（需在 VM 内装采集 agent，属独立子系统，后续单做）。
 
 ## 形态一：混合形态（开发/演示推荐，当前使用）
 
@@ -78,6 +94,7 @@ docker compose up -d   # 5 个容器：mysql + app + websockify + prometheus + a
 | alerts.yml | 9 条告警规则（VMRunningDrop/HostCpuHigh/PoolSpaceLow/TaskBacklog/VMCpuHot/VmopsDown/HostMemHigh/VMMemHigh/VMDiskIOHigh，全中文 summary） |
 | alertmanager.yml.example | 告警分组/路由模板（default receiver 推平台告警网关 vmops-webhook，见下「告警网关」） |
 | file_sd/ | Prometheus file_sd 目标目录（平台自动生成 targets.json，见下「监控服务发现闭环」） |
+| vector.toml | 日志采集器 Vector 的配置（4 类源 → VictoriaLogs，见上「日志栈」） |
 
 ## 监控服务发现闭环（file_sd）
 

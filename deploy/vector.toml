@@ -1,0 +1,66 @@
+# Vector 采集配置（vmops 日志栈）
+# 数据流向：4 类日志源 → Vector → VictoriaLogs(:9428) → Web UI 查询
+#   UI: http://127.0.0.1:9428/select/vmui
+# 改本文件后：docker compose restart vector
+#
+# 挂载关系见 docker-compose.yml 的 vector 服务：宿主 /var/log 与 ./vmops.log 挂到 /host 下只读。
+
+data_dir = "/var/lib/vector"
+
+# ── ① 平台自身日志 ──
+# 混合形态下 app 原生直跑，start.sh 把 stdout/stderr 重定向到仓库根 ./vmops.log。
+# 建机/克隆/任务失败等平台行为全在这里，是排查最常用的一路。
+[sources.platform]
+type = "file"
+include = ["/host/vmops.log"]
+
+# ── ② 基础设施容器日志 ──
+# 走 Docker API（挂 /var/run/docker.sock），自动附带 container_name / image / stream 等
+# 元数据——这是选 Vector 而非 vlagent 的主因（后者只能 tail 原始 json、拿不到元数据）。
+[sources.docker]
+type = "docker_logs"
+
+# ── ③ 宿主机系统日志 ──
+# rsyslog 文件。本机同时存在 journald，为避免同一批系统消息重复入库，只 tail 文件、不采 journald。
+[sources.host_syslog]
+type = "file"
+include = [
+  "/host/var/log/syslog",   # 系统/服务（含 libvirtd）
+  "/host/var/log/auth.log", # SSH 认证（安全审计）
+  "/host/var/log/kern.log", # 内核（OOM / 磁盘 / IO）
+]
+
+# ── ④ libvirt / qemu 每台 VM 的底层日志 ──
+[sources.libvirt]
+type = "file"
+include = ["/host/var/log/libvirt/qemu/*.log"]
+
+# ── 打来源标签 ──
+# 便于在 VL 里按来源筛选（docker_logs 源自带 source_type=docker_logs，无需处理）。
+[transforms.tag_platform]
+type = "remap"
+inputs = ["platform"]
+source = '.source_type = "platform"'
+
+[transforms.tag_host]
+type = "remap"
+inputs = ["host_syslog"]
+source = '.source_type = "host"'
+
+[transforms.tag_libvirt]
+type = "remap"
+inputs = ["libvirt"]
+source = '.source_type = "libvirt"'
+
+# ── 汇聚到 VictoriaLogs ──
+# 用 jsonline 入口（每行一个 JSON）。_msg_field/_time_field/_stream_fields 作为 URL 参数，
+# 告诉 VL 哪个字段是正文/时间/流标签（Vector 默认事件字段名即 message / timestamp）。
+# 走 http sink 而非 elasticsearch sink：字段映射显式可控，不依赖 VL 的 ES 兼容层默认值。
+[sinks.victorialogs]
+type = "http"
+inputs = ["tag_platform", "docker", "tag_host", "tag_libvirt"]
+uri = "http://victoria-logs:9428/insert/jsonline?_msg_field=message&_time_field=timestamp&_stream_fields=source_type,container_name"
+encoding.codec = "json"
+framing.method = "newline_delimited"
+# VL 的 insert 端点不响应 Vector 期望的健康探测，关掉避免误判不健康
+healthcheck.enabled = false
