@@ -24,6 +24,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 | 容器 | Docker CLI / Docker Engine API（`service/dockerx` 封装：结构化输出 + exec TTY 容器终端）+ docker compose |
 | 前端 | Vue 3 + Vite + Element Plus + vue-router + ECharts |
 | 监控 | 内建 Prometheus exporter + Prometheus + Alertmanager（看板由平台 ECharts 原生渲染） |
+| 日志 | VictoriaLogs + Vector（四类源采集与检索，替代 ELK，见「监控栈」章节） |
 | AI | OpenAI 兼容 API 代理（SSE 流式 + 平台上下文注入，Key 只存服务端） |
 | 部署 | 二进制直跑 / Docker / docker-compose |
 
@@ -50,7 +51,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **模板制作 / 镜像清洗（v4）**（把自己从 ISO 装的「制作机」固化成私有模板：VM 详情页一键固化 → `virt-sysprep` 清洗 + 可选 `virt-customize` 注入基础优化（qemu-guest-agent/cloud-init/串口 console/关 SELinux）+ 可选 `virt-sparsify` 压缩 → 移除制作机并登记为模板；之后走既有「云镜像」方式增量克隆批量建机。前提：宿主机 `guestfs-tools` + 免密 sudo）
 - [x] 镜像管理（上传到池 / 既有池卷登记 / 模板标记 / 基于模板 linked clone 建机；页面四 tab：云镜像/模板盘 + ISO 安装镜像 + **镜像市场**（云镜像 qcow2 与官方 ISO 一键下载，逐卡标注来源）+ **容器镜像**（Docker 镜像清单/拉取/删除/检查更新，分散语义归位））
 - [x] 审计日志（中间件自动写入 + 用户名回填 + 多条件查询 / 操作类型分布；审计中心以双 tab 承载操作日志与控制台会话）
-- [x] 仪表盘（概览/监控/拓扑三 tab：总览计数、状态分布、宿主机实时大盘、资源容量/超分卡、历史性能曲线（Prometheus query_range 回放，刷新不清零）、资产从属拓扑图）
+- [x] 仪表盘（概览/监控/拓扑三 tab：总览计数、状态分布、宿主机实时大盘、历史性能曲线（Prometheus query_range 回放，刷新不清零）、资产从属拓扑图）
 - [x] VM 列表实时化（卡片 + CPU/内存迷你折线 + 搜索筛选 + 批量电源（状态不一致时禁用）与删除）
 - [x] 任务中心（任务详情抽屉解析 `kept_volumes`）/ 审计中心（操作日志 + 会话双 tab）/ 系统设置（可写运行参数，保存即生效；只读快照移至仪表盘「平台信息」卡）/ 个人中心 / 用户管理
 - [x] **Prometheus 监控**（内建 `/metrics`：VM/宿主机/存储池/任务指标 + 9 告警规则；监控中心为**原生 ECharts 看板**（宿主机/存储池曲线 + 虚拟机六指标，Grafana 已退役）、实时告警、webhook 告警历史、file_sd 抓取目标预览）
@@ -65,7 +66,8 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - [x] **SSH 凭据托管（v3）（AES-256-GCM 加密落库：主密钥运行时注入不落库 + 每条记录随机盐，数据库泄露后凭据不可直接可读；文件管理 / VM 应用安装「使用已保存凭据」后端自行解密消费，明文不出服务端）
 - [x] **VM 文件管理（v3：双通道）**（在线通道：SSH/SFTP 浏览/上传/下载/删除/建目录，管开机机；离线通道：guestmount 只读挂载关机机系统盘，不依赖 VM 内 SSH；运行中 VM 一律拒绝离线挂载防磁盘锁，挂载只读——宁可浏览受限不可损坏磁盘）
 - [x] **计划任务（v3，v4 扩动作）**（自研五字段 cron 解析（百行纯函数可单测，不引第三方）+ 整分 tick 调度器：定时快照 / mysqldump 数据库备份 / **定时执行 Playbook**（转 Ansible 任务管线，RECAP 计数入执行历史，调度与引擎各司其职）；启停 / 立即运行 / 执行记录；2026-10-04 起并入运维自动化页「计划任务」tab，`/crons` 深链重定向）
-- [x] ~~Loki 日志栈（v3）~~（2026-10 优化期拆除平台集成：查询面板/代理接口/配置字段全删，部署配置亦已随裁剪移出仓库（2026-09-30）——指标+告警已覆盖主链路，日志属可选增量自行外接，平台不再强绑）
+- [x] ~~Loki 日志栈（v3）~~（2026-10 优化期拆除平台集成：查询面板/代理接口/配置字段全删——指标+告警已覆盖主链路；这套「自行外接 Loki」的方案后由下面的原生日志栈取代）
+- [x] **日志栈（v4）**（VictoriaLogs + Vector：采集四类源——平台自身 `vmops.log` / 基础设施容器日志 / 宿主 `syslog`·`auth`·`kern` / libvirt-qemu；内置 Web UI 检索（`http://127.0.0.1:9428/select/vmui`）；替代 ELK 三件套，约 150MB，随 `docker compose up -d` 默认启动）
 - [x] **镜像市场（云镜像 qcow2 + 官方安装 ISO）**（内置清单一键提交下载任务，异步流式落盘、完成自动登记镜像库；单源直下并逐卡标注来源——清华源为主、个别卡南大源，每卡附「访问源页面」链接；云镜像 5 项 / ISO 6 项含 Ubuntu 26.04）
 - [x] **架构设计器（v4，eNSP 式先设计后落地）**（预置架构模板一键载入 + AntV X6 画布：设备栏拖拽添加、节点自由拖动、边缘拉线连线、对齐吸附、Delete 删除；计划保存 data/designer + YAML 导出；**一键落地**：容器栈 compose up、VM 节点走完整建机管线（cloud-init 注入 → 自动开机 → DHCP 租约自愈重试 → 装应用 → 跑 playbook）；SSH 口令只随落地请求一次性携带，不随计划保存）
 - [x] **Ansible 自动化运维（v4，批量执行引擎缝合）**（宿主机现成 Ansible 引擎探测；**inventory 由平台资产生成**——目标只收 VM id，白名单结构性成立；adhoc 批量执行（19 个模块白名单：ping/command/shell/setup/file/copy/user/package/service/systemd/cron…）输出节流实时滚动；**Playbook 库**（CRUD + `--syntax-check` 校验 + 头部 vars 约定渲染执行表单 + RECAP 逐主机矩阵；支持**目录形态（role 结构）**——`<id>/site.yml` + `roles/ templates/ files/ handlers/`，内置 `web-stack` 种子示例，页面内可在线增删改 role 文件）；**共享 role 库**（`data/ansible/roles/` 独立成库：一个 role 对全部 playbook 可见，不必各自复制一份；新建按标准骨架生成，页面内可在线增删改；playbook 本地同名 role 覆盖共享库；内置 `common-baseline` 种子 + `baseline-node` 示例 playbook，实测幂等复跑 changed=0）；**执行选项**（`--check` 预演 / `--diff` 差异 / `-t` 标签 / `--skip-tags`）；**SSH 免密双通道**（平台托管 ed25519 密钥对：新建 VM cloud-init 直通、存量一键分发公钥，免密 VM 走私钥通道不承载口令文件）；cron 新增 playbook 动作（调度 × 引擎缝合））
@@ -91,7 +93,7 @@ Logo 一笔三义：**波浪线既是终端的家目录符 `~`，也是海面**�
 - MySQL 8.0+（或 Docker）
 - libvirt + KVM（运行虚拟机的宿主机）
 - Docker（可选：容器管理页需要，未安装时相关页面显示不可用提示）
-- Prometheus / Alertmanager（Docker compose 一键栈，见监控章节）
+- Prometheus / Alertmanager + VictoriaLogs / Vector（Docker compose 一键栈，见监控章节）
 
 ## 快速开始
 
@@ -167,13 +169,14 @@ cd ~/vmops/web
 npm run dev          # 访问 http://localhost:5173
 ```
 
-### 4. 监控栈（可选）
+### 4. 监控栈 + 日志栈（可选）
 
 ```bash
 # docker-compose 一键栈（唯一方式；原生 ~/monitor 目录已废弃删除）
-# Grafana 已退役（看板原生化）：监控栈只剩 prometheus + alertmanager
-docker compose up -d prometheus alertmanager
+# Grafana 已退役（看板原生化）；日志栈 VictoriaLogs + Vector 无 profile，随 up -d 默认启动
+docker compose up -d prometheus alertmanager victoria-logs vector
 # Prometheus :9090，Alertmanager :9093
+# 日志 UI（绑回环，远程看走 SSH 隧道）http://127.0.0.1:9428/select/vmui
 ```
 
 ### 5. 测试账号
@@ -337,8 +340,7 @@ websockify 回调 `/api/vnc/token/:token` 外均需在 `Authorization: Bearer <t
 
 ### 仪表盘 / 审计 / 设置 / 监控
 
-- `GET /api/dashboard/overview` `GET /api/dashboard/vm-status` `GET /api/dashboard/host-stats` `GET /api/dashboard/vm-perf`
-- `GET /api/dashboard/capacity` — 资源容量/超分（分配 vCPU/内存 vs 物理核/内存，超分比）
+- `GET /api/dashboard/overview` `GET /api/dashboard/vm-status` `GET /api/dashboard/host-stats` `GET /api/dashboard/vm-perf` `GET /api/dashboard/activity`
 - `GET /api/dashboard/host-history` `GET /api/dashboard/vm-history` — 历史曲线（Prometheus query_range，大盘与列表迷你图预填）
 - `GET /api/audit`（action/object_type/username/status/日期/分页） `GET /api/audit/summary` `GET /api/audit/actions`
 - `GET /api/settings`（admin，运行参数与快照） `PUT /api/settings`（admin，写库即生效）
@@ -416,7 +418,7 @@ vmops/
 │   ├── jumpd/           # SSH 跳板入口（资产菜单/连接重验/命令黑名单）
 │   └── ansible/         # Ansible 引擎封装（inventory 生成/adhoc/Playbook 执行/目录形态 role 文件管理/共享 role 库）
 ├── scripts/             # init-db.sql（手工建库）/ smoke.sh（API 层 E2E）/ ui-smoke.mjs（UI 层 E2E，零依赖 CDP）/ credential-rekey、purge-task-secrets（密钥运维，独立 main 包）
-├── deploy/              # prometheus.yml(.example) / alerts.yml / alertmanager.yml(.example) / gen-monitor-conf.sh / docker-compose
+├── deploy/              # prometheus.yml(.example) / alerts.yml / alertmanager.yml(.example) / gen-monitor-conf.sh / vector.toml / docker-compose
 ├── web/                 # Vue3 + Vite 前端（21 个路由页面组件：Dashboard(概览/监控双 tab)/Topology/VmList/VmDetail/向导/Console/
 │                        #   Host/Image(四 tab 含镜像市场与容器镜像)/Storage(含 Docker 卷)/Network(含 Docker 网络)/Containers(容器+编排)/Task/Audit/Settings/UserList/Profile/Login）
 │   ├── src/utils/format.js  # 状态文案/时间/尺寸/错误提取统一实现（收敛 10 余处重复）

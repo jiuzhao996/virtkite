@@ -54,13 +54,13 @@
 
 ```
 宿主机原生：vmops(:8080) + websockify(:6080)
-Docker 容器：mysql + prometheus + alertmanager（Grafana 已退役，看板原生化）
+Docker 容器：mysql + prometheus + alertmanager + victoria-logs + vector（Grafana 已退役，看板原生化；日志栈见上「日志栈」章节）
 ```
 
 启动方式：
 
 ```bash
-docker compose up -d mysql prometheus alertmanager          # 容器侧
+docker compose up -d mysql prometheus alertmanager victoria-logs vector   # 容器侧（含日志栈）
 ./start.sh                                                   # 宿主机侧（app + websockify）
 ```
 
@@ -68,13 +68,13 @@ docker compose up -d mysql prometheus alertmanager          # 容器侧
 - Prometheus 容器经 `host.docker.internal:8080`（compose `extra_hosts: host-gateway`）抓取宿主机上的 app。
 - 监控看板已原生化（2026-10）：平台「监控中心」用 ECharts 直连 Prometheus 历史（`/api/monitor/pool-history`、
   `/api/monitor/vm-metrics-history`），不再依赖 Grafana 进程；
-  页内「平台概览 / 虚拟机明细」单选切换两个 provisioned 看板（uid 与 deploy/ 下 JSON 一致）。
+  页内「平台概览 / 虚拟机明细」单选切换两个原生看板（平台 ECharts 渲染，无外部 Grafana 依赖）。
 - 告警链路：prometheus.yml 的 `alerting:` 段 → alertmanager:9093（Prometheus 2.x 无 `--alertmanager.url` 参数，勿回退）。
 
 ## 形态二：一键全容器（发布形态）
 
 ```bash
-docker compose up -d   # 5 个容器：mysql + app + websockify + prometheus + alertmanager
+docker compose up -d   # 7 个容器：mysql + app + websockify + prometheus + alertmanager + victoria-logs + vector
 ```
 
 与形态一的差异与注意：
@@ -126,6 +126,6 @@ docker compose up -d   # 5 个容器：mysql + app + websockify + prometheus + a
 - 除鉴权失败/请求体非法外网关恒返回 200（Alertmanager 对非 2xx 会按策略重试轰炸），
   处理失败只记服务端日志。
 
-镜像版本：prometheus v3.14.0 / alertmanager v0.34.0 / mysql 8.0.36（Docker Hub 直连超时时用 `docker.m.daocloud.io` 拉取后 tag 回官方名）。
+镜像版本：prometheus v3.14.0 / alertmanager v0.34.0 / victoria-logs v1.53.0 / vector:latest-alpine / mysql 8.0.36（Docker Hub 直连超时时用 `docker.m.daocloud.io` 拉取后 tag 回官方名）。
 
 > 历史排障记录：Grafana 曾在本栈服役（13.2.1 完整版，勿用 -slim——缺内置数据源插件），2026-10 已退役，`grafana-data` 卷可删。考古见 git 历史。
