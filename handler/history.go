@@ -32,9 +32,12 @@ func NewHistoryHandler(db *gorm.DB, prometheusURL string) *HistoryHandler {
 }
 
 // tsPoint 单指标序列点：T 为 HH:MM:SS 文案（与前端轮询追加的点位格式一致）。
+// ⚠️ 必须带 json tag（小写 t/val）：前端按 pt.t / pt.val 读取。曾漏 tag 导致序列化为
+// 大写 T/Val，所有基于 tsPoint 的曲线（存储池使用率、任务队列深度、抓取目标存活、
+// 运行虚拟机数趋势、VM 六指标）x 轴全渲染成 "undefined"、series 无值（2026-10-13 修）。
 type tsPoint struct {
-	T   string
-	Val float64
+	T   string  `json:"t"`
+	Val float64 `json:"val"`
 }
 
 // histPoint 历史曲线单点（CPU 与内存占比两条序列合并后）。
@@ -389,26 +392,26 @@ const (
 	promQueryMaxSeries = 50
 )
 
-// PromQuery 通用只读查询 POST /api/monitor/prom-query（原生看板扩展层，2026-10）。
-// body: { query, minutes }——minutes 缺省 = instant 即时查询（单点），带 minutes = range 区间序列。
+// PromQuery 通用只读查询 GET /api/monitor/prom-query?query=..&minutes=..
+// minutes 缺省 / <=0 = instant 即时查询（单点），>0 = range 区间序列。
 // 供前端 panels.js 注册表消费：加一张监控面板 = 注册表加一行，零后端改动。
+// 走 GET（原为 POST）：审计中间件对 GET 放行，否则每次开监控页的多次面板查询都被记成
+// access 审计、把仪表盘「最近动态」刷屏（2026-10-13 修）；只读查询本就是 GET 语义。
 func (h *HistoryHandler) PromQuery(c *gin.Context) {
-	var req struct {
-		Query   string `json:"query"`
-		Minutes int    `json:"minutes"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Query == "" {
+	query := c.Query("query")
+	if query == "" {
 		Fail(c, http.StatusBadRequest, "query 不能为空")
 		return
 	}
-	if len(req.Query) > promQueryMaxLen {
+	if len(query) > promQueryMaxLen {
 		Fail(c, http.StatusBadRequest, "查询表达式过长（上限 512 字符）")
 		return
 	}
+	minutes, _ := strconv.Atoi(c.Query("minutes"))
 
 	// instant：/api/v1/query 单点查询，统一包装成单点序列（前端渲染口径一致）
-	if req.Minutes <= 0 {
-		val, labels, err := h.instantQuery(c, req.Query)
+	if minutes <= 0 {
+		val, labels, err := h.instantQuery(c, query)
 		if err != nil {
 			LogError(c, fmt.Errorf("监控后端 Prometheus instant 查询失败: %w", err))
 			Success(c, gin.H{"series": []gin.H{}, "source": "unavailable"})
@@ -422,7 +425,7 @@ func (h *HistoryHandler) PromQuery(c *gin.Context) {
 		return
 	}
 
-	series, err := h.queryRangeMulti(c, req.Query, clampMinutes(strconv.Itoa(req.Minutes), 30))
+	series, err := h.queryRangeMulti(c, query, clampMinutes(c.Query("minutes"), 30))
 	if err != nil {
 		LogError(c, fmt.Errorf("监控后端 Prometheus range 查询失败: %w", err))
 		Success(c, gin.H{"series": []gin.H{}, "source": "unavailable"})

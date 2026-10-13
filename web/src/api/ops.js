@@ -70,7 +70,7 @@ export const ops = {
   aiStatus: () => unwrap(http.get('/ai/status')),
 
   // 通用只读 PromQL 查询（原生看板扩展层，panels.js 注册表消费）：minutes 缺省后端按 instant 单点查询
-  promQuery: (query, minutes) => unwrap(http.post('/monitor/prom-query', { query, minutes })),
+  promQuery: (query, minutes) => unwrap(http.get('/monitor/prom-query', { params: { query, minutes } })),
 
   // VM 文件管理（在线走 VM 内 SSH，需 creds；离线走 guestmount 只读挂系统盘，仅 path）
   // creds = { host, port, user, password }（页面侧连接表单持有，密码不落盘）

@@ -519,7 +519,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		monitor.GET("/pool-history", historyHandler.PoolHistory)
 		monitor.GET("/vm-metrics-history", historyHandler.VMDetailedHistory)
 		// 通用只读 PromQL 查询（原生看板扩展层：panels.js 注册表驱动，加面板零后端改动）
-		monitor.POST("/prom-query", historyHandler.PromQuery)
+		// 走 GET：只读查询，被审计中间件的 GET 放行规则覆盖，避免刷审计（2026-10-13 由 POST 改）
+		monitor.GET("/prom-query", historyHandler.PromQuery)
 	}
 
 	// 声明式部署栈（P2A：清单 operator+；deploy admin；docs 命中栈元数据清单才可读）
