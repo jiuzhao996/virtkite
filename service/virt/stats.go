@@ -133,8 +133,10 @@ func (v *Virt) GetDomainStats(name string) (*VmStats, error) {
 }
 
 // diffRate 计算字节速率（bps）：Δbytes / Δs；计数器回绕或下降时返回 0。
+// dt<=0 一并返回 0：调用方虽已用 dt>0 兜底，但这里不设防时 float→uint64
+// 遇到 +Inf/NaN 属未定义转换，补上与 diffCpuPercent 一致的防御。
 func diffRate(cur, prev uint64, dt float64) uint64 {
-	if cur < prev {
+	if cur < prev || dt <= 0 {
 		return 0
 	}
 	return uint64(float64(cur-prev) / dt)
