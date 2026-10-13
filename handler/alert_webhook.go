@@ -54,7 +54,7 @@ type amAlert struct {
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations"`
 	StartsAt    time.Time         `json:"startsAt"`
-	EndsAt      *time.Time        `json:"endsAt"` // 指针：firing 告警不携带，避免零日期入库报错
+	EndsAt      *time.Time        `json:"endsAt"` // 指针：经 normalizeEndsAt 归一，零时间→nil（见该函数注释）
 	Fingerprint string            `json:"fingerprint"`
 }
 
@@ -128,10 +128,25 @@ func convertAlerts(alerts []amAlert) []*model.Alert {
 			Annotations: mustJSON(a.Annotations),
 			Status:      status,
 			StartsAt:    a.StartsAt,
-			EndsAt:      a.EndsAt,
+			EndsAt:      normalizeEndsAt(a.EndsAt),
 		})
 	}
 	return out
+}
+
+// normalizeEndsAt 把 Alertmanager 的「零时间」归一成 nil。
+//
+// 这里踩过一次，注释一度写着「firing 告警不携带 endsAt」——**这个假设是错的**：
+// Alertmanager 实际总是携带该字段，firing 时值是 Go 零时间 "0001-01-01T00:00:00Z"。
+// 解析成非 nil 指针后写库，MySQL 严格模式直接报 Error 1292
+// （Incorrect datetime value: '0000-00-00' for column 'ends_at'），于是**告警状态更新
+// 全部静默失败**（只留一行日志），前端看到的永远是旧状态。
+// 零时间在语义上就等于「尚未结束」，归一成 NULL 才是对的。
+func normalizeEndsAt(t *time.Time) *time.Time {
+	if t == nil || t.IsZero() || t.Year() <= 1 {
+		return nil
+	}
+	return t
 }
 
 // mustJSON map 序列化为 JSON 文本；nil map 序列化为 "{}" 而非 "null"（前端好按对象消费）。
@@ -173,7 +188,7 @@ func (h *AlertWebhookHandler) upsert(a *model.Alert) {
 		"annotations": a.Annotations,
 		"status":      a.Status,
 		"starts_at":   a.StartsAt,
-		"ends_at":     a.EndsAt,
+		"ends_at":     normalizeEndsAt(a.EndsAt),
 	}
 	if err := h.DB.Model(&existing).Updates(updates).Error; err != nil {
 		log.Printf("[alert-webhook] 更新告警失败 fingerprint=%s: %v", a.Fingerprint, err)

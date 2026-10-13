@@ -240,3 +240,33 @@ func TestAlertNotifyText(t *testing.T) {
 		}
 	})
 }
+
+// TestNormalizeEndsAt 零时间归一。
+//
+// 风险点（真实踩过）：Alertmanager 对 firing 告警**总是**带 endsAt，值是 Go 零时间
+// "0001-01-01T00:00:00Z"。若原样落库，MySQL 严格模式报 Error 1292
+// （Incorrect datetime value: '0000-00-00'），**告警状态更新全部静默失败**——前端永远
+// 看到旧状态，而后端只有一行日志。本测试把「零时间必须变 nil」这条钉死。
+func TestNormalizeEndsAt(t *testing.T) {
+	zero := time.Time{}
+	if got := normalizeEndsAt(&zero); got != nil {
+		t.Errorf("Go 零时间应归一为 nil，实际 %v", got)
+	}
+	// Alertmanager 实际发的形态：解析 "0001-01-01T00:00:00Z"
+	amZero, err := time.Parse(time.RFC3339, "0001-01-01T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := normalizeEndsAt(&amZero); got != nil {
+		t.Errorf("AM 的 0001-01-01 应归一为 nil，实际 %v", got)
+	}
+	if got := normalizeEndsAt(nil); got != nil {
+		t.Errorf("nil 应保持 nil，实际 %v", got)
+	}
+	// 真实恢复时间必须原样保留
+	real, _ := time.Parse(time.RFC3339, "2026-10-13T19:05:50Z")
+	got := normalizeEndsAt(&real)
+	if got == nil || !got.Equal(real) {
+		t.Errorf("真实恢复时间被误清：%v", got)
+	}
+}
