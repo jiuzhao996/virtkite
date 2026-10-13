@@ -152,6 +152,11 @@ func (c *Collector) updateVMs() {
 		}
 		st, err := c.Virt.GetDomainStats(vm.Name)
 		if err != nil || st == nil {
+			// 抓取失败但该 VM 在库里仍是 running：只是这一拍没取到，**保留上次序列**——
+			// 记入 seen 使其免于下面的 stale 清理。否则瞬时失败会删掉整条序列，PromQL 上该 VM
+			// 「消失」，vmops_vm_running 缺失甚至会误触发 VMRunningDrop 告警（与文件头及 Update
+			// 注释的「失败项跳过保留旧值」契约一致）。差集清理只针对库里已不存在的 VM。
+			seen[vm.Name] = true
 			continue
 		}
 		seen[vm.Name] = true
