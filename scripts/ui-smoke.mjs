@@ -24,11 +24,12 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import net from 'node:net'
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8080'
 const USER = process.env.ADMIN_USER || 'admin'
 const PASS = process.env.ADMIN_PASS || ''
-const CDP_PORT = Number(process.env.CDP_PORT || 9333)
+let CDP_PORT = Number(process.env.CDP_PORT || 9333)
 const CHROME = process.env.CHROME || 'google-chrome'
 const SHOTS = process.env.SHOTS || ''
 const TOKEN_KEY = 'vmops_token' // 与 web/src/store/auth.js 的 TOKEN_KEY 保持一致
@@ -36,6 +37,26 @@ const TOKEN_KEY = 'vmops_token' // 与 web/src/store/auth.js 的 TOKEN_KEY 保�
 if (!PASS) {
   console.error('缺少 ADMIN_PASS。用法：ADMIN_PASS=<口令> node scripts/ui-smoke.mjs')
   process.exit(2)
+}
+
+// 调试端口探活：端口若已被占用（上一轮 ui-smoke 残留的 Chrome、或别处挂着的 headless
+// 浏览器），新 Chrome 会因端口冲突起不了调试口，waitForCDP 反而连上那个「别人的」浏览器
+// ——它可能停在前端改动前的旧页面、还带着旧会话，于是整轮测试静默测错对象
+// （2026-10-13 实战踩到：Settings 已改成 el-tabs，测试却仍读到旧的 .sec-nav 页面）。
+// 起 Chrome 前先扫一个空闲端口，确保测的是本轮自己的实例。
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer()
+    srv.once('error', () => resolve(false))
+    srv.once('listening', () => srv.close(() => resolve(true)))
+    srv.listen(port, '127.0.0.1')
+  })
+}
+async function pickFreePort(start) {
+  for (let p = start; p < start + 50; p++) {
+    if (await isPortFree(p)) return p
+  }
+  throw new Error(`从 ${start} 起连续 50 个端口都被占用，无法为 ui-smoke 找到空闲调试端口`)
 }
 
 // ---------- 页面清单：hash → 该页必须出现的标志文案 ----------
@@ -153,6 +174,14 @@ async function main() {
     process.exit(2)
   }
 
+  // 端口被占用则另选一个空闲端口（详见 pickFreePort 注释）：默认 9333 被别的浏览器
+  // 占着时，不再连错对象、静默测到旧页面。
+  const freePort = await pickFreePort(CDP_PORT)
+  if (freePort !== CDP_PORT) {
+    console.log(`注意：CDP 端口 ${CDP_PORT} 被占用，本轮改用 ${freePort} 起浏览器`)
+    CDP_PORT = freePort
+  }
+
   const profile = mkdtempSync(join(tmpdir(), 'vmops-ui-smoke-'))
   const chrome = spawn(
     CHROME,
@@ -221,7 +250,7 @@ async function main() {
       if (!SHOTS) return
       mkdirSync(SHOTS, { recursive: true })
       // 全页截图（captureBeyondViewport）会把 position:sticky 元素画到其滚动偏移处
-      // ——Chrome 已知行为。页内锚点条（.sec-nav）这类吸顶元件因此「漂移」到页面中段，
+      // ——Chrome 已知行为。任何吸顶元件（如页内导航条）因此「漂移」到页面中段，
       // 截图看着像 bug，其实真机滚动正常（用户 2026-10-13 据此反馈「漂移」）。
       // 捕获期间把 sticky 临时压回 static，只动 sticky、不碰 absolute/fixed（避免打乱
       // 布局），拍完立即按原值还原。
@@ -346,32 +375,35 @@ async function main() {
     await ev(`document.querySelector('.el-drawer__close-btn')?.click()`)
     await sleep(600)
 
-    // ---------- 3.7) 系统设置：宿主机在最前、计划任务已移出、页内锚点可用 ----------
-    // 这三条都来自用户反馈：宿主机（单机平台最常看的一项）原本埋在 9 张卡之后要滚 3 屏；
-    // 计划任务与「运维自动化」页重复；3.6 屏的页面没有导航找一项很难。
+    // ---------- 3.7) 系统设置：左侧竖向 tab（宿主机在最前、计划任务已移出、可切换）----------
+    // 均来自用户反馈：此前 9 张卡纵向堆叠约 3.6 屏、靠浮动吸顶条导航（滚动时吸顶条从卡片
+    // 内容上「切」过去看着像错位）；现改为左侧竖向 tab —— 一次只显示一节，无滚动、无遮挡。
     await goto('#/settings', 3200)
     const settingsShape = await ev(`(() => {
       const ids = ['sec-hosts','sec-sshkeys','sec-params','sec-security','sec-notify','sec-announce','sec-cloudinit','sec-ai','sec-nested']
       const present = ids.filter((i) => document.getElementById(i))
+      const tabs = Array.from(document.querySelectorAll('.settings-tabs .el-tabs__item')).map((e) => e.textContent.trim())
       return JSON.stringify({
-        first: document.querySelector('.sec-nav ~ *')?.id || '',
-        navCount: document.querySelectorAll('.sec-nav-item').length,
+        first: tabs[0] || '',
+        tabCount: tabs.length,
         presentCount: present.length,
-        hasCron: !!document.getElementById('sec-cron') || /计划任务/.test(document.querySelector('.el-main')?.innerText || '')
+        hasCron: /计划任务/.test(document.querySelector('.settings-tabs')?.innerText || '')
       })
     })()`)
     const sp = JSON.parse(settingsShape)
-    check('设置页：宿主机排第一', sp.first === 'sec-hosts', `首位=${sp.first}`)
-    check('设置页：9 个分节齐全', sp.presentCount === 9 && sp.navCount === 9, `分节=${sp.presentCount} 锚点=${sp.navCount}`)
+    check('设置页：首个 tab 是宿主机', sp.first === '宿主机', `首个=${sp.first}`)
+    check('设置页：9 个 tab 与 9 个分节齐全', sp.tabCount === 9 && sp.presentCount === 9, `tab=${sp.tabCount} 分节=${sp.presentCount}`)
     check('设置页：计划任务已移出', !sp.hasCron, '本页仍出现「计划任务」')
-    const before = await ev(`document.querySelector('.el-main').scrollTop`)
-    await ev(`(() => {
-      const a = Array.from(document.querySelectorAll('.sec-nav-item')).find((e) => e.textContent.trim() === '嵌套虚拟化')
-      if (a) a.click()
+    // 切到最后一个 tab，断言 active 项随之改变（内容随 tab 切换，无滚动/无吸顶遮挡）
+    const tabCount = await ev(`(() => {
+      const items = Array.from(document.querySelectorAll('.settings-tabs .el-tabs__item'))
+      const last = items[items.length - 1]
+      if (last) last.click()
+      return items.length
     })()`)
-    await sleep(1500)
-    const after = await ev(`document.querySelector('.el-main').scrollTop`)
-    check('设置页：锚点可跳转', after > before, `滚动 ${before} → ${after}`)
+    await sleep(700)
+    const activeLabel = await ev(`document.querySelector('.settings-tabs .el-tabs__item.is-active')?.textContent.trim() || ''`)
+    check('设置页：tab 可切换', tabCount === 9 && activeLabel === '嵌套虚拟化', `当前 tab=${activeLabel}`)
 
     // ---------- 4) 建机向导走到底（不点创建，无副作用）----------
     step = '建机向导'
