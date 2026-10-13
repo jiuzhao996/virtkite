@@ -220,7 +220,25 @@ async function main() {
     const shot = async (name) => {
       if (!SHOTS) return
       mkdirSync(SHOTS, { recursive: true })
+      // 全页截图（captureBeyondViewport）会把 position:sticky 元素画到其滚动偏移处
+      // ——Chrome 已知行为。页内锚点条（.sec-nav）这类吸顶元件因此「漂移」到页面中段，
+      // 截图看着像 bug，其实真机滚动正常（用户 2026-10-13 据此反馈「漂移」）。
+      // 捕获期间把 sticky 临时压回 static，只动 sticky、不碰 absolute/fixed（避免打乱
+      // 布局），拍完立即按原值还原。
+      await ev(`(() => {
+        window.__shotSticky = []
+        document.querySelectorAll('*').forEach((el) => {
+          if (getComputedStyle(el).position === 'sticky') {
+            window.__shotSticky.push([el, el.style.position])
+            el.style.position = 'static'
+          }
+        })
+      })()`)
       const r = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true })
+      await ev(`(() => {
+        (window.__shotSticky || []).forEach(([el, p]) => { el.style.position = p })
+        window.__shotSticky = null
+      })()`)
       writeFileSync(join(SHOTS, `${name}.png`), Buffer.from(r.data, 'base64'))
     }
     const goto = async (hash, waitMs = 2200) => {
@@ -327,6 +345,33 @@ async function main() {
     check('点描述开抽屉而非编辑框', st.drawer && !st.dialog, afterClick)
     await ev(`document.querySelector('.el-drawer__close-btn')?.click()`)
     await sleep(600)
+
+    // ---------- 3.7) 系统设置：宿主机在最前、计划任务已移出、页内锚点可用 ----------
+    // 这三条都来自用户反馈：宿主机（单机平台最常看的一项）原本埋在 9 张卡之后要滚 3 屏；
+    // 计划任务与「运维自动化」页重复；3.6 屏的页面没有导航找一项很难。
+    await goto('#/settings', 3200)
+    const settingsShape = await ev(`(() => {
+      const ids = ['sec-hosts','sec-sshkeys','sec-params','sec-security','sec-notify','sec-announce','sec-cloudinit','sec-ai','sec-nested']
+      const present = ids.filter((i) => document.getElementById(i))
+      return JSON.stringify({
+        first: document.querySelector('.sec-nav ~ *')?.id || '',
+        navCount: document.querySelectorAll('.sec-nav-item').length,
+        presentCount: present.length,
+        hasCron: !!document.getElementById('sec-cron') || /计划任务/.test(document.querySelector('.el-main')?.innerText || '')
+      })
+    })()`)
+    const sp = JSON.parse(settingsShape)
+    check('设置页：宿主机排第一', sp.first === 'sec-hosts', `首位=${sp.first}`)
+    check('设置页：9 个分节齐全', sp.presentCount === 9 && sp.navCount === 9, `分节=${sp.presentCount} 锚点=${sp.navCount}`)
+    check('设置页：计划任务已移出', !sp.hasCron, '本页仍出现「计划任务」')
+    const before = await ev(`document.querySelector('.el-main').scrollTop`)
+    await ev(`(() => {
+      const a = Array.from(document.querySelectorAll('.sec-nav-item')).find((e) => e.textContent.trim() === '嵌套虚拟化')
+      if (a) a.click()
+    })()`)
+    await sleep(1500)
+    const after = await ev(`document.querySelector('.el-main').scrollTop`)
+    check('设置页：锚点可跳转', after > before, `滚动 ${before} → ${after}`)
 
     // ---------- 4) 建机向导走到底（不点创建，无副作用）----------
     step = '建机向导'
