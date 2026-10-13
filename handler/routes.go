@@ -581,7 +581,6 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	dashboard.Use(middleware.OperatorMiddleware())
 	{
 		dashboard.GET("/overview", dashboardHandler.Overview)
-		dashboard.GET("/capacity", dashboardHandler.Capacity)
 		dashboard.GET("/vm-status", dashboardHandler.VMStatusDistribution)
 		dashboard.GET("/host-stats", dashboardHandler.HostStats)
 		dashboard.GET("/vm-perf", dashboardHandler.VmPerf)

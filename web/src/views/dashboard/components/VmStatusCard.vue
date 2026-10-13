@@ -35,48 +35,18 @@
       </div>
     </div>
   </el-card>
-
-  <!-- 资源容量（超分视角）：已分配 vs 宿主机物理容量。云平台核心指标——
-       一台宿主机"装下"了多少申请出来的资源，ratio>1 即超分（KVM 只分配不预留） -->
-  <el-card shadow="hover" class="mt">
-    <template #header>
-      <span class="card-title">资源容量</span>
-    </template>
-    <div v-if="!capacity.has_host" class="empty">暂无宿主机记录，无法对比物理容量</div>
-    <template v-else>
-      <div class="cap-row">
-        <span class="cap-label">vCPU</span>
-        <div class="cap-track"><div class="cap-fill" :class="{ over: capacity.cpu_ratio > 1 }" :style="{ width: capBar(capacity.cpu_ratio) }" /></div>
-        <span class="cap-num">{{ capacity.allocated_vcpu }} / {{ capacity.physical_cores }} 核</span>
-      </div>
-      <div class="cap-row">
-        <span class="cap-label">内存</span>
-        <div class="cap-track"><div class="cap-fill" :class="{ over: capacity.mem_ratio > 1 }" :style="{ width: capBar(capacity.mem_ratio) }" /></div>
-        <span class="cap-num">{{ capGB(capacity.allocated_mem_mb) }} / {{ (capacity.physical_mem_mb / 1024).toFixed(1) }} GB</span>
-      </div>
-      <div class="cap-ratio">
-        <span>超分比</span>
-        <b :class="{ over: capacity.cpu_ratio > 1 }">CPU {{ capacity.cpu_ratio }}×</b>
-        <b :class="{ over: capacity.mem_ratio > 1 }">内存 {{ capacity.mem_ratio }}×</b>
-        <el-tooltip content="KVM 只分配不预留：超分是云平台的常态设计，前提是负载不同时跑满" placement="top">
-          <el-icon class="cap-help"><InfoFilled /></el-icon>
-        </el-tooltip>
-      </div>
-    </template>
-  </el-card>
 </template>
 
 <script setup>
-// 虚拟机状态环图 + 资源容量（超分视角）卡（自 Dashboard.vue 拆出，渲染输出不变）。
-// 纯展示组件：vmStatus / capacity 由 shell 统一拉取后经 props 下发。
+// 虚拟机状态环图卡。原「资源容量（超分视角）」部分已于 2026-10-13 删减批次移除
+// （无 VM 时全是 0，信息量为零；组件随之由 VmStatusCapacityCard 更名 VmStatusCard）。
+// 纯展示组件：vmStatus 由 shell 统一拉取后经 props 下发。
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { InfoFilled } from '@element-plus/icons-vue'
 import { vmStatusText, vmStatusColor, vmStatusHex } from '../../../utils/format'
 
 const props = defineProps({
-  vmStatus: { type: Array, required: true }, // [{ status, count }]
-  capacity: { type: Object, required: true } // { has_host, allocated_vcpu, ... cpu_ratio, mem_ratio }
+  vmStatus: { type: Array, required: true } // [{ status, count }]
 })
 
 const router = useRouter()
@@ -103,14 +73,6 @@ const donutStyle = computed(() => {
   })
   return `conic-gradient(${segs.join(', ')})`
 })
-
-// 超分条宽度：以 4× 超分为满格封顶，1×（不超分）= 25%；超分时条变橙
-function capBar(ratio) {
-  return Math.min(100, (ratio || 0) * 25) + '%'
-}
-function capGB(mb) {
-  return (mb / 1024).toFixed(1) + ' GB'
-}
 </script>
 
 <style scoped>
@@ -127,9 +89,6 @@ function capGB(mb) {
   color: var(--color-muted-foreground);
   text-align: center;
   padding: 20px 0;
-}
-.mt {
-  margin-top: 16px;
 }
 
 /* 虚拟机状态 */
@@ -220,59 +179,5 @@ function capGB(mb) {
 }
 .status-bar {
   flex: 1;
-}
-
-/* 资源容量卡（超分视角）：分配/物理 横条，ratio>1 超分变橙 */
-.cap-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.cap-label {
-  width: 40px;
-  flex-shrink: 0;
-  font-size: 0.85rem;
-  color: var(--el-text-color-secondary);
-}
-.cap-track {
-  flex: 1;
-  height: 8px;
-  background: var(--el-fill-color);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-.cap-fill {
-  height: 100%;
-  border-radius: var(--radius-sm);
-  background: var(--el-color-success);
-  transition: width 0.3s;
-}
-.cap-fill.over {
-  background: var(--el-color-warning);
-}
-.cap-num {
-  min-width: 116px;
-  text-align: right;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-}
-.cap-ratio {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-top: 2px;
-  font-size: 0.85rem;
-  color: var(--el-text-color-secondary);
-}
-.cap-ratio b {
-  font-family: var(--font-mono);
-  color: var(--el-color-success);
-}
-.cap-ratio b.over {
-  color: var(--el-color-warning);
-}
-.cap-help {
-  cursor: help;
 }
 </style>

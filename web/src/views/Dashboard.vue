@@ -46,9 +46,11 @@
         <!-- Row 1: 统计卡片（adminOnly「用户」卡过滤、跳转在子组件内） -->
         <StatOverviewRow :overview="overview" />
 
-        <!-- Row 2: 主机资源大盘 + 虚拟机状态/资源容量 -->
-        <el-row :gutter="16" class="mt">
-          <el-col :md="14">
+        <!-- 概览主体：左右两列各自独立成栈（原拆成两个 el-row，左右列高矮不齐 → 下方留白「割裂」）。
+             左列信息密（主机资源图 + VM 实时性能），右列轻（虚拟机状态 + 最近动态）；列内最后一张卡
+             由 .dash-cols 的 flex 撑满，两列自动等高。 -->
+        <el-row :gutter="16" class="mt dash-cols">
+          <el-col :md="16">
             <!-- active-tick：切回概览 tab 时 +1，子组件据此补 resize（display:none 恢复后图不自动渲染） -->
             <HostResourceCard
               :host="host"
@@ -58,19 +60,11 @@
               :time-labels="timeLabels"
               :active-tick="overviewTick"
             />
+            <VmPerfTable :items="vmPerf" class="mt" />
           </el-col>
-          <el-col :md="10">
-            <VmStatusCapacityCard :vm-status="vmStatus" :capacity="capacity" />
-          </el-col>
-        </el-row>
-
-        <!-- Row 3: VM 实时性能表 + 全站活动流（织网：从「发生了什么」直跳对象页） -->
-        <el-row :gutter="16" class="mt">
-          <el-col :md="14">
-            <VmPerfTable :items="vmPerf" />
-          </el-col>
-          <el-col :md="10">
-            <ActivityFeedCard v-if="canOperate" :active="activeTab === 'overview'" />
+          <el-col :md="8">
+            <VmStatusCard :vm-status="vmStatus" />
+            <ActivityFeedCard v-if="canOperate" :active="activeTab === 'overview'" class="mt" />
           </el-col>
         </el-row>
 
@@ -106,7 +100,7 @@ import MonitorView from './Monitor.vue'
 import TopologyView from './Topology.vue'
 import StatOverviewRow from './dashboard/components/StatOverviewRow.vue'
 import HostResourceCard from './dashboard/components/HostResourceCard.vue'
-import VmStatusCapacityCard from './dashboard/components/VmStatusCapacityCard.vue'
+import VmStatusCard from './dashboard/components/VmStatusCard.vue'
 import VmPerfTable from './dashboard/components/VmPerfTable.vue'
 import ActivityFeedCard from './dashboard/components/ActivityFeedCard.vue'
 import AdminPanelCards from './dashboard/components/AdminPanelCards.vue'
@@ -248,14 +242,6 @@ function setOverviewTimers(on) {
   vmTimer = setInterval(pollVms, ms)
   alertTimer = setInterval(loadAlerts, ms)
 }
-const capacity = ref({ has_host: false, vm_count: 0, allocated_vcpu: 0, allocated_mem_mb: 0, physical_cores: 0, physical_mem_mb: 0, cpu_ratio: 0, mem_ratio: 0 })
-async function loadCapacity() {
-  try {
-    const res = await api.dashboardCapacity()
-    capacity.value = res.data || capacity.value
-  } catch (e) { /* 静默：容量卡降级为空态 */ }
-}
-
 const userText = computed(() => {
   const u = state.user
   if (!u) return '—'
@@ -366,7 +352,6 @@ onMounted(async () => {
   // 告警概览与平台信息：进页拉一次（告警后续走轮询表）
   loadAlerts()
   loadSysInfo()
-  loadCapacity()
   loadAnnouncement()
   // 历史曲线预填：先画满过去一小时，再由轮询无缝追加
   prefillHostHistory()
@@ -443,5 +428,14 @@ onBeforeUnmount(() => {
 }
 .mt {
   margin-top: 16px;
+}
+/* 概览主体两列等高：左列（主机资源 + VM 性能）与右列（虚拟机状态 + 最近动态）各自成栈，
+   列内最后一张卡 flex 撑满 → 两列底部齐平，消除「一边高一边矮」的留白。 */
+.dash-cols :deep(.el-col) {
+  display: flex;
+  flex-direction: column;
+}
+.dash-cols :deep(.el-col) > *:last-child {
+  flex: 1;
 }
 </style>

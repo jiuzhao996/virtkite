@@ -162,7 +162,6 @@ export const core = {
 
   // 仪表盘
   dashboardOverview: () => unwrap(http.get('/dashboard/overview')),
-  dashboardCapacity: () => unwrap(http.get('/dashboard/capacity')),
   vmStatus: () => unwrap(http.get('/dashboard/vm-status')),
   dashboardHostStats: () => unwrap(http.get('/dashboard/host-stats')),
   vmPerf: () => unwrap(http.get('/dashboard/vm-perf')),

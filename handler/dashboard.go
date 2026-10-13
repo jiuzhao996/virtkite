@@ -1,13 +1,10 @@
 package handler
 
 import (
-	"bufio"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,57 +80,6 @@ func (h *DashboardHandler) Overview(c *gin.Context) {
 		"pool_count":       poolCount,
 		"network_count":    networkCount,
 	})
-}
-
-// Capacity 资源容量与超分视角：全部 VM 的分配量汇总 vs 宿主机物理容量。
-// 单管理节点下宿主机就是平台本机，物理量直接读本机（runtime.NumCPU + /proc/meminfo），
-// hosts 表的 cpu_cores/memory_gb 登记字段从未回写、不可靠，仅作读取失败时的兜底。
-// cpu_ratio/mem_ratio = 已分配/物理，>1 即超分；物理量取不到时 has_host=false，前端降级展示。
-func (h *DashboardHandler) Capacity(c *gin.Context) {
-	var alloc struct {
-		VCPU   uint64
-		MemMB  uint64
-		VMClnt int64
-	}
-	h.DB.Model(&model.VM{}).Select(
-		"COALESCE(SUM(v_cpu), 0) AS v_cpu, COALESCE(SUM(memory_mb), 0) AS mem_mb, COUNT(*) AS vm_clnt",
-	).Scan(&alloc)
-
-	cores := runtime.NumCPU()
-	memKB := uint64(0)
-	if f, err := os.Open("/proc/meminfo"); err == nil {
-		// defer 而非分支末尾裸 Close：扫描过程中任何提前 return/异常都不留悬挂 fd。
-		// 本处在 if 块内而非循环体内，defer 到函数返回时执行即为正确作用域。
-		defer f.Close()
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			if strings.HasPrefix(sc.Text(), "MemTotal") {
-				memKB = parseMeminfoKB(sc.Text())
-				break
-			}
-		}
-	}
-	if cores <= 0 || memKB == 0 {
-		// 兜底：本机读数失败时用首台登记宿主机（字段可能为 0，届时 has_host=false）
-		var host model.Host
-		if err := h.DB.Order("id ASC").First(&host).Error; err == nil {
-			cores, memKB = host.CPUCores, uint64(host.MemoryGB*1024)
-		}
-	}
-
-	resp := gin.H{
-		"vm_count":         alloc.VMClnt,
-		"allocated_vcpu":   alloc.VCPU,
-		"allocated_mem_mb": alloc.MemMB,
-		"has_host":         cores > 0 && memKB > 0,
-		"physical_cores":   cores,
-		"physical_mem_mb":  memKB / 1024,
-	}
-	if resp["has_host"] == true {
-		resp["cpu_ratio"] = math.Round(float64(alloc.VCPU)/float64(cores)*100) / 100
-		resp["mem_ratio"] = math.Round(float64(alloc.MemMB)/float64(memKB/1024)*100) / 100
-	}
-	Success(c, resp)
 }
 
 // VMStatusDistribution 虚拟机状态分布

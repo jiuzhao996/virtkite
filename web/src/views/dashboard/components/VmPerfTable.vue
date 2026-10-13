@@ -4,7 +4,13 @@
       <span class="card-title">VM 实时性能</span>
       <span class="update-time">运行中虚拟机展示 CPU / 内存占用</span>
     </template>
-    <el-table :data="items" size="small" class="perf-table" empty-text="暂无运行中虚拟机">
+    <!-- 空态精简：无运行中 VM 时不渲染整张表（表头+空行很占高、加剧概览卡高矮不齐），
+         改一行灰字提示 -->
+    <div v-if="!items.length" class="perf-empty">
+      <el-icon><Monitor /></el-icon>
+      <span>暂无运行中虚拟机</span>
+    </div>
+    <el-table v-else :data="items" size="small" class="perf-table">
       <el-table-column label="名称" min-width="220" show-overflow-tooltip>
         <template #default="{ row }">
           <!-- 名称可点直达 VM 详情（列表页卡片「详情」同目标） -->
@@ -76,6 +82,15 @@ defineProps({
 }
 
 /* VM 实时性能表 */
+.perf-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.88rem;
+}
 .perf-table .vm-name {
   display: inline-flex;
   align-items: center;
