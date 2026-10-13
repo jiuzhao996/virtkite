@@ -422,6 +422,11 @@ function next() {
     if (installMode.value === 'iso') {
       if (!iso.osName) return ElMessage.warning({ message: '请选择操作系统', grouping: true })
       if (!iso.isoPath && !iso.installUrl.trim()) return ElMessage.warning('请选择安装介质（存储池 → ISO / 手动输入路径 / 网络安装源 URL）')
+      // 网络安装源格式校验：后端只在 curl 下载内核时才失败（任务已启动才发现），前端先拦一道。
+      // 要求 scheme + 主机 + 安装树路径（后端在其后拼 /images/pxeboot/vmlinuz），如 ftp://host/rocky10/
+      if (iso.installUrl.trim() && !/^(ftp|https?):\/\/[^\s/]+\/.+/i.test(iso.installUrl.trim())) {
+        return ElMessage.warning('网络安装源格式不正确：需 ftp:// 或 http(s):// 开头并含安装树路径，如 ftp://192.168.219.1/rocky10/')
+      }
     } else if (installMode.value === 'cloudimage') {
       if (!cloudImage.imageId) return ElMessage.warning('请选择云镜像')
     } else if (installMode.value === 'clone') {

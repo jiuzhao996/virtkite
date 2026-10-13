@@ -41,8 +41,8 @@
         </div>
       </el-form-item>
       <el-form-item label="网络安装源">
-        <el-input v-model="iso.installUrl" placeholder="可选：FTP/HTTP 安装树 URL，如 ftp://192.168.219.1/rocky10/（填了则免下载 ISO，直接内核引导）" />
-        <div class="os-hint">等价 virt-install --location：平台下载该树下的内核与 initrd 引导安装，cmdline 默认 inst.repo=&lt;url&gt;</div>
+        <el-input v-model="iso.installUrl" placeholder="可选，如 ftp://192.168.219.1/rocky10/" />
+        <div class="os-hint">网络安装源（FTP/HTTP 安装树）：填了则免下载 ISO、直接内核引导，等价 virt-install --location——平台下载该树下的内核与 initrd 引导安装，cmdline 默认 inst.repo=&lt;url&gt;</div>
       </el-form-item>
       <el-form-item label="操作系统" required>
         <el-select v-model="iso.osName" filterable placeholder="选择操作系统（可按 ISO 文件名自动识别）" style="width: 380px" @change="isoAutoDetected = false">

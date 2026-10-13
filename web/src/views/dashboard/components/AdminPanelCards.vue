@@ -11,7 +11,7 @@
         </template>
         <div v-if="topActions.length === 0" class="empty">暂无数据</div>
         <div v-for="a in topActions" :key="a.action" class="action-row">
-          <span class="action-name">{{ actionLabel(a.action) }}</span>
+          <span class="action-name" :title="actionLabel(a.action)">{{ actionLabel(a.action) }}</span>
           <div class="action-track">
             <div class="action-fill" :style="{ width: actionPct(a.count) + '%', background: actionColor(a.action) }" />
           </div>
@@ -175,10 +175,14 @@ function actionColor(a) {
   margin-bottom: 10px;
 }
 .action-name {
-  width: 84px;
+  /* 放宽到能容最长的操作名（如「跳板拦截危险命令」8 字）；仍嫌长的用省略号兜，
+     悬停 title 显示全称——此前 84px + nowrap 无 overflow:hidden，长名直接压到进度条上 */
+  width: 108px;
   font-size: 0.85rem;
   color: var(--color-muted-foreground);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .action-track {
   flex: 1;
