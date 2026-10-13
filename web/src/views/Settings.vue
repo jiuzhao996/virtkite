@@ -1,90 +1,25 @@
 <template>
   <div v-loading="loading">
-    <PageHead title="系统设置" subtitle="平台运行参数，保存进数据库、立即生效无需重启；生效配置的只读快照见仪表盘「平台信息」卡，界面轮询偏好已移至顶栏「个人中心」，cloud-init 模板管理亦在本页">
+    <PageHead title="系统设置" subtitle="宿主机登记、平台运行参数、安全与通知、模板与扩展组件。运行参数保存进数据库、立即生效无需重启；生效配置的只读快照见仪表盘「平台信息」卡；界面轮询偏好在顶栏「个人中心」；计划任务已并入「运维自动化」页">
       <el-tag v-if="dirtyForms" type="warning" effect="plain" class="dirty-tag">有未保存的改动</el-tag>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </PageHead>
 
-    <!-- 可写配置：DB 持久化、写入即生效 -->
-    <el-card shadow="never" class="mb">
-      <template #header>
-        <div class="card-head">
-          <span class="card-title">运行参数</span>
-          <el-button type="primary" :loading="saving" @click="saveWritable">保存并生效</el-button>
-        </div>
-      </template>
-      <el-form label-width="170px" style="max-width: 560px">
-        <el-form-item label="默认存储池">
-          <el-input v-model="writable.default_storage_pool" placeholder="未指定池时创建/删除 VM 使用的池名" />
-        </el-form-item>
-        <el-form-item label="VNC token 有效期">
-          <el-input-number v-model="writable.vnc_token_ttl_min" :min="1" :max="60" controls-position="right" />
-          <span class="unit">分钟（每次生成 token 实时读取）</span>
-        </el-form-item>
-        <el-form-item label="VNC 会话过期判定">
-          <el-input-number v-model="writable.vnc_stale_min" :min="5" :max="1440" controls-position="right" />
-          <span class="unit">分钟（超时无活动将被清扫收敛）</span>
-        </el-form-item>
-        <el-form-item label="跳板命令黑名单">
-          <el-input v-model="writable.jumpd_cmd_blacklist" placeholder="逗号分隔，留空 = 内置默认（rm -rf, mkfs, dd if= …）" />
-          <div class="input-help">学生经 SSH 跳板敲入的整行命中任一子串即被拦截并写入审计（大小写/多空格自动归一）</div>
-        </el-form-item>
-      </el-form>
-      <p class="tip">以上配置持久化在数据库中，保存后立即生效，无需重启后端。</p>
-    </el-card>
+    <!-- 页内锚点：本页 9 张卡片纵向约 3.6 屏，没有导航时找一项要滚很久、还容易滚过头。
+         吸顶在页头下方；点一下平滑滚到对应卡片。 -->
+    <div class="sec-nav">
+      <a v-for="s in SECTIONS" :key="s.id" class="sec-nav-item" @click="scrollToSection(s.id)">{{ s.label }}</a>
+    </div>
 
-    <!-- AI 设置（运维助手）：与「运行参数」独立保存，只提交 ai_* 三个键 -->
-    <el-card shadow="never" class="mb">
-      <template #header>
-        <div class="card-head">
-          <span class="card-title">AI 设置（运维助手）</span>
-          <el-button type="primary" :loading="savingAI" @click="saveAI">保存</el-button>
-        </div>
-      </template>
-      <el-form label-width="170px" style="max-width: 560px">
-        <el-form-item label="API 地址">
-          <el-input v-model="ai.base_url" placeholder="如 https://api.deepseek.com/v1" clearable />
-        </el-form-item>
-        <el-form-item label="API Key">
-          <!-- GET 返回明文，表单用密码框掩码展示；new-password 防浏览器把 Key 当登录口令自动填充 -->
-          <el-input
-            v-model="ai.api_key"
-            type="password"
-            show-password
-            autocomplete="new-password"
-            placeholder="粘贴服务商提供的 API Key"
-          />
-        </el-form-item>
-        <el-form-item label="模型名">
-          <el-input v-model="ai.model" placeholder="如 deepseek-chat" clearable />
-        </el-form-item>
-      </el-form>
-      <p class="tip">配置后可通过顶栏「AI 助手」使用智能问答；Key 保存在服务端，不会下发到浏览器。</p>
-    </el-card>
-
-    <!-- 安全设置（批次 D）：安全入口 + 密码策略，独立保存 -->
-    <el-card shadow="never" class="mb">
-      <template #header>
-        <div class="card-head">
-          <span class="card-title">安全设置</span>
-          <el-button type="primary" :loading="savingSec" @click="saveSec">保存</el-button>
-        </div>
-      </template>
-      <el-form label-width="170px" style="max-width: 560px">
-        <el-form-item label="安全入口">
-          <el-input v-model="sec.entrance" placeholder="留空 = 关闭（默认登录地址）" clearable style="width: 320px" />
-          <div class="input-help">设置后登录 API 必须携带该入口参数（?entrance=值），否则一律 404——防扫描爆破。请妥善保存，遗忘可经 SSH 按文档重置。</div>
-        </el-form-item>
-        <el-form-item label="密码最小长度">
-          <el-input-number v-model="sec.pwdMin" :min="0" :max="64" controls-position="right" style="width: 160px" />
-          <div class="input-help">0 = 关闭策略；≥8 时密码需同时包含字母与数字</div>
-        </el-form-item>
-      </el-form>
-      <p class="tip">安全入口遗忘时的应急处理见 docs/07 部署文档。</p>
-    </el-card>
+    <!-- 宿主机（IA 归并批次 2026-10 并入）：单宿主机平台一页一卡太薄，admin 属性的
+         登记/SSH 测试收进设置页；侧栏不再单列 -->
+    <div class="ci-wrap" id="sec-hosts">
+      <h3 class="sub-section-title">宿主机</h3>
+      <HostList embedded />
+    </div>
 
     <!-- SSH 主机密钥（TOFU）：首次 SSH 连接记录指纹，指纹变化拒绝连接（防中间人）；虚拟机重建后删旧记录重连 -->
-    <el-card shadow="never" class="mb">
+    <el-card shadow="never" class="mb" id="sec-sshkeys">
       <template #header>
         <div class="card-head">
           <span class="card-title">
@@ -120,8 +55,67 @@
       </el-table>
     </el-card>
 
+    <!-- 可写配置：DB 持久化、写入即生效 -->
+    <el-card shadow="never" class="mb" id="sec-params">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">运行参数</span>
+          <el-button type="primary" :loading="saving" @click="saveWritable">保存并生效</el-button>
+        </div>
+      </template>
+      <el-form label-width="170px" style="max-width: 560px">
+        <el-form-item label="默认存储池">
+          <!-- 用下拉而不是自由文本：这里填错一个字母，创建/删除 VM 就会打到不存在的池上，
+               而错误只在真正建机时才暴露。候选来自 libvirt 实际池列表，选不出错的池。 -->
+          <el-select
+            v-model="writable.default_storage_pool"
+            filterable
+            placeholder="未指定池时创建/删除 VM 使用的池名"
+            style="width: 260px"
+          >
+            <el-option v-for="n in poolOptions" :key="n" :label="n" :value="n" />
+          </el-select>
+          <span class="unit">建机/删机未显式指定池时用它</span>
+        </el-form-item>
+        <el-form-item label="VNC token 有效期">
+          <el-input-number v-model="writable.vnc_token_ttl_min" :min="1" :max="60" controls-position="right" />
+          <span class="unit">分钟（每次生成 token 实时读取）</span>
+        </el-form-item>
+        <el-form-item label="VNC 会话过期判定">
+          <el-input-number v-model="writable.vnc_stale_min" :min="5" :max="1440" controls-position="right" />
+          <span class="unit">分钟（超时无活动将被清扫收敛）</span>
+        </el-form-item>
+        <el-form-item label="跳板命令黑名单">
+          <el-input v-model="writable.jumpd_cmd_blacklist" placeholder="逗号分隔，留空 = 内置默认（rm -rf, mkfs, dd if= …）" />
+          <div class="input-help">学生经 SSH 跳板敲入的整行命中任一子串即被拦截并写入审计（大小写/多空格自动归一）</div>
+        </el-form-item>
+      </el-form>
+      <p class="tip">以上配置持久化在数据库中，保存后立即生效，无需重启后端。</p>
+    </el-card>
+
+    <!-- 安全设置（批次 D）：安全入口 + 密码策略，独立保存 -->
+    <el-card shadow="never" class="mb" id="sec-security">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">安全设置</span>
+          <el-button type="primary" :loading="savingSec" @click="saveSec">保存</el-button>
+        </div>
+      </template>
+      <el-form label-width="170px" style="max-width: 560px">
+        <el-form-item label="安全入口">
+          <el-input v-model="sec.entrance" placeholder="留空 = 关闭（默认登录地址）" clearable style="width: 320px" />
+          <div class="input-help">设置后登录 API 必须携带该入口参数（?entrance=值），否则一律 404——防扫描爆破。请妥善保存，遗忘可经 SSH 按文档重置。</div>
+        </el-form-item>
+        <el-form-item label="密码最小长度">
+          <el-input-number v-model="sec.pwdMin" :min="0" :max="64" controls-position="right" style="width: 160px" />
+          <div class="input-help">0 = 关闭策略；≥8 时密码需同时包含字母与数字</div>
+        </el-form-item>
+      </el-form>
+      <p class="tip">安全入口遗忘时的应急处理见 docs/07 部署文档。</p>
+    </el-card>
+
     <!-- 告警通知：alert_notify_url 单键，留空 = 关闭推送；独立保存 -->
-    <el-card shadow="never" class="mb">
+    <el-card shadow="never" class="mb" id="sec-notify">
       <template #header>
         <div class="card-head">
           <span class="card-title">告警通知</span>
@@ -137,7 +131,7 @@
     </el-card>
 
     <!-- 系统公告（v3 批次 P）：登录页与仪表盘公开展示，独立保存，只提交 announcement 键 -->
-    <el-card shadow="never">
+    <el-card shadow="never" id="sec-announce">
       <template #header>
         <div class="card-head">
           <span class="card-title">系统公告</span>
@@ -159,8 +153,42 @@
       <p class="tip">公告对全部用户公开（含未登录的登录页），请勿填写敏感信息；清空内容并保存即撤下公告。仪表盘对同一内容仅提示一次，内容变更后重新提示。</p>
     </el-card>
 
+    <!-- cloud-init 模板（IA 精简批次并入）：创建向导「云镜像 + cloud-init」面板一键套用的初始化模板 -->
+    <div class="ci-wrap" id="sec-cloudinit">
+      <CloudInitTemplates embedded />
+    </div>
+
+    <!-- AI 设置（运维助手）：与「运行参数」独立保存，只提交 ai_* 三个键 -->
+    <el-card shadow="never" class="mb" id="sec-ai">
+      <template #header>
+        <div class="card-head">
+          <span class="card-title">AI 设置（运维助手）</span>
+          <el-button type="primary" :loading="savingAI" @click="saveAI">保存</el-button>
+        </div>
+      </template>
+      <el-form label-width="170px" style="max-width: 560px">
+        <el-form-item label="API 地址">
+          <el-input v-model="ai.base_url" placeholder="如 https://api.deepseek.com/v1" clearable />
+        </el-form-item>
+        <el-form-item label="API Key">
+          <!-- GET 返回明文，表单用密码框掩码展示；new-password 防浏览器把 Key 当登录口令自动填充 -->
+          <el-input
+            v-model="ai.api_key"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            placeholder="粘贴服务商提供的 API Key"
+          />
+        </el-form-item>
+        <el-form-item label="模型名">
+          <el-input v-model="ai.model" placeholder="如 deepseek-chat" clearable />
+        </el-form-item>
+      </el-form>
+      <p class="tip">配置后可通过顶栏「AI 助手」使用智能问答；Key 保存在服务端，不会下发到浏览器。</p>
+    </el-card>
+
     <!-- 嵌套虚拟化（VM 里再跑 VM）：宿主内核层开关，独立保存 -->
-    <el-card shadow="never" class="mb" v-loading="nestedLoading">
+    <el-card shadow="never" class="mb" v-loading="nestedLoading" id="sec-nested">
       <template #header>
         <div class="card-head">
           <span class="card-title">嵌套虚拟化</span>
@@ -179,25 +207,6 @@
       </div>
       <p class="tip">开启后可在虚拟机内再运行虚拟机（需 CPU 支持 VT-x/AMD-V）。会写入 modprobe.d 持久化；运行时重载需所有虚拟机已关机，否则重启宿主机后生效。</p>
     </el-card>
-
-    <!-- cloud-init 模板（IA 精简批次并入）：创建向导「云镜像 + cloud-init」面板一键套用的初始化模板 -->
-    <div class="ci-wrap">
-      <CloudInitTemplates embedded />
-    </div>
-
-    <!-- 宿主机（IA 归并批次 2026-10 并入）：单宿主机平台一页一卡太薄，admin 属性的
-         登记/SSH 测试收进设置页；侧栏不再单列 -->
-    <div class="ci-wrap">
-      <h3 class="sub-section-title">宿主机</h3>
-      <HostList embedded />
-    </div>
-
-    <!-- 计划任务（同批并入）：低频 admin 功能（快照/DB 备份定时化），功能保留，
-         侧栏一级入口让位 -->
-    <div class="ci-wrap">
-      <h3 class="sub-section-title">计划任务</h3>
-      <CronList embedded />
-    </div>
   </div>
 </template>
 
@@ -209,9 +218,46 @@ import { api } from '../api'
 import { errMsg, fmtDateTime } from '../utils/format'
 import CloudInitTemplates from './CloudInitTemplates.vue'
 import HostList from './HostList.vue'
-import CronList from './CronList.vue'
 import PageHead from '../components/PageHead.vue'
 import { onBeforeRouteLeave } from 'vue-router'
+
+// 页内锚点导航的分节清单：id 与模板里各卡片的 id 一一对应。
+// 顺序即页面顺序——**宿主机提到最前**（用户反馈：单宿主机平台的「机器在哪」比调参更常看，
+// 埋在 9 张卡之后要滚 3 屏才找得到）。
+const SECTIONS = [
+  { id: 'sec-hosts', label: '宿主机' },
+  { id: 'sec-sshkeys', label: 'SSH 主机密钥' },
+  { id: 'sec-params', label: '运行参数' },
+  { id: 'sec-security', label: '安全设置' },
+  { id: 'sec-notify', label: '告警通知' },
+  { id: 'sec-announce', label: '系统公告' },
+  { id: 'sec-cloudinit', label: 'cloud-init 模板' },
+  { id: 'sec-ai', label: 'AI 设置' },
+  { id: 'sec-nested', label: '嵌套虚拟化' }
+]
+
+// 滚到分节。用 scrollIntoView 而非手动算 offset：滚动容器是 .el-main，
+// 手算要同时考虑它和 window 的滚动位置，容易在窗口尺寸变化后算偏。
+// 落点偏移由 CSS 的 scroll-margin-top 兜（避开吸顶的锚点条）。
+function scrollToSection(id) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// 默认存储池的下拉候选：来自 libvirt 实际池列表，避免手输打错池名。
+// 取不到时保持空列表——此时下拉为空，但不会阻断本页其它设置项的修改。
+const poolOptions = ref([])
+async function loadPools() {
+  try {
+    const res = await api.listStoragePools()
+    const names = ((res.data && res.data.items) || []).map((p) => p.name)
+    // 把当前已配置的值并进去：池被删掉后配置可能仍指向它，不并入的话下拉会显示成空白，
+    // 用户以为「没配」，一保存反而把有效配置清掉了
+    const cur = writable.default_storage_pool
+    poolOptions.value = cur && !names.includes(cur) ? [cur, ...names] : names
+  } catch (e) {
+    /* 池列表拉取失败不影响本页其它设置项 */
+  }
+}
 
 const loading = ref(false)
 const saving = ref(false)
@@ -481,9 +527,12 @@ function onBeforeUnload(e) {
   e.preventDefault()
   e.returnValue = ''
 }
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('beforeunload', onBeforeUnload)
-  load()
+  // loadPools 必须**等 load 完成**再调：它要把「当前已配置的池名」并进候选，
+  // 并行发起时读到的是初始值（还没被 load 填充），并入的会是个无效值
+  await load()
+  loadPools()
   loadKeys()
   loadNested()
 })
@@ -540,5 +589,36 @@ onUnmounted(() => {
 }
 .dirty-tag {
   margin-right: 8px;
+}
+/* 页内锚点条：吸顶在页头下方（页头高 60px），横向可滚动不换行 */
+.sec-nav {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding: 8px 4px;
+  margin-bottom: 12px;
+  background: var(--el-bg-color);
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.sec-nav-item {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  color: var(--color-muted-foreground);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sec-nav-item:hover {
+  color: var(--el-color-primary);
+  background: var(--el-fill-color-light);
+}
+/* 锚点落点避开吸顶条：不加这行滚过去会被锚点条盖住标题 */
+.sec-nav ~ * {
+  scroll-margin-top: 56px;
 }
 </style>
