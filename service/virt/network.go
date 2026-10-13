@@ -219,49 +219,6 @@ func (v *Virt) DefineNetwork(xml string) error {
 	return nil
 }
 
-// 运行中的网络先停止再重建，并保留原 autostart 设置。
-func (v *Virt) UpdateNetwork(name, xml string) error {
-	l, err := v.getConn()
-	if err != nil {
-		return err
-	}
-	n, err := l.NetworkLookupByName(name)
-	if err != nil {
-		return fmt.Errorf("网络 %s 不存在: %w", name, err)
-	}
-
-	// 记录原 autostart，重建后恢复
-	autostart := int32(0)
-	if a, err := l.NetworkGetAutostart(n); err == nil {
-		autostart = a
-	}
-
-	// 运行中先停止（对应 virsh net-destroy）
-	active, err := l.NetworkIsActive(n)
-	if err == nil && active == 1 {
-		if err := l.NetworkDestroy(n); err != nil {
-			return fmt.Errorf("停止网络失败: %w", err)
-		}
-	}
-	// 删除旧定义（对应 virsh net-undefine）
-	if err := l.NetworkUndefine(n); err != nil {
-		return fmt.Errorf("删除网络定义失败: %w", err)
-	}
-	// 按新 XML 重新定义并启动（对应 virsh net-define + net-start）
-	nn, err := l.NetworkDefineXML(xml)
-	if err != nil {
-		return fmt.Errorf("定义网络失败: %w", err)
-	}
-	if err := l.NetworkCreate(nn); err != nil {
-		return fmt.Errorf("启动网络失败: %w", err)
-	}
-	// 恢复原 autostart 设置
-	if err := l.NetworkSetAutostart(nn, autostart); err != nil {
-		return fmt.Errorf("恢复自动启动设置失败: %w", err)
-	}
-	return nil
-}
-
 // 以下为 NAT 网络 XML 生成结构（按 AGENTS.md「XML 用标准库 encoding/xml」，
 // 参照 spec.go 的 BuildDomainXML 写法）。用 xml.Marshal 而非字符串拼接：
 // 网络名/网关中的 XML 元字符由标准库自动转义，无法闭合标签注入额外节点。
