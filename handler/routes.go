@@ -205,6 +205,8 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 	{
 		vms.GET("", vmHandler.ListVMs)
 		vms.GET("/options", vmHandler.GetVMOptions)
+		// 网络安装源可达性测试（建机向导「测试」按钮）：只读探测，复用下载路径抓首字节
+		vms.POST("/install-source/test", vmHandler.TestInstallSource)
 		vms.GET("/import/scan", vmHandler.ScanImportVMs)
 		vms.POST("/import", vmHandler.ImportVMs)
 		vms.POST("", vmHandler.CreateVM)

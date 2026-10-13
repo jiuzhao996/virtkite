@@ -210,6 +210,25 @@ func (h *VMHandler) GetVMOptions(c *gin.Context) {
 	})
 }
 
+// TestInstallSource 测试网络安装源可达性（建机向导「测试」按钮）：POST /api/vms/install-source/test。
+// body: {url}。只读探测——复用下载的相对路径抓首字节，不落盘、不建机。
+func (h *VMHandler) TestInstallSource(c *gin.Context) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.URL) == "" {
+		Fail(c, http.StatusBadRequest, "请提供网络安装源地址")
+		return
+	}
+	if err := tasks.ProbeInstallSource(req.URL); err != nil {
+		// 完整错误（含 curl stderr）只进日志；前端只收中文友好消息（AGENTS 后端标准 #3）
+		LogError(c, err)
+		Success(c, gin.H{"available": false, "message": "安装源不可用：地址不可达、路径不对，或不是 RHEL 系（Rocky/CentOS 等）安装树布局"})
+		return
+	}
+	Success(c, gin.H{"available": true, "message": "安装树可达：已能取到内核与 initrd"})
+}
+
 // poolPathMap 返回 存储池名 → 目标路径 的映射（供磁盘归属推断）。
 func (h *VMHandler) poolPathMap() (map[string]string, error) {
 	names, err := h.Virt.ListPools()

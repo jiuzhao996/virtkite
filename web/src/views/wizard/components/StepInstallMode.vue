@@ -41,7 +41,12 @@
         </div>
       </el-form-item>
       <el-form-item label="网络安装源">
-        <el-input v-model="iso.installUrl" placeholder="可选，如 ftp://192.168.219.1/rocky10/" />
+        <el-input v-model="iso.installUrl" placeholder="可选，如 ftp://192.168.219.1/rocky10/">
+          <!-- 测试按钮：后端复用下载路径抓首字节，探安装树是否真可达（前端无法跨协议直连 FTP/HTTP 树） -->
+          <template #append>
+            <el-button :loading="testing" :disabled="!installUrlValid" @click="testSource">测试</el-button>
+          </template>
+        </el-input>
         <div class="os-hint">
           与上方「安装介质」二选一：填了就不必选 ISO——平台从该树下载内核与 initrd 直接引导安装
           （等价 virt-install --location，cmdline 默认 inst.repo=&lt;url&gt;）。须填安装树「目录」（不是 ISO 文件），
@@ -209,6 +214,22 @@ const cloudInitEnabled = defineModel('cloudInitEnabled', { type: Boolean, defaul
 // 网络安装源是否「有效」：填了且格式正确才算提供了安装介质——安装介质的必填星号据此消失
 // （此前只看非空，填个错 URL 星号也消失，误导；校验口径与 CreateVmWizard 下一步一致）
 const installUrlValid = computed(() => isValidInstallTreeUrl(props.iso.installUrl))
+
+// 「测试」按钮：调后端探测安装树是否真可达（前端无法跨协议直连 FTP/HTTP 树，必须后端探）。
+const testing = ref(false)
+async function testSource() {
+  testing.value = true
+  try {
+    const res = await api.testInstallSource(props.iso.installUrl.trim())
+    const d = res.data || {}
+    if (d.available) ElMessage.success(d.message || '安装源可达')
+    else ElMessage.error(d.message || '安装源不可达')
+  } catch (e) {
+    ElMessage.error(errMsg(e, '测试失败'))
+  } finally {
+    testing.value = false
+  }
+}
 
 const router = useRouter()
 

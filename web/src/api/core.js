@@ -53,6 +53,8 @@ export const core = {
   detachInterface: (id, mac) => unwrap(http.delete('/vms/' + id + '/devices/interfaces/' + mac)),
   cloneVM: (id, payload) => unwrap(http.post('/vms/' + id + '/clone', payload)),
   vmOptions: () => unwrap(http.get('/vms/options')),
+  // 网络安装源可达性测试（建机向导「测试」按钮）：后端复用下载路径抓首字节探测
+  testInstallSource: (url) => unwrap(http.post('/vms/install-source/test', { url })),
 
   listSnapshots: (id) => unwrap(http.get('/vms/' + id + '/snapshots')),
   createSnapshot: (id, name, description) => unwrap(http.post('/vms/' + id + '/snapshots', { name, description })),
