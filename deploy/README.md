@@ -20,6 +20,7 @@
   （VM SSH 凭据加密主密钥，必须与 `JWT_SECRET_KEY` 完全不同，否则轮换 JWT 会连带废掉历史凭据）；
   缺失时 `docker compose config` 直接报错拒绝启动。
 - **隧道持久化**：两端 systemd（Restart=always，frp 心跳自动重连）；旧 SSH 反向隧道方案（virtkite-tunnel）已 disable 备用。
+  两端的 `frps.toml` / `frpc.toml` 全文与旧方案弃用原因见 [kpyun/frp-方案.md](kpyun/frp-方案.md)（本节只留架构概览，改隧道配置以专文为准）。
 
 ## 双存储监控（✅ 已上线）
 
