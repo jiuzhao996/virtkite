@@ -69,13 +69,12 @@
             </span>
           </div>
           <div class="pool-path mono" :title="pool.path">{{ pool.path }}</div>
-          <div
-            class="pool-desc"
-            :class="{ placeholder: !pool.description, editable: isAdmin }"
-            :title="pool.description || '点击编辑添加描述'"
-            @click.stop="openMeta(pool)"
-          >
-            {{ pool.description || '点击编辑添加描述' }}
+          <!-- 描述是**只读**展示：此前整行可点去编辑，热区横跨整张卡片，误触率很高
+               （想开抽屉却弹出编辑框）。编辑统一走下方「编辑」按钮。
+               后端已按池角色补缺省文案，所以这里基本不会是空的；真为空时也不显示
+               「点击编辑…」这类诱导文案——那正是误触的来源。 -->
+          <div class="pool-desc" :class="{ placeholder: !pool.description }" :title="pool.description">
+            {{ pool.description || '—' }}
           </div>
           <!-- 池卡片不再画容量条：dir 池容量是文件系统级的，同盘多池口径相同，
                统一由顶部「物理容量」汇总条展示；卡片只留池自有信息（卷数） -->
@@ -828,14 +827,6 @@ onMounted(load)
 .pool-desc.placeholder {
   color: var(--color-muted-foreground);
   opacity: 0.7;
-}
-/* 可点描述行（admin 编辑入口）需要指针与 hover 反馈（ui-ux-pro-max §2 cursor-pointer/state-clarity）；
-   viewer 无编辑权限不加可点样式，避免"看起来能点点了没反应" */
-.pool-desc.editable {
-  cursor: pointer;
-}
-.pool-desc.editable:hover {
-  color: var(--el-color-primary);
 }
 .pool-stats {
   display: flex;

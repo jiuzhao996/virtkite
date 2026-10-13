@@ -301,6 +301,33 @@ async function main() {
     const hashDefault = await ev('location.hash')
     check('回默认 tab 清掉 query', backDefault && !hashDefault.includes('tab='), `hash=${hashDefault}`)
 
+    // ---------- 3.6) 存储池卡片：点描述必须开抽屉，不能弹编辑框 ----------
+    // 这条是真实误触反馈：描述行此前整块是「点我编辑」的热区，横跨整张卡片，
+    // 用户想开抽屉却弹出编辑框。现在描述是只读文本，编辑只走「编辑」按钮。
+    await goto('#/storage', 2600)
+    const tabClicked = await ev(`(() => {
+      const t = Array.from(document.querySelectorAll('.el-tabs__item')).find((e) => e.textContent.trim() === '存储池')
+      if (!t) return false
+      t.click()
+      return true
+    })()`)
+    await sleep(2000)
+    const descCount = await ev(`document.querySelectorAll('.pool-desc').length`)
+    check('存储池卡片渲染', tabClicked && descCount > 0, `tab=${tabClicked} 描述行=${descCount}`)
+    // 描述文案由后端按池角色补缺省，卡片上不该再出现「点击编辑…」这类诱导文案
+    const hintLeft = await ev(`Array.from(document.querySelectorAll('.pool-desc')).some((e) => e.textContent.includes('点击编辑'))`)
+    check('卡片无「点击编辑」诱导文案', !hintLeft, '仍存在诱导点击的占位文案')
+    await ev(`document.querySelector('.pool-desc')?.click()`)
+    await sleep(1800)
+    const afterClick = await ev(`JSON.stringify({
+      drawer: !!document.querySelector('.el-drawer'),
+      dialog: !!document.querySelector('.el-dialog')
+    })`)
+    const st = JSON.parse(afterClick)
+    check('点描述开抽屉而非编辑框', st.drawer && !st.dialog, afterClick)
+    await ev(`document.querySelector('.el-drawer__close-btn')?.click()`)
+    await sleep(600)
+
     // ---------- 4) 建机向导走到底（不点创建，无副作用）----------
     step = '建机向导'
     await ev(`sessionStorage.clear()`) // 向导有 sessionStorage 草稿，先清掉保证从第 1 步开始

@@ -73,3 +73,42 @@ func TestInferPoolRole(t *testing.T) {
 		}
 	}
 }
+
+// TestInferPoolDesc 池缺省描述的推断。
+//
+// 风险点：描述是纯平台概念（libvirt 池 XML 没有这个字段），不补缺省时卡片上就是空白——
+// 此前只能显示「点击编辑添加描述」诱导用户去点，整行因此成了横跨卡片的误触热区
+// （想开抽屉却弹出编辑框）。缺省文案内置后，用户不必为「让卡片好看点」去编辑任何东西。
+func TestInferPoolDesc(t *testing.T) {
+	cases := []struct {
+		name, path   string
+		wantNonEmpty bool
+	}{
+		{"base", "/home/jiuzhao/storage/base", true},
+		{"images", "/home/jiuzhao/storage/images", true},
+		{"exten", "/home/jiuzhao/storage/exten", true},
+		{"iso", "/home/jiuzhao/storage/iso", true},
+		// 按路径兜底（池名被改过但目录仍是平台约定）
+		{"custom-name", "/data/storage/base", true},
+		// 未知池：返回空串，由前端显示占位符（不是错误）
+		{"whatever", "/mnt/random", false},
+	}
+	for _, tc := range cases {
+		got := inferPoolDesc(tc.name, tc.path)
+		if tc.wantNonEmpty && got == "" {
+			t.Errorf("inferPoolDesc(%q,%q) 应有缺省描述", tc.name, tc.path)
+		}
+		if !tc.wantNonEmpty && got != "" {
+			t.Errorf("inferPoolDesc(%q,%q) 未知池应返回空串，实际 %q", tc.name, tc.path, got)
+		}
+	}
+	// 四个已知角色文案必须互不相同（否则推断串味，卡片看起来都一样）
+	seen := map[string]bool{}
+	for _, n := range []string{"base", "images", "exten", "iso"} {
+		d := inferPoolDesc(n, "")
+		if seen[d] {
+			t.Errorf("池 %s 的描述与其它池重复：%q", n, d)
+		}
+		seen[d] = true
+	}
+}

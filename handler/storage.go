@@ -100,6 +100,27 @@ func inferPoolRole(name, path string) string {
 	}
 }
 
+// inferPoolDesc 按池角色给出缺省描述（纯函数）。
+//
+// 与 inferPoolRole 同一套路：libvirt 池 XML 没有语义字段，而描述又是纯平台概念，
+// 不补缺省的话卡片上就是一片空白——此前只能显示「点击编辑添加描述」诱导用户去点，
+// 反而让整行成了误触热区。这里把文案内置，用户不需要为此动手。
+// DB 里显式设过描述时以 DB 为准（见列表装配处）。
+func inferPoolDesc(name, path string) string {
+	switch inferPoolRole(name, path) {
+	case "模板基盘":
+		return "模板与云镜像落点，增量克隆的父盘"
+	case "系统盘":
+		return "平台主力系统盘池，增量克隆落点"
+	case "数据盘":
+		return "给虚拟机热挂的扩展数据盘"
+	case "安装镜像":
+		return "系统安装 ISO 存放处"
+	default:
+		return ""
+	}
+}
+
 // loadPoolMeta 读取池元数据（角色覆盖 + 描述），key 为池名。
 func (h *StorageHandler) loadPoolMeta() map[string]model.PoolMeta {
 	metas := map[string]model.PoolMeta{}
@@ -203,12 +224,14 @@ func (h *StorageHandler) ListPools(c *gin.Context) {
 	items := make([]gin.H, 0, len(pools))
 	for _, p := range pools {
 		role := inferPoolRole(p.Name, p.Path)
-		description := ""
+		description := inferPoolDesc(p.Name, p.Path) // 缺省文案内置，用户不必为此编辑
 		if m, ok := metas[p.Name]; ok {
 			if m.Role != "" {
 				role = m.Role
 			}
-			description = m.Description
+			if strings.TrimSpace(m.Description) != "" {
+				description = m.Description // 显式设过才覆盖缺省
+			}
 		}
 		items = append(items, gin.H{
 			"name":        p.Name,
