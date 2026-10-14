@@ -135,6 +135,9 @@ func (m *Manager) All() map[string]string {
 		KeyPasswordMinLength:  strconv.Itoa(m.PasswordMinLength()),
 		KeyAnnouncement:       m.Announcement(),
 		KeyAlertNotifyURL:     m.AlertNotifyURL(),
+		// 曾漏掉此键：设置页读不到已配的黑名单，且「保存运行参数」会把它当空串提交 → 静默清空自定义黑名单
+		// （回落内置默认）。补进快照后设置页可回显、保存回填原值（2026-10-14 修）。
+		KeyJumpdCmdBlacklist: m.JumpdCmdBlacklist(),
 	}
 }
 

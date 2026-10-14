@@ -55,7 +55,7 @@ func TestValidate(t *testing.T) {
 // 保证「系统设置未配置」与「改造前」行为完全相同。
 func TestDefaultResolvers(t *testing.T) {
 	if DefaultStoragePoolFallback != "images" {
-		t.Errorf("DefaultStoragePoolFallback = %q, want vmops", DefaultStoragePoolFallback)
+		t.Errorf("DefaultStoragePoolFallback = %q, want images", DefaultStoragePoolFallback)
 	}
 	if VNCTokenTTLDefaultMin != 5 {
 		t.Errorf("VNCTokenTTLDefaultMin = %d, want 5", VNCTokenTTLDefaultMin)
