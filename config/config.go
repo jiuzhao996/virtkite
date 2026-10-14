@@ -48,6 +48,10 @@ type Config struct {
 	// Prometheus 地址（仪表盘/虚拟机详情的历史曲线查询用；docker compose 内为 http://prometheus:9090）
 	PrometheusURL string
 
+	// VictoriaLogs 地址（平台内置「日志」页查询用；docker compose 内为 http://victoria-logs:9428）。
+	// 留空则日志页显式提示「未配置」，不报错。
+	VictoriaLogsURL string
+
 	// /metrics 抓取令牌（非空时 /metrics 要求 Authorization: Bearer <token> 或 ?token=<token>，
 	// 与 deploy/prometheus.yml 抓取任务的 bearer_token 配对；为空则保持公开，用防火墙限制来源）
 	MetricsToken string
@@ -111,6 +115,9 @@ func Init() {
 
 		// Prometheus 地址
 		PrometheusURL: getEnv("PROMETHEUS_URL", "http://127.0.0.1:9090"),
+
+		// VictoriaLogs 地址（平台内置日志页）
+		VictoriaLogsURL: getEnv("VICTORIALOGS_URL", "http://127.0.0.1:9428"),
 
 		// /metrics 抓取令牌
 		MetricsToken: getEnv("METRICS_TOKEN", ""),

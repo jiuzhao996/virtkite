@@ -60,6 +60,8 @@ services:
       ALERTMANAGER_URL: http://alertmanager:9093
       # 仪表盘/虚拟机详情的历史曲线经 Prometheus query_range 查询
       PROMETHEUS_URL: http://prometheus:9090
+      # 平台内置「日志」页经 VictoriaLogs 查询（LogsQL）；宿主机原生直跑时默认 127.0.0.1:9428
+      VICTORIALOGS_URL: http://victoria-logs:9428
       # Prometheus file_sd 目标文件（服务发现闭环）：与 prometheus 服务的挂载指向同一宿主机目录，
       # 平台每分钟把 running 且有 IP 的 VM 写入该文件（宿主机原生直跑时改在 .env 配置 FILE_SD_PATH）
       FILE_SD_PATH: /app/deploy/file_sd/targets.json

@@ -193,7 +193,7 @@
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 // 图标按需显式 import：Share/Tickets 随拓扑图与 cloud-init 独立菜单项撤销一并移除
-import { ArrowDown, MagicStick, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Menu, Monitor, Picture, Setting, SwitchButton, Ticket, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, MagicStick, ArrowLeft, ArrowRight, Bell, Box, ChatDotRound, Connection, Cpu, DataLine, Delete, Document, FolderOpened, FullScreen, Goods, List, Memo, Menu, Monitor, Picture, Setting, SwitchButton, Ticket, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { roleText, vmStatusText, vmStatusTag } from '../utils/format'
@@ -270,6 +270,7 @@ const navItems = [
   // 审计中心 operateOnly：后端 /api/audit 为 admin-only、/api/sessions 为 operator-only，
   // viewer 点进来只会看到一张永远空着的会话表（403 静默失败），直接不展示入口
   { index: '/audit', label: '审计中心', icon: Document, group: '运维', operateOnly: true },
+  { index: '/logs', label: '日志', icon: Memo, group: '运维', operateOnly: true },
   { index: '/recycle-bin', label: '回收站', icon: Delete, group: '运维', adminOnly: true },
   { index: '/users', label: '用户管理', icon: User, group: '管理', adminOnly: true },
   { index: '/settings', label: '系统设置', icon: Setting, group: '管理', adminOnly: true }

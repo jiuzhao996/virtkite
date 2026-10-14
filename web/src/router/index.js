@@ -50,6 +50,8 @@ const routes = [
       { path: 'networks', name: 'networks', component: () => import('../views/NetworkList.vue') },
       { path: 'tasks', name: 'tasks', component: () => import('../views/TaskList.vue') },
       { path: 'audit', name: 'audit', component: () => import('../views/AuditList.vue') },
+      // 平台日志（内置）：只读查询 VictoriaLogs（非 viewer，与监控中心同款收权）
+      { path: 'logs', name: 'logs', component: () => import('../views/Logs.vue'), meta: { requiresOperate: true } },
       { path: 'monitor', redirect: '/dashboard?tab=monitor' },
       { path: 'profile', name: 'profile', component: () => import('../views/Profile.vue') },
       { path: 'users', name: 'users', component: () => import('../views/UserList.vue'), meta: { requiresAdmin: true } },

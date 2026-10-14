@@ -254,6 +254,7 @@ func main() {
 		WSTickets:         wsTickets,
 		AlertmanagerURL:   config.GlobalConfig.AlertmanagerURL,
 		PrometheusURL:     config.GlobalConfig.PrometheusURL,
+		VictoriaLogsURL:   config.GlobalConfig.VictoriaLogsURL,
 		AlertWebhookToken: config.GlobalConfig.AlertWebhookToken,
 		MetricsToken:      config.GlobalConfig.MetricsToken,
 	}

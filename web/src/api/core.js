@@ -150,6 +150,8 @@ export const core = {
   // 原生看板历史曲线（Grafana 退役批次 2026-10）
   poolHistory: (minutes) => unwrap(http.get('/monitor/pool-history', { params: { minutes } })),
   vmMetricsHistory: (minutes) => unwrap(http.get('/monitor/vm-metrics-history', { params: { minutes } })),
+  // 平台日志（内置日志页）：只读查询 VictoriaLogs 的 LogsQL
+  queryLogs: (query, limit) => unwrap(http.get('/logs/query', { params: { query, limit } })),
 
   // 池平台侧元数据（角色覆盖 + 描述；role 传空串 = 自动推断，description ≤500 字符）
   updatePoolMeta: (name, payload) => unwrap(http.put('/storage/pools/' + name + '/meta', payload)),

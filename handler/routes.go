@@ -38,6 +38,7 @@ type Deps struct {
 	WSTickets         *wsticket.Store
 	AlertmanagerURL   string
 	PrometheusURL     string
+	VictoriaLogsURL   string
 	AlertWebhookToken string
 	MetricsToken      string
 }
@@ -523,6 +524,15 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		// 通用只读 PromQL 查询（原生看板扩展层：panels.js 注册表驱动，加面板零后端改动）
 		// 走 GET：只读查询，被审计中间件的 GET 放行规则覆盖，避免刷审计（2026-10-13 由 POST 改）
 		monitor.GET("/prom-query", historyHandler.PromQuery)
+	}
+
+	// 平台日志（内置「日志」页）：只读查询 VictoriaLogs 的 LogsQL。
+	// 非 viewer——日志含宿主/平台明细，与监控中心同款收权。
+	logHandler := NewLogHandler(deps.VictoriaLogsURL)
+	logsGroup := api.Group("/logs")
+	logsGroup.Use(middleware.NonViewerMiddleware())
+	{
+		logsGroup.GET("/query", logHandler.Query)
 	}
 
 	// 声明式部署栈（P2A：清单 operator+；deploy admin；docs 命中栈元数据清单才可读）

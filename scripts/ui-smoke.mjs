@@ -76,6 +76,7 @@ const PAGES = [
   ['#/networks', '网络'],
   ['#/tasks', '任务中心'],
   ['#/audit', '审计中心'],
+  ['#/logs', '日志'],
   ['#/profile', '个人中心'],
   ['#/users', '用户管理'],
   ['#/settings', '系统设置']
