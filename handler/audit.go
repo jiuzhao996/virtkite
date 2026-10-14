@@ -133,8 +133,10 @@ func (h *AuditHandler) ExportAuditCSV(c *gin.Context) {
 		return nil
 	}).Error
 	if err != nil {
-		// 头已发出无法改状态码：写一行错误说明收尾（CSV 前部数据仍有效）
-		_ = w.Write([]string{"导出中断", err.Error()})
+		// 头已发出无法改状态码：补一行与表头同宽（10 列）的说明收尾（CSV 前部数据仍有效）。
+		// 不写 err.Error()——真错误已进服务端日志（下一行），文件里只留对下载者友好的文案，
+		// 与「handler 边界不泄漏内部错误」一致。
+		_ = w.Write([]string{"", "", "", "", "", "", "", "", "导出中断", "导出中途失败，文件不完整；详情见服务端日志"})
 		w.Flush()
 		log.Printf("[audit] CSV 导出中断: %v", err)
 		return

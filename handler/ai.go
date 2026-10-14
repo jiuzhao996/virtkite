@@ -62,7 +62,7 @@ func (h *AIHandler) platformSummary() string {
 	var total, running int64
 	h.DB.Model(&model.VM{}).Count(&total)
 	h.DB.Model(&model.VM{}).Where("status = ?", model.VMStatusRunning).Count(&running)
-	var pools, images int64
+	var images int64
 	h.DB.Model(&model.Image{}).Count(&images)
 	b.WriteString("当前平台状态：")
 	b.WriteString(fmt.Sprintf("虚拟机共 %d 台（运行中 %d）", total, running))
@@ -77,7 +77,7 @@ func (h *AIHandler) platformSummary() string {
 			b.WriteString(fmt.Sprintf("；Docker 容器 %d 个（运行中 %d）", len(cs), rb))
 		}
 	}
-	b.WriteString(fmt.Sprintf("；镜像库 %d 条；存储池与网络以平台页面为准", pools+images))
+	b.WriteString(fmt.Sprintf("；镜像库 %d 条；存储池与网络以平台页面为准", images))
 	// 运行中 VM 清单（最多 20 台）
 	var vms []model.VM
 	h.DB.Where("status = ?", model.VMStatusRunning).Limit(20).Find(&vms)
@@ -137,12 +137,14 @@ func (h *AIHandler) Chat(c *gin.Context) {
 	msgs = append(msgs, chatMessage{Role: "system", Content: sys})
 	msgs = append(msgs, req.Messages...)
 
-	payload := fmt.Sprintf(`{"model":%q,"messages":[`, model)
+	// model 与 role 都在 message 里，同样经 jsonString 做 JSON 转义——
+	// 原先用 Go 的 %q：它把控制字符转成 \a/\v 等**非 JSON 转义**，会让整个 payload 非法、上游 400。
+	payload := fmt.Sprintf(`{"model":%s,"messages":[`, jsonString(model))
 	for i, m := range msgs {
 		if i > 0 {
 			payload += ","
 		}
-		payload += fmt.Sprintf(`{"role":%q,"content":%s}`, m.Role, jsonString(m.Content))
+		payload += fmt.Sprintf(`{"role":%s,"content":%s}`, jsonString(m.Role), jsonString(m.Content))
 	}
 	payload += `],"stream":true}`
 

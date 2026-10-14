@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,14 +132,24 @@ func wsTicketResource(c *gin.Context) string {
 	switch {
 	case strings.HasPrefix(full, "/api/vms/") &&
 		(strings.HasSuffix(full, "/terminal") || strings.HasSuffix(full, "/serial")):
-		return wsticket.VMResource(c.Param("id"))
+		return wsticket.VMResource(canonicalID(c.Param("id")))
 	case strings.HasPrefix(full, "/api/docker/") &&
 		(strings.HasSuffix(full, "/terminal") || strings.HasSuffix(full, "/logs/ws")):
-		return wsticket.DockerResource(c.Param("id"))
+		return wsticket.DockerResource(canonicalID(c.Param("id")))
 	case strings.HasPrefix(full, "/api/tasks/") && strings.HasSuffix(full, "/logs/ws"):
-		return wsticket.TaskResource(c.Param("id"))
+		return wsticket.TaskResource(canonicalID(c.Param("id")))
 	}
 	return ""
+}
+
+// canonicalID 把路径里的数值主键归一化为规范十进制（去前导零）。签发侧用 paramID→uint 得到规范值，
+// 校验侧若直接用原始 c.Param，`/api/tasks/007/logs/ws` 会「签发 task:7 / 校验 task:007」不匹配被拒——
+// 边缘但真实的裂缝。非数值原样返回（这些路由的 :id 理应为数值）。
+func canonicalID(s string) string {
+	if n, err := strconv.ParseUint(s, 10, 64); err == nil {
+		return strconv.FormatUint(n, 10)
+	}
+	return s
 }
 
 // AuthMiddleware 认证中间件，支持两种凭证：
