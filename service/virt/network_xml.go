@@ -32,7 +32,8 @@ type netForwardXML struct {
 	NAT  *netNatXML `xml:"nat,omitempty"`
 }
 
-// netBridgeXML <bridge name='virbr10' stp='on' delay='0'/>
+// netBridgeXML 网络关联网桥 <bridge name='virbr10' stp='on' delay='0'/>。
+// stp='on' 开启生成树防环；delay='0' 省去端口转发延迟（单桥无环，设 0 让 guest 网络更快就绪）。
 type netBridgeXML struct {
 	Name  string `xml:"name,attr"`
 	STP   string `xml:"stp,attr"`
@@ -165,7 +166,9 @@ func NetworkXMLForMode(name, mode, gateway, hostBridge string) (string, error) {
 	return string(out), nil
 }
 
-// hashNetwork 根据名称生成稳定网桥后缀
+// hashNetwork 由网络名派生一个稳定的网桥后缀：字符码求和后 %200 + 10，
+// 落在 [10,209]，拼成 virbr<N>。取 10 起步是避开 libvirt 默认桥 virbr0，
+// 且同一网络名恒得同一 N（重复定义时桥名不变）。
 func hashNetwork(name string) int {
 	sum := 0
 	for _, r := range name {
@@ -174,7 +177,8 @@ func hashNetwork(name string) int {
 	return sum%200 + 10
 }
 
-// dhcpStart / dhcpEnd 基于网关生成 DHCP 范围
+// dhcpStart / dhcpEnd 基于网关生成 DHCP 范围：起点 .2、终点 .254，
+// 避开会占用 .1 的网关地址与 .255 的广播地址。
 func dhcpStart(gw string) string {
 	return replaceLastOctet(gw, 2)
 }
@@ -182,6 +186,8 @@ func dhcpEnd(gw string) string {
 	return replaceLastOctet(gw, 254)
 }
 
+// replaceLastOctet 把 IPv4 的最后一段替换为 last（如 192.168.100.1 → .2/.254）；
+// 无点号（非 IPv4）时原样返回。
 func replaceLastOctet(ip string, last int) string {
 	idx := strings.LastIndex(ip, ".")
 	if idx < 0 {

@@ -35,15 +35,17 @@ func (b *backingStoreXML) chain() string {
 // 注意：features（acpi/apic）由 BuildDomainXML 固定生成，此处无需回填；
 // autostart 不在 domain XML 中，由 GetDomainSpec 单独查询。
 func ParseDomainXML(xmlstr string) (*DomainSpec, error) {
+	// 用匿名 struct 一次性反序列化：字段与 dumpxml 的 XML 路径一一对应，只取平台关心的字段，
+	// 其余节点（如 features/clock/rng…）由 encoding/xml 自动忽略。
 	var dx struct {
 		Name   string `xml:"name"`
 		UUID   string `xml:"uuid"`
 		Memory struct {
-			Unit  string `xml:"unit,attr"`
+			Unit  string `xml:"unit,attr"` // 未声明时按 KiB（见 memoryToMB）
 			Value string `xml:",chardata"`
 		} `xml:"memory"`
 		VCPU struct {
-			Current string `xml:"current,attr"`
+			Current string `xml:"current,attr"` // 开机当前核数；热升级上限在 chardata（Value）
 			Value   string `xml:",chardata"`
 		} `xml:"vcpu"`
 		OS struct {
@@ -57,7 +59,7 @@ func ParseDomainXML(xmlstr string) (*DomainSpec, error) {
 			} `xml:"boot"`
 		} `xml:"os"`
 		CPU struct {
-			Mode string `xml:"mode,attr"`
+			Mode string `xml:"mode,attr"` // 为空表示未输出 <cpu>，即 libvirt 缺省 custom 派生模型（非直通）
 		} `xml:"cpu"`
 		Devices struct {
 			Disks []struct {

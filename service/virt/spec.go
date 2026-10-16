@@ -1,3 +1,6 @@
+// 本文件定义 DomainSpec 及其子结构（DiskSpec/InterfaceSpec/…）——VM 配置的平台侧模型，
+// 也是 `virsh dumpxml` 结果的结构化视图。XML 的构造在 spec_build.go、解析在 spec_parse.go；
+// 另有 GetDomainSpec 负责「dumpxml + autostart」的整体回读。
 package virt
 
 import (
@@ -5,6 +8,7 @@ import (
 )
 
 // DiskSpec 磁盘设备（对应 virsh dumpxml 的 <disk> 元素）。
+// 一份 DiskSpec 同时被 XML 构造（spec_build.go）与单设备挂载（attach-disk）复用。
 type DiskSpec struct {
 	Type        string `json:"type"`                   // file / block
 	Device      string `json:"device"`                 // disk / cdrom / floppy
@@ -79,7 +83,10 @@ func (v *Virt) GetDomainSpec(name string) (*DomainSpec, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 原样保留 dumpxml 文本，供「编辑 XML」界面回显（结构化字段丢失的细节由此兜底）。
 	spec.RawXML = xmlstr
+	// autostart 不在 domain XML 内，单独查询；DomainGetAutostart 返回 1 为真。
+	// 查询失败不阻断整体读取，保持默认 false。
 	autostart, err := l.DomainGetAutostart(dom)
 	if err == nil {
 		spec.Autostart = autostart == 1

@@ -1,3 +1,8 @@
+// 本文件负责 libvirt 存储池（pool）与存储卷（vol）的封装：创建/删除/枚举/详情及对应 XML 构造。
+// XML 一律走标准库 encoding/xml 序列化（AGENTS.md 约定），池名/路径/卷名等外部可控输入由
+// 标准库自动转义，无 XML 注入面。增量克隆的关键在 buildVolumeXMLWithBacking：靠卷 XML 的
+// <backingStore> 声明父盘，而非 StorageVolCreateXMLFrom / vol-clone（后者是全量拷贝、产出的子卷
+// 没有 backing file——详见 AGENTS.md 第 11 条，误用会让「增量克隆」名不副实）。
 package virt
 
 import (
@@ -12,7 +17,7 @@ func xmlDecode(data string, v interface{}) error {
 	return xml.Unmarshal([]byte(data), v)
 }
 
-// PoolInfo 存储池详情（供前端展示）。
+// PoolInfo 存储池详情（供前端展示）。容量单位为字节（libvirt 原样返回）。
 type PoolInfo struct {
 	Name       string    `json:"name"`
 	Active     bool      `json:"active"`
@@ -150,6 +155,7 @@ func (v *Virt) CreateVolume(poolName, diskName string, capacityGB int) (string, 
 	}
 
 	volName := diskName + ".qcow2"
+	// 卷容量按 GB 声明（unit='G'，见 volUnitGiB）。
 	xmlstr, err := buildVolumeXML(volName, volFormatQcow2, volUnitGiB, int64(capacityGB))
 	if err != nil {
 		return "", err
@@ -180,6 +186,7 @@ func (v *Virt) DeleteVolume(poolName, diskName string) error {
 		return nil
 	}
 
+	// StorageVolDeleteNormal：删除卷本体及其元数据（不擦除底层数据块，与 virsh vol-delete 默认行为一致）。
 	if err := l.StorageVolDelete(vol, libvirt.StorageVolDeleteNormal); err != nil {
 		return fmt.Errorf("删除存储卷失败: %w", err)
 	}
