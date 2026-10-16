@@ -86,209 +86,64 @@
       </el-card>
     </div>
 
-    <!-- 告警列表 -->
-    <el-card shadow="never" class="alert-card" :class="{ 'alert-firing': firingCount }">
-      <template #header>
-        <div class="alert-head">
-          <span>实时告警</span>
-          <div class="alert-head-actions">
-            <el-tag v-if="!alertsError" :type="firingCount ? 'danger' : 'success'" effect="light" size="small">
-              {{ firingCount ? `${firingCount} 条待处理` : '当前无告警' }}
-            </el-tag>
-            <el-button :icon="Refresh" :loading="alertsLoading" @click="loadAlerts">刷新</el-button>
-          </div>
-        </div>
-      </template>
+    <!-- 告警列表（Alertmanager 实时 firing）→ monitor/components/RealtimeAlertsCard.vue -->
+    <RealtimeAlertsCard
+      :alerts="alerts"
+      :alerts-loading="alertsLoading"
+      :alerts-error="alertsError"
+      :firing-count="firingCount"
+      @refresh="loadAlerts"
+    />
 
-      <el-alert
-        v-if="alertsError"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="监控栈未连接"
-        description="无法访问 Alertmanager（典型原因：docker compose 未启动监控栈）。执行 docker compose up -d 启动 Prometheus / Alertmanager 后刷新本页。"
-      />
+    <!-- 告警历史（webhook 入库追溯）→ monitor/components/AlertHistoryCard.vue -->
+    <AlertHistoryCard
+      v-model:status="historyStatus"
+      v-model:page="historyPage"
+      :history="history"
+      :history-loading="historyLoading"
+      :history-total="historyTotal"
+      :history-page-size="historyPageSize"
+      @refresh="loadHistory"
+      @page-change="loadHistory"
+      @filter-change="onHistoryFilter"
+    />
 
-      <el-table v-else-if="firingCount" :data="alerts" v-loading="alertsLoading" stripe>
-        <el-table-column label="级别" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.labels && row.labels.severity === 'critical' ? 'danger' : 'warning'" effect="light" size="small">
-              {{ (row.labels && row.labels.severity) === 'critical' ? '严重' : '警告' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="告警名称" width="170">
-          <template #default="{ row }">
-            <span class="mono">{{ row.labels && row.labels.alertname }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="摘要" min-width="240">
-          <template #default="{ row }">{{ (row.annotations && row.annotations.summary) || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status && row.status.state === 'active' ? 'danger' : 'info'" effect="plain" size="small">
-              {{ row.status && row.status.state === 'active' ? '触发中' : '已抑制' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="触发时间" width="180">
-          <template #default="{ row }">
-            <span class="mono">{{ row.startsAt ? fmtDateTime(row.startsAt) : '—' }}</span>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-empty v-else description="当前无告警，一切正常" :image-size="60" />
-    </el-card>
-
-    <!-- 告警历史（Alertmanager webhook 推回平台入库的追溯数据，与上方实时列表互补） -->
-    <el-card shadow="never" class="alert-card">
-      <template #header>
-        <div class="alert-head">
-          <span><el-icon class="head-icon"><AlarmClock /></el-icon>告警历史</span>
-          <div class="alert-head-actions">
-            <el-select v-model="historyStatus" style="width: 130px" @change="onHistoryFilter">
-              <el-option label="全部状态" value="" />
-              <el-option label="触发中" value="firing" />
-              <el-option label="已恢复" value="resolved" />
-            </el-select>
-            <el-button :icon="Refresh" @click="loadHistory">刷新</el-button>
-          </div>
-        </div>
-      </template>
-
-      <el-table :data="history" v-loading="historyLoading" stripe>
-        <template #empty><el-empty description="暂无告警历史记录" :image-size="80" /></template>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'firing' ? 'danger' : 'success'" effect="light" size="small">
-              {{ row.status === 'firing' ? '触发中' : '已恢复' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="告警名称" width="180">
-          <template #default="{ row }">
-            <span class="mono">{{ row.labels && row.labels.alertname || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="级别" width="90">
-          <template #default="{ row }">
-            <el-tag
-              :type="(row.labels && row.labels.severity) === 'critical' ? 'danger' : (row.labels && row.labels.severity) === 'warning' ? 'warning' : 'info'"
-              effect="light" size="small"
-            >
-              {{ (row.labels && row.labels.severity) === 'critical' ? '严重' : (row.labels && row.labels.severity) === 'warning' ? '警告' : (row.labels && row.labels.severity) || '—' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="虚拟机" width="140">
-          <template #default="{ row }">
-            <span class="mono">{{ (row.labels && row.labels.vm) || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="开始时间" width="170">
-          <template #default="{ row }">
-            <span class="mono">{{ row.starts_at ? fmtDateTime(row.starts_at) : '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="最近更新" width="170">
-          <template #default="{ row }">
-            <span class="mono">{{ row.updated_at ? fmtDateTime(row.updated_at) : '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="摘要" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">
-            {{ (row.annotations && (row.annotations.summary || row.annotations.description)) || '—' }}
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <div class="history-pager">
-        <el-pagination
-          v-model:current-page="historyPage"
-          :page-size="historyPageSize"
-          :total="historyTotal"
-          layout="total, prev, pager, next"
-          @current-change="loadHistory"
-        />
-      </div>
-    </el-card>
-
-    <!-- node_exporter 抓取目标预览（监控服务发现闭环）：
-         平台把「运行中且已获取 IP」的 VM 自动下发为 Prometheus file_sd 抓取目标，
-         与后端 StartFileSDWriter 落盘内容同源，此处只读预览（变化慢，手动刷新即可）。 -->
-    <el-card shadow="never" class="alert-card">
-      <template #header>
-        <div class="alert-head">
-          <span><el-icon class="head-icon"><Aim /></el-icon>node_exporter 抓取目标</span>
-          <div class="alert-head-actions">
-            <el-tag size="small" :type="sdEnabled ? 'success' : 'warning'" effect="plain">
-              {{ sdEnabled ? '服务发现已启用' : 'FILE_SD_PATH 未配置' }}
-            </el-tag>
-            <el-tag size="small" :type="sdTargets.length ? 'primary' : 'info'" effect="plain">
-              {{ sdTargets.length }} 个目标
-            </el-tag>
-            <el-button :icon="Refresh" @click="loadFileSD">刷新</el-button>
-          </div>
-        </div>
-      </template>
-
-      <el-empty
-        v-if="!sdTargets.length"
-        :description="sdEnabled ? '暂无抓取目标（仅运行中且已获取 IP 的虚拟机会被纳入）' : 'FILE_SD_PATH 环境变量未配置：预览可用，但平台不会把目标写入文件，Prometheus 侧需手工维护。配置后重启后端即启用。'"
-        :image-size="60"
-      />
-      <!-- 有满足条件的目标但 file_sd 未启用时：表格上方说明「仅预览、Prometheus 暂不抓取」，
-           消除「FILE_SD_PATH 未配置」标签与「N 个目标」并存带来的矛盾感 -->
-      <template v-else>
-        <el-alert
-          v-if="!sdEnabled"
-          class="sd-alert"
-          type="info"
-          :closable="false"
-          show-icon
-          :title="`以下 ${sdTargets.length} 台虚拟机满足自动监控条件（运行中且已获取 IP）`"
-          description="当前 FILE_SD_PATH 未配置，此列表仅为预览，Prometheus 暂不会抓取。在后端环境变量中配置 FILE_SD_PATH 并重启后即自动接入。"
-        />
-        <el-table :data="sdTargets" v-loading="sdLoading" stripe>
-          <el-table-column label="抓取端点" width="200">
-            <template #default="{ row }">
-              <span class="mono">{{ (row.targets && row.targets[0]) || '—' }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="虚拟机" min-width="160">
-            <template #default="{ row }">{{ (row.labels && row.labels.vm_name) || '—' }}</template>
-          </el-table-column>
-          <el-table-column label="VM ID" width="110">
-            <template #default="{ row }">
-              <span class="mono">{{ (row.labels && row.labels.vm_id) || '—' }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="job" width="130">
-            <template #default="{ row }">
-              <span class="mono">{{ (row.labels && row.labels.job) || '—' }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </template>
-
-      <!-- 底部说明两态：启用时保留完整说明（含 FILE_SD_PATH 写入逻辑）；
-           未启用时换精简版——FILE_SD_PATH 的解释已由上方 alert 承载，不再重复 -->
-      <p v-if="sdEnabled" class="sd-note">
-        目标由监控服务发现（file_sd）自动生成，同 IP 去重；VM 内需安装 node_exporter（端口 9100）。
-        设置 FILE_SD_PATH 环境变量后，平台会把本列表自动写入该路径供 Prometheus 读取；
-        平台自身 exporter 走 prometheus.yml 静态抓取，不在此列。
-      </p>
-      <p v-else class="sd-note">
-        目标由监控服务发现自动生成（同 IP 去重）；虚拟机内需安装并运行 node_exporter（端口 9100）才会产生监控数据。
-      </p>
-    </el-card>
+    <!-- node_exporter 抓取目标预览（file_sd）→ monitor/components/FileSDCard.vue -->
+    <FileSDCard
+      :sd-targets="sdTargets"
+      :sd-enabled="sdEnabled"
+      :sd-loading="sdLoading"
+      @refresh="loadFileSD"
+    />
 
   </div>
 </template>
 
 <script setup>
+// ============================================================================
+// 监控中心（Monitor）
+// ----------------------------------------------------------------------------
+// 职责：Prometheus 原生看板（ECharts 直连平台代理的 Prometheus 历史）+ Alertmanager
+//       实时告警 + 告警历史（webhook 入库）+ node_exporter file_sd 抓取目标预览。
+//       被仪表盘以 tab 嵌入时隐藏页头（embedded），并随 tab 激活态启停轮询（active）。
+//
+// 数据流：
+//   看板 ← api.hostHistory / poolHistory / vmMetricsHistory（按时间跨度 minutes）→
+//          renderHostChart / renderPoolChart / renderMetricChart（各 useChart handle）
+//   扩展面板 ← api.promQuery（PANELS 注册表声明式驱动，panels.js）
+//   告警 ← api.listAlerts（3s 轮询）；历史 ← api.monitorAlertHistory（手动刷新）；file_sd
+//          ← api.monitorFileSD（手动刷新）
+//
+// 已拆出的子组件（web/src/views/monitor/components/）：
+//   RealtimeAlertsCard.vue   实时告警卡（refresh）
+//   AlertHistoryCard.vue     告警历史卡（refresh / page-change / filter-change + v-model）
+//   FileSDCard.vue           node_exporter 抓取目标预览卡（refresh）
+//
+// 刻意没拆的：原生看板卡与扩展面板网格——它们的 :ref 直连 setup 期建立的 useChart
+//   句柄（hostHandle/poolHandle/metricHandles/panelHandles，bindMetricRef/bindPanelRef
+//   把模板 ref 转发进去），句柄是模块级多实例闭包，下沉会牵动整套图表生命周期，收益低易错。
+//   ⚠️ .alert-card / .alert-head / .head-icon 等样式在三张拆出的卡片里各留一份，改一处须同步。
+// ============================================================================
 // embedded：被仪表盘 tab 嵌入时隐藏独立页头
 // active：嵌入场景随所在 tab 激活态启停轮询（独立路由页保持默认 true 一直轮询）
 const props = defineProps({
@@ -297,13 +152,16 @@ const props = defineProps({
 })
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Aim, AlarmClock, Refresh, WarningFilled } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { cssVar, fmtDateTime, fmtRateBytes } from '../utils/format'
+import { cssVar, fmtRateBytes } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
 import { useChart } from '../composables/useChart'
 import { PANELS } from './monitor/panels'
+import RealtimeAlertsCard from './monitor/components/RealtimeAlertsCard.vue'
+import AlertHistoryCard from './monitor/components/AlertHistoryCard.vue'
+import FileSDCard from './monitor/components/FileSDCard.vue'
 
 // ── 扩展面板（panels.js 注册表）：通用 prom-query 端点 + 声明式渲染 ──
 const panelData = reactive({}) // panelId → [{name, points}]
@@ -670,20 +528,13 @@ onMounted(() => {
 .alert-card {
   margin-bottom: 16px;
 }
-/* 有待处理告警时卡片标红边，滚到看板下方也不会漏看 */
-.alert-firing :deep(.el-card__header) {
-  border-top: 2px solid var(--el-color-danger);
-}
+/* .alert-firing / .head-icon / .history-pager / .sd-alert / .sd-note 已随对应卡片下沉到
+   monitor/components/{RealtimeAlertsCard,AlertHistoryCard,FileSDCard}.vue（各留一份，改一处须同步） */
 .alert-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-weight: 600;
-}
-.head-icon {
-  vertical-align: -0.15em;
-  margin-right: 4px;
-  color: var(--el-color-primary);
 }
 .alert-head-actions {
   display: flex;
@@ -692,21 +543,6 @@ onMounted(() => {
   font-weight: normal;
   flex-wrap: wrap;
   justify-content: flex-end;
-}
-.history-pager {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
-}
-/* 未启用 file_sd 时的预览提示条：与下方表格留出间距 */
-.sd-alert {
-  margin-bottom: 12px;
-}
-.sd-note {
-  margin: 12px 0 0;
-  font-size: 0.82rem;
-  color: var(--el-text-color-secondary);
-  line-height: 1.6;
 }
 
 /* ── 原生看板：双列图表网格（窄屏回落单列）；图表固定高，容器宽度自适应 ── */

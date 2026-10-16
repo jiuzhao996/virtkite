@@ -16,82 +16,24 @@
         </el-card>
 
         <el-card shadow="never">
-          <div class="filters">
-            <el-select v-model="q.action" placeholder="操作类型" clearable filterable style="width: 180px" @change="search">
-              <el-option v-for="a in actionOptions" :key="a.value" :label="a.label" :value="a.value" />
-            </el-select>
-            <el-select v-model="q.object_type" placeholder="对象类型" clearable style="width: 130px" @change="search">
-              <el-option v-for="o in objectOptions" :key="o.value" :label="o.label" :value="o.value" />
-            </el-select>
-            <el-input v-model="q.username" placeholder="操作人" clearable style="width: 140px" @keyup.enter="search" @clear="search" />
-            <el-select v-model="q.status" placeholder="状态" clearable style="width: 110px" @change="search">
-              <el-option label="成功" value="success" />
-              <el-option label="失败" value="failed" />
-            </el-select>
-            <el-date-picker
-              v-model="range"
-              type="daterange"
-              range-separator="至"
-              start-placeholder="开始日期"
-              end-placeholder="结束日期"
-              value-format="YYYY-MM-DD"
-              :shortcuts="dateShortcuts"
-              @change="onRange"
-            />
-            <el-button type="primary" :icon="Search" :loading="loading" @click="search">查询</el-button>
-            <el-button :icon="RefreshLeft" @click="reset">重置</el-button>
-            <el-button :icon="Refresh" :loading="loading" @click="refreshAll">刷新</el-button>
-            <el-button :icon="Download" :loading="exporting" @click="exportCsv">导出</el-button>
-          </div>
+          <!-- 筛选条 → audit/components/AuditFilterBar.vue（q/range 直接改页面状态，动作 emit 回页面） -->
+          <AuditFilterBar
+            :q="q"
+            v-model:range="range"
+            :action-options="actionOptions"
+            :object-options="objectOptions"
+            :date-shortcuts="dateShortcuts"
+            :loading="loading"
+            :exporting="exporting"
+            @search="search"
+            @reset="reset"
+            @refresh="refreshAll"
+            @export="exportCsv"
+            @range-change="onRange"
+          />
 
-          <!-- 行点击钻取：整行可点开详情抽屉（详情单元格同入口，操作列已无冗余按钮）；clickable-table 只作用于本表，
-               不波及「控制台会话」tab（SessionList 为独立组件，行内另有虚拟机链接与断开按钮） -->
-          <el-table :data="items" stripe border style="width: 100%" class="clickable-table" @row-click="onRowClick">
-            <template #empty><el-empty description="暂无审计记录" :image-size="80" /></template>
-            <el-table-column label="时间" min-width="172">
-              <template #default="{ row }">
-                <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作人" width="120">
-              <template #default="{ row }">
-                <span>{{ row.username || '—' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="160">
-              <template #default="{ row }">
-                <el-tag :type="actionTagType(row.action)" effect="plain">{{ actionLabel(row.action) }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="object_type" label="对象" width="100" />
-            <el-table-column label="来源 IP" width="150">
-              <template #default="{ row }">
-                <span class="mono">{{ row.source_ip || '—' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <el-tag :type="row.status === 'success' ? 'success' : 'danger'" effect="light">
-                  {{ row.status === 'success' ? '成功' : '失败' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="详情" min-width="220">
-              <template #default="{ row }">
-                <el-tooltip
-                  v-if="row.detail"
-                  :content="row.detail"
-                  placement="top"
-                  :show-after="300"
-                  :enterable="false"
-                  popper-class="audit-detail-popper"
-                >
-                  <span class="detail-cell mono" @click.stop="openDetail(row)">{{ row.detail }}</span>
-                </el-tooltip>
-                <span v-else class="muted">—</span>
-              </template>
-            </el-table-column>
-          </el-table>
+          <!-- 操作日志表 → audit/components/AuditOpsTable.vue（整行/详情单元格点击统一 emit row-click） -->
+          <AuditOpsTable :items="items" :action-map="actionMap" @row-click="onRowClick" />
 
           <el-pagination
             class="pager"
@@ -112,95 +54,54 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 审计详情抽屉（替代原小弹窗）：行点击 / 详情单元格两处共用 openDetail 入口。
-         形态对齐 TaskList 任务详情抽屉：顶部概要大字 + descriptions 结构化字段 + 关联跳转 + 详情原文 -->
-    <el-drawer
-      v-model="drawerOpen"
-      :title="current ? '审计详情 #' + current.id : '审计详情'"
-      size="480px"
-      append-to-body
-      destroy-on-close
-    >
-      <template v-if="current">
-        <!-- 顶部概要：动作中文大字 + 状态大 tag + 原始动作串与时间（mono 等宽便于对齐追溯） -->
-        <div class="dt-head">
-          <div class="dt-title-row">
-            <span class="dt-title">{{ actionLabel(current.action) }}</span>
-            <el-tag :type="current.status === 'success' ? 'success' : 'danger'" effect="light" size="large">
-              {{ current.status === 'success' ? '成功' : '失败' }}
-            </el-tag>
-          </div>
-          <div class="dt-meta mono">{{ current.action }} · {{ fmtDateTime(current.created_at) }}</div>
-        </div>
-
-        <!-- 结构化字段：column=2 border small；耗时从 detail 文本里正则抽取（后端中间件固定写「请求处理时间: X」） -->
-        <el-descriptions :column="2" border size="small" class="dt-desc">
-          <el-descriptions-item label="操作人">{{ current.username || '—' }}</el-descriptions-item>
-          <el-descriptions-item label="对象类型">{{ objectTypeLabel(current.object_type) }}</el-descriptions-item>
-          <el-descriptions-item label="对象ID">
-            <span class="mono">{{ current.object_id != null ? '#' + current.object_id : '—' }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="来源 IP">
-            <span class="mono">{{ current.source_ip || '—' }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="请求处理耗时" :span="2">
-            <span class="mono">{{ parseDuration(current.detail) }}</span>
-          </el-descriptions-item>
-        </el-descriptions>
-
-        <!-- 关联跳转（包C）：vm 直达虚拟机详情、user 直达用户列表，其余对象无详情落点不渲染 -->
-        <template v-if="relatedLink">
-          <h4 class="detail-sec">关联跳转</h4>
-          <el-link type="primary" :underline="false" @click="goRelated">{{ relatedLink.text }}</el-link>
-        </template>
-
-        <!-- 变更内容（前后快照）：只有显式拍过快照的写操作才有值（改规格/授权等）。
-             按**字段级 diff** 展示而不是把两坨 JSON 并排贴——看的人要的是
-             「哪个字段从什么变成了什么」，并排两段 JSON 得自己找。 -->
-        <template v-if="changeRows.length">
-          <h4 class="detail-sec">变更内容</h4>
-          <el-table :data="changeRows" size="small" border class="dt-diff">
-            <el-table-column prop="label" label="字段" width="140" />
-            <el-table-column label="变更前">
-              <template #default="{ row }"><span class="mono dt-before">{{ row.before }}</span></template>
-            </el-table-column>
-            <el-table-column label="变更后">
-              <template #default="{ row }"><span class="mono dt-after">{{ row.after }}</span></template>
-            </el-table-column>
-          </el-table>
-        </template>
-
-        <h4 class="detail-sec">详情原文</h4>
-        <pre class="detail-text">{{ current.detail || '—' }}</pre>
-      </template>
-      <template #footer>
-        <el-button @click="drawerOpen = false">关闭</el-button>
-      </template>
-    </el-drawer>
+    <!-- 审计详情抽屉（派生逻辑随之下沉）→ audit/components/AuditDetailDrawer.vue -->
+    <AuditDetailDrawer v-model="drawerOpen" :current="current" :action-map="actionMap" />
   </div>
 </template>
 
 <script setup>
+// ============================================================================
+// 审计中心（AuditList）
+// ----------------------------------------------------------------------------
+// 职责：两个 tab——「操作日志」（近 7 天操作量迷你图 + 可筛选的操作日志表 + 详情抽屉）
+//       与「控制台会话」（独立组件 SessionList）。操作日志仅管理员可见（后端 /api/audit
+//       admin-only）；viewer 只能看会话流水。均为只读记录，用于安全追溯。
+//
+// 数据流：
+//   列表 ← usePagination(fetchAuditPage) → api.listAudit（筛选参数 q + 分页）
+//   动作映射 ← api.auditActions（转数组供下拉；兜底 FALLBACK_ACTION_LABELS）
+//   迷你图 ← loadChart（自行按 100/页翻近 7 天，聚合成本地日期柱状图，点柱联动日期筛选）
+//
+// 已拆出的子组件（web/src/views/audit/components/）：
+//   AuditFilterBar.vue       筛选条（q/range 直连页面状态；search/reset/refresh/export 上抛）
+//   AuditOpsTable.vue        操作日志表（行点击 emit row-click；动作着色纯函数搬入）
+//   AuditDetailDrawer.vue    详情抽屉（变更 diff / 关联跳转 / 字段中文名等派生逻辑随之下沉）
+//
+// 刻意没拆的：近 7 天迷你图卡——chartRef 直接绑 useChart 句柄、点柱联动 q.start/end，
+//   与页面筛选状态强耦合；翻页/筛选流转收在 usePagination，留在页面。
+// ⚠️ 动作中文口径（actionMap）在三处使用：本页下拉、AuditOpsTable、AuditDetailDrawer
+//   （后两者各自持一份 actionLabel）——改一处须同步。
+// ============================================================================
 import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Search, RefreshLeft, Refresh, Download } from '@element-plus/icons-vue'
 import { api, TOKEN_KEY } from '../api'
 import echarts from '../utils/echarts'
 import { BarChart } from 'echarts/charts'
 import { useChart } from '../composables/useChart'
 import { useAuth } from '../store/auth'
-import { FALLBACK_ACTION_LABELS, fmtDateTime, errMsg, cssVar } from '../utils/format'
+import { FALLBACK_ACTION_LABELS, errMsg, cssVar } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
 import SessionList from './SessionList.vue'
 import PageHead from '../components/PageHead.vue'
+import AuditFilterBar from './audit/components/AuditFilterBar.vue'
+import AuditOpsTable from './audit/components/AuditOpsTable.vue'
+import AuditDetailDrawer from './audit/components/AuditDetailDrawer.vue'
 
 // utils/echarts.js 按需注册清单里没有 BarChart（该文件不在本批次可改范围）：
 // 柱状图在本页局部补注册。echarts.use 幂等可叠加，且 useChart 持有的是同一模块单例，
 // 注册全局生效；漏注册的后果是运行时静默白图（构建不报错），务必保留本行
 echarts.use([BarChart])
 
-const router = useRouter()
 const { isAdmin } = useAuth()
 // 默认 tab：管理员落在操作日志，普通用户只有会话流水可看
 const activeTab = ref(isAdmin.value ? 'ops' : 'sessions')
@@ -210,66 +111,9 @@ const range = ref(null)
 const drawerOpen = ref(false)
 const current = ref(null)
 
-// 前后快照的字段中文名：审计是给人看的，字段名保持后端原样（vcpu/memory_mb）读起来费劲。
-const DIFF_FIELD_LABELS = {
-  vcpu: 'vCPU 核数',
-  memory_mb: '内存 (MB)',
-  disk_gb: '磁盘 (GB)',
-  vm: '虚拟机',
-  user: '用户',
-  granted: '已授权',
-  expires_at: '有效期至',
-  status: '状态',
-  name: '名称',
-  ip: 'IP',
-  autostart: '开机自启'
-}
-
-function diffVal(v) {
-  if (v === undefined) return '—'
-  if (v === null) return 'null'
-  if (typeof v === 'object') return JSON.stringify(v)
-  return String(v)
-}
-
-// 前后快照 → 字段级 diff。取两边键的并集，**只列真正变了的字段**（没变的占版面没意义）。
-// 比较前统一字符串化：布尔/数字/字符串混排时直接比会误判。
-// JSON 解析失败按空对象处理（后端字段是 text，历史行可能为空或非 JSON），不抛错。
-const changeRows = computed(() => {
-  const c = current.value
-  if (!c || (!c.before_data && !c.after_data)) return []
-  const parse = (raw) => {
-    if (!raw) return {}
-    try {
-      const v = JSON.parse(raw)
-      return v && typeof v === 'object' ? v : {}
-    } catch (e) {
-      return {}
-    }
-  }
-  const b = parse(c.before_data)
-  const a = parse(c.after_data)
-  const keys = [...new Set([...Object.keys(b), ...Object.keys(a)])]
-  return keys
-    .filter((k) => diffVal(b[k]) !== diffVal(a[k]))
-    .map((k) => ({
-      field: k,
-      label: DIFF_FIELD_LABELS[k] || k,
-      before: diffVal(b[k]),
-      after: diffVal(a[k])
-    }))
-})
-
-// 对象类型中文映射：取值集合核实自 middleware/audit.go determineObjectType（vm/host/image/user/docker/app/cron/system）
-// + 任务指定的 storage/network/task 预留位；未知类型显原文不臆造
-const OBJECT_TYPE_LABELS = {
-  vm: '虚拟机', user: '用户', image: '镜像', storage: '存储池', network: '网络',
-  task: '任务', system: '系统', host: '宿主机', docker: 'Docker', app: '应用', cron: '计划任务'
-}
-function objectTypeLabel(t) {
-  if (!t) return '—'
-  return OBJECT_TYPE_LABELS[t] || t
-}
+// DIFF_FIELD_LABELS / diffVal / changeRows / OBJECT_TYPE_LABELS / objectTypeLabel /
+// parseDuration / actionLabel / actionTagType / relatedLink / goRelated 已随详情抽屉与
+// 操作日志表下沉到 audit/components/ 下（本页不再用；utils 里 fmtDateTime 亦然）。
 
 // 对象类型筛选下拉：与 determineObjectType 的真实产出对齐（原列表缺 docker/app/cron）
 const objectOptions = [
@@ -295,37 +139,8 @@ const actionOptions = computed(() =>
     .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
 )
 
-function actionLabel(action) {
-  if (!action) return '—'
-  return actionMap.value[action] || action
-}
-
-// 动作大类着色（加在既有 actionLabel 调用处）：登录/登出 primary、删除 danger、
-// 创建/克隆/导入/上传 success、电源类 warning、其余 info；集合核实自 middleware/audit.go
-// determineAction/vmAction 与 service/jumpd/server.go（jumpd.cmd_blocked 落「其余」info）
-function actionTagType(action) {
-  if (!action) return 'info'
-  if (action === 'login' || action === 'logout') return 'primary'
-  if (action.startsWith('delete_')) return 'danger'
-  if (
-    action.startsWith('create_') ||
-    action.startsWith('clone_') ||
-    action.startsWith('import_') ||
-    action.startsWith('upload_')
-  ) {
-    return 'success'
-  }
-  if (['start_vm', 'stop_vm', 'restart_vm', 'pause_vm', 'resume_vm'].includes(action)) return 'warning'
-  return 'info'
-}
-
-// 请求处理耗时：中间件 detail 固定为「请求处理时间: 58.79ms」（Go time.Duration.String()，
-// 可能是 ms/µs/s/m 复合形），抽取首个空白前的时长串；抽不到（如 jumpd 的 detail）显「—」
-function parseDuration(detail) {
-  if (!detail) return '—'
-  const m = detail.match(/请求处理时间[:：]\s*([^\s，,]+)/)
-  return m ? m[1] : '—'
-}
+// actionLabel / actionTagType（AuditOpsTable、AuditDetailDrawer 各自持有）与 parseDuration
+// （AuditDetailDrawer）已随渲染下沉——动作中文口径改一处须同步这三处。
 
 const q = reactive({ action: '', object_type: '', username: '', status: '', start: '', end: '' })
 
@@ -468,35 +283,7 @@ function onRowClick(row) {
   openDetail(row)
 }
 
-// 关联跳转（包C）：vm → 虚拟机详情、user → 用户列表；对象ID 为空或其余类型不给链接。
-// R6 扩展：此前只有 vm / user 两类能跳，docker/image/cron/task/app/stack 全是不可点的
-// 死行——审计是天然的「跨对象索引」，这里补齐就是织网。
-const relatedLink = computed(() => {
-  if (!current.value) return null
-  const t = current.value.object_type
-  const id = current.value.object_id
-  // 路径兜底：栈动作的 object_type 是 system，只有路径能区分
-  const p = String(current.value.detail || '').split(' · ')[0]
-  if (t === 'vm' && id != null) return { text: '查看虚拟机 →', to: '/vms/' + id }
-  if (t === 'vm') return { text: '查看虚拟机列表 →', to: '/vms' }
-  if (t === 'user') return { text: '查看用户列表 →', to: '/users' }
-  if (t === 'docker') return { text: '查看容器 →', to: '/containers' }
-  if (t === 'image') return { text: '查看镜像 →', to: '/images' }
-  if (t === 'cron') return { text: '查看计划任务 →', to: '/automation?tab=cron' }
-  if (t === 'app') return { text: '查看应用商店 →', to: '/apps' }
-  if (t === 'task') return { text: '查看任务中心 →', to: '/tasks' }
-  if (t === 'host') return { text: '查看宿主机 →', to: '/hosts' }
-  if (p.startsWith('/api/stacks')) return { text: '查看部署栈 →', to: '/apps?tab=stacks' }
-  if (p.startsWith('/api/networks')) return { text: '查看网络 →', to: '/networks' }
-  if (p.startsWith('/api/storage')) return { text: '查看存储 →', to: '/storage' }
-  return null
-})
-
-function goRelated() {
-  if (!relatedLink.value) return
-  drawerOpen.value = false
-  router.push(relatedLink.value.to)
-}
+// relatedLink / goRelated（关联跳转）已随详情抽屉下沉到 AuditDetailDrawer.vue
 
 // ===== 近 7 天操作量迷你图（包B） =====
 // useChart 托管实例生命周期：init 惰性（首渲 setOption 才建）、ResizeObserver 自动跟随、
@@ -677,31 +464,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* .page-head / .page-title / .page-desc 已收进 global.css；.mono 的 font-family 亦然，此处只留字号 */
-.filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-lg);
-  margin-bottom: var(--space-xl);
-}
+/* .page-head / .page-title / .page-desc 已收进 global.css；.mono 已随表格/抽屉下沉。
+   .filters → AuditFilterBar.vue；.mono/.muted/.detail-cell/.clickable-table → AuditOpsTable.vue；
+   .dt- 前缀 / .detail-sec / .detail-text / .audit-detail-popper → AuditDetailDrawer.vue */
 .pager {
   margin-top: var(--space-xl);
   justify-content: flex-end;
-}
-.mono {
-  font-size: 0.85rem;
-}
-.muted {
-  color: var(--color-muted-foreground);
-}
-.detail-cell {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-primary);
-  cursor: pointer;
 }
 /* ===== 近 7 天操作量迷你图（包B） ===== */
 .chart-card {
@@ -726,64 +494,7 @@ onMounted(() => {
   height: 120px;
   width: 100%;
 }
-/* ===== 行点击钻取 ===== */
-/* el-table 内部渲染的 tr 拿不到本组件 scoped 属性，必须 :deep 穿透；
-   限定 .clickable-table 前缀，只对操作日志表生效，不波及「控制台会话」tab 的行 */
-.clickable-table :deep(.el-table__row) {
-  cursor: pointer;
-}
-/* ===== 详情抽屉（形态对齐 TaskList 任务详情抽屉） ===== */
-.dt-head {
-  padding: 4px 0;
-}
-.dt-title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.dt-title {
-  font-size: 16px;
-  font-weight: 600;
-  word-break: break-all;
-}
-.dt-meta {
-  font-size: 0.82rem;
-  color: var(--color-muted-foreground);
-}
-.dt-desc {
-  margin-bottom: 4px;
-}
-.detail-sec {
-  margin: 16px 0 8px;
-  font-size: 14px;
-}
-.detail-text {
-  margin: 0;
-  padding: var(--space-lg);
-  background: var(--color-muted);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 320px;
-  overflow: auto;
-}
-/* tooltip 内容 teleport 到 body，scoped 下用 :deep 穿透；超长 detail 不把 tooltip 撑出视口 */
-:deep(.audit-detail-popper) {
-  max-width: 480px;
-}
-.dt-diff {
-  margin-bottom: 4px;
-}
-.dt-before {
-  color: var(--color-muted-foreground);
-  text-decoration: line-through;
-}
-.dt-after {
-  color: var(--el-color-primary);
-  font-weight: 600;
-}
+/* ===== 行点击钻取 / 详情抽屉的样式 =====
+   已随 AuditOpsTable.vue（.clickable-table）与 AuditDetailDrawer.vue（.dt-* / .detail-*）
+   下沉，此处不再重复。 */
 </style>

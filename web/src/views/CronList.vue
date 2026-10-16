@@ -123,176 +123,72 @@
       </el-table>
     </el-card>
 
-    <!-- 新建 / 编辑（复用一个弹窗：editingId 区分模式） -->
-    <el-dialog :close-on-click-modal="false" v-model="dialog" :title="editingId ? '编辑计划任务' : '新建计划任务'" width="480px">
-      <el-form label-width="90px">
-        <el-form-item label="任务名称" required>
-          <el-input v-model="form.name" placeholder="如：每晚上报 node1 快照" maxlength="100" />
-        </el-form-item>
-        <el-form-item label="表达式" required>
-          <div class="expr-row">
-            <el-input v-model="form.cron_expr" placeholder="分 时 日 月 周，如 0 2 * * *" class="mono" />
-            <el-select v-model="preset" placeholder="常用预设" style="width: 150px" clearable @change="applyPreset">
-              <el-option v-for="p in PRESETS" :key="p.expr" :label="p.label" :value="p.expr" />
-            </el-select>
-          </div>
-          <div class="field-tip">5 个字段：分 时 日 月 周；示例「0 2 * * *」= 每天 02:00</div>
-          <!-- 下次执行预览：输入停顿 500ms 后调后端解析，非法表达式给红色提示 -->
-          <div v-if="cronPreview.state === 'invalid'" class="cron-preview cron-preview-invalid">表达式无效</div>
-          <div v-else-if="cronPreview.state === 'ok' && cronPreview.times.length" class="cron-preview cron-preview-ok">
-            下次执行：{{ cronPreview.times.join('、') }}
-          </div>
-        </el-form-item>
-        <el-form-item label="动作" required>
-          <el-radio-group v-model="form.action">
-            <el-radio value="vm_snapshot">虚拟机快照</el-radio>
-            <el-radio value="db_backup">数据库备份</el-radio>
-            <el-radio value="ansible_playbook">Playbook 执行</el-radio>
-            <el-radio value="container_healthcheck">容器健康巡检</el-radio>
-            <el-radio value="image_version_check">镜像版本巡检</el-radio>
-            <el-radio value="designer_drift_check">架构漂移巡检</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item v-if="form.action === 'vm_snapshot'" label="目标虚拟机" required>
-          <el-select v-model="form.vm_id" placeholder="选择要定时快照的虚拟机" style="width: 100%" v-loading="vmsLoading">
-            <el-option v-for="vm in vms" :key="vm.id" :label="vmName(vm)" :value="vm.id" />
-          </el-select>
-          <div class="field-tip">保存后参数自动生成为 {{ snapshotParamsPreview }}</div>
-        </el-form-item>
-        <el-form-item v-else-if="form.action === 'ansible_playbook'" label="Playbook" required>
-          <el-select v-model="form.pb_playbook" filterable placeholder="选择要定时执行的 playbook" style="width: 100%" v-loading="pbLoading">
-            <el-option v-for="p in playbooks" :key="p.id" :label="p.id + (p.desc ? '（' + p.desc + '）' : '')" :value="p.id" />
-          </el-select>
-          <div class="field-tip">执行走 ansible_run 任务管线（凭据/输出/RECAP 全在任务中心可查）</div>
-        </el-form-item>
-        <el-form-item v-if="form.action === 'ansible_playbook'" label="目标方式">
-          <el-radio-group v-model="form.pb_target_mode">
-            <el-radio-button value="vms">按虚拟机</el-radio-button>
-            <el-radio-button value="group">按主机组（动态）</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item v-else-if="form.action === 'ansible_playbook' && form.pb_target_mode === 'group'" label="主机组" required>
-          <el-select v-model="form.pb_group_id" placeholder="选择主机组" style="width: 100%">
-            <el-option v-for="g in hostGroups" :key="g.id" :label="g.name" :value="g.id" />
-          </el-select>
-          <div class="field-tip">成员在每次触发时动态解析，改组即生效（不存字面 targets）</div>
-        </el-form-item>
-        <el-form-item v-else-if="form.action === 'ansible_playbook'" label="目标虚拟机" required>
-          <el-select v-model="form.pb_targets" multiple filterable placeholder="选择运行中的虚拟机（可多选）" style="width: 100%" v-loading="vmsLoading">
-            <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vmName(vm)" :value="vm.id" />
-          </el-select>
-          <div class="field-tip">执行时逐台复核：需运行中、有 IP、已保存托管凭据</div>
-        <div v-if="hostGroups.length" class="group-chips">
-              <span class="group-chips-label">主机组</span>
-              <el-tag v-for="g in hostGroups" :key="g.id" class="group-chip" effect="plain"
-                :title="'点击并入「' + g.name + '」组成员'" @click="applyPbGroup(g)">{{ g.name }}</el-tag>
-            </div>
-          </el-form-item>
-        <el-form-item v-else-if="form.action === 'db_backup'" label="说明">
-          <div class="field-tip">备份数据库到主机 backup 目录，按保留份数自动清理旧备份</div>
-        </el-form-item>
-        <el-form-item v-else-if="form.action === 'container_healthcheck'" label="说明">
-          <div class="field-tip">巡检所有运行中容器，unhealthy 且连续失败 ≥3 次时自动重启并通知（需容器创建时配置了健康检查）</div>
-        </el-form-item>
-        <el-form-item v-else-if="form.action === 'image_version_check'" label="说明">
-          <div class="field-tip">对比本地镜像与远端仓库 digest，有更新时推送镜像名列表（远端查询秒级，需外网可达）</div>
-        </el-form-item>
-        <el-form-item v-else-if="form.action === 'designer_drift_check'" label="说明">
-          <div class="field-tip">巡检全部「已成功落地过」的设计器计划：对比落地快照与平台现实（虚拟机/容器栈/网络），有漂移时推送明细。无快照的计划自动跳过</div>
-        </el-form-item>
-        <el-form-item label="保留份数">
-          <el-input-number v-model="form.keep" :min="1" :max="365" controls-position="right" style="width: 160px" />
-          <div class="field-tip">快照 / 备份只保留最近 N 份，超出后自动清理最旧的</div>
-        </el-form-item>
-        <el-form-item label="死开关宽限">
-          <el-input-number v-model="form.grace_minutes" :min="0" :max="1440" controls-position="right" style="width: 160px" />
-          <div class="field-tip">超过预期执行时刻 N 分钟仍无执行记录即告警（0 表示关闭）</div>
-        </el-form-item>
-        <el-form-item label="失败重试">
-          <el-input-number v-model="form.retry_count" :min="0" :max="3" controls-position="right" style="width: 120px" />
-          <span class="retry-sep">次，间隔</span>
-          <el-input-number v-model="form.retry_interval" :min="1" :max="120" controls-position="right" style="width: 120px" />
-          <span class="retry-sep">秒</span>
-          <div class="field-tip">执行失败后自动重试（0 次表示不重试）</div>
-        </el-form-item>
-        <el-form-item label="链式编排">
-          <el-select v-model="form.on_success_task_id" clearable placeholder="成功后执行（可选）" style="width: 210px">
-            <el-option v-for="t in otherTasks" :key="t.id" :label="t.name" :value="t.id" />
-          </el-select>
-          <el-select v-model="form.on_failure_task_id" clearable placeholder="失败后执行（可选）" style="width: 210px; margin-left: 8px">
-            <el-option v-for="t in otherTasks" :key="t.id" :label="t.name" :value="t.id" />
-          </el-select>
-          <div class="field-tip">按结果触发下一跳（最多 5 级防环）；下一跳 params 里可用 {prev.output} 引用本次结果</div>
-        </el-form-item>
-        <el-form-item label="启用">
-          <el-switch v-model="form.enabled" active-text="启用" inactive-text="停用" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="save">{{ editingId ? '保存' : '创建' }}</el-button>
-      </template>
-    </el-dialog>
+    <!-- 新建 / 编辑（复用一个弹窗：editingId 区分模式）→ cron/components/CronFormDialog.vue -->
+    <CronFormDialog
+      v-model="dialog"
+      v-model:preset="preset"
+      :form="form"
+      :editing-id="editingId"
+      :cron-preview="cronPreview"
+      :vms="vms"
+      :vms-loading="vmsLoading"
+      :playbooks="playbooks"
+      :pb-loading="pbLoading"
+      :host-groups="hostGroups"
+      :other-tasks="otherTasks"
+      :saving="saving"
+      @save="save"
+    />
 
-    <!-- 执行历史抽屉（50% 宽）：GET /crons/:id/runs 分页倒序 -->
-    <el-drawer v-model="drawerVisible" size="50%">
-      <template #header>
-        <div class="runs-head">
-          <span class="runs-title">{{ drawerTitle }}</span>
-          <el-button
-            size="small" type="primary" :icon="VideoPlay"
-            :loading="runningId === (drawerTask && drawerTask.id)"
-            @click="rerunCurrent"
-          >再跑一次</el-button>
-        </div>
-      </template>
-      <el-table v-loading="runsLoading" :data="runs" stripe size="small">
-        <template #empty>
-          <el-empty description="该任务还没有执行记录" :image-size="80" />
-        </template>
-        <el-table-column label="开始时间" width="170">
-          <template #default="{ row }">
-            <span class="mono">{{ fmtDateTime(row.started_at) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90" align="center">
-          <template #default="{ row }">
-            <el-tag :type="runStatusTag(row.status)" effect="light" size="small">
-              {{ runStatusText(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="耗时" width="90" align="center">
-          <template #default="{ row }"><span class="mono">{{ runDuration(row) }}</span></template>
-        </el-table-column>
-        <el-table-column label="尝试" width="60" align="center">
-          <template #default="{ row }">{{ row.attempt || 1 }}</template>
-        </el-table-column>
-        <el-table-column label="结果摘要" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.output || '—' }}</template>
-        </el-table-column>
-      </el-table>
-      <el-pagination
-        class="runs-pager"
-        layout="total, prev, pager, next"
-        size="small"
-        :total="runsTotal"
-        :page-size="runsPageSize"
-        :current-page="runsPage"
-        @current-change="onRunsPageChange"
-      />
-    </el-drawer>
+    <!-- 执行历史抽屉 → cron/components/CronRunsDrawer.vue -->
+    <CronRunsDrawer
+      v-model="drawerVisible"
+      v-model:page="runsPage"
+      :title="drawerTitle"
+      :runs="runs"
+      :runs-loading="runsLoading"
+      :runs-total="runsTotal"
+      :runs-page-size="runsPageSize"
+      :rerunning="runningId === (drawerTask && drawerTask.id)"
+      @rerun="rerunCurrent"
+      @page-change="onRunsPageChange"
+    />
   </div>
 </template>
 
 <script setup>
+// ============================================================================
+// 计划任务（CronList）
+// ----------------------------------------------------------------------------
+// 职责：按 cron 表达式定时执行虚拟机快照 / 数据库备份 / Playbook / 容器巡检等例行运维
+//       动作；支持前端筛选、启停、立即运行、复制、编辑、删除、执行历史查看、链式编排
+//       （成功/失败触发下一跳）、死开关（超时未跑告警）。
+//
+// 数据流：
+//   列表 ← api.cronList()（含内嵌 recent_runs，供「最近执行」列）；前端过滤 actionFilter/
+//          enabledFilter 得 filteredItems
+//   表单 ← openCreate/openEdit（editingId 区分模式，params JSON 双向翻译）→ save() 组装
+//          payload 后 api.cronCreate/cronUpdate；表达式预览经 debounce 500ms 调 cronPreview
+//   历史 ← usePagination(fetchRuns) → api.cronRuns（分页倒序）
+//
+// 已拆出的子组件（web/src/views/cron/components/）：
+//   CronFormDialog.vue   新建/编辑弹窗（预设回填、主机组并入等表单内逻辑随之下沉）
+//   CronRunsDrawer.vue   执行历史抽屉（分页；状态/耗时纯函数搬入）
+//
+// 刻意没拆的：主表格——它串联十余个行内动作（启停/运行/历史/复制/编辑/删除）与较多
+//   行内状态（togglingId/runningId），且「参数」列要把 vm_id 翻译成虚拟机名；
+//   Toolbar 分组与模板下拉留在页面。
+// ⚠️ runStatusTag / runStatusText 在主表格与 CronRunsDrawer 各留一份——改一处须同步。
+// ============================================================================
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, VideoPlay, MagicStick } from '@element-plus/icons-vue'
+import { Plus, Refresh, MagicStick } from '@element-plus/icons-vue'
 import { api } from '../api'
-import { errMsg, isCancel, fmtDateTime, vmStatusText } from '../utils/format'
+import { errMsg, isCancel, fmtDateTime } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
 import PageHead from '../components/PageHead.vue'
+import CronFormDialog from './cron/components/CronFormDialog.vue'
+import CronRunsDrawer from './cron/components/CronRunsDrawer.vue'
 
 // embedded：嵌入系统设置页时隐藏独立页头（IA 归并批次 2026-10）
 defineProps({ embedded: { type: Boolean, default: false } })
@@ -415,11 +311,7 @@ const vmsLoading = ref(false)
 // playbook 下拉（ansible_playbook 动作）
 const playbooks = ref([])
 const pbLoading = ref(false)
-const runnableVMs = computed(() => vms.value.filter((v) => v.status === 'running' && v.ip))
-
-function vmName(vm) {
-  return vm.status ? `${vm.name}（${vmStatusText(vm.status)}）` : vm.name
-}
+// runnableVMs（可执行目标过滤）与 vmName（名称+状态标签）已随表单弹窗下沉到 CronFormDialog.vue
 
 async function loadVMs() {
   vmsLoading.value = true
@@ -451,14 +343,7 @@ const saving = ref(false)
 const editingId = ref(null)
 const preset = ref('')
 
-// 常用 cron 预设（label 与 expr 成对，选中即回填表达式输入框）
-const PRESETS = [
-  { label: '每 5 分钟', expr: '*/5 * * * *' },
-  { label: '每小时', expr: '0 * * * *' },
-  { label: '每天 02:00', expr: '0 2 * * *' },
-  { label: '每周日 03:00', expr: '0 3 * * 0' },
-  { label: '每月 1 日 04:00', expr: '0 4 1 * *' }
-]
+// 常用 cron 预设（PRESETS）已随表单弹窗下沉到 CronFormDialog.vue
 
 // keep：保留份数（快照/备份只留最近 N 份），后端校验 1-365，默认 7
 const DEFAULT_KEEP = 7
@@ -506,14 +391,8 @@ async function fetchPreview(expr) {
   }
 }
 
-// vm_snapshot 时参数预览：未选虚拟机用 ? 占位，选中后即最终提交的 JSON 字符串
-const snapshotParamsPreview = computed(() =>
-  JSON.stringify({ vm_id: form.value.vm_id == null ? '?' : form.value.vm_id })
-)
-
-function applyPreset(expr) {
-  if (expr) form.value.cron_expr = expr
-}
+// snapshotParamsPreview（vm_snapshot 参数预览）与 applyPreset（预设回填表达式）
+// 已随表单弹窗下沉到 CronFormDialog.vue；本页只保留 preset 状态并在开弹窗时复位。
 
 function openCreate() {
   editingId.value = null
@@ -701,16 +580,7 @@ async function duplicate(row) {
   }
 }
 
-// 执行耗时：由 started_at / finished_at 计算（进行中显示 —）
-function runDuration(row) {
-  if (!row.finished_at) return '—'
-  const ms = new Date(row.finished_at) - new Date(row.started_at)
-  if (!isFinite(ms) || ms < 0) return '—'
-  if (ms < 1000) return ms + ' ms'
-  const s = Math.round(ms / 1000)
-  if (s < 60) return s + ' 秒'
-  return Math.floor(s / 60) + ' 分' + (s % 60) + ' 秒'
-}
+// runDuration（执行耗时计算）已随执行历史抽屉下沉到 CronRunsDrawer.vue
 
 // 再从历史抽屉触发一次执行
 async function rerunCurrent() {
@@ -793,12 +663,7 @@ async function loadHostGroups() {
     // 静默：无组时手选不受影响
   }
 }
-function applyPbGroup(g) {
-  const pick = (g.vm_ids || []).filter((id) => runnableVMs.value.some((v) => v.id === id))
-  if (!pick.length) return ElMessage.warning(`「${g.name}」当前没有可执行成员（需运行中且有 IP）`)
-  form.value.pb_targets = [...new Set([...form.value.pb_targets, ...pick])]
-  ElMessage.success(`已并入「${g.name}」${pick.length} 台`)
-}
+// applyPbGroup（主机组一键并入 playbook 目标）已随表单弹窗下沉到 CronFormDialog.vue
 
 onMounted(() => {
   loadHostGroups()
@@ -814,32 +679,10 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* .toolbar-left / .toolbar-right 骨架与 gap/换行由 Toolbar 组件承担 */
-.expr-row {
-  display: flex;
-  gap: 8px;
-  width: 100%;
-}
-.cron-preview {
-  font-size: 0.78rem;
-  line-height: 1.5;
-  margin-top: 4px;
-}
-.cron-preview-ok {
-  color: var(--color-success, #16a34a);
-}
-.cron-preview-invalid {
-  color: var(--el-color-danger);
-}
-.runs-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.runs-title {
-  font-weight: 600;
-}
+/* .toolbar-left / .toolbar-right 骨架与 gap/换行由 Toolbar 组件承担。
+   .expr-row / .cron-preview* / .group-chips* / .group-chip / .retry-sep / .field-tip →
+   cron/components/CronFormDialog.vue；.runs-head / .runs-title / .runs-pager →
+   cron/components/CronRunsDrawer.vue（各留一份，改一处须同步）。本页只留模板下拉样式。 */
 .tpl-item {
   display: flex;
   flex-direction: column;
@@ -849,34 +692,5 @@ onUnmounted(() => {
 .tpl-desc {
   font-size: 0.76rem;
   color: var(--color-muted-foreground);
-}
-.group-chips {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 4px;
-}
-.group-chips-label {
-  font-size: 0.78rem;
-  color: var(--color-muted-foreground);
-}
-.group-chip {
-  cursor: pointer;
-}
-.retry-sep {
-  margin: 0 6px;
-  color: var(--color-muted-foreground);
-  font-size: 0.85rem;
-}
-.field-tip {
-  font-size: 0.78rem;
-  color: var(--el-text-color-secondary, #909399);
-  line-height: 1.5;
-  margin-top: 4px;
-}
-.runs-pager {
-  margin-top: 12px;
-  justify-content: flex-end;
 }
 </style>

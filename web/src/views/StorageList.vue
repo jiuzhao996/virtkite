@@ -15,80 +15,18 @@
       </el-tab-pane>
       <el-tab-pane label="存储池" name="pools" lazy>
 
-    <!-- 汇总条：物理容量 / cloud-init 种子目录 / 默认存储池 -->
-    <!-- dir 池容量是文件系统级的，同盘多池口径相同，取 items 里最大 capacity 及其 available，不再每行重复 -->
-    <el-card shadow="never" class="summary-card">
-      <div class="summary-row">
-        <div class="summary-item summary-cap">
-          <div class="summary-label">物理容量</div>
-          <template v-if="physCap.capacity">
-            <div class="summary-value">
-              {{ fmtSizeBytes(physCap.capacity) }}
-              <span class="summary-sub">可用 {{ fmtSizeBytes(physCap.available) }}</span>
-            </div>
-            <el-progress
-              :percentage="physPct"
-              :color="usageColor(physPct)"
-              :stroke-width="8"
-              :show-text="false"
-            />
-          </template>
-          <div v-else class="summary-sub">暂无存储池数据</div>
-        </div>
-        <div class="summary-item">
-          <div class="summary-label">cloud-init 种子目录</div>
-          <div class="summary-value mono summary-path" :title="seedDir.path">{{ seedDir.path || '—' }}</div>
-          <div class="summary-sub">{{ seedDir.count }} 个 *-seed.iso 种子文件（每台 VM 一份）</div>
-        </div>
-        <div class="summary-item">
-          <div class="summary-label">默认存储池</div>
-          <div class="summary-value">{{ defaultPool || '—' }}</div>
-          <div class="summary-sub">创建虚拟机未指定池时的落点</div>
-        </div>
-      </div>
-    </el-card>
+    <!-- 汇总条（纯展示，数据由页面算好后传入 → storage/components/PoolSummary.vue） -->
+    <PoolSummary :phys-cap="physCap" :phys-pct="physPct" :seed-dir="seedDir" :default-pool="defaultPool" />
 
-    <!-- 池卡片网格（替代 el-table，卡片样式对齐 VmList） -->
-    <!-- 空态引导：孤岛页此前 0 个出站链接，空态连个下一步都没有 -->
-    <el-empty v-if="!pools.length && !loading" description="暂无存储池" :image-size="80">
-      <template #description>
-        <p>暂无存储池，可到系统设置登记宿主机后再回来查看</p>
-      </template>
-      <el-button type="primary" size="small" @click="$router.push('/settings')">去系统设置</el-button>
-      <el-button size="small" @click="$router.push('/vms')">查看虚拟机</el-button>
-    </el-empty>
-    <el-row v-else :gutter="16">
-      <el-col v-for="pool in pools" :key="pool.name" :xs="24" :sm="12" :md="8" class="pool-col">
-        <el-card shadow="hover" class="pool-card" @click="openVolumes(pool)">
-          <div class="pool-head">
-            <span class="pool-name" :title="pool.name">{{ pool.name }}</span>
-            <span class="pool-tags">
-              <el-tag v-if="!pool.active" type="danger" size="small" effect="light">未激活</el-tag>
-              <el-tag v-if="pool.role" :type="roleTagType(pool.role)" size="small" effect="light">{{ pool.role }}</el-tag>
-              <el-tag v-else type="info" size="small" effect="plain">未分类</el-tag>
-            </span>
-          </div>
-          <div class="pool-path mono" :title="pool.path">{{ pool.path }}</div>
-          <!-- 描述是**只读**展示：此前整行可点去编辑，热区横跨整张卡片，误触率很高
-               （想开抽屉却弹出编辑框）。编辑统一走下方「编辑」按钮。
-               后端已按池角色补缺省文案，所以这里基本不会是空的；真为空时也不显示
-               「点击编辑…」这类诱导文案——那正是误触的来源。 -->
-          <div class="pool-desc" :class="{ placeholder: !pool.description }" :title="pool.description">
-            {{ pool.description || '—' }}
-          </div>
-          <!-- 池卡片不再画容量条：dir 池容量是文件系统级的，同盘多池口径相同，
-               统一由顶部「物理容量」汇总条展示；卡片只留池自有信息（卷数） -->
-          <div class="pool-stats">
-            <span>卷数 <b class="mono">{{ pool.vol_count == null ? 0 : pool.vol_count }}</b></span>
-          </div>
-          <div class="pool-actions" @click.stop>
-            <el-button size="small" :icon="FolderOpened" @click="openVolumes(pool)">浏览卷</el-button>
-            <el-button v-if="isAdmin" size="small" :icon="Edit" @click="openMeta(pool)">编辑</el-button>
-            <el-button v-if="isAdmin" size="small" type="danger" plain :icon="Delete" @click="removePool(pool)">删除</el-button>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+    <!-- 池卡片网格（纯展示，见 storage/components/PoolCardGrid.vue；点击/编辑/删除经 emit 回页面处理） -->
+    <PoolCardGrid
+      :pools="pools"
+      :loading="loading"
+      :is-admin="isAdmin"
+      @open="openVolumes"
+      @edit="openMeta"
+      @remove="removePool"
+    />
       </el-tab-pane>
       <!-- Docker 卷（Docker 资源拆分批次）：operator+ 可见，lazy 首次激活才挂载 -->
       <el-tab-pane v-if="canOperate" label="Docker 卷" name="docker" lazy>
@@ -98,202 +36,118 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 池信息编辑（角色 + 描述） -->
-    <el-dialog :close-on-click-modal="false" v-model="metaDialog" :title="'编辑池信息 - ' + metaForm.name" width="480px">
-      <el-form :model="metaForm" label-width="80px">
-        <el-form-item label="角色">
-          <el-select v-model="metaForm.role" style="width: 100%">
-            <el-option label="自动推断（空）" value="" />
-            <el-option v-for="r in poolRoles" :key="r" :label="r" :value="r" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="描述">
-          <el-input
-            v-model="metaForm.description"
-            type="textarea"
-            :rows="3"
-            maxlength="500"
-            show-word-limit
-            placeholder="池用途说明（最长 500 字符）"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="metaDialog = false">取消</el-button>
-        <el-button type="primary" :loading="metaSaving" @click="saveMeta">保存</el-button>
-      </template>
-    </el-dialog>
+    <!-- 池信息编辑（角色 + 描述）→ storage/components/PoolMetaDialog.vue -->
+    <PoolMetaDialog
+      v-model="metaDialog"
+      :form="metaForm"
+      :roles="poolRoles"
+      :saving="metaSaving"
+      @save="saveMeta"
+    />
 
-    <!-- 卷抽屉（池名 · 角色） -->
-    <el-drawer v-model="volDrawer" :title="curPool ? curPool + ' · ' + (curRole || '未分类') : '卷管理'" size="72%">
-      <!-- 本池血缘图（P4 后新增，克隆家谱同款渲染）：开抽屉即见——池内卷的
-           backing 链与挂载关系一图看全；跨池克隆链保留对端（置灰边界节点） -->
-      <el-card shadow="never" class="pool-graph-card" v-loading="poolGraphLoading">
-        <template #header>
-          <div class="pool-graph-head">
-            <span class="pool-graph-title">本池血缘图谱<span class="pool-graph-hint">金菱=模板 · 青圆=在用 · 灰圆=孤儿 · 淡圆=跨池链对端 · 点击节点看 tooltip</span></span>
-            <el-button text size="small" :icon="Refresh" @click="loadPoolGraph">刷新图</el-button>
-          </div>
-        </template>
-        <VolumeLineageGraph :nodes="poolGraphNodes" :edges="poolGraphEdges" height="360px" />
-        <div v-if="poolGraphNodes.length" class="pool-graph-stats mono">
-          本池 {{ poolInCount }} 卷 ｜ 虚拟 {{ poolVirtualText }} / 实际 {{ poolActualText }}
-          <template v-if="poolBoundaryCount"> ｜ 跨池链对端 {{ poolBoundaryCount }}</template>
-        </div>
-        <el-empty v-if="!poolGraphLoading && !poolGraphNodes.length" description="该池暂无存储卷" :image-size="48" />
-      </el-card>
-      <div class="toolbar">
-        <div>
-          <el-button v-if="isAdmin" type="primary" size="small" :icon="Plus" @click="openCreateVol">新建卷</el-button>
-          <el-button v-if="isAdmin" size="small" :icon="Brush" @click="cleanupOrphans">清理孤儿卷</el-button>
-        </div>
-      </div>
-      <el-table :data="volumes" stripe border size="small" style="width: 100%" max-height="560" empty-text="该存储池暂无卷">
-        <el-table-column prop="name" label="卷名" min-width="150" show-overflow-tooltip />
-        <el-table-column label="类型" width="130">
-          <template #default="{ row }">
-            <!-- 判定优先级：有子卷=模板基盘 > 有 backing=增量系统盘 > .iso=安装镜像；可叠加为 el-tag 组 -->
-            <template v-if="volTypeTags(row).length">
-              <el-tag
-                v-for="t in volTypeTags(row)"
-                :key="t.text"
-                :type="t.type"
-                size="small"
-                effect="light"
-                class="type-tag"
-              >{{ t.text }}</el-tag>
-            </template>
-            <el-tag v-else type="info" size="small" effect="plain">普通卷</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="容量" width="90">
-          <template #default="{ row }">{{ fmtSizeBytes(row.capacity) }}</template>
-        </el-table-column>
-        <el-table-column label="已用" width="90">
-          <template #default="{ row }">{{ fmtSizeBytes(row.allocation) }}</template>
-        </el-table-column>
-        <el-table-column label="在用" width="170">
-          <template #default="{ row }">
-            <template v-if="volRefs[row.name] && refsInUse(volRefs[row.name])">
-              <el-tooltip placement="top" :content="refsTooltip(volRefs[row.name])">
-                <span class="ref-tags">
-                  <el-tag v-if="volRefs[row.name].vms && volRefs[row.name].vms.length" type="warning" size="small" effect="light">
-                    VM×{{ volRefs[row.name].vms.length }}
-                  </el-tag>
-                  <el-tag v-if="volRefs[row.name].images && volRefs[row.name].images.length" type="primary" size="small" effect="light">
-                    镜像×{{ volRefs[row.name].images.length }}
-                  </el-tag>
-                  <el-tag v-if="volRefs[row.name].children && volRefs[row.name].children.length" type="danger" size="small" effect="light">
-                    子卷×{{ volRefs[row.name].children.length }}
-                  </el-tag>
-                </span>
-              </el-tooltip>
-            </template>
-            <el-tag v-else type="info" size="small" effect="plain">未使用</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              v-if="isAdmin && !hasImageRef(row)"
-              size="small"
-              type="primary"
-              plain
-              :icon="Collection"
-              @click="openRegister(row)"
-            >登记为云镜像</el-button>
-            <el-button v-if="isAdmin" size="small" type="danger" :icon="Delete" @click="removeVolume(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-drawer>
+    <!-- 卷抽屉（池名 · 角色）→ storage/components/VolumeDrawer.vue（血缘图 + 卷表格） -->
+    <VolumeDrawer
+      v-model="volDrawer"
+      :cur-pool="curPool"
+      :cur-role="curRole"
+      :pool-graph-loading="poolGraphLoading"
+      :pool-graph-nodes="poolGraphNodes"
+      :pool-graph-edges="poolGraphEdges"
+      :pool-in-count="poolInCount"
+      :pool-boundary-count="poolBoundaryCount"
+      :pool-virtual-text="poolVirtualText"
+      :pool-actual-text="poolActualText"
+      :volumes="volumes"
+      :vol-refs="volRefs"
+      :is-admin="isAdmin"
+      @refresh-graph="loadPoolGraph"
+      @create-vol="openCreateVol"
+      @cleanup-orphans="cleanupOrphans"
+      @register="openRegister"
+      @remove="removeVolume"
+    />
 
-    <!-- 登记为云镜像（把池内已有卷纳入镜像库，不复制不移动） -->
-    <el-dialog v-model="regDialog" :title="'登记为云镜像 - ' + regVol" width="460px">
-      <el-form :model="regForm" label-width="100px">
-        <el-form-item label="镜像名称" required>
-          <el-input v-model="regForm.name" placeholder="镜像库中的显示名称" />
-        </el-form-item>
-        <el-form-item label="OS 版本">
-          <el-input v-model="regForm.os_version" placeholder="如 ubuntu-22.04，可留空" />
-        </el-form-item>
-        <el-form-item label="模板镜像">
-          <el-switch v-model="regForm.is_template" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="regDialog = false">取消</el-button>
-        <el-button type="primary" :loading="regSaving" @click="doRegister">登记</el-button>
-      </template>
-    </el-dialog>
+    <!-- 登记为云镜像（把池内已有卷纳入镜像库，不复制不移动）→ storage/components/RegisterImageDialog.vue -->
+    <RegisterImageDialog
+      v-model="regDialog"
+      :form="regForm"
+      :vol-name="regVol"
+      :saving="regSaving"
+      @register="doRegister"
+    />
 
-    <!-- 新建存储池 -->
-    <el-dialog v-model="poolDialog" title="新建存储池" width="460px">
-      <el-form ref="poolFormRef" :model="poolForm" :rules="poolRules" label-width="80px">
-        <el-form-item label="名称" prop="name">
-          <el-input v-model="poolForm.name" placeholder="仅字母、数字、_、-、." />
-        </el-form-item>
-        <el-form-item label="路径" prop="path">
-          <el-input v-model="poolForm.path" placeholder="如 /var/lib/libvirt/xxx-images" />
-        </el-form-item>
-        <el-form-item label="描述">
-          <el-input
-            v-model="poolForm.description"
-            type="textarea"
-            :rows="2"
-            maxlength="500"
-            show-word-limit
-            placeholder="可选，创建成功后保存为池描述"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="poolDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="createPool">创建</el-button>
-      </template>
-    </el-dialog>
+    <!-- 新建存储池 → storage/components/PoolCreateDialog.vue（暴露 validate() 供 createPool 行内校验） -->
+    <PoolCreateDialog
+      ref="poolFormRef"
+      v-model="poolDialog"
+      :form="poolForm"
+      :rules="poolRules"
+      :saving="saving"
+      @create="createPool"
+    />
 
-    <!-- 新建卷 -->
-    <el-dialog v-model="volCreateDialog" title="新建存储卷" width="460px">
-      <el-form :model="volForm" label-width="90px">
-        <el-form-item label="名称" required>
-          <el-input v-model="volForm.name" placeholder="如 vm-disk1.qcow2" />
-        </el-form-item>
-        <el-form-item label="格式">
-          <el-select v-model="volForm.format" style="width: 100%">
-            <el-option label="qcow2" value="qcow2" />
-            <el-option label="raw" value="raw" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="容量(GB)">
-          <el-input-number v-model="volForm.capacity" :min="1" :max="500" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="volCreateDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="createVolume">创建</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 克隆家谱与回收工作台（全库跨池血缘图谱 + 回收候选，差异化功能） -->
+    <!-- 新建卷 → storage/components/VolumeCreateDialog.vue -->
+    <VolumeCreateDialog
+      v-model="volCreateDialog"
+      :form="volForm"
+      :saving="saving"
+      @create="createVolume"
+    />
   </div>
 </template>
 
 <script setup>
+// ============================================================================
+// 存储管理（StorageList）
+// ----------------------------------------------------------------------------
+// 职责：三 tab 统一存储入口——「拓扑图」（StorageTopology）/「存储池」（池卡片 +
+//       卷管理抽屉，含血缘图谱）/「Docker 卷」（VolumeTab，operator+）。
+//       同时承载池的增删改（新建/编辑角色描述/删除）与卷的增删、登记为云镜像、
+//       孤儿卷清理（转后台任务）。
+//
+// 数据流：
+//   load() ← api.listStoragePools()：pools / seedDir / defaultPool / poolRoles
+//   打开某池 openVolumes(pool) → fetchVolumes（卷 + volRefs 引用映射）+ loadPoolGraph
+//     （全库血缘图 → poolGraphNodes/Edges 按当前池过滤出本池 + 跨池边界节点）
+//   池信息/建池/建卷/登记镜像/删卷/清理孤儿 → 各 api.*，成功后统一 load()/refreshVolumes()
+//
+// 已拆出的子组件（web/src/views/storage/components/）：
+//   PoolSummary.vue          顶部汇总条（物理容量 / 种子目录 / 默认池）
+//   PoolCardGrid.vue         池卡片网格 + 空态引导（open/edit/remove 经 emit 回页面）
+//   VolumeDrawer.vue         卷管理抽屉（血缘图 + 卷表格；refresh-graph/create-vol/
+//                            cleanup-orphans/register/remove 经 emit 回页面）
+//   PoolMetaDialog.vue       编辑池信息（角色 + 描述）
+//   PoolCreateDialog.vue     新建存储池（暴露 validate() 供 createPool 行内校验）
+//   VolumeCreateDialog.vue   新建存储卷
+//   RegisterImageDialog.vue  登记为云镜像
+//
+// 刻意没拆的：池/卷/血缘图的数据请求与状态（pools/volumes/volRefs/poolGraphRaw 及各
+//   计算属性）留在页面——它们是子组件的数据源，且互相耦合（如删卷后要同时刷新
+//   卷表、引用、血缘图与容量汇总），下沉反而要来回抛事件。
+// ⚠️ refsInUse / refsTooltip 在页面与 VolumeDrawer 各留一份（页面用于孤儿卷筛选与
+//   删卷确认文案，抽屉用于表格「在用」列）——改一处须同步另一处。
+// ============================================================================
 import { ref, computed, h, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Plus, FolderOpened, Edit, Delete, Collection, Brush } from '@element-plus/icons-vue'
+import { Refresh, Plus } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId } from '../utils/task.js'
 import PageHead from '../components/PageHead.vue'
-import VolumeLineageGraph from './storage/components/VolumeLineageGraph.vue'
 import StorageTopology from './storage/components/StorageTopology.vue'
+import PoolSummary from './storage/components/PoolSummary.vue'
+import PoolCardGrid from './storage/components/PoolCardGrid.vue'
+import VolumeDrawer from './storage/components/VolumeDrawer.vue'
+import PoolMetaDialog from './storage/components/PoolMetaDialog.vue'
+import PoolCreateDialog from './storage/components/PoolCreateDialog.vue'
+import VolumeCreateDialog from './storage/components/VolumeCreateDialog.vue'
+import RegisterImageDialog from './storage/components/RegisterImageDialog.vue'
 import DockerGate from '../components/DockerGate.vue'
 import VolumeTab from './docker/components/VolumeTab.vue'
 // 容量格式化 / 错误文案 / 取消判定统一走 utils/format.js（原本地三份实现已删）
 // 本页的 .page-head / .page-title / .toolbar / .count 与其他列表页逐字相同，已收进 global.css
-import { fmtSizeBytes, fmtGBSum, errMsg, isCancel, usageColor, clampPct } from '../utils/format'
+// （fmtSizeBytes / usageColor 的使用点已随汇总条与卷抽屉下沉到子组件）
+import { fmtGBSum, errMsg, isCancel, clampPct } from '../utils/format'
 
 const { isAdmin, canOperate } = useAuth()
 // 默认落在拓扑图（与网络页同款首屏），池列表/卷管理备查
@@ -374,16 +228,7 @@ const physPct = computed(() => {
   return clampPct(((capacity - available) / capacity) * 100)
 })
 
-// 池角色 → el-tag type（其余/空串走「未分类」灰 tag，不在本表）
-const ROLE_TAG_TYPES = {
-  模板基盘: 'warning',
-  系统盘: 'primary',
-  数据盘: 'success',
-  安装镜像: 'info'
-}
-function roleTagType(role) {
-  return ROLE_TAG_TYPES[role] || 'info'
-}
+// 池角色 → el-tag type 的映射与 roleTagType 已随池卡片下沉到 PoolCardGrid.vue（本页不再用）
 
 function refsInUse(r) {
   return (r.vms && r.vms.length) || (r.images && r.images.length) || (r.children && r.children.length)
@@ -396,21 +241,8 @@ function refsTooltip(r) {
   return parts.join('；')
 }
 
-// 卷类型徽标组（按优先级叠加）：有子卷=模板基盘；有 backing 父盘=增量系统盘；.iso=安装镜像
-function volTypeTags(row) {
-  const tags = []
-  const r = volRefs.value[row.name] || {}
-  if (r.children && r.children.length) tags.push({ text: '模板基盘', type: 'warning' })
-  if (row.backing_file) tags.push({ text: '增量系统盘', type: 'primary' })
-  if (/\.iso$/i.test(row.name || '')) tags.push({ text: '安装镜像', type: 'info' })
-  return tags
-}
-
-// 该卷是否已登记进镜像库（已登记则不显示「登记为云镜像」按钮）
-function hasImageRef(row) {
-  const r = volRefs.value[row.name]
-  return !!(r && r.images && r.images.length)
-}
+// volTypeTags（卷类型徽标组）与 hasImageRef（是否已登记镜像）已随卷表格下沉到
+// VolumeDrawer.vue；本页保留的 refsInUse / refsTooltip 仅服务孤儿卷筛选与删卷确认文案。
 
 async function load() {
   loading.value = true
@@ -730,160 +562,8 @@ onMounted(load)
   align-items: center;
   gap: 8px;
 }
-/* ===== 汇总条 ===== */
-.summary-card {
-  margin-bottom: 16px;
-}
-.summary-row {
-  display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  gap: 16px 48px;
-}
-.summary-item {
-  min-width: 180px;
-}
-.summary-cap {
-  flex: 1;
-  min-width: 240px;
-  max-width: 380px;
-}
-.summary-label {
-  font-size: 0.8rem;
-  color: var(--color-muted-foreground);
-  margin-bottom: 4px;
-}
-.summary-value {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--color-foreground);
-  margin-bottom: 6px;
-}
-.summary-path {
-  font-size: 0.85rem;
-  max-width: 340px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.summary-sub {
-  font-size: 0.8rem;
-  color: var(--color-muted-foreground);
-}
-/* ===== 池卡片网格 ===== */
-.pool-col {
-  margin-bottom: 16px;
-}
-.pool-card {
-  cursor: pointer;
-  height: 100%;
-  transition: transform var(--dur-base) var(--ease-standard), border-color var(--dur-base) var(--ease-standard), box-shadow var(--dur-base) var(--ease-standard);
-}
-.pool-card:hover {
-  border-color: var(--el-color-primary);
-  transform: translateY(-2px);
-  box-shadow: var(--elev-hover);
-}
-.pool-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.pool-name {
-  flex: 1;
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--color-foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pool-tags {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.pool-path {
-  font-size: 0.78rem;
-  color: var(--color-muted-foreground);
-  margin-bottom: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pool-desc {
-  font-size: 0.85rem;
-  line-height: 1.4;
-  color: var(--color-foreground);
-  min-height: 40px;
-  margin-bottom: 8px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.pool-desc.placeholder {
-  color: var(--color-muted-foreground);
-  opacity: 0.7;
-}
-.pool-stats {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 0.85rem;
-  color: var(--color-muted-foreground);
-  margin-bottom: 12px;
-}
-.pool-stats b {
-  color: var(--color-foreground);
-  font-weight: 700;
-}
-/* 卡片 mini 用量条：贴在统计行与操作区之间，capacity 缺省时不渲染、间距回落原状 */
-.pool-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
-}
-/* el-button 相邻默认 margin-left 会与 flex gap 叠加，归零由 gap 控距 */
-.pool-actions .el-button + .el-button {
-  margin-left: 0;
-}
-/* ===== 卷抽屉 ===== */
-.type-tag {
-  margin-right: 4px;
-}
-.ref-tags {
-  display: inline-flex;
-  gap: 4px;
-}
-
-/* 本池血缘图卡（volDrawer 顶部） */
-.pool-graph-card {
-  margin-bottom: 12px;
-}
-.pool-graph-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.pool-graph-title {
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-.pool-graph-hint {
-  margin-left: 10px;
-  font-weight: 400;
-  font-size: 0.72rem;
-  color: var(--color-muted-foreground);
-}
-.pool-graph-stats {
-  margin-top: 10px;
-  font-size: 0.78rem;
-  color: var(--color-muted-foreground);
-}
+/* ===== 汇总条 / 池卡片网格 / 卷抽屉的样式 =====
+   已随各自渲染下沉到 storage/components/{PoolSummary,PoolCardGrid,VolumeDrawer}.vue
+   （.summary-* → PoolSummary，.pool-* → PoolCardGrid，.pool-graph-* / .type-tag /
+   .ref-tags → VolumeDrawer）。本页只留页头动作组样式。 */
 </style>

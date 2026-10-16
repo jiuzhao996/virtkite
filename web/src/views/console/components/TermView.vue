@@ -1,14 +1,7 @@
 <template>
   <div ref="termViewEl" class="term-view" :style="{ backgroundImage: 'url(' + consoleBg + ')' }">
-    <!-- 星星划过背景：坐标来自一次性生成的 STARS 常量（内联 Math.random 会随每秒时钟重渲染而瞬移） -->
-    <div class="stars-bg">
-      <div v-for="(s, i) in STARS" :key="i" class="star" :style="{
-        left: s.left + '%',
-        top: s.top + '%',
-        animationDelay: s.delay + 's',
-        animationDuration: s.duration + 's',
-      }" />
-    </div>
+    <!-- 星星划过背景（坐标来自一次性生成的模块级常量）→ TermStars.vue -->
+    <TermStars />
 
     <!-- JumpServer 风格顶部信息栏 -->
     <div class="term-header">
@@ -32,109 +25,79 @@
       <el-button size="small" type="warning" plain class="term-error-retry" @click="reconnect">一键重连</el-button>
     </div>
 
-    <!-- SSH 连接表单 -->
-    <div v-if="mode === 'ssh' && !connected" class="ssh-form-wrap">
-      <div class="ssh-form">
-        <h3 class="form-title"><el-icon><Platform /></el-icon>SSH 连接</h3>
-        <el-form label-width="70px">
-          <el-form-item label="主机">
-            <el-input v-model="sshForm.host" placeholder="VM IP 或域名，默认取虚拟机 IP" />
-          </el-form-item>
-          <el-form-item label="端口">
-            <el-input-number v-model="sshForm.port" :min="1" :max="65535" controls-position="right" style="width: 100%" />
-          </el-form-item>
-          <el-form-item label="用户名">
-            <el-input v-model="sshForm.user" placeholder="如 root" />
-          </el-form-item>
-          <el-form-item label="密码">
-            <el-input v-model="sshForm.password" type="password" show-password @keyup.enter="connectSSH" />
-          </el-form-item>
-        </el-form>
-        <el-button type="primary" class="form-btn" :loading="connecting" @click="connectSSH">连接终端</el-button>
-      </div>
-    </div>
+    <!-- SSH 连接表单 → TermSshForm.vue（sshForm 直接改字段，connect 上抛） -->
+    <TermSshForm
+      v-if="mode === 'ssh' && !connected"
+      :form="sshForm"
+      :connecting="connecting"
+      @connect="connectSSH"
+    />
 
-    <!-- 串口连接面板：无表单，醒目入口 -->
-    <div v-else-if="mode === 'serial' && !connected" class="serial-panel">
-      <div class="serial-big-icon"><el-icon><Connection /></el-icon></div>
-      <div class="serial-title">串口 Console · 免 IP 直连</div>
-      <div class="serial-desc">等价 virsh console，直接读写 guest 串口 ttyS0。无需 IP / 账号，无网卡也能进系统，建议优先尝试。</div>
-      <el-button type="primary" size="large" class="serial-btn" :loading="connecting" @click="connectSerial">
-        <el-icon v-if="!connecting"><CaretRight /></el-icon>
-        <span>{{ connecting ? '连接中…' : '连接串口 Console' }}</span>
-      </el-button>
-      <div class="serial-hint">
-        <el-icon><InfoFilled /></el-icon>
-        <span>连上却无输出、敲键无回显？通常是客户机没在 ttyS0 起终端：请在客户机内执行 <code>systemctl enable --now serial-getty@ttyS0</code>，并把 <code>console=ttyS0</code> 追加到内核 cmdline（写入 <code>/etc/default/grub</code> 后执行 <code>grub2-mkconfig -o /boot/grub2/grub.cfg</code> 并重启生效）。</span>
-      </div>
-    </div>
+    <!-- 串口连接面板：无表单，醒目入口 → TermSerialPanel.vue -->
+    <TermSerialPanel
+      v-else-if="mode === 'serial' && !connected"
+      :connecting="connecting"
+      @connect="connectSerial"
+    />
 
     <!-- 终端主体（SSH / 串口共用） -->
     <div v-else-if="connected" class="term-body">
       <div ref="termEl" class="terminal-container" />
     </div>
 
-    <!-- 底部操作栏 -->
-    <div class="term-footer">
-      <div class="term-footer-left">
-        <template v-if="connected">
-          <el-button size="small" class="ft-btn" :loading="connecting" @click="reconnect">
-            <el-icon v-if="!connecting"><Refresh /></el-icon><span>重新连接</span>
-          </el-button>
-          <el-button size="small" class="ft-btn" @click="disconnectFromTerminal">断开</el-button>
-        </template>
-        <template v-else>
-          <el-button size="small" class="ft-btn" @click="emit('back')">
-            <el-icon><ArrowLeft /></el-icon><span>返回选择</span>
-          </el-button>
-        </template>
-      </div>
-      <div class="term-footer-right">
-        <template v-if="connected">
-          <span class="term-shortcut" title="xterm 内置快捷键"><el-icon><InfoFilled /></el-icon>复制 Ctrl+Shift+C ｜ 粘贴 Ctrl+Shift+V / Ctrl+V</span>
-          <el-button size="small" class="ft-btn" title="粘贴剪贴板内容到终端（需浏览器授权剪贴板）" @click="pasteFromClipboard">
-            <el-icon><CopyDocument /></el-icon><span>粘贴</span>
-          </el-button>
-          <el-button size="small" class="ft-btn" title="缩小字号（11 ~ 24）" @click="changeTermFont(-1)">A-</el-button>
-          <el-button size="small" class="ft-btn" title="放大字号（11 ~ 24）" @click="changeTermFont(1)">A+</el-button>
-          <el-button size="small" class="ft-btn" :title="isTermFull ? '退出全屏' : '终端全屏'" @click="toggleTermFullscreen">
-            <el-icon><FullScreen /></el-icon><span>{{ isTermFull ? '退出全屏' : '全屏' }}</span>
-          </el-button>
-        </template>
-      </div>
-    </div>
+    <!-- 底部操作栏 → TermFooter.vue（各动作经 emit 回本组件执行） -->
+    <TermFooter
+      :connected="connected"
+      :connecting="connecting"
+      :is-term-full="isTermFull"
+      @back="emit('back')"
+      @reconnect="reconnect"
+      @disconnect="disconnectFromTerminal"
+      @paste="pasteFromClipboard"
+      @font-change="changeTermFont"
+      @fullscreen="toggleTermFullscreen"
+    />
   </div>
 </template>
 
 <script setup>
-// SSH / 串口共用终端视图（自 ConsolePage 拆出，2026-10 前端收敛批次）。
-// WS 生命周期 / 探测 / 剪贴板 / 字号 / 全屏 / resize 校准等协议层逻辑原样保留，
-// 仅按 mode prop 分流未连接面板与输入帧格式（SSH 走 JSON 帧、串口发原始字节）。
-// 壳（ConsolePage）负责视图切换与「智能默认串口探测」的决策，探测结果经 probe-failed 上抛。
+// ============================================================================
+// SSH / 串口共用终端视图（TermView）
+// ----------------------------------------------------------------------------
+// 职责：一套终端壳，按 mode 分流——未连接时展示 SSH 表单或串口入口面板，连接后用 xterm
+//       读写 WS 数据流。WS 生命周期 / 串口探测 / 剪贴板 / 字号 / 全屏 / resize 校准等
+//       协议层逻辑原样保留（SSH 走 JSON 帧、串口发原始字节）。
+//   壳（ConsolePage）负责视图切换与「智能默认串口探测」决策，探测结果经 probe-failed 上抛。
+//
+// 数据流：connectSSH/connectSerial → openWsWithTimeout(一次性短时票据) → xterm ↔ ws；
+//   输入 term.onData → ws.send；输出 handleMsg → term.write；resize 同步 SSH PTY 尺寸。
+//
+// 已拆出的子组件（同目录）：
+//   TermStars.vue         星星划过装饰背景（自持 STARS 常量）
+//   TermSshForm.vue       SSH 未连接表单（form 直连 sshForm，connect 上抛）
+//   TermSerialPanel.vue   串口未连接入口面板（connect 上抛）
+//   TermFooter.vue        底部操作栏（返回/重连/断开/粘贴/字号/全屏 全 emit 上抛）
+//
+// 刻意没拆的：顶部信息栏（.term-header，直读 connected/connecting/clock/hostLabel）、错误条、
+//   终端主体——后者用 ref="termEl" 直连 xterm 实例（term.open），ref 无法外传，必须内联。
+// ⚠️ .form-title .el-icon 的图标基线微调原与 header/error 共用一条规则，拆出后 TermSshForm
+//   单独保留一份；≤640px 媒体查询按归属拆到 TermSshForm / TermFooter。
+// ============================================================================
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 // 图标一律用组件（禁止 emoji 当图标）。main.js 已全量全局注册，这里仍显式 import：
 // 一是模板里能看出图标来源，二是将来改按需引入不用回头翻模板。
-import {
-  ArrowLeft,
-  CaretRight,
-  Clock,
-  Connection,
-  CopyDocument,
-  FullScreen,
-  InfoFilled,
-  Monitor,
-  Platform,
-  Refresh,
-  User,
-  WarningFilled,
-} from '@element-plus/icons-vue'
+import { Clock, Monitor, User, WarningFilled } from '@element-plus/icons-vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '../../../api'
 import consoleBg from '../../../assets/console-bg.webp'
 import { buildTermTheme, VM_TERM_SURFACE } from '../../../utils/term-theme'
+import TermStars from './TermStars.vue'
+import TermSshForm from './TermSshForm.vue'
+import TermSerialPanel from './TermSerialPanel.vue'
+import TermFooter from './TermFooter.vue'
 
 const props = defineProps({
   mode: { type: String, required: true }, // 'ssh' | 'serial'
@@ -148,15 +111,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['back', 'probe-failed', 'serial-ok'])
 
-// 星星背景坐标：一次性生成的模块级常量。此前在模板里内联 Math.random()，
-// 时钟 ref 每秒更新触发重渲染 → 40 颗星每秒重新随机、肉眼可见地“瞬移”；
-// 改为常量数组后 v-for 只读渲染，位置/节奏在页面生命周期内恒定。
-const STARS = Array.from({ length: 40 }, () => ({
-  left: +(Math.random() * 100).toFixed(2),
-  top: +(Math.random() * 100).toFixed(2),
-  delay: +(Math.random() * 6).toFixed(2),
-  duration: +(2 + Math.random() * 4).toFixed(2),
-}))
+// 星星背景坐标常量（STARS）已随装饰层下沉到 TermStars.vue（同目录）
 
 // 终端字号偏好：A-/A+ 调节，localStorage 持久化（11~24，越界截断）
 const TERM_FONT_KEY = 'vmops-term-font'
@@ -536,11 +491,11 @@ onUnmounted(() => {
 .term-user .el-icon,
 .term-host .el-icon,
 .term-clock .el-icon,
-.term-error .el-icon,
-.form-title .el-icon {
+.term-error .el-icon {
   vertical-align: -0.15em;
   margin-right: 4px;
 }
+/* .form-title .el-icon 已随 SSH 表单下沉到 TermSshForm.vue（该组件单独保留一份） */
 
 .term-view {
   position: relative;
@@ -553,23 +508,7 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.stars-bg { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 0; }
-.star {
-  position: absolute;
-  width: 2px;
-  height: 2px;
-  background: #fff; /* 星点恒白（装饰，与主题无关） */
-  border-radius: 50%;
-  opacity: 0;
-  animation: shootingStar linear infinite;
-  box-shadow: 0 0 4px 1px var(--term-glow);
-}
-@keyframes shootingStar {
-  0% { opacity: 0; transform: translateX(0) translateY(0); }
-  5% { opacity: 1; }
-  20% { opacity: 0; transform: translateX(-120px) translateY(80px); }
-  100% { opacity: 0; transform: translateX(-120px) translateY(80px); }
-}
+/* .stars-bg / .star / @keyframes shootingStar 已下沉到 TermStars.vue */
 
 /* ---------- JumpServer 风格顶部信息栏 ---------- */
 .term-header {
@@ -628,96 +567,9 @@ onUnmounted(() => {
   font-size: 0.85rem;
 }
 
-/* ---------- SSH 连接表单 ---------- */
-.ssh-form-wrap {
-  position: relative;
-  z-index: 2;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  min-height: 0;
-}
-.ssh-form {
-  width: 440px;
-  max-width: 100%;
-  padding: 26px 30px;
-  border-radius: var(--radius-lg);
-  background: var(--term-card-bg);
-  border: 1px solid rgba(88, 166, 255, 0.2);
-  box-shadow: var(--elev-pop);
-}
-.form-title { margin: 0 0 18px; color: var(--term-text); font-size: 1.1rem; }
-.ssh-form :deep(.el-form-item__label) { color: var(--term-text-sub); }
-.ssh-form :deep(.el-input__wrapper),
-.ssh-form :deep(.el-input-number .el-input__wrapper) {
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15) inset;
-}
-.ssh-form :deep(.el-input__inner) { color: var(--term-text); }
-.ssh-form :deep(.el-input-number__decrease),
-.ssh-form :deep(.el-input-number__increase) {
-  color: var(--term-text-sub);
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.12) !important;
-  box-shadow: none !important;
-}
-.form-btn { width: 100%; margin-top: 4px; }
-
-/* ---------- 串口连接面板 ---------- */
-.serial-panel {
-  position: relative;
-  z-index: 2;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  text-align: center;
-  padding: 24px;
-}
-.serial-big-icon {
-  width: 84px;
-  height: 84px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-serial-gold);
-  border: 2px solid rgba(240, 185, 11, 0.5);
-  border-radius: 50%;
-  background: rgba(8, 14, 24, 0.6);
-}
-/* 圆盘内的大图标：svg 不吃 text-shadow，原来的金色发光改用 drop-shadow 保留 */
-.serial-big-icon .el-icon {
-  font-size: 2.8rem;
-  filter: drop-shadow(0 0 12px rgba(240, 185, 11, 0.55));
-}
-.serial-title { color: var(--term-text); font-size: 1.25rem; font-weight: 600; }
-.serial-desc { max-width: 460px; color: var(--term-text-sub); font-size: 0.88rem; line-height: 1.6; }
-.serial-btn { margin-top: 8px; }
-/* 客户机侧排障提示：串口连上但无输出/无回显多半是 guest 没起 getty（见诊断结论），一句话提示即可 */
-.serial-hint {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  max-width: 500px;
-  margin-top: 10px;
-  color: var(--term-text-dim);
-  font-size: 0.78rem;
-  line-height: 1.7;
-  text-align: left;
-}
-.serial-hint .el-icon { margin-top: 0.3em; flex: none; }
-.serial-hint code {
-  padding: 0 4px;
-  border-radius: var(--radius-sm);
-  background: rgba(240, 185, 11, 0.12);
-  color: var(--color-serial-gold);
-  font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
-  font-size: 0.75rem;
-}
+/* ---------- SSH 连接表单 / 串口连接面板 ----------
+   .ssh-form-wrap / .ssh-form / .form-title / .form-btn 已下沉到 TermSshForm.vue；
+   .serial-* 已下沉到 TermSerialPanel.vue（各自保留一份，改一处须同步）。 */
 
 /* ---------- 终端主体（含水印） ---------- */
 .term-body {
@@ -742,33 +594,11 @@ onUnmounted(() => {
 }
 
 
-/* ---------- 底部操作栏 ---------- */
-.term-footer {
-  position: relative;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: var(--term-overlay);
-  backdrop-filter: blur(4px);
-  border-top: 1px solid var(--term-line);
-  font-size: 0.85rem;
-  color: var(--term-text-sub);
-}
-.term-footer-left { display: flex; gap: 8px; }
-.term-footer-right { display: flex; align-items: center; gap: 14px; }
-.ft-btn {
-  color: var(--term-accent-bright);
-  border-color: rgba(88, 166, 255, 0.3);
-}
-.ft-btn:hover {
-  color: var(--term-accent-bright);
-  border-color: rgba(88, 166, 255, 0.5);
-  background: rgba(88, 166, 255, 0.08);
-}
+/* ---------- 底部操作栏 ----------
+   .term-footer / .ft-btn / .term-shortcut 已下沉到 TermFooter.vue（含其 ≤640px 媒体查询）。 */
 
-/* ---------- 窄屏适配（≤640px）：header 三段换行、footer 换行保操作区 ---------- */
+/* ---------- 窄屏适配（≤640px）：header 三段换行 ----------
+   footer / ssh-form 的窄屏规则已随各自组件下沉（TermFooter / TermSshForm）。 */
 @media (max-width: 640px) {
   .term-header {
     flex-wrap: wrap;
@@ -783,12 +613,5 @@ onUnmounted(() => {
     flex: 1 1 100%;
     justify-content: flex-start;
   }
-  .term-footer {
-    flex-wrap: wrap;
-    row-gap: 6px;
-    padding: 8px 12px;
-  }
-  .term-footer-right { flex-wrap: wrap; row-gap: 4px; }
-  .ssh-form { padding: 20px 18px; }
 }
 </style>

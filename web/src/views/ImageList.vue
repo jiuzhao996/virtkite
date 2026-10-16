@@ -5,22 +5,8 @@
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- Tab 1 云镜像/模板盘：登记列表（创建 VM「云镜像」方式的数据源） -->
       <el-tab-pane label="云镜像 / 模板盘" name="images">
-        <!-- 存储容量区：dir 池 capacity 是文件系统级的，同盘多池口径完全相同，
-             故只画一条总容量条（取容量最大的池），不再逐池重复同一条进度条 -->
-        <div v-if="poolCap" class="pool-caps">
-          <div class="pool-caps-head">
-            <span class="pool-caps-title">存储容量</span>
-            <span class="pool-caps-sub">全部 {{ poolCaps.length }} 个存储池共用同一文件系统，合并显示</span>
-          </div>
-          <div class="pool-cap-row">
-            <span class="pool-cap-name">总计</span>
-            <div class="pool-cap-track">
-              <div class="pool-cap-fill" :style="{ width: poolCap.pct + '%', background: capColor(poolCap.pct) }" />
-            </div>
-            <span class="pool-cap-text mono">已用 {{ fmtSizeBytes(poolCap.used) }} / {{ fmtSizeBytes(poolCap.total) }}</span>
-            <span class="pool-cap-pct mono" :style="{ color: capColor(poolCap.pct) }">{{ poolCap.pct }}%</span>
-          </div>
-        </div>
+        <!-- 存储容量条（合并显示，取容量最大的池）→ images/components/PoolCapacityBar.vue -->
+        <PoolCapacityBar :pool-cap="poolCap" :pool-caps="poolCaps" />
         <el-card shadow="never">
           <!-- 原左右分组 gap 为 var(--space-lg)（12px），经 gap/right-gap 传入保持不变 -->
           <Toolbar gap="var(--space-lg)" right-gap="var(--space-lg)">
@@ -99,100 +85,22 @@
 
       <!-- Tab 2 ISO 安装镜像：只读展示激活存储池中的 .iso 卷（创建 VM「本地安装介质」方式的数据源） -->
       <el-tab-pane label="ISO 安装镜像" name="iso">
-        <el-card shadow="never">
-          <Toolbar gap="var(--space-lg)" right-gap="var(--space-lg)">
-            <template #left>
-              <el-button :icon="Refresh" :loading="isoLoading" @click="loadIso">刷新</el-button>
-              <span class="os-hint">ISO 为共享安装介质，管理（上传/删除）请到对应存储池</span>
-            </template>
-            <template #right>
-              <span class="count">共 {{ isoItems.length }} 个</span>
-            </template>
-          </Toolbar>
-
-          <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            style="margin-bottom: 12px"
-            title="ISO 用于创建 VM 的「本地安装介质 (ISO)」方式：安装系统时从激活存储池选择 ISO 挂载光驱。可到「ISO 市场」tab 一键下载官方安装镜像。"
-          />
-          <el-table v-loading="isoLoading" :data="isoItems" stripe border style="width: 100%">
-            <template #empty><el-empty description="激活存储池中未发现 .iso 卷" :image-size="80" /></template>
-            <el-table-column label="名称" min-width="200">
-              <template #default="{ row }">
-                <span class="mono">{{ row.name }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="大小" width="120">
-              <template #default="{ row }">{{ fmtSizeBytes(row.capacity) }}</template>
-            </el-table-column>
-            <el-table-column label="来源存储池" width="140">
-              <template #default="{ row }">{{ row.pool }}</template>
-            </el-table-column>
-            <el-table-column label="路径" min-width="280" show-overflow-tooltip>
-              <template #default="{ row }">
-                <span class="mono">{{ row.path }}</span>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
+        <ImageIsoTab :iso-items="isoItems" :iso-loading="isoLoading" @refresh="loadIso" />
       </el-tab-pane>
       <!-- Tab 模板制作：ISO → 制作机 → 固化模板 的引导入口（operator+；模板就是「自己的云镜像」） -->
       <el-tab-pane v-if="canOperate" label="模板制作" name="build" lazy>
-        <el-card shadow="never">
-          <el-alert
-            type="info" :closable="false" show-icon style="margin-bottom: 16px"
-            title="流程：① 选一个已下载的 ISO 建「制作机」→ ② 用控制台（VNC）进系统装 OS 并配置 → ③ 关机后点「固化为模板」，平台清洗镜像、注入基础优化与平台公钥、登记为模板。之后即可在创建向导「云镜像」方式下批量克隆。"
-          />
-
-          <h4 class="build-h">① 建制作机</h4>
-          <el-form label-width="72px" inline>
-            <el-form-item label="名称">
-              <el-input v-model="buildForm.name" placeholder="如 ubuntu2404-builder" style="width: 190px" />
-            </el-form-item>
-            <el-form-item label="ISO">
-              <el-select v-model="buildForm.isoPath" placeholder="选择已下载的 ISO" filterable style="width: 300px" v-loading="isoLoading">
-                <el-option v-for="i in isoItems" :key="i.path" :label="i.name + '（' + i.pool + '）'" :value="i.path" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="磁盘">
-              <el-input-number v-model="buildForm.diskGb" :min="5" :max="500" />
-            </el-form-item>
-            <el-form-item label="池">
-              <el-select v-model="buildForm.pool" style="width: 120px">
-                <el-option v-for="p in poolNames" :key="p" :label="p" :value="p" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="网络">
-              <el-select v-model="buildForm.network" style="width: 140px">
-                <el-option v-for="n in netNames" :key="n" :label="n" :value="n" />
-              </el-select>
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" :icon="Plus" :loading="buildBusy" @click="createBuilder">创建制作机</el-button>
-            </el-form-item>
-          </el-form>
-          <div class="build-tip">建好后是关机态：去「虚拟机 → 详情 → 控制台（VNC）」装系统，装完关机再回来固化。</div>
-
-          <h4 class="build-h">② 固化为模板（关机态制作机）</h4>
-          <el-table :data="buildVMs" v-loading="buildVMLoading" size="small" stripe style="width: 100%">
-            <template #empty><el-empty description="没有关机态的制作机（新建或关机后出现在这里）" :image-size="60" /></template>
-            <el-table-column prop="name" label="制作机" min-width="200" />
-            <el-table-column label="磁盘 (GB)" width="110">
-              <template #default="{ row }">{{ row.disk_gb }}</template>
-            </el-table-column>
-            <el-table-column label="创建时间" width="180">
-              <template #default="{ row }">{{ fmtDateTime(row.created_at) }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="150" fixed="right">
-              <template #default="{ row }">
-                <el-button text type="primary" size="small" :icon="Files" @click="openFinalizeFor(row)">固化为模板</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-        <VmFinalizeDialog ref="finalizeRef" v-model="finalizeDlg" :vm-id="finalizeVM?.id || 0" :vm-name="finalizeVM?.name || ''" @done="loadBuildVMs" />
+        <ImageBuildTab
+          :build-form="buildForm"
+          :build-busy="buildBusy"
+          :build-vms="buildVMs"
+          :build-vm-loading="buildVMLoading"
+          :iso-items="isoItems"
+          :iso-loading="isoLoading"
+          :pool-names="poolNames"
+          :net-names="netNames"
+          @create-builder="createBuilder"
+          @finalize-done="loadBuildVMs"
+        />
       </el-tab-pane>
       <!-- Tab 3 容器镜像（Docker 资源拆分批次）：operator+ 可见（viewer 不出 tab）；
            lazy 首次激活才挂载（避免未激活时打 docker 接口）；门控重试接 ImageTab.refresh
@@ -208,104 +116,70 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 上传镜像 -->
-    <el-dialog :close-on-click-modal="false" v-model="dialog" title="上传镜像" width="500px">
-      <el-form label-width="90px">
-        <el-form-item label="名称" required>
-          <el-input v-model="form.name" placeholder="镜像名称" />
-        </el-form-item>
-        <el-form-item label="OS 版本">
-          <el-input v-model="form.os_version" placeholder="如 Ubuntu 22.04" />
-        </el-form-item>
-        <el-form-item label="存储池">
-          <el-select
-            v-model="form.pool"
-            filterable
-            allow-create
-            default-first-option
-            placeholder="默认 img 池"
-            style="width: 100%"
-          >
-            <el-option v-for="p in poolOptions" :key="p" :label="p" :value="p" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="作为模板">
-          <el-switch v-model="form.is_template" />
-        </el-form-item>
-        <el-form-item label="文件" required>
-          <el-upload
-            ref="uploadRef"
-            drag
-            :auto-upload="false"
-            :show-file-list="true"
-            :limit="1"
-            :on-change="onFileChange"
-            :on-remove="onFileRemove"
-            accept=".qcow2,.raw,.vmdk"
-          >
-            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-            <div class="el-upload__text">拖入文件或 <em>点击选择</em></div>
-          </el-upload>
-        </el-form-item>
-        <!-- 上传进度：镜像可达数 GB，无进度条时用户无法判断是否卡死 -->
-        <el-form-item v-if="uploading" label="进度">
-          <el-progress
-            :percentage="uploadPct"
-            :stroke-width="10"
-            :format="(p) => (p >= 100 ? '服务端写入中…' : p + '%')"
-            style="width: 100%"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialog = false">取消</el-button>
-        <el-button type="primary" :loading="uploading" :disabled="!file" @click="upload">上传</el-button>
-      </template>
-    </el-dialog>
+    <!-- 上传镜像 → images/components/ImageUploadDialog.vue（文件经 v-model:file 回传页面） -->
+    <ImageUploadDialog
+      ref="uploadRef"
+      v-model="dialog"
+      v-model:file="file"
+      :form="form"
+      :pool-options="poolOptions"
+      :uploading="uploading"
+      :upload-pct="uploadPct"
+      @upload="upload"
+    />
 
-    <!-- 基于模板创建虚拟机 -->
-    <el-dialog v-model="cloneDialog" :title="'基于模板创建虚拟机 - ' + (cloneImg.name || '')" width="480px">
-      <el-alert type="info" :closable="false" show-icon class="clone-tip" title="将引用模板文件作为系统盘创建虚拟机，创建后可在虚拟机列表管理" />
-      <el-form label-width="90px">
-        <el-form-item label="名称" required>
-          <el-input v-model="cloneForm.name" placeholder="仅字母、数字、_、-" />
-        </el-form-item>
-        <el-form-item label="CPU 核数">
-          <el-input-number v-model="cloneForm.vcpu" :min="1" :max="64" />
-        </el-form-item>
-        <el-form-item label="内存(MB)">
-          <el-input-number v-model="cloneForm.memory_mb" :min="256" :max="131072" :step="256" />
-        </el-form-item>
-        <el-form-item label="网络">
-          <el-select v-model="cloneForm.network" clearable placeholder="留空使用 default" style="width: 100%">
-            <el-option
-              v-for="n in netOptions"
-              :key="n.name"
-              :label="n.gateway ? n.name + '（' + n.gateway + '）' : n.name"
-              :value="n.name"
-            />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="cloneDialog = false">取消</el-button>
-        <el-button type="primary" :loading="cloning" @click="cloneVm">创建</el-button>
-      </template>
-    </el-dialog>
+    <!-- 基于模板创建虚拟机 → images/components/ImageCloneDialog.vue -->
+    <ImageCloneDialog
+      v-model="cloneDialog"
+      :clone-img="cloneImg"
+      :clone-form="cloneForm"
+      :net-options="netOptions"
+      :cloning="cloning"
+      @create="cloneVm"
+    />
   </div>
 </template>
 
 <script setup>
+// ============================================================================
+// 镜像管理（ImageList）
+// ----------------------------------------------------------------------------
+// 职责：五 tab——「云镜像/模板盘」（登记列表，创建 VM 的数据源）、「ISO 安装镜像」
+//       （激活池中的 .iso 卷，只读）、「模板制作」（ISO→制作机→固化模板，operator+）、
+//       「容器镜像」（ImageTab，operator+）、「镜像市场」（ImageMarketHome 入口页）。
+//       并承载上传镜像、标记/取消模板、删除、基于模板创建 VM。
+//
+// 数据流：
+//   云镜像 ← load() → api.listImages；前端 search 关键字过滤得 filteredItems
+//   容量条 ← loadPools() → api.listStoragePools（与上传下拉一次响应双消费：poolOptions + poolCaps）
+//   ISO ← loadIso()（逐激活池 getStoragePool 聚合 .iso，allSettled 单池失败不拖垮全局）
+//   模板制作 ← loadBuild()（池/网络候选 + 关机态 VM 列表）；createBuilder 走 api.createVM + pollTask
+//   深链 ?tab=（白名单内采纳）；tab 变更经 syncTabToUrl 写回 URL
+//
+// 已拆出的子组件（web/src/views/images/components/）：
+//   PoolCapacityBar.vue     存储容量合并条（纯展示）
+//   ImageIsoTab.vue         ISO 安装镜像 tab 内容（纯展示 + refresh）
+//   ImageBuildTab.vue       模板制作 tab 内容（建机/固化经 emit 回页面；固化弹窗自持状态）
+//   ImageUploadDialog.vue   上传镜像弹窗（文件经 v-model:file 回传，upload 由页面执行）
+//   ImageCloneDialog.vue    基于模板创建 VM 弹窗（create 由页面执行）
+//
+// 刻意没拆的：云镜像主表格（与 Toolbar/搜索/筛选/行内动作强耦合，且是本页主内容）。
+// ⚠️ .mono 与 .ops 留在本页；下拉/表单用到的 fmtSizeGB 等仍在页面。
+// ============================================================================
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { syncTabToUrl } from '../utils/tab-url'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Upload, Delete, Star, StarFilled, Cpu, Search, Plus, Files } from '@element-plus/icons-vue'
+import { Refresh, Upload, Delete, Star, StarFilled, Cpu, Search } from '@element-plus/icons-vue'
 import ImageMarketHome from './images/components/ImageMarketHome.vue'
 import ImageMarket from './images/components/ImageMarket.vue'
 import ImageIsoMarket from './images/components/ImageIsoMarket.vue'
+import PoolCapacityBar from './images/components/PoolCapacityBar.vue'
+import ImageIsoTab from './images/components/ImageIsoTab.vue'
+import ImageBuildTab from './images/components/ImageBuildTab.vue'
+import ImageUploadDialog from './images/components/ImageUploadDialog.vue'
+import ImageCloneDialog from './images/components/ImageCloneDialog.vue'
 import DockerGate from '../components/DockerGate.vue'
-import VmFinalizeDialog from '../components/VmFinalizeDialog.vue'
 import ImageTab from './docker/components/ImageTab.vue'
 const dockerTabRef = ref(null)
 import PageHead from '../components/PageHead.vue'
@@ -313,7 +187,7 @@ import Toolbar from '../components/Toolbar.vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task'
-import { fmtSizeGB, fmtSizeBytes, fmtDateTime, errMsg, isCancel, clampPct } from '../utils/format'
+import { fmtSizeGB, fmtDateTime, errMsg, isCancel, clampPct } from '../utils/format'
 
 const { isAdmin, canOperate } = useAuth()
 const route = useRoute()
@@ -353,12 +227,7 @@ const filteredItems = computed(() => {
   return items.value.filter((i) => (i.name || '').toLowerCase().includes(kw))
 })
 
-function onFileChange(uploadFile) {
-  file.value = uploadFile.raw
-}
-function onFileRemove() {
-  file.value = null
-}
+// onFileChange / onFileRemove（上传文件选择）已随上传弹窗下沉到 ImageUploadDialog.vue
 
 async function load() {
   loading.value = true
@@ -427,9 +296,7 @@ const buildVMs = ref([])
 const buildVMLoading = ref(false)
 const poolNames = ref(['base', 'images', 'exten'])
 const netNames = ref(['default'])
-const finalizeDlg = ref(false)
-const finalizeRef = ref(null)
-const finalizeVM = ref(null)
+// 固化弹窗的开关 / 目标 VM / 组件 ref 已随「模板制作」tab 下沉到 ImageBuildTab.vue
 
 async function loadBuild() {
   if (!isoLoaded.value) {
@@ -490,12 +357,6 @@ async function createBuilder() {
   }
 }
 
-function openFinalizeFor(row) {
-  finalizeVM.value = row
-  finalizeRef.value?.prepare()
-  finalizeDlg.value = true
-}
-
 /* ── 存储池容量区（质感专项）── */
 // 与上传下拉共用 listStoragePools 一次响应（loadPools 内双消费）；仅收激活池
 // （capacity/allocation 为 libvirt 实时口径，未激活池拿不到值）；拉取失败 → 空数组 → 区块隐藏
@@ -505,12 +366,7 @@ const poolCap = computed(() => {
   if (!poolCaps.value.length) return null
   return poolCaps.value.reduce((a, b) => (b.total > a.total ? b : a))
 })
-// 比例条配色：>90% 红 / >75% 橙 / 其余品牌青绿（与 VmList 状态条同源语义色，两主题各有限定值）
-function capColor(pct) {
-  if (pct > 90) return 'var(--color-danger)'
-  if (pct > 75) return 'var(--color-warning)'
-  return 'var(--color-primary)'
-}
+// capColor（容量条配色）已随容量条下沉到 PoolCapacityBar.vue
 
 // 存储池下拉：默认 img，可手输其他池名；同一响应顺带产出容量条数据（一次拉取，双消费）
 async function loadPools() {
@@ -698,86 +554,6 @@ onMounted(() => {
 .mono {
   font-size: 0.85rem;
 }
-.clone-tip {
-  margin-bottom: var(--space-lg);
-}
-.os-hint {
-  color: var(--color-muted-foreground);
-  font-size: 0.82rem;
-}
-/* ── 存储池容量区（质感专项）：轻量区块（非 el-card），底色用 muted 令牌与下方列表卡区分层级 ── */
-.pool-caps {
-  background: var(--color-muted);
-  border-radius: var(--radius-md);
-  padding: var(--space-md) var(--space-xl);
-  margin-bottom: var(--space-lg);
-}
-.pool-caps-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-md);
-  margin-bottom: var(--space-sm);
-}
-.pool-caps-title {
-  font-size: 0.8rem;
-  font-weight: 700;
-  color: var(--color-foreground);
-}
-.pool-caps-sub {
-  font-size: 0.75rem;
-  color: var(--color-muted-foreground);
-}
-.pool-cap-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-lg);
-  padding: var(--space-sm) 0;
-}
-.pool-cap-name {
-  width: 140px;
-  flex-shrink: 0;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--color-foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 槽底用边框族加深档：在 muted 面板底上两种主题都可辨（--color-border 过淡） */
-.pool-cap-track {
-  flex: 1;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--color-border-strong);
-  overflow: hidden;
-}
-.pool-cap-fill {
-  height: 100%;
-  border-radius: 999px;
-  transition: width var(--dur-base) var(--ease-standard);
-}
-.pool-cap-text {
-  flex-shrink: 0;
-  font-size: 0.8rem;
-  color: var(--color-muted-foreground);
-}
-.pool-cap-pct {
-  flex-shrink: 0;
-  width: 44px;
-  text-align: right;
-  font-size: 0.8rem;
-  font-weight: 700;
-}
-
-/* ── 模板制作 tab ── */
-.build-h {
-  margin: 6px 0 14px;
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-.build-tip {
-  margin: -4px 0 20px;
-  color: var(--color-muted-foreground);
-  font-size: 0.82rem;
-}
+/* .clone-tip / .pool-caps 前缀 / .os-hint / .build-h / .build-tip 已随各区块下沉到
+   images/components/ 下的 PoolCapacityBar / ImageIsoTab / ImageBuildTab（各留一份，改一处须同步） */
 </style>
