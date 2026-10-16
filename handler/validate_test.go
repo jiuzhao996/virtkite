@@ -424,8 +424,11 @@ var (
 // UUID 重复会撞 vms.uuid 唯一索引导致创建失败。冗余清理批次已把三份逐字相同的实现
 // 收归 service/virt 一处导出，本测试从 handler 调用路径验证共享实现。
 func TestHandlerRandomMACAndUUID(t *testing.T) {
-	t.Run("MAC 前缀固定 52:54:00 且 300 次不重复", func(t *testing.T) {
-		seen := make(map[string]bool, 300)
+	t.Run("MAC 前缀固定 52:54:00 且格式合法（不苛求 300 次互斥）", func(t *testing.T) {
+		// 刻意**不断言「300 次互不重复」**：RandomMAC 是 52:54:00 + 3 字节随机（24 位空间），
+		// 300 次抽样按生日问题约有 0.27% 概率碰撞——那是随机性的正常现象、非缺陷；断言它只会制造
+		// 偶发假失败（2026-10-16 就偶发失败过一次）。改为断言「格式合法」+「样本内至少两个不同」。
+		seen := map[string]bool{}
 		for i := 0; i < 300; i++ {
 			mac, err := virt.RandomMAC()
 			if err != nil {
@@ -434,10 +437,10 @@ func TestHandlerRandomMACAndUUID(t *testing.T) {
 			if !macFormatHandler.MatchString(mac) {
 				t.Fatalf("MAC 格式不符（期望 52:54:00:xx:xx:xx）：实际 %q", mac)
 			}
-			if seen[mac] {
-				t.Fatalf("300 次生成出现重复 MAC：%s（同网段会 ARP 冲突）", mac)
-			}
 			seen[mac] = true
+		}
+		if len(seen) < 2 {
+			t.Fatal("300 次生成的 MAC 全相同，生成器疑似退化为常量")
 		}
 	})
 
