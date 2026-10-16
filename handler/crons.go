@@ -1,18 +1,16 @@
 package handler
 
+// crons.go 计划任务的 HTTP 处理器：列表/预览/执行历史、创建/更新/删除/启停/手动触发/复制
+// 与内置模板查询。数据结构见 crons_types.go，校验与参数归一化见 crons_validate.go。
+
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/cron"
 	"gorm.io/gorm"
@@ -38,41 +36,6 @@ type CronsHandler struct {
 // NewCronsHandler 创建计划任务处理器。
 func NewCronsHandler(db *gorm.DB, sched *cron.Scheduler) *CronsHandler {
 	return &CronsHandler{DB: db, Scheduler: sched}
-}
-
-// cronTaskItem 列表项：任务本体 + 下次执行时间预览 + 最近执行记录。
-type cronTaskItem struct {
-	model.ScheduledTask
-	NextRun    *time.Time    `json:"next_run"` // 表达式非法或 366 天内无匹配（如 2 月 31 日）时为 null
-	RecentRuns []cronRunItem `json:"recent_runs"`
-	// Stale 死开关命中：预期执行时刻已过宽限期仍无执行记录（调度器可能未运行）
-	Stale    bool       `json:"stale"`
-	StaleDue *time.Time `json:"stale_due,omitempty"`
-}
-
-// cronRunItem 执行历史条目（列表内嵌精简版；完整历史走 GET /api/crons/:id/runs）。
-type cronRunItem struct {
-	Status    string    `json:"status"`     // running / success / failed（model.CronRun 状态常量）
-	StartedAt time.Time `json:"started_at"` // 执行开始时间
-	Output    string    `json:"output"`     // 结果摘要：成功为成果描述、失败为错误摘要（≤2000 字符）
-}
-
-// cronTaskReq 创建/更新请求体。全部字段可选：Create 用默认值兜底，Update 只改出现的键，
-// 校验始终针对「合并后的完整任务」做，避免部分更新造成 action 与 params 不配套。
-type cronTaskReq struct {
-	Name     *string `json:"name"`
-	CronExpr *string `json:"cron_expr"`
-	Action   *string `json:"action"`
-	Params   *string `json:"params"`
-	Enabled  *bool   `json:"enabled"`
-	Keep     *int    `json:"keep"` // 保留最近 N 份产物（快照/备份），1-365
-	// 死开关宽限（分钟，0=关闭，上限 1440）与失败重试（次数 0-3、间隔秒 1-120）
-	GraceMinutes  *int `json:"grace_minutes"`
-	RetryCount    *int `json:"retry_count"`
-	RetryInterval *int `json:"retry_interval"`
-	// 链式编排（A3）：成功后/失败后触发的下一跳任务 id。0 或 null 表示清除（不链）。
-	OnSuccessTaskID *uint `json:"on_success_task_id"`
-	OnFailureTaskID *uint `json:"on_failure_task_id"`
 }
 
 // List GET /api/crons：全部任务 + 每条的下次执行时间预览 + 最近 3 条执行记录。
@@ -154,31 +117,6 @@ func (h *CronsHandler) recentRuns(taskID uint, limit int) []cronRunItem {
 		items = append(items, cronRunItem{Status: r.Status, StartedAt: r.StartedAt, Output: r.Output})
 	}
 	return items
-}
-
-// cronTemplate 内置任务模板（出厂预设，前端「从模板新建」一键填充表单）。
-// 需要目标（vm_id / playbook）的动作不放模板——无法预设，只能现选。
-type cronTemplate struct {
-	Key           string `json:"key"`
-	Name          string `json:"name"`
-	Desc          string `json:"desc"`
-	Action        string `json:"action"`
-	CronExpr      string `json:"cron_expr"`
-	Params        string `json:"params"`
-	Keep          int    `json:"keep"`
-	GraceMinutes  int    `json:"grace_minutes"`
-	RetryCount    int    `json:"retry_count"`
-	RetryInterval int    `json:"retry_interval"`
-}
-
-// cronTemplates 出厂模板清单（顺序即前端展示顺序）。
-var cronTemplates = []cronTemplate{
-	{Key: "daily-db-backup", Name: "每日数据库备份", Desc: "每天 03:00 备份数据库，保留最近 7 份",
-		Action: cron.ActionDBBackup, CronExpr: "0 3 * * *", Params: "{}", Keep: 7, GraceMinutes: 30, RetryInterval: 60},
-	{Key: "hourly-healthcheck", Name: "每小时容器健康巡检", Desc: "每小时巡检容器健康，unhealthy 自动重启并通知",
-		Action: cron.ActionContainerHealthcheck, CronExpr: "0 * * * *", Params: `{"notify":true}`, Keep: 7, GraceMinutes: 15, RetryInterval: 60},
-	{Key: "daily-image-check", Name: "每日镜像版本巡检", Desc: "每天 08:00 检查本地镜像是否有新版可更新",
-		Action: cron.ActionImageVersionCheck, CronExpr: "0 8 * * *", Params: "{}", Keep: 7, GraceMinutes: 60, RetryInterval: 60},
 }
 
 // Templates GET /api/crons/templates：内置任务模板（只读）。
@@ -388,238 +326,6 @@ func (h *CronsHandler) RunNow(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"message": "已执行一次"})
-}
-
-// applyCronReq 把请求中出现的字段合并到任务上，并对合并后的完整任务做校验与参数归一化。
-// 返回的 error 均为固定中文文案（可直接回显），不含内部细节。
-func applyCronReq(st *model.ScheduledTask, req cronTaskReq) error {
-	if req.Name != nil {
-		st.Name = strings.TrimSpace(*req.Name)
-	}
-	if req.CronExpr != nil {
-		st.CronExpr = strings.TrimSpace(*req.CronExpr)
-	}
-	if req.Action != nil {
-		st.Action = strings.TrimSpace(*req.Action)
-	}
-	if req.Params != nil {
-		st.Params = *req.Params
-	}
-	if req.Enabled != nil {
-		st.Enabled = *req.Enabled
-	}
-	if req.OnSuccessTaskID != nil {
-		st.OnSuccessTaskID = nilIfZero(*req.OnSuccessTaskID)
-	}
-	if req.OnFailureTaskID != nil {
-		st.OnFailureTaskID = nilIfZero(*req.OnFailureTaskID)
-	}
-	if req.GraceMinutes != nil {
-		st.GraceMinutes = *req.GraceMinutes
-	}
-	if req.RetryCount != nil {
-		st.RetryCount = *req.RetryCount
-	}
-	if req.RetryInterval != nil {
-		st.RetryInterval = *req.RetryInterval
-	}
-	if req.Keep != nil {
-		st.Keep = *req.Keep
-	} else if st.Keep <= 0 {
-		// 未显式给出且存量值非法（历史行零值）时兜底默认值，避免「只改名字」被
-		// validateCronTask 的范围校验误拒
-		st.Keep = cron.DefaultKeep
-	}
-	// 重试间隔与死开关宽限的存量零值兜底（RetryInterval 校验下限为 1，零值会被拒）
-	if st.RetryInterval <= 0 {
-		st.RetryInterval = cron.DefaultRetryInterval
-	}
-	if st.GraceMinutes < 0 {
-		st.GraceMinutes = cron.DefaultGrace
-	}
-	_, err := validateCronTask(st)
-	return err
-}
-
-// nilIfZero 把 0 转成 nil（链式引用清空语义：任务 id 从 1 起，0 表示不链）。
-func nilIfZero(v uint) *uint {
-	if v == 0 {
-		return nil
-	}
-	return &v
-}
-
-// ensureChainTargets 校验链式下一跳任务存在且不自指。返回 false 表示响应已写好。
-func (h *CronsHandler) ensureChainTargets(c *gin.Context, st *model.ScheduledTask) bool {
-	for _, ref := range []*uint{st.OnSuccessTaskID, st.OnFailureTaskID} {
-		if ref == nil {
-			continue
-		}
-		if st.ID != 0 && *ref == st.ID {
-			Fail(c, http.StatusBadRequest, "链式下一跳不能指向任务自身")
-			return false
-		}
-		var n int64
-		if err := h.DB.Model(&model.ScheduledTask{}).Where("id = ?", *ref).Count(&n).Error; err != nil {
-			ErrorResponse(c, http.StatusInternalServerError, err)
-			return false
-		}
-		if n == 0 {
-			Fail(c, http.StatusBadRequest, fmt.Sprintf("链式下一跳任务 %d 不存在", *ref))
-			return false
-		}
-	}
-	return true
-}
-
-// validateCronTask 校验任务的名称/cron 表达式/动作/参数（纯校验，不查库），
-// 并把 Params 归一化为白名单键的 JSON。vm_snapshot 时返回解析出的 vm_id（>0）。
-// 错误消息为固定中文文案，调用方可直接 Fail 回显。
-func validateCronTask(st *model.ScheduledTask) (uint, error) {
-	if st.Name == "" {
-		return 0, errors.New("任务名不能为空")
-	}
-	if utf8.RuneCountInString(st.Name) > 100 {
-		return 0, errors.New("任务名不能超过 100 个字符")
-	}
-	if utf8.RuneCountInString(st.CronExpr) > 50 {
-		return 0, errors.New("cron 表达式不能超过 50 个字符")
-	}
-	// 保留份数：1-365 份（未显式给值时 applyCronReq 已兜底默认值，0/负数到此即为非法入参）
-	if st.Keep < 1 || st.Keep > 365 {
-		return 0, fmt.Errorf("keep（保留份数）必须在 1-365 之间，当前为 %d", st.Keep)
-	}
-	// 死开关宽限：0=关闭；上限 1440（一天），超出按非法入参拒绝，避免逐分钟回看退化成大循环
-	if st.GraceMinutes < 0 || st.GraceMinutes > 1440 {
-		return 0, fmt.Errorf("grace_minutes（死开关宽限分钟）必须在 0-1440 之间，当前为 %d（0 表示关闭）", st.GraceMinutes)
-	}
-	if st.RetryCount < 0 || st.RetryCount > 3 {
-		return 0, fmt.Errorf("retry_count（失败重试次数）必须在 0-3 之间，当前为 %d", st.RetryCount)
-	}
-	if st.RetryInterval < 1 || st.RetryInterval > 120 {
-		return 0, fmt.Errorf("retry_interval（重试间隔秒）必须在 1-120 之间，当前为 %d", st.RetryInterval)
-	}
-	spec, err := cron.ParseCron(st.CronExpr)
-	if err != nil {
-		return 0, err // ParseCron 错误为固定中文文案，可直接回显
-	}
-	// 排除「永不匹配」的表达式（如 0 0 31 2 *——2 月 31 日不存在），建了也永远不跑
-	if next := cron.Next(spec, time.Now()); next.IsZero() {
-		return 0, errors.New("cron 表达式在未来 366 天内没有可执行时刻，请检查字段取值")
-	}
-
-	switch st.Action {
-	case cron.ActionVMSnapshot:
-		var params struct {
-			VMID uint `json:"vm_id"`
-		}
-		if strings.TrimSpace(st.Params) == "" {
-			return 0, errors.New(`vm_snapshot 需要 params，例如 {"vm_id":14}`)
-		}
-		if err := json.Unmarshal([]byte(st.Params), &params); err != nil || params.VMID == 0 {
-			return 0, errors.New(`params 必须为 JSON 且包含有效的 vm_id，例如 {"vm_id":14}`)
-		}
-		// 归一化存储：只保留白名单键，屏蔽多余内容与注入面
-		b, merr := json.Marshal(map[string]uint{"vm_id": params.VMID})
-		if merr != nil {
-			return 0, errors.New("params 序列化失败")
-		}
-		st.Params = string(b)
-		return params.VMID, nil
-	case cron.ActionDBBackup:
-		st.Params = "{}" // 预留扩展位，当前无可配参数
-		return 0, nil
-	case cron.ActionAnsiblePlaybook:
-		// P4-S3：归一化 playbook id（白名单正则）与目标；executor 会逐台复核运行态/IP/托管凭据，
-		// 这里只做结构性校验。目标支持显式 targets 或主机组 group_id（后者成员动态生效）。
-		var params struct {
-			Playbook string `json:"playbook"`
-			Targets  []uint `json:"targets"`
-			GroupID  uint   `json:"group_id"`
-		}
-		if strings.TrimSpace(st.Params) == "" {
-			return 0, errors.New(`ansible_playbook 需要 params，例如 {"playbook":"sysctl-tuning","targets":[89]} 或 {"playbook":"sysctl-tuning","group_id":3}`)
-		}
-		if err := json.Unmarshal([]byte(st.Params), &params); err != nil {
-			return 0, errors.New(`params 必须为 JSON，例如 {"playbook":"sysctl-tuning","targets":[89]}`)
-		}
-		if !cron.AnsiblePlaybookIDRe.MatchString(params.Playbook) {
-			return 0, errors.New("playbook ID 非法（字母数字与 -_，字母开头）")
-		}
-		if _, err := os.Stat(config.DataPath("ansible", "playbooks", params.Playbook+".yml")); err != nil {
-			return 0, fmt.Errorf("playbook 不存在: %s", params.Playbook)
-		}
-		if len(params.Targets) == 0 && params.GroupID == 0 {
-			return 0, errors.New("目标不能为空（targets 或 group_id 至少其一）")
-		}
-		if len(params.Targets) > 50 {
-			return 0, errors.New("单次执行最多 50 台")
-		}
-		norm := map[string]interface{}{"playbook": params.Playbook}
-		if len(params.Targets) > 0 {
-			norm["targets"] = params.Targets
-		}
-		if params.GroupID > 0 {
-			norm["group_id"] = params.GroupID
-		}
-		b, merr := json.Marshal(norm)
-		if merr != nil {
-			return 0, errors.New("params 序列化失败")
-		}
-		st.Params = string(b)
-		return 0, nil
-	case cron.ActionContainerHealthcheck:
-		// 归一化：只保留白名单键 notify（默认 true），屏蔽多余内容
-		notifyOn := true
-		if strings.TrimSpace(st.Params) != "" {
-			var params struct {
-				Notify *bool `json:"notify"`
-			}
-			if err := json.Unmarshal([]byte(st.Params), &params); err == nil && params.Notify != nil {
-				notifyOn = *params.Notify
-			}
-		}
-		b, merr := json.Marshal(map[string]bool{"notify": notifyOn})
-		if merr != nil {
-			return 0, errors.New("params 序列化失败")
-		}
-		st.Params = string(b)
-		return 0, nil
-	case cron.ActionImageVersionCheck:
-		st.Params = "{}" // 无参数
-		return 0, nil
-	case cron.ActionDesignerDrift:
-		st.Params = "{}" // 无参数：巡检全部有快照的计划
-		return 0, nil
-	default:
-		return 0, errors.New("action 只支持 vm_snapshot（定时快照）/ db_backup（定时备份数据库）/ ansible_playbook（定时执行 playbook）/ container_healthcheck（容器健康巡检）/ image_version_check（镜像版本巡检）/ designer_drift_check（架构漂移巡检）")
-	}
-}
-
-// ensureVMExists 校验 vm_snapshot 任务的 vm_id 指向存在的虚拟机（软删的查不到）。
-// 返回 false 表示响应已写好（DB 故障 500 / 查无此项 400），调用方直接 return。
-func (h *CronsHandler) ensureVMExists(c *gin.Context, st *model.ScheduledTask) bool {
-	if st.Action != cron.ActionVMSnapshot {
-		return true
-	}
-	var params struct {
-		VMID uint `json:"vm_id"`
-	}
-	// validateCronTask 已归一化 Params，这里解析失败只可能是脏数据，按参数错误处理
-	if err := json.Unmarshal([]byte(st.Params), &params); err != nil || params.VMID == 0 {
-		Fail(c, http.StatusBadRequest, "params 必须包含有效的 vm_id")
-		return false
-	}
-	var count int64
-	if err := h.DB.Model(&model.VM{}).Where("id = ?", params.VMID).Count(&count).Error; err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return false
-	}
-	if count == 0 {
-		Fail(c, http.StatusBadRequest, fmt.Sprintf("虚拟机 %d 不存在", params.VMID))
-		return false
-	}
-	return true
 }
 
 // taskEnabledText 启停结果文案
