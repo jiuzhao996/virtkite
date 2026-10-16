@@ -191,42 +191,21 @@
 
         <div v-if="detail.status === 'failed' && detail.error" class="detail-error">{{ detail.error }}</div>
 
-        <!-- 结构化执行日志（条目数组）：首屏 GET 全量 → WS 追平增量；hidden 调试/噪音行默认折叠、可展开 -->
-        <template v-if="logStructured">
-          <h4 class="detail-sec log-head">
-            <span>执行日志<span v-if="logLive" class="log-live">● 实时</span></span>
-            <span v-if="hiddenCount" class="log-toggle" @click="showDebug = !showDebug">
-              {{ showDebug ? '隐藏' : '显示' }} {{ hiddenCount }} 行调试
-            </span>
-          </h4>
-          <div ref="logViewRef" class="log-view mono">
-            <div v-if="!visibleLogEntries.length" class="log-empty">（暂无日志输出）</div>
-            <div
-              v-for="e in visibleLogEntries"
-              :key="e.seq"
-              class="log-line"
-              :class="'log-' + e.kind"
-            >
-              <span class="log-ts">{{ fmtLogTs(e.ts) }}</span>
-              <span class="log-text">{{ e.text }}</span>
-            </div>
-          </div>
-        </template>
+        <!-- 结构化执行日志（条目数组）：首屏 GET 全量 → WS 追平增量；hidden 调试/噪音行默认折叠、可展开。
+             渲染整体下沉到 TaskLogPanel 子组件，页面只喂原始 entries + 实时标志、转发 scrollToBottom -->
+        <TaskLogPanel
+          v-if="logStructured"
+          ref="logPanelRef"
+          v-model:debug="showDebug"
+          :entries="logEntries"
+          :live="logLive"
+        />
 
         <!-- 任务参数 payload：后端 model.Task.Payload 为 json:"-" 不下发，本块仅在接口放开后自动生效；
              键名含 password/passwd/secret/token/key（大小写不敏感）时值一律以 ****** 展示 -->
         <template v-if="payloadKVs.length">
           <h4 class="detail-sec">任务参数</h4>
-          <div class="kv-list">
-            <div v-for="kv in payloadKVs" :key="kv.k" class="kv-row">
-              <div class="kv-key mono">{{ kvLabel(kv.k) }}</div>
-              <div class="kv-val">
-                <span v-if="kv.masked" class="mono kv-masked">******</span>
-                <pre v-else-if="kv.pre" class="kv-pre mono">{{ kv.text }}</pre>
-                <span v-else class="kv-text">{{ kv.text }}</span>
-              </div>
-            </div>
-          </div>
+          <TaskKVList :kvs="payloadKVs" :label-fn="kvLabel" />
         </template>
 
         <template v-if="detailParsed">
@@ -253,16 +232,7 @@
           </div>
 
           <!-- 其余键值对：嵌套对象 / 长文本（如 ansible 输出）进等宽 pre 限高滚动，敏感键打码 -->
-          <div v-if="resultKVs.length" class="kv-list">
-            <div v-for="kv in resultKVs" :key="kv.k" class="kv-row">
-              <div class="kv-key mono">{{ kvLabel(kv.k) }}</div>
-              <div class="kv-val">
-                <span v-if="kv.masked" class="mono kv-masked">******</span>
-                <pre v-else-if="kv.pre" class="kv-pre mono">{{ kv.text }}</pre>
-                <span v-else class="kv-text">{{ kv.text }}</span>
-              </div>
-            </div>
-          </div>
+          <TaskKVList v-if="resultKVs.length" :kvs="resultKVs" :label-fn="kvLabel" />
         </template>
         <el-empty
           v-else-if="!payloadKVs.length && detail.status === 'success'"
@@ -275,7 +245,32 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+// ============================================================================
+// 任务中心（TaskList）
+// ----------------------------------------------------------------------------
+// 职责：展示后台异步任务（创建/克隆/删除/关机/装应用/跑 Playbook/镜像构建…）的
+//       列表、进度与结果。所有耗时操作都走「提交得 task → 后台执行 → 轮询看进度」，
+//       本页就是这条链路的可视窗口。
+//
+// 数据流：
+//   列表 ← fetchTaskPage()（api.listTasks；"进行中"筛选 = pending+running 两请求并发合并）
+//          ← usePagination 管分页/首屏 loading，search() 回第 1 页、load() 原地重拉
+//          ← tick 心跳：本页有进行中任务才每 3s 静默刷新，无则停
+//   详情 ← openDetail(row)：先落行快照开抽屉，活动态再单查 getTask 并用 tick 跟进终态
+//   日志 ← openLogStream()：首屏 GET 全量 → 非终态连 WS（一次性票据）追平增量，
+//          按 seq 去重、滚到底；抽屉关闭即断开
+//   批量 ← selectedRows 驱动：查看详情=恰好选 1 条，批量取消/删除=选中里有可处理项即可
+//
+// 关键坑位：见各函数上方注释（行点击钻取要 .stop、敏感键脱敏、保留卷两种形态归一、
+//           tasks 表无 started_at 的时间线降级等）。
+//
+// 已拆出的纯展示子组件（页面保留列表/筛分页/批量/轮询/日志 WS 逻辑）：
+//   tasks/components/TaskLogPanel.vue  结构化执行日志面板（含调试行折叠、实时徽标、滚到底）
+//   tasks/components/TaskKVList.vue    「任务参数」「执行结果」共用的键值对渲染器
+// 详情抽屉整体未拆：它的时间线/进度/日志与页面的轮询心跳（tick→refreshDetail）和
+// 日志 WS 生命周期强耦合，外拆需复制计时器或引入跨组件调用，不满足「明确自包含」。
+// ============================================================================
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Delete, Search, Monitor, View } from '@element-plus/icons-vue'
@@ -283,6 +278,8 @@ import { api } from '../api'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
+import TaskKVList from './tasks/components/TaskKVList.vue'
+import TaskLogPanel from './tasks/components/TaskLogPanel.vue'
 import { useAuth } from '../store/auth'
 import { taskTypeText, taskStatusText, taskStatusTag, fmtDateTime, errMsg, isCancel } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
@@ -355,12 +352,14 @@ const detail = ref(null)
 // ==================== 结构化执行日志 + 实时增量 WS ====================
 
 // logEntries：结构化日志条目 [{seq,ts,kind,text,hidden}]；
-// logStructured：true 走日志面板，false（老任务 result 是纯文本/业务 JSON）回退到既有 result 渲染。
+// logStructured：true 走日志面板（TaskLogPanel 子组件），false（老任务 result 是纯文本/业务 JSON）
+// 回退到既有 result 渲染。
 const logEntries = ref([])
 const logStructured = ref(false)
 const logLive = ref(false)
 const showDebug = ref(false)
-const logViewRef = ref(null)
+// 日志面板子组件实例：仅用于把「滚到底」能力暴露出来（模板 ref）
+const logPanelRef = ref(null)
 let logWs = null
 let logRetryTimer = null
 let logRetry = 0
@@ -368,18 +367,8 @@ let logManualClose = false
 let logLastSeq = 0
 let logTaskId = null
 
-const hiddenCount = computed(() => logEntries.value.filter((e) => e.hidden).length)
-const visibleLogEntries = computed(() =>
-  showDebug.value ? logEntries.value : logEntries.value.filter((e) => !e.hidden)
-)
-
-/** 毫秒时间戳 → HH:MM:SS（日志行前缀）。 */
-function fmtLogTs(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const p = (n) => String(n).padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
+// hiddenCount / visibleLogEntries / fmtLogTs 已随日志面板下沉到 TaskLogPanel.vue
+// （它自行折叠调试行并格式化时间戳，页面只喂原始 entries）
 
 /** 按 seq 去重追加：GET 首屏全量与 WS 增量可能重叠，seq 保证幂等。 */
 function appendLogEntries(list) {
@@ -396,11 +385,9 @@ function appendLogEntries(list) {
   if (added) scrollLogToBottom()
 }
 
+// 滚到底交给日志面板子组件（它持有滚动容器 ref），页面只转发调用
 function scrollLogToBottom() {
-  nextTick(() => {
-    const el = logViewRef.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
+  logPanelRef.value?.scrollToBottom()
 }
 
 function closeLogStream() {
@@ -1066,43 +1053,7 @@ onUnmounted(() => {
   margin-right: 4px;
   vertical-align: -2px;
 }
-/* 详情抽屉：通用键值对（result/payload） */
-.kv-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.kv-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--el-fill-color-light);
-}
-.kv-key {
-  font-size: 12px;
-  color: var(--color-muted-foreground);
-}
-.kv-val {
-  font-size: 13px;
-  word-break: break-all;
-}
-.kv-pre {
-  margin: 0;
-  padding: 8px;
-  max-height: 240px;
-  overflow: auto;
-  background: var(--el-fill-color);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
-.kv-masked {
-  color: var(--color-muted-foreground);
-  letter-spacing: 2px;
-}
+/* 详情抽屉：通用键值对（result/payload）样式已随渲染下沉到 TaskKVList.vue */
 .detail-sec {
   margin: 16px 0 8px;
   font-size: 14px;
@@ -1149,58 +1100,5 @@ onUnmounted(() => {
   font-size: 11px;
   color: var(--el-color-warning-dark-2);
 }
-/* 结构化执行日志面板 */
-.log-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.log-live {
-  margin-left: 6px;
-  font-size: 12px;
-  color: var(--color-success);
-}
-.log-toggle {
-  font-size: 12px;
-  font-weight: normal;
-  color: var(--el-color-primary);
-  cursor: pointer;
-}
-.log-view {
-  max-height: 320px;
-  overflow: auto;
-  padding: 8px 10px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: var(--radius-sm);
-  background: var(--el-fill-color-light);
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-.log-empty {
-  color: var(--color-muted-foreground);
-}
-.log-line {
-  display: flex;
-  gap: 8px;
-}
-.log-ts {
-  flex: none;
-  color: var(--color-muted-foreground);
-  user-select: none;
-}
-.log-text {
-  flex: 1;
-  min-width: 0;
-}
-.log-stderr .log-text {
-  color: var(--el-color-danger);
-}
-.log-command .log-text {
-  color: var(--el-color-primary);
-}
-.log-info .log-text {
-  color: var(--color-success);
-}
+/* 结构化执行日志面板样式已随渲染下沉到 TaskLogPanel.vue */
 </style>

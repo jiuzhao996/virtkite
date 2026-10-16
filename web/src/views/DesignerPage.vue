@@ -59,25 +59,13 @@
           <div ref="canvasRef" class="ds-canvas-inner"></div>
           <div ref="minimapRef" class="ds-minimap"></div>
         </div>
-        <div v-if="driftResult" class="ds-drift" :class="driftResult.drifted ? 'warn' : 'ok'">
-          <b>漂移检查</b>
-          <span v-if="!driftResult.has_snap">尚无基线——成功落地一次后才有对比基准</span>
-          <span v-else-if="!driftResult.drifted">与现实一致</span>
-          <span v-else>
-            {{ driftResult.items.length }} 处差异
-            （<b>{{ driftResult.pending || 0 }}</b> 处画布未落地 · <b>{{ driftResult.external || 0 }}</b> 处现实被外部改动）
-          </span>
-          <div v-for="(it, i) in driftResult.items" :key="i" class="ds-drift-item">
-            <el-tag size="small" :type="actionMeta(it.action).type" effect="light">{{ actionMeta(it.action).label }}</el-tag>
-            <span class="mono">{{ it.node }}</span>
-            <span class="ds-drift-side">{{ it.side === 'pending' ? '画布改动' : '外部改动' }}</span>
-            — {{ it.reason || it.detail }}
-          </div>
-          <div v-if="driftResult.drifted" class="ds-drift-actions">
-            <el-button size="small" type="primary" @click="openReconcile">按差异收敛</el-button>
-            <el-button size="small" @click="importFromReality">接纳实况（按现状重画）</el-button>
-          </div>
-        </div>
+        <DesignerDriftPanel
+          v-if="driftResult"
+          :drift-result="driftResult"
+          :action-meta="actionMeta"
+          @reconcile="openReconcile"
+          @import-reality="importFromReality"
+        />
 
         <div v-if="applyStatus" class="ds-apply" :class="applyStatus.status">
           <b>{{ applyStatusText }}</b>
@@ -90,65 +78,17 @@
       <el-card shadow="never" class="ds-right">
         <template #header><span class="ds-h">节点属性</span></template>
         <template v-if="selected">
-          <el-form label-width="64px" size="small">
-            <el-form-item label="名称"><el-input v-model="selected.name" /></el-form-item>
-            <el-form-item label="类型"><el-tag size="small" effect="plain">{{ kindLabel[selected.kind] }}</el-tag></el-form-item>
-            <!-- VM 节点落地参数：这些字段随计划保存，口令除外 -->
-            <template v-if="selected.kind === 'vm'">
-              <el-form-item label="云镜像">
-                <el-select v-model="selected.ref" filterable placeholder="选择云镜像" style="width: 100%">
-                  <el-option v-for="img in cloudImages" :key="img.id" :label="img.name" :value="String(img.id)">
-                    <span>{{ img.name }}</span>
-                    <span class="ds-opt-sub">{{ img.os_version }}</span>
-                  </el-option>
-                </el-select>
-              </el-form-item>
-              <el-form-item label="存储池">
-                <el-select v-model="selected.pool" placeholder="默认池" style="width: 100%">
-                  <el-option v-for="p in storagePools" :key="p.name" :label="p.name" :value="p.name" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="规格">
-                <div class="ds-spec">
-                  <el-input-number v-model="selected.vcpu" :min="1" :max="16" size="small" controls-position="right" style="width: 88px" />
-                  <span class="ds-spec-unit">vCPU</span>
-                  <el-input-number v-model="selected.memory_mb" :min="512" :step="512" size="small" controls-position="right" style="width: 96px" />
-                  <span class="ds-spec-unit">MB</span>
-                </div>
-              </el-form-item>
-              <el-form-item label="SSH 用户"><el-input v-model="selected.ssh_user" placeholder="root" /></el-form-item>
-              <el-form-item label="SSH 口令">
-                <el-input v-model="selected._sshSecret" type="password" show-password autocomplete="new-password" placeholder="仅本次落地使用，不随计划保存" />
-              </el-form-item>
-              <el-form-item label="应用">
-                <el-select v-model="selected.apps" multiple filterable placeholder="落地后自动安装" style="width: 100%">
-                  <el-option v-for="a in apps" :key="a.id" :label="a.name" :value="a.id" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="Playbook">
-                <el-select v-model="selected.playbooks" multiple filterable placeholder="落地后自动执行（初始化/加固/优化）" style="width: 100%">
-                  <el-option v-for="p in playbooks" :key="p.id" :label="p.id + (p.desc ? '（' + p.desc + '）' : '')" :value="p.id" />
-                </el-select>
-              </el-form-item>
-            </template>
-            <el-form-item v-else-if="selected.kind === 'container'" label="引用栈">
-              <span class="mono ds-ref">{{ selected.ref }}</span>
-            </el-form-item>
-            <el-form-item v-else label="建议值">
-              <el-input v-model="selected.ref" placeholder="网段/用途" />
-            </el-form-item>
-            <el-form-item label="备注"><el-input v-model="selected.note" type="textarea" :rows="2" /></el-form-item>
-          </el-form>
-          <el-divider>连线</el-divider>
-          <div class="ds-links">
-            <div v-for="l in edgesOfSelected" :key="l.id" class="ds-link-row">
-              <span class="mono">{{ l.text }}</span>
-              <el-button text size="small" type="danger" :icon="Delete" @click="removeEdge(l.id)" />
-            </div>
-            <div v-if="!edgesOfSelected.length" class="ds-link-empty">从节点边缘的连接点拉线到目标节点</div>
-          </div>
-          <el-divider />
-          <el-button text type="danger" size="small" :icon="Delete" @click="removeSelected">删除节点</el-button>
+          <DesignerNodeForm
+            :selected="selected"
+            :edges-of-selected="edgesOfSelected"
+            :cloud-images="cloudImages"
+            :storage-pools="storagePools"
+            :apps="apps"
+            :playbooks="playbooks"
+            :kind-label="kindLabel"
+            @remove-edge="removeEdge"
+            @remove-node="removeSelected"
+          />
         </template>
         <template v-else-if="selectedEdge">
           <el-form label-width="64px" size="small">
@@ -169,39 +109,44 @@
     </div>
 
     <!-- 落地/收敛预览对话框（D3 + DE3）：动作枚举 + 理由 -->
-    <el-dialog v-model="diffVisible" :title="diffMode === 'reconcile' ? '按差异收敛预览' : '落地预览'" width="720px">
-      <p v-if="diffMode === 'reconcile'" class="ds-diff-tip">
-        只对下列差异执行：<b class="ds-new">将创建</b> 补齐缺失、<b class="ds-del">将下线</b> 移除画布已删的、<b class="ds-warn">将重建/重启</b> 修正规格或运行态；未变化的资源不动。
-      </p>
-      <p v-else class="ds-diff-tip">
-        全量落地：按依赖顺序落地画布内全部节点（<b class="ds-new">将创建</b> 新建，<b class="ds-old">无需动作</b> 的已存在按类型跳过/复用）。
-      </p>
-      <el-table :data="diffRows" size="small" max-height="360">
-        <template #empty><el-empty description="无差异 / 画布为空" :image-size="60" /></template>
-        <el-table-column label="名称" prop="name" min-width="150" />
-        <el-table-column label="类型" prop="kind" width="90" />
-        <el-table-column label="动作" width="96">
-          <template #default="{ row }">
-            <el-tag :type="actionMeta(row.action).type" effect="light" size="small">{{ actionMeta(row.action).label }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="理由" prop="reason" min-width="240" />
-      </el-table>
-      <template #footer>
-        <el-button @click="diffVisible = false">取消</el-button>
-        <el-button type="primary" :loading="applying" @click="confirmApply">{{ diffMode === 'reconcile' ? '确认收敛' : '确认落地' }}</el-button>
-      </template>
-    </el-dialog>
+    <DesignerDiffDialog
+      v-model="diffVisible"
+      :diff-mode="diffMode"
+      :diff-rows="diffRows"
+      :applying="applying"
+      :action-meta="actionMeta"
+      @confirm="confirmApply"
+    />
   </div>
 </template>
 
 <script setup>
-// 架构设计器（P2B v3）：画布换 AntV X6——设备栏拖拽添加（Addon.Dnd）、节点自由
-// 拖动、边缘连接点拉线连线、snapline 对齐、Delete 删除。业务链路（模板/计划存取/
-// YAML 导出/一键落地/属性面板）与 v2 完全一致，仅 planPayload 的数据源从 echarts
-// 数组换成 graphToPlan()（X6 → 计划 JSON 转换层），后端协议零改动。
+// ============================================================================
+// 架构设计器（DesignerPage）
+// ----------------------------------------------------------------------------
+// 职责：拖拽编排「网络 / 虚拟机 / 容器栈」三类节点 → 拉线表达接入/挂载/依赖 →
+//       一键落地为真实资源（容器栈 compose 部署 + VM 建机装应用），并做漂移检查与收敛。
+//
+// 数据流（三条主链）：
+//   编排 ← X6 画布(graph) 是唯一事实源；paletteGroups/startDrag 拖入建节点；
+//          selected(选中节点)/selectedEdge(选中连线) 驱动右栏属性面板
+//   持久化 ← graphToPlan() 把 X6 图转换层落成计划 JSON（nodeIdMap 重映射成 n1..nK），
+//            savePlan/loadPlan/loadTemplate 走 api.saveDesignerPlan / 模板接口
+//   落地 ← preflight 校验 → buildDiff() 拉后端收敛预演（reconcile-plan）→ 确认后
+//          applyDesignerPlan / reconcileDesignerPlan，再轮询 designerApplyStatus
+//
 // SSH 口令只存在内存（节点 data._sshSecret），graphToPlan 剥离，落地时随 apply
 // 请求体一次性携带（后端写盘前也会强制剥离兜底）。
+//
+// 画布换 AntV X6（P2B v3）：设备栏拖拽添加（Dnd）、节点自由拖动、边缘连接点拉线、
+// snapline 对齐、Delete 删除；业务链路与 v2 一致，仅 planPayload 数据源换成
+// graphToPlan()（X6 → 计划 JSON 转换层），后端协议零改动。
+//
+// 已拆出的纯展示子组件（本页保留 X6/业务逻辑，因为 graph 是模块级闭包、无法外传）：
+//   designer/components/DesignerDriftPanel.vue   漂移检查结果面板
+//   designer/components/DesignerDiffDialog.vue   落地/收敛预览对话框
+//   designer/components/DesignerNodeForm.vue     右栏节点属性表单
+// ============================================================================
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -209,6 +154,9 @@ import { Plus, Delete, Download, VideoPlay, DocumentChecked, Aim, Refresh } from
 import { api } from '../api'
 import { errMsg, isCancel, cssVar } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
+import DesignerDriftPanel from './designer/components/DesignerDriftPanel.vue'
+import DesignerDiffDialog from './designer/components/DesignerDiffDialog.vue'
+import DesignerNodeForm from './designer/components/DesignerNodeForm.vue'
 import { Graph, Shape } from '@antv/x6'
 import { Snapline } from '@antv/x6-plugin-snapline'
 import { Selection } from '@antv/x6-plugin-selection'
@@ -1008,41 +956,7 @@ onUnmounted(() => {
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--el-bg-color); overflow: hidden;
 }
-.ds-drift {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  border: 1px solid var(--color-border);
-}
-.ds-drift.ok {
-  background: #f0f9f2;
-  border-color: #b7e0c4;
-}
-.ds-drift.warn {
-  background: #fff8e6;
-  border-color: #f0d9a0;
-}
-.ds-drift-item {
-  margin-top: 4px;
-  font-size: 0.78rem;
-  color: var(--color-muted-foreground);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.ds-drift-side {
-  font-size: 0.72rem;
-  color: var(--color-muted-foreground);
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  padding: 0 4px;
-}
-.ds-drift-actions {
-  margin-top: 10px;
-  display: flex;
-  gap: 8px;
-}
+/* 漂移面板样式已随渲染下沉到 designer/components/DesignerDriftPanel.vue */
 .ds-export-pre {
   max-height: 420px;
   overflow: auto;
@@ -1055,24 +969,7 @@ onUnmounted(() => {
   border-radius: 8px;
   margin: 0;
 }
-.ds-diff-tip {
-  margin: 0 0 12px;
-  font-size: 0.85rem;
-  color: var(--color-muted-foreground);
-  line-height: 1.6;
-}
-.ds-diff-tip .ds-new {
-  color: #3aa76d;
-}
-.ds-diff-tip .ds-old {
-  color: #909399;
-}
-.ds-diff-tip .ds-del {
-  color: #f56c6c;
-}
-.ds-diff-tip .ds-warn {
-  color: #e6a23c;
-}
+/* 落地/收敛预览对话框样式已随渲染下沉到 designer/components/DesignerDiffDialog.vue */
 .ds-minimap {
   position: absolute;
   right: 12px;
@@ -1098,14 +995,7 @@ onUnmounted(() => {
 .ds-apply.failed { background: var(--status-error-bg); }
 .ds-step { color: var(--color-muted-foreground); font-size: 0.78rem; line-height: 1.7; }
 .ds-err { color: var(--color-danger); font-size: 0.8rem; margin-top: 4px; word-break: break-all; }
+/* 节点属性表单样式已随渲染下沉到 designer/components/DesignerNodeForm.vue；
+   但 .ds-ref 在页面的「选中连线」分支里也用到，故仍留一份（子组件里另有一份，改时同步） */
 .ds-ref { font-size: 0.8rem; word-break: break-all; }
-.ds-spec { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.ds-spec-unit { font-size: 0.78rem; color: var(--color-muted-foreground); }
-.ds-opt-sub { float: right; font-size: 0.75rem; color: var(--color-muted-foreground); }
-.ds-links { display: flex; flex-direction: column; gap: 2px; }
-.ds-link-row {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 0.8rem; padding: 4px 0; color: var(--color-muted-foreground);
-}
-.ds-link-empty { font-size: 0.75rem; color: var(--color-muted-foreground); padding: 4px 0; }
 </style>

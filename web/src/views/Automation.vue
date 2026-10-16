@@ -87,38 +87,15 @@
             <el-button type="primary" size="small" :icon="Plus" @click="openEditor(null)" :disabled="!engine.installed" :title="engine.installed ? '' : '宿主机未安装 Ansible'">新建 Playbook</el-button>
             <span class="auto-hint">内置种子出厂预设，删掉会复活；自建完全自治。保存前自动过 ansible-playbook --syntax-check</span>
           </div>
-          <el-table :data="playbooks" v-loading="pbLoading" size="small" @row-dblclick="(row) => openEditor(row)">
-            <el-table-column prop="id" label="ID" width="150">
-              <template #default="{ row }"><span class="mono">{{ row.id }}</span></template>
-            </el-table-column>
-            <el-table-column prop="name" label="名称" min-width="130" />
-            <el-table-column prop="desc" label="说明" min-width="260" show-overflow-tooltip />
-            <el-table-column label="标识" width="90">
-              <template #default="{ row }">
-                <el-tag size="small" :type="row.built_in ? 'primary' : 'success'" effect="plain">{{ row.built_in ? '内置' : '自建' }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="形态" width="90">
-              <template #default="{ row }">
-                <el-tag size="small" :type="row.is_dir ? 'warning' : 'info'" effect="plain">
-                  {{ row.is_dir ? '目录' : '单文件' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="updated_at" label="更新时间" width="170" />
-            <el-table-column label="操作" width="270" fixed="right">
-              <template #default="{ row }">
-                <el-button text size="small" type="primary" :icon="VideoPlay" @click="openRunDialog(row)" :disabled="!engine.installed" :title="engine.installed ? '' : '宿主机未安装 Ansible'">执行</el-button>
-                <el-button v-if="row.is_dir" text size="small" :icon="Folder" @click="openFiles(row)">文件</el-button>
-                <el-button text size="small" :icon="Edit" @click="openEditor(row)">编辑</el-button>
-                <el-popconfirm title="删除该 playbook？" confirm-button-text="删除" @confirm="removePlaybook(row.id)">
-                  <template #reference>
-                    <el-button text size="small" type="danger" :icon="Delete">删除</el-button>
-                  </template>
-                </el-popconfirm>
-              </template>
-            </el-table-column>
-          </el-table>
+          <AnsiblePlaybookTable
+            :playbooks="playbooks"
+            :loading="pbLoading"
+            :installed="engine.installed"
+            @run="openRunDialog"
+            @files="openFiles"
+            @edit="openEditor"
+            @delete="removePlaybook"
+          />
         </el-card>
       </el-tab-pane>
 
@@ -133,31 +110,12 @@
               playbook 本地同名 role 会覆盖共享库里的（想单独特化某个 playbook 时用）
             </span>
           </div>
-          <el-table :data="roles" v-loading="roleLoading" size="small" @row-dblclick="(row) => openRoleFiles(row)">
-            <el-table-column prop="name" label="名称" width="200">
-              <template #default="{ row }"><span class="mono">{{ row.name }}</span></template>
-            </el-table-column>
-            <el-table-column prop="desc" label="说明" min-width="300" show-overflow-tooltip />
-            <el-table-column label="文件" width="80">
-              <template #default="{ row }">{{ row.file_count }}</template>
-            </el-table-column>
-            <el-table-column label="标识" width="90">
-              <template #default="{ row }">
-                <el-tag size="small" :type="row.built_in ? 'primary' : 'success'" effect="plain">{{ row.built_in ? '内置' : '自建' }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="updated_at" label="更新时间" width="170" />
-            <el-table-column label="操作" width="160" fixed="right">
-              <template #default="{ row }">
-                <el-button text size="small" :icon="Folder" @click="openRoleFiles(row)">文件</el-button>
-                <el-popconfirm title="删除该 role？引用它的 playbook 会报「role 不存在」" confirm-button-text="删除" @confirm="removeRole(row.name)">
-                  <template #reference>
-                    <el-button text size="small" type="danger" :icon="Delete">删除</el-button>
-                  </template>
-                </el-popconfirm>
-              </template>
-            </el-table-column>
-          </el-table>
+          <AnsibleRoleTable
+            :roles="roles"
+            :loading="roleLoading"
+            @files="openRoleFiles"
+            @delete="removeRole"
+          />
         </el-card>
       </el-tab-pane>
 
@@ -168,28 +126,16 @@
             <el-button size="small" :icon="Refresh" @click="loadHistory">刷新</el-button>
             <span class="auto-hint">ansible_run 类型任务（含 adhoc 与 playbook）</span>
           </div>
-          <el-table :data="history" v-loading="histLoading" size="small" row-class-name="clickable-row" @row-click="viewHistoryTask">
-            <el-table-column prop="id" label="ID" width="70" />
-            <el-table-column prop="title" label="任务" min-width="220" show-overflow-tooltip />
-            <el-table-column label="状态" width="100">
-              <template #default="{ row }">
-                <el-tag size="small" effect="plain" :type="statusTag(row.status)">{{ statusLabel(row.status) }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="created_at" label="提交时间" width="180" />
-            <el-table-column label="操作" width="170" fixed="right">
-              <template #default="{ row }">
-                <el-button
-                  v-if="row.status === 'running'"
-                  text size="small" type="warning"
-                  :loading="cancellingId === row.id"
-                  @click.stop="cancelHistoryTask(row)"
-                >取消</el-button>
-                <!-- 出口：跳到任务中心看该任务的完整时间线与结构化结果 -->
-                <el-button text size="small" @click.stop="goTaskCenter(row)">任务中心 →</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+          <AnsibleHistoryTable
+            :history="history"
+            :loading="histLoading"
+            :cancelling-id="cancellingId"
+            :status-tag="statusTag"
+            :status-label="statusLabel"
+            @view="viewHistoryTask"
+            @cancel="cancelHistoryTask"
+            @task-center="goTaskCenter"
+          />
         </el-card>
       </el-tab-pane>
 
@@ -200,38 +146,19 @@
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 执行输出（tab 外共用：adhoc / playbook / 历史回看） -->
-    <el-card shadow="never" v-if="runTask" class="auto-out-card">
-      <template #header>
-        <div class="auto-out-head">
-          <span class="auto-h">执行输出<span v-if="runTask.title" class="auto-out-title">——{{ runTask.title }}</span></span>
-          <div class="auto-out-meta">
-            <el-tag size="small" effect="plain" :type="statusTag(runTask.status)">{{ statusLabel(runTask.status) }}</el-tag>
-            <el-progress v-if="isRunning" :percentage="runTask.progress || 0" :stroke-width="8" style="width: 160px" />
-            <el-button text size="small" :icon="Close" @click="runTask = null" />
-          </div>
-        </div>
-      </template>
-      <!-- RECAP 矩阵（playbook 执行才有内容） -->
-      <el-table v-if="recapRows.length" :data="recapRows" size="small" class="auto-recap">
-        <el-table-column prop="host" label="主机" min-width="160">
-          <template #default="{ row }"><span class="mono">{{ row.host }}</span></template>
-        </el-table-column>
-        <el-table-column label="ok" width="80">
-          <template #default="{ row }"><el-tag size="small" type="success" effect="plain">{{ row.ok }}</el-tag></template>
-        </el-table-column>
-        <el-table-column label="changed" width="90">
-          <template #default="{ row }"><el-tag size="small" :type="row.changed ? 'warning' : 'info'" effect="plain">{{ row.changed }}</el-tag></template>
-        </el-table-column>
-        <el-table-column label="failed" width="80">
-          <template #default="{ row }"><el-tag size="small" :type="row.failed ? 'danger' : 'info'" effect="plain">{{ row.failed }}</el-tag></template>
-        </el-table-column>
-        <el-table-column label="unreachable" width="110">
-          <template #default="{ row }"><el-tag size="small" :type="row.unreachable ? 'danger' : 'info'" effect="plain">{{ row.unreachable }}</el-tag></template>
-        </el-table-column>
-      </el-table>
-      <pre ref="logBox" class="auto-log mono">{{ logText || '（等待输出…）' }}</pre>
-    </el-card>
+    <!-- 执行输出（tab 外共用：adhoc / playbook / 历史回看）；渲染下沉到 AnsibleOutputCard 子组件，
+         页面只喂任务/结果/文本，并在每轮轮询后转发 scrollToBottom -->
+    <AnsibleOutputCard
+      v-if="runTask"
+      ref="outputCardRef"
+      :task="runTask"
+      :recap-rows="recapRows"
+      :log-text="logText"
+      :is-running="isRunning"
+      :status-tag="statusTag"
+      :status-label="statusLabel"
+      @close="runTask = null"
+    />
 
     <!-- Playbook 编辑抽屉 -->
     <el-drawer v-model="editorOpen" :title="editorId ? '编辑 Playbook — ' + editorId : '新建 Playbook'" size="62%" :append-to-body="true" destroy-on-close>
@@ -385,17 +312,37 @@
 </template>
 
 <script setup>
-// 运维自动化（P4 S2）：三 tab——快速执行（adhoc）/ Playbook 库（CRUD + 语法校验）/
-// 执行历史（RECAP 矩阵）。执行全走 ansible_run 异步任务：提交得 task_id → 轮询
-// 任务详情（executor 端 2s 节流落库 Result，前端 1.5s 轮询即实时日志）。
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+// ============================================================================
+// 运维自动化（Automation）
+// ----------------------------------------------------------------------------
+// 职责：Ansible 批量执行（快速执行/Playbook/Role 库）与计划任务调度的同页入口。
+//       五个 tab：快速执行(adhoc) / Playbook 库 / Role 库 / 执行历史 / 计划任务(仅管理员)。
+//
+// 数据流：
+//   执行 ← runAdhoc / runPlaybook 提交 api.ansibleRun 得 task_id → startPolling 每 1.5s
+//          轮询 api.getTask，把 runTask 喂给执行输出卡（executor 端 2s 节流落库 Result）
+//   目标 ← runnableVMs（运行中且有 IP）+ hostGroups（主机组，触发时动态解析成员）
+//          + 凭据标记 sshOK（免密 ∪ 已托管凭据）
+//   深链 ← ?tab= 双向同步（进来读 query、切 tab 写 query，见 queryTabName/onTabChange）
+//
+// 已拆出的子组件（列表/输出的纯展示壳，动作 emit 回本页）：
+//   automation/components/AnsibleOutputCard.vue    执行输出卡（RECAP 矩阵 + 日志）
+//   automation/components/AnsiblePlaybookTable.vue Playbook 库表格
+//   automation/components/AnsibleRoleTable.vue     Role 库表格
+//   automation/components/AnsibleHistoryTable.vue  执行历史表格
+// ============================================================================
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, VideoPlay, Edit, Delete, Close, Setting, Folder, Document } from '@element-plus/icons-vue'
+import { Plus, Refresh, Edit, Delete, Setting } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { syncTabToUrl } from '../utils/tab-url'
 import { api } from '../api'
 import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
+import AnsibleOutputCard from './automation/components/AnsibleOutputCard.vue'
+import AnsiblePlaybookTable from './automation/components/AnsiblePlaybookTable.vue'
+import AnsibleRoleTable from './automation/components/AnsibleRoleTable.vue'
+import AnsibleHistoryTable from './automation/components/AnsibleHistoryTable.vue'
 import { useAuth } from '../store/auth'
 import CronList from './CronList.vue'
 import DirFilesDialog from './ansible/DirFilesDialog.vue'
@@ -438,7 +385,8 @@ const submitting = ref(false)
 const deploying = ref(false)
 const extraVars = reactive({})
 const runTask = ref(null)
-const logBox = ref(null)
+// 执行输出卡子组件实例：经它转发 scrollToBottom（滚动容器在子组件内）
+const outputCardRef = ref(null)
 let pollTimer = null
 
 // playbook 库
@@ -928,10 +876,9 @@ function viewHistoryTask(row) {
 function goTaskCenter(row) {
   router.push({ path: '/tasks', query: { id: row.id } })
 }
+// 滚到底交给执行输出卡子组件（它持有滚动容器 ref），页面只转发调用
 function scrollToBottom() {
-  nextTick(() => {
-    if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight
-  })
+  outputCardRef.value?.scrollToBottom()
 }
 
 onMounted(async () => {
@@ -999,19 +946,9 @@ onUnmounted(stopPolling)
 .auto-count { font-size: 0.8rem; color: var(--color-muted-foreground); white-space: nowrap; }
 .auto-hint { margin-left: 12px; font-size: 0.78rem; color: var(--color-muted-foreground); }
 .auto-pb-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-/* 执行历史表行点击钻取：el-table 内部 tr 拿不到 scoped 属性，须 :deep 穿透 */
-:deep(tr.clickable-row) { cursor: pointer; }
-.auto-out-card { margin-top: 16px; }
-.auto-out-head { display: flex; align-items: center; justify-content: space-between; }
-.auto-out-title { font-weight: 400; font-size: 0.82rem; color: var(--color-muted-foreground); }
-.auto-out-meta { display: flex; align-items: center; gap: 12px; }
-.auto-recap { margin-bottom: 12px; }
-.auto-log {
-  margin: 0; padding: 12px 14px; max-height: 420px; overflow: auto;
-  background: var(--color-code-bg, var(--el-fill-color-darker));
-  border-radius: var(--radius-sm); font-size: 0.78rem; line-height: 1.7;
-  white-space: pre-wrap; word-break: break-all;
-}
+/* 执行历史表行点击钻取样式已随渲染下沉到 automation/components/AnsibleHistoryTable.vue */
+
+/* 执行输出卡样式已随渲染下沉到 automation/components/AnsibleOutputCard.vue */
 .auto-editor { display: flex; flex-direction: column; gap: 12px; }
 .auto-editor-bar { display: flex; align-items: center; gap: 10px; }
 .auto-yaml :deep(.el-textarea__inner) {
