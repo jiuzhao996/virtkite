@@ -1,3 +1,17 @@
+// audit.go：审计日志中间件——记录「谁改了什么」。
+//
+// 产出落到 audit_logs 表，字段口径是：操作人（UserID/Username）、来源 IP、动作
+// （Action，如 start_vm/delete_image）、对象类型（ObjectType，如 vm/image）、
+// 结果（success/failed）、变更前后快照（BeforeData/AfterData，由写操作经
+// SetAuditDiff 主动挂在上下文里，见 audit_diff.go）、Detail（路径 + 耗时）。
+//
+// 三条贯穿本文件的设计取舍（答辩常被追问）：
+//  1. 只审计写操作与登录：GET 一类的只读轮询（前端 3~5s 一次）与静态资源、/metrics、
+//     /api/health 全部跳过，否则 audit_logs 会被刷成天文数字、淹没真实操作统计。
+//  2. 追加写、失败不阻断：审计用最朴素的 db.Create，失败只 log.Printf 不重试、不影响
+//     业务响应——审计是旁路记录，不能反过来拖垮请求链（与 dbx 的「语义上必须落库」场景不同）。
+//  3. 中间件注册在全局、早于 JWT：某些请求（如登录）到这里时上下文里还没有身份，
+//     故需自行解析 Bearer token 补齐操作人（见 AuditMiddleware 内注释）。
 package middleware
 
 import (

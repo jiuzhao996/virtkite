@@ -1,3 +1,12 @@
+// vm_devices.go —— 虚拟机设备读写：磁盘与网卡的热插拔、域定义健康检查、标准设备补齐。
+//
+// 两条贯穿全文件的约定：
+//  1. 凡改动域定义的操作（加/删盘、加/删网卡）都属生命周期写操作：先 guardVMIdle
+//     再 lockVM（AGENTS 条款 16）——分别封堵「HTTP 已返回、后台任务仍在跑」与
+//     「同一瞬间并发进来的两个请求」两类窗口，缺一不可。
+//  2. 删卷遵循「宁可留一个文件，也不损坏共享数据」：镜像库共享镜像、增量克隆父盘、
+//     仍被其他虚拟机挂载的卷一律保留（判定见 detachVolKeepReason，与 tasks.execDeleteVM
+//     的 shouldKeepVol 三重守卫、StorageHandler.DeleteVolume 的在用守卫同一立场）。
 package handler
 
 import (

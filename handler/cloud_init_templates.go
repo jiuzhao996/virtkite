@@ -7,6 +7,12 @@ package handler
 // 入库时白名单校验后序列化为 JSON 字符串（model.CloudInitTemplate.Spec），
 // 出库时反序列化为对象返回——前端拿到的 spec 始终是对象，可直接回填表单。
 //
+// 校验有两条强度不同的入口，别混淆：
+//   - validateTemplateSpec：模板入库路径（本文件），hostname/user 收字符白名单（更严）；
+//   - validateCloudInitText：直连建机路径（向导 / 镜像直建 / 设计器画布），只拦控制
+//     字符、net_mode 白名单与静态缺参/非法 IP，刻意放开字符集以保留中文主机名。
+// 两者都只负责给出「及时、友好的 400」，user-data 的最终结构化序列化在 virt 层兜底。
+//
 // 路由建议挂 OperatorMiddleware（模板属建机操作语义，operator 可用；viewer 无读写场景）：
 //
 //	cit := api.Group("/cloud-init-templates")

@@ -56,8 +56,14 @@ type stackMeta struct {
 	Docs     []string
 }
 
+// stackMetaRe 匹配栈 YAML 头部那条机器可读元数据行（形如 `# vmops-stack: id=xx | ...`）。
+// 用注释行而非真 YAML 键：compose 文件本身仍可被 docker 直接消费，栈目录也顺带充当
+// 商店目录，无需额外的清单文件。
 var stackMetaRe = regexp.MustCompile(`^#\s*vmops-stack:\s*(.+)$`)
 
+// parseStackMeta 读取栈 YAML 并解析头部元数据行，返回元数据与文件原文。
+// 只认首条匹配行；元数据缺失时 ID 回落到文件名（去掉 .yml）。刻意不引 yaml 依赖——
+// compose 文件的语法合法性交给 docker 校验，这里只做展示级解析。
 func parseStackMeta(path string) (*stackMeta, []byte, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

@@ -1,3 +1,16 @@
+// ansible_tasks.go：ansible 批量执行任务（P4 自动化运维）——ansible_run 的 executor 实现。
+//
+// 一次 ansible_run 的生命周期即 execAnsibleRun 内的 1)~5) 编号步骤：
+//
+//  1. 取目标 VM（只收 vm_id，服务端查库取 IP：裸 IP 无入口，白名单结构性成立）
+//  2. 认证通道分流（已注入平台公钥 AnsibleReady 的走免密私钥，其余解密托管口令）
+//  3. 生成 run 级 inventory（明文口令只落 0700 瞬时目录，跑完即删）
+//  4. 调 ansible 执行（逐行输出经 ctx.Log 实时推 WS、落库节流由 TaskLogger 统一承担）
+//  5. 汇总结构化结果（playbook 解析 PLAY RECAP，adhoc 回传原始输出）
+//
+// 安全口径：口令取自 vm_credentials 密文（secretbox 解密），survey 的 secret 答案经
+// 环境变量注入而非 extra-vars/argv，run 目录用完即删；目标缺凭据即整体失败并列出补录
+// 清单（fail-closed，不做「有凭据的先跑」的半吊子执行）。
 package tasks
 
 import (
