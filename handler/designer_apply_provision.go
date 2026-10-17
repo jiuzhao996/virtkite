@@ -38,11 +38,13 @@ import (
 func (h *DesignerHandler) provisionNode(p *dsgPlan, n dsgNode, st *dsgApplyState, userID *uint, username string) error {
 	switch n.Kind {
 	case "container":
+		// Ref 来自计划文件，必须过白名单再拼路径：否则 "../" 可读到 stacks 目录之外，
+		// target 也会被带到目录外（路径穿越）。用与 dsgIDRe 同级的规则。
+		if !dsgIDRe.MatchString(n.Ref) {
+			return fmt.Errorf("容器节点引用非法：%q", n.Ref)
+		}
 		st.Steps = append(st.Steps, "部署栈 "+n.Ref+"（"+n.Name+"）…")
-		// 从栈模板库取 compose 原文。注意（既有实现）：Ref 来自计划文件，保存
-		// 计划时没有对容器节点的 Ref 做白名单校验，这里直接拼进 filepath.Join；
-		// 若 Ref 含 "../" 可读到 stacks 目录之外，target 也会被带到目录外。
-		// 注释批次不改行为，后续应在 SavePlan/落地前用与 dsgIDRe 同级的规则校验 Ref。
+		// 从栈模板库取 compose 原文。
 		meta, sraw, err := parseStackMeta(filepath.Join(stacksDir(), n.Ref+".yml"))
 		if err != nil {
 			return fmt.Errorf("栈不存在：%s", n.Ref)
@@ -51,10 +53,11 @@ func (h *DesignerHandler) provisionNode(p *dsgPlan, n dsgNode, st *dsgApplyState
 		if err := os.MkdirAll(target, 0o755); err != nil {
 			return fmt.Errorf("创建部署目录失败: %w", err)
 		}
-		// 注意（既有实现）：这里忽略了 WriteFile 的错误。写失败时若目录里已有旧
-		// compose 文件，ComposeUp 会继续用旧内容部署，与设计器当前定义不一致。
-		// 注释批次不改行为，后续应检查并返回该错误。
-		_ = os.WriteFile(filepath.Join(target, "docker-compose.yml"), sraw, 0o644)
+		// 必须检查写失败：否则目录里残留的旧 compose 会被 ComposeUp 继续使用，
+		// 与设计器当前定义不一致（静默用旧配置部署）。
+		if err := os.WriteFile(filepath.Join(target, "docker-compose.yml"), sraw, 0o644); err != nil {
+			return fmt.Errorf("写入 compose 文件失败: %w", err)
+		}
 		if err := h.Docker.ComposeUpFromFile(target); err != nil {
 			return fmt.Errorf("栈 %s 部署失败: %w", n.Ref, err)
 		}

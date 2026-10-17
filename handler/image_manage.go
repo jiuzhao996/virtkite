@@ -271,24 +271,22 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 		return
 	}
 
-	// 软删除数据库记录
-	if err := h.DB.Delete(&img).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "删除镜像记录失败")
-		return
-	}
-
 	// 删除磁盘文件（仅当位于镜像池/镜像目录下，防止误删系统文件）。
 	// 删除前必须过引用守卫：该镜像可能正被 VM 以 source_image_id 直接引用（不拷贝），
 	// 或是其他卷的 backing 父盘——os.Remove 绕过 libvirt，没有任何报错兜底，删了就是不可逆损坏。
 	// 与 storage.DeleteVolume / shouldKeepVol 同一立场：宁可删不掉，不可损坏在用磁盘。
+	//
+	// ⚠️ 顺序很关键：**先算路径与引用守卫、再软删记录**。原实现先软删后查引用，命中 409 时
+	// 记录已被软删除、文件却还在，列表里镜像消失但磁盘仍在（且 VM 的 source_image_id 指向已删记录）。
 	poolPath := ""
 	if p, err := h.Virt.GetPoolPath(imagePool); err == nil {
 		poolPath = p
 	}
+	inPool, inDir := false, false
 	if img.Path != "" {
 		// 前缀必须带分隔符边界：否则 /var/lib/libvirt/images-evil/x.qcow2 会命中 /var/lib/libvirt/images（全量审计 P2）
-		inPool := poolPath != "" && strings.HasPrefix(img.Path, strings.TrimRight(poolPath, "/")+"/")
-		inDir := strings.HasPrefix(img.Path, strings.TrimRight(config.GlobalConfig.ImageDir, "/")+"/")
+		inPool = poolPath != "" && strings.HasPrefix(img.Path, strings.TrimRight(poolPath, "/")+"/")
+		inDir = strings.HasPrefix(img.Path, strings.TrimRight(config.GlobalConfig.ImageDir, "/")+"/")
 		if inPool || inDir {
 			// 引用查询失败时当前实现按「无引用」放行（fail-open），与删卷守卫
 			// shouldKeepVol 的 fail-closed 取向不同；这是既有取舍，记录在此便于审计。
@@ -296,10 +294,20 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 				Fail(c, http.StatusConflict, "镜像正被使用，拒绝删除："+refs)
 				return
 			}
-			if err := os.Remove(img.Path); err != nil && !os.IsNotExist(err) {
-				// 文件删除失败不阻断主流程，但必须留痕（gin 无 Error Handler 消费 c.Errors，原写法=完全静默）
-				log.Printf("[image] 删除镜像文件失败 path=%s err=%v", img.Path, err)
-			}
+		}
+	}
+
+	// 引用守卫通过后，再软删除数据库记录
+	if err := h.DB.Delete(&img).Error; err != nil {
+		Fail(c, http.StatusInternalServerError, "删除镜像记录失败")
+		return
+	}
+
+	// 记录删掉后再删磁盘文件（池内/镜像目录内才删）
+	if img.Path != "" && (inPool || inDir) {
+		if err := os.Remove(img.Path); err != nil && !os.IsNotExist(err) {
+			// 文件删除失败不阻断主流程，但必须留痕（gin 无 Error Handler 消费 c.Errors，原写法=完全静默）
+			log.Printf("[image] 删除镜像文件失败 path=%s err=%v", img.Path, err)
 		}
 	}
 

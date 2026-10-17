@@ -63,7 +63,7 @@ func (h *UserHandler) passwordPolicy() int {
 func (h *UserHandler) ListUsers(c *gin.Context) {
 	var users []model.User
 	if err := h.DB.Find(&users).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "查询用户失败")
+		ErrorWithMessage(c, http.StatusInternalServerError, "查询用户失败", err)
 		return
 	}
 	if users == nil {
@@ -120,7 +120,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 	// 哈希密码
 	passwordHash, err := middleware.HashPassword(req.Password)
 	if err != nil {
-		Fail(c, http.StatusInternalServerError, "密码处理失败")
+		ErrorWithMessage(c, http.StatusInternalServerError, "密码处理失败", err)
 		return
 	}
 
@@ -141,7 +141,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 	}
 
 	if err := h.DB.Create(&user).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "创建用户失败")
+		ErrorWithMessage(c, http.StatusInternalServerError, "创建用户失败", err)
 		return
 	}
 
@@ -201,7 +201,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	}
 
 	if err := h.DB.Model(&user).Updates(updates).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "更新用户失败")
+		ErrorWithMessage(c, http.StatusInternalServerError, "更新用户失败", err)
 		return
 	}
 
@@ -290,7 +290,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	}
 
 	if err := h.DB.Delete(&user).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "删除用户失败")
+		ErrorWithMessage(c, http.StatusInternalServerError, "删除用户失败", err)
 		return
 	}
 

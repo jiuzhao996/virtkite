@@ -208,9 +208,14 @@ func (h *VMFilesHandler) OfflineUpload(c *gin.Context) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sudo", "-n", "tee", "--", target)
 	cmd.Stdin = src
+	// tee 会把内容回显到 stdout；上传可能是大文件，stdout 必须丢弃（否则 CombinedOutput 会把
+	// 整份内容读进内存）。但 CombinedOutput 在 Stdout 已设置时会直接返回 "exec: Stdout already
+	// set" 且**不执行命令**——所以这里用 Run()，stderr 单独捕获用于错误信息。
 	cmd.Stdout = io.Discard
-	if out, werr := cmd.CombinedOutput(); werr != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "写入失败", fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), werr))
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if werr := cmd.Run(); werr != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "写入失败", fmt.Errorf("%s: %w", strings.TrimSpace(stderr.String()), werr))
 		return
 	}
 	Success(c, gin.H{"message": "已上传", "path": target})
