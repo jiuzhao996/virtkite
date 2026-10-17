@@ -3,6 +3,7 @@ package handler
 // image_clone.go 镜像的生命周期动作：标记/取消模板、基于镜像异步创建虚拟机（linked clone）。
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -84,12 +85,27 @@ func (h *ImageHandler) CloneVM(c *gin.Context) {
 			Fail(c, http.StatusBadRequest, "cloud-init 配置不合法："+err.Error())
 			return
 		}
-		payload["cloud_init"] = req.CloudInit
+		// 与 CreateVM 同口径：口令在进任务队列前加密，payload 不留明文
+		raw, err := json.Marshal(req.CloudInit)
+		if err != nil {
+			ErrorWithMessage(c, http.StatusInternalServerError, "序列化 cloud-init 失败", err)
+			return
+		}
+		ciMap := map[string]interface{}{}
+		if err := json.Unmarshal(raw, &ciMap); err != nil {
+			ErrorWithMessage(c, http.StatusInternalServerError, "解析 cloud-init 失败", err)
+			return
+		}
+		if err := sealCloudInitMap(ciMap); err != nil {
+			ErrorWithMessage(c, http.StatusInternalServerError, "初始化配置加密失败", err)
+			return
+		}
+		payload["cloud_init"] = ciMap
 	}
 	userID, username := taskUserFromContext(c)
 	task, err := h.Tasks.Submit("clone_image_vm", "从镜像创建虚拟机 "+req.Name, payload, userID, username, req.Name, nil)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		SubmitTaskError(c, err)
 		return
 	}
 	Accepted(c, "任务已提交", gin.H{"task_id": task.ID})

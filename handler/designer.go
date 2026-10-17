@@ -71,6 +71,9 @@ type dsgNode struct {
 type dsgLink struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	// Kind 连线语义：net（网络接入，默认）/ storage（存储挂载）/ dep（启动依赖）。
+	// 前端画布会改类型；旧版结构体没有该字段，保存后类型被丢弃、重新加载一律变回 net。
+	Kind string `json:"kind,omitempty"`
 }
 
 type dsgPlan struct {
@@ -195,6 +198,11 @@ func (h *DesignerHandler) DeletePlan(c *gin.Context) {
 // 前端下载）。容器栈段可直接喂 compose；vm/net 段为 v2 执行器的 provision 声明。
 func (h *DesignerHandler) ExportYAML(c *gin.Context) {
 	id := c.Param("id")
+	// 与其他设计器端点同口径校验 ID：此前漏校验，异常字符会进入文件路径
+	if !dsgIDRe.MatchString(id) {
+		Fail(c, http.StatusBadRequest, "计划 ID 非法")
+		return
+	}
 	raw, err := os.ReadFile(filepath.Join(designerDir(), id+".json"))
 	if err != nil {
 		Fail(c, http.StatusNotFound, "计划不存在")
@@ -207,10 +215,13 @@ func (h *DesignerHandler) ExportYAML(c *gin.Context) {
 	}
 	var b []byte
 	b = append(b, "# VirtKite 部署计划（设计器导出）\n# 计划: "+p.Name+"\n\n"...)
+	// 容器节点必须先聚合再输出：每个节点各写一个顶层 stacks: 会产生重复键，
+	// 不是合法/可用的 compose YAML。
+	var stackRefs []string
 	for _, n := range p.Nodes {
 		switch n.Kind {
 		case "container":
-			b = append(b, "stacks:\n  - id: "+n.Ref+"   # 节点 "+n.Name+"\n"...)
+			stackRefs = append(stackRefs, n.Ref+"   # 节点 "+n.Name)
 		case "vm":
 			pool, user := n.Pool, n.SSHUser
 			if pool == "" {
@@ -225,6 +236,13 @@ func (h *DesignerHandler) ExportYAML(c *gin.Context) {
 		case "net":
 			b = append(b, "# 网络: "+n.Name+"（"+n.Ref+"）\n"...)
 		}
+	}
+	if len(stackRefs) > 0 {
+		b = append(b, "stacks:\n"...)
+		for _, ref := range stackRefs {
+			b = append(b, "  - id: "+ref+"\n"...)
+		}
+		b = append(b, "\n"...)
 	}
 	for _, l := range p.Links {
 		b = append(b, "# link: "+l.From+" -> "+l.To+"\n"...)

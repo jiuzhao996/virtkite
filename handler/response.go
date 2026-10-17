@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 	"unicode"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jiuzhao/vmops/service/tasks"
 )
 
 // Success 返回成功响应，HTTP 200，统一格式 {"code":200,"message":"success","data":data}
@@ -57,6 +59,18 @@ func ErrorResponse(c *gin.Context, status int, err error) {
 func ErrorWithMessage(c *gin.Context, status int, message string, err error) {
 	LogError(c, err)
 	Fail(c, status, message)
+}
+
+// SubmitTaskError 任务提交失败的统一响应。
+// 队列繁忙（tasks.ErrQueueBusy）是「可稍后重试」的暂时状态，返回 503 + 明确文案；
+// 其它错误仍按 500 + 中文兜底。此前各 handler 一律 ErrorWithMessage(..., "提交任务失败", err)，
+// 把 manager 的「任务队列繁忙，请稍后重试」吞掉，用户只看到笼统失败。
+func SubmitTaskError(c *gin.Context, err error) {
+	if errors.Is(err, tasks.ErrQueueBusy) {
+		Fail(c, http.StatusServiceUnavailable, "任务队列繁忙，请稍后重试")
+		return
+	}
+	ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
 }
 
 // LogError 将完整错误写入服务端日志（含请求路径），供排查使用。

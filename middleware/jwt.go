@@ -135,7 +135,9 @@ func wsTicketResource(c *gin.Context) string {
 		return wsticket.VMResource(canonicalID(c.Param("id")))
 	case strings.HasPrefix(full, "/api/docker/") &&
 		(strings.HasSuffix(full, "/terminal") || strings.HasSuffix(full, "/logs/ws")):
-		return wsticket.DockerResource(canonicalID(c.Param("id")))
+		// docker 的 :id 可以是容器 ID（hex）或容器名，不是数值主键——不能做十进制归一，
+		// 否则名为 00123 的容器：签发 docker:00123、校验 docker:123，合法票被判不匹配。
+		return wsticket.DockerResource(c.Param("id"))
 	case strings.HasPrefix(full, "/api/tasks/") && strings.HasSuffix(full, "/logs/ws"):
 		return wsticket.TaskResource(canonicalID(c.Param("id")))
 	}

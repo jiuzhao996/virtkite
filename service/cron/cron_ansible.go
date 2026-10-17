@@ -68,6 +68,9 @@ func (s *Scheduler) runAnsiblePlaybook(st model.ScheduledTask) (string, error) {
 		switch t.Status {
 		case model.TaskStatusSuccess:
 			return s.summarizeAnsibleRun(params.Playbook, t.Result)
+		case model.TaskStatusCancelled:
+			// 取消也是终态：不处理会一直轮询到 25 分钟超时，期间占着 execMu
+			return "", fmt.Errorf("playbook %s 执行被取消", params.Playbook)
 		case model.TaskStatusFailed:
 			msg := t.Error
 			if msg == "" {

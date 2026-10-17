@@ -145,7 +145,7 @@ func (h *StorageHandler) CleanupOrphans(c *gin.Context) {
 	task, err := h.Tasks.Submit("cleanup_volumes", "清理孤儿卷 "+poolName,
 		gin.H{"pool": poolName}, uid, uname, "", nil)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		SubmitTaskError(c, err)
 		return
 	}
 	Accepted(c, "清理任务已提交", gin.H{"task_id": task.ID})

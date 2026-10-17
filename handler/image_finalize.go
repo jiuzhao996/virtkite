@@ -64,7 +64,7 @@ func (h *VMHandler) FinalizeImage(c *gin.Context) {
 	userID, username := taskUserFromContext(c)
 	task, err := h.Tasks.Submit("image_finalize", "固化为模板 "+vm.Name, payload, userID, username, vm.Name, &vm.ID)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		SubmitTaskError(c, err)
 		return
 	}
 	Accepted(c, "任务已提交", gin.H{"task_id": task.ID})

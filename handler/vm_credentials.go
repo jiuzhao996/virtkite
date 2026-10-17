@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/config"
@@ -52,6 +53,11 @@ func NewVMCredentialHandler(db *gorm.DB, masterSecret string) *VMCredentialHandl
 // 迁移（已从回落态切到独立密钥的存量部署）：历史凭据仍是旧密钥加密的，需跑一次重加密——
 // go run ./scripts/credential-rekey --apply（默认 dry-run，详见该文件的用法说明）。
 func CredentialMasterSecret() string {
+	// 单测 / 极早期启动时 GlobalConfig 可能尚未初始化：按「未配置」处理，
+	// 由调用方 fail-closed（不能空指针 panic）
+	if config.GlobalConfig == nil {
+		return ""
+	}
 	if key := config.GlobalConfig.CredentialMasterKey; key != "" {
 		// 已独立配置：此后轮换 JWT_SECRET_KEY 不会动摇任何已存凭据
 		return key
@@ -121,6 +127,12 @@ func (h *VMCredentialHandler) Save(c *gin.Context) {
 	}
 	if len(req.Password) > maxSavedPasswordLen {
 		Fail(c, http.StatusBadRequest, "密码过长（最多 256 字符）")
+		return
+	}
+	// 换行/控制字符会在生成 ansible inventory 时逃出 INI 值（`ansible_ssh_pass='...'`
+	// 仍是逐行解析），向 inventory 注入额外主机或变量。保存侧直接拒绝。
+	if strings.ContainsAny(req.User, "\r\n\x00") || strings.ContainsAny(req.Password, "\r\n\x00") {
+		Fail(c, http.StatusBadRequest, "用户名或密码不能包含换行/控制字符")
 		return
 	}
 	port := req.Port

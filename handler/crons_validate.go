@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/ansible"
 	"github.com/jiuzhao/vmops/service/cron"
 )
 
@@ -192,7 +192,9 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 		if !cron.AnsiblePlaybookIDRe.MatchString(params.Playbook) {
 			return 0, errors.New("playbook ID 非法（字母数字与 -_，字母开头）")
 		}
-		if _, err := os.Stat(config.DataPath("ansible", "playbooks", params.Playbook+".yml")); err != nil {
+		// 存在性检查必须走 ResolvePlaybook：只认 <id>.yml 会把目录形态
+		// （<id>/site.yml，如 web-stack）误判为不存在，而手动执行/executor 都支持。
+		if _, _, ok := ansible.ResolvePlaybook(config.DataPath("ansible", "playbooks"), params.Playbook); !ok {
 			return 0, fmt.Errorf("playbook 不存在: %s", params.Playbook)
 		}
 		// targets 与 group_id 至少给一个：否则任务会「成功执行 0 台」，看起来像静默失败

@@ -17,6 +17,7 @@ package handler
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -132,6 +133,19 @@ func (h *VMRecycleHandler) findDeletedVM(c *gin.Context) (model.VM, bool) {
 	return vm, true
 }
 
+// sameDomainUUID 校验 libvirt 中同名域的 UUID 是否与本条回收站记录一致。
+// 返回 true 表示可安全认领（记录无 UUID 或读不到域定义时保持宽容，交由调用方按域存在处理）。
+func (h *VMRecycleHandler) sameDomainUUID(vm model.VM) bool {
+	if vm.UUID == "" {
+		return true // 早期记录没有 UUID，无法比对，保持原行为
+	}
+	spec, err := h.Virt.GetDomainSpec(vm.Name)
+	if err != nil || spec == nil || spec.UUID == "" {
+		return true // 读不到定义：不阻断恢复，按「域存在」分支走
+	}
+	return spec.UUID == vm.UUID
+}
+
 // Restore 恢复回收站虚拟机（admin）。POST /api/vms-recycle/:id/restore
 // 清空 deleted_at 使记录回到正常列表；域仍在则同步实时状态；域已 undefine 且系统盘卷还在
 // 则按 DB 记录重建精简定义（恢复过的 VM 可直接开机），重建失败降级为仅恢复记录。
@@ -175,6 +189,12 @@ func (h *VMRecycleHandler) Restore(c *gin.Context) {
 	// 且没有第二次同步机会（列表会一直显示旧状态），必须重试 + 醒目留痕。
 	// 不回滚恢复本身（记录已恢复成功），但如实告知前端「状态未落库」，别让前端拿它当已同步。
 	state, err := h.Virt.GetDomainState(vm.Name)
+	if err == nil && !h.sameDomainUUID(vm) {
+		// 只按名字认领会把「手工 define 的同名域」当成自己的记录，后续启停/删除
+		// 全打到错误机器上。UUID 对不上就按「域不存在」处理，走重建分支。
+		log.Printf("[recycle] 同名域 UUID 不匹配，按域不存在处理 vm=%s db_uuid=%s", vm.Name, vm.UUID)
+		err = fmt.Errorf("同名域 UUID 与记录不一致")
+	}
 	if err == nil {
 		msg := "已恢复（libvirt 中仍存在同名域，状态已同步）"
 		if err := dbx.Persist(h.DB, fmt.Sprintf("回收站恢复状态同步 vm=%s", vm.Name), func() error {

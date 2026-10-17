@@ -134,6 +134,23 @@ func collectRelatedCredentials(db *gorm.DB, payload map[string]interface{}, task
 			}
 		}
 	}
+	// group_id 派发：组成员在提交时未展开进 targets，脱敏集合必须补上，
+	// 否则 ansible -vvv 之类的输出可能把托管口令明文写进任务日志。
+	if v, ok := payload["group_id"]; ok {
+		if gid, ok := toUint(v); ok {
+			var g model.HostGroup
+			if err := db.First(&g, gid).Error; err == nil {
+				var vmIDs []uint
+				if json.Unmarshal([]byte(g.VMIDs), &vmIDs) == nil {
+					for _, id := range vmIDs {
+						if id > 0 {
+							ids[id] = true
+						}
+					}
+				}
+			}
+		}
+	}
 	if len(ids) == 0 {
 		return nil
 	}

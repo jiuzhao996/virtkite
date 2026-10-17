@@ -178,7 +178,12 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		}
 		vmHostName[vm.ID] = name
 		if vm.AnsibleReady && keyFile != "" {
-			hosts = append(hosts, ansible.HostEntry{Name: name, IP: vm.IP, User: ansibleSSHUser(vm), Port: 22, KeyFile: keyFile})
+			// 免密通道也尊重托管凭据里登记的端口（回归：此前固定 22，非 22 端口必失败）
+			keyPort := 22
+			if c, ok := credByVM[vm.ID]; ok && c.Port > 0 {
+				keyPort = c.Port
+			}
+			hosts = append(hosts, ansible.HostEntry{Name: name, IP: vm.IP, User: ansibleSSHUser(vm), Port: keyPort, KeyFile: keyFile})
 			continue
 		}
 		cred := credByVM[vm.ID]
@@ -269,11 +274,10 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 		runCtx = context.Background()
 	}
 	recap, err := eng.Run(runCtx, runOpts)
-	if err != nil {
-		return fmt.Errorf("%w", err)
-	}
 
-	// 5) 结构化结果：playbook 有 PLAY RECAP 逐主机计数；adhoc 输出原文随终态回传
+	// 5) 结构化结果：无论成败都回传 output/RECAP。
+	// 失败时 manager 也会把 ctx.Task.Result 落库，自动化页才能定位是哪台主机失败；
+	// 否则 friendlyError 在第一个冒号处截断，只剩「部分主机执行失败」，RECAP 全丢。
 	mu.Lock()
 	output := truncate(strings.Join(buf, "\n"), 50_000)
 	mu.Unlock()
@@ -289,5 +293,9 @@ func execAnsibleRun(ctx *ExecContext, masterSecret string) error {
 	}
 	raw, _ := json.Marshal(result)
 	ctx.Task.Result = string(raw)
+
+	if err != nil {
+		return fmt.Errorf("%w", err)
+	}
 	return nil
 }

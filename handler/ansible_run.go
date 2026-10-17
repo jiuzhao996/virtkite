@@ -91,7 +91,14 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 		//     执行时解密走环境变量（见 ansible.ApplySurveyAnswers）
 		var surveyVars []ansible.SurveyVar
 		if raw, rerr := os.ReadFile(pbPath); rerr == nil {
-			if sv, present, perr := ansible.ParseSurvey(raw); perr == nil && present {
+			sv, present, perr := ansible.ParseSurvey(raw)
+			if perr != nil {
+				// survey 解析失败不能当作"没有 survey"继续：secret 字段会因此失去
+				// 加密分流，答案全部以明文落 payload.extra_vars。fail-closed。
+				Fail(c, http.StatusBadRequest, "playbook 的 survey 定义有误："+perr.Error())
+				return
+			}
+			if present {
 				surveyVars = sv
 			}
 		}
@@ -149,7 +156,8 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 			Fail(c, http.StatusBadRequest, "模块仅支持 "+ansibleModuleList)
 			return
 		}
-		if req.Module != "ping" && strings.TrimSpace(req.Args) == "" {
+		// ping / setup 是无参模块（setup 采集 facts），不应强制填 args
+		if req.Module != "ping" && req.Module != "setup" && strings.TrimSpace(req.Args) == "" {
 			Fail(c, http.StatusBadRequest, "模块 "+req.Module+" 需要填写执行参数")
 			return
 		}
@@ -160,7 +168,7 @@ func (h *AnsibleHandler) Run(c *gin.Context) {
 	userID, username := taskUserFromContext(c)
 	task, err := h.Tasks.Submit("ansible_run", title, payload, userID, username, "", nil)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		SubmitTaskError(c, err)
 		return
 	}
 	// 留痕：谁、从哪、对几台机器跑了什么（shell 参数/playbook 内容不进日志——可能含敏感内容）

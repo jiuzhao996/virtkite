@@ -250,7 +250,7 @@ func (lg *TaskLogger) EntriesSince(since int) []model.TaskLogEntry {
 	return out
 }
 
-// Close 收口：停节流协程 → 标记关闭并关闭订阅通道（唤醒 WS 转发循环）→ 终态刷一次 → 注销登记。
+// Close 收口：停节流协程 → 标记关闭 → 终态刷库 → 关闭订阅通道（唤醒 WS 转发循环）→ 注销登记。
 // 幂等，可安全被 run 的 defer 与 executor 各调一次。
 func (lg *TaskLogger) Close() {
 	lg.stopped.Do(func() { close(lg.stop) })
@@ -268,10 +268,12 @@ func (lg *TaskLogger) Close() {
 	lg.subs = make(map[chan model.TaskLogEntry]struct{})
 	lg.mu.Unlock()
 
+	// 先落库、再关闭订阅通道：WS 转发循环收到 closed 后会立刻读 DB 并下发 done，
+	// 反过来（先 close 再 flush）会让客户端缺最后一批日志。
+	lg.flush() // 终态刷一次：最后不足一个节流窗口的日志不能丢
 	for _, c := range subs {
 		close(c)
 	}
-	lg.flush() // 终态刷一次：最后不足一个节流窗口的日志不能丢
 	if lg.mgr != nil {
 		lg.mgr.unregisterLogger(lg.taskID, lg)
 	}

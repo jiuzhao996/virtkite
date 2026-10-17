@@ -24,6 +24,7 @@ import (
 
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/ansible"
 	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
@@ -215,6 +216,9 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 	}
 	netName := resolveVMNetwork(p, n)
 	prov := map[string]interface{}{"start": true, "wait_ip": true, "ssh_user": sshUser}
+	// cloud-init 只放边界加密后的口令：与 provision 块同源同密钥，
+	// executor 解密后生成 seed；payload 里绝不能出现明文 password。
+	ciPayload := map[string]interface{}{"hostname": n.Name, "user": sshUser}
 	if n.SSHSecret != "" {
 		// 口令在进入任务队列前就地加密：payload 会落 tasks 表并出现在任务详情里，
 		// 明文一旦写入就难以彻底清除（历史清洗脚本即为此存在）。salt 随密文一起
@@ -225,6 +229,8 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 		}
 		prov["password_enc"] = cipherB64
 		prov["salt"] = saltHex
+		ciPayload["password_enc"] = cipherB64
+		ciPayload["salt"] = saltHex
 	}
 	// disks 用 source_image_id 直接引用云镜像（不拷贝）：与镜像页「基于云镜像
 	// 创建」同构，create_gb 取镜像登记大小作为目标盘容量。interfaces/network
@@ -238,7 +244,7 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 		"disks":        []map[string]interface{}{{"source_image_id": img.ID, "create_gb": int(img.SizeGB)}},
 		"interfaces":   []map[string]interface{}{{"type": "network", "source": netName, "model": "virtio"}},
 		"network":      netName,
-		"cloud_init":   ciSpec,
+		"cloud_init":   ciPayload,
 		"provision":    prov,
 	}
 	task, err := h.Tasks.Submit("create_vm", "设计器创建 VM "+n.Name, createPayload, userID, username, n.Name, nil)
@@ -300,18 +306,13 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 		st.Steps = append(st.Steps, "✓ "+appID+" 安装完成")
 	}
 
-	// 5) playbook 逐个跑（P4-S3 编排联动）：复用 ansible_run 任务管线（凭据解析/
-	// inventory 生成/RECAP 全在 executor），这里只编排。playbook 跑的是初始化/加固/
-	// 优化类动作，与应用安装互补。
-	//
-	// 存在性检查只认单文件 <id>.yml：设计器节点存的是 playbook ID，目录形态
-	// （<id>/site.yml）需走 ansible.ResolvePlaybook；当前这里不支持目录形态，
-	// 传目录 ID 会得到「playbook 不存在」。
+	// 存在性检查走 ResolvePlaybook：同时支持单文件 <id>.yml 与目录形态
+	// （<id>/site.yml，如 web-stack），与手动执行/executor 口径一致。
 	for _, pbID := range n.Playbooks {
 		if !playbookIDRe.MatchString(pbID) {
 			return vmID, fmt.Errorf("playbook ID 非法: %s", pbID)
 		}
-		if _, perr := os.Stat(config.DataPath("ansible", "playbooks", pbID+".yml")); perr != nil {
+		if _, _, ok := ansible.ResolvePlaybook(config.DataPath("ansible", "playbooks"), pbID); !ok {
 			return vmID, fmt.Errorf("playbook 不存在: %s", pbID)
 		}
 		t, err := h.Tasks.Submit("ansible_run", "设计器 playbook "+pbID+" → "+n.Name,

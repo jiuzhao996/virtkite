@@ -176,7 +176,11 @@ func execCloneImageVM(ctx *ExecContext) error {
 	network, _ := strParam(payload, "network")
 	var cloudInit *virt.CloudInitSpec
 	if raw, ok := payload["cloud_init"]; ok && raw != nil {
-		cloudInit = parseTaskCloudInit(raw)
+		var cerr error
+		cloudInit, cerr = parseTaskCloudInit(raw, ctx.MasterSecret)
+		if cerr != nil {
+			return cerr
+		}
 	}
 
 	var img model.Image

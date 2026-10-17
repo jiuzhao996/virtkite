@@ -39,6 +39,9 @@ type ExecContext struct {
 	// executor 通过它写日志：Log.Info / Log.Command / Log.AppendLine / Log.Debug。
 	// 可为 nil（如直接构造 ExecContext 的单测），调用方需容错。
 	Log *TaskLogger
+	// MasterSecret 凭据主密钥（worker 从 Manager 注入）：executor 用它解密
+	// payload 中边界加密的 cloud-init 口令（password_enc/salt），明文不落库。
+	MasterSecret string
 }
 
 // Executor 任务执行函数：返回 nil=成功（可写 ctx.Task.Result），error=失败（中文友好，写 Task.Error）。
@@ -244,10 +247,17 @@ func (m *Manager) Cancel(id uint) (cancelled bool, err error) {
 	if task.Status != statusRunning {
 		return false, nil
 	}
-	m.updateTaskFields(id, map[string]interface{}{
-		"status": statusCancelled,
-		"error":  "已被用户取消",
-	}, "用户取消")
+	// CAS：只有仍处于 running 才能改成 cancelled。任务恰在此刻完成时 RowsAffected=0，
+	// 不能把 success/failed 覆盖成 cancelled（读-改之间没有锁，原实现有该竞态）。
+	res := m.DB.Model(&model.Task{}).
+		Where("id = ? AND status = ?", id, statusRunning).
+		Updates(map[string]interface{}{"status": statusCancelled, "error": "已被用户取消", "updated_at": time.Now()})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return false, nil
+	}
 	if c, ok := m.cancels.Load(id); ok {
 		if cf, ok2 := c.(context.CancelFunc); ok2 {
 			cf()
@@ -289,7 +299,14 @@ func (m *Manager) ListPaged(page, pageSize int, status string) ([]model.Task, in
 	}
 
 	q := m.DB.Model(&model.Task{})
-	if status != "" {
+	switch status {
+	case "":
+		// 不过滤
+	case "active":
+		// 「进行中」是一个跨状态视图：pending + running 必须由 DB 统一分页/排序，
+		// 否则前端各查一次再拼接会出现一页 2×pageSize、排序错乱、total 语义漂移。
+		q = q.Where("status IN ?", []string{model.TaskStatusPending, model.TaskStatusRunning})
+	default:
 		q = q.Where("status = ?", status)
 	}
 	var total int64

@@ -54,7 +54,18 @@ func ListDirFiles(baseDir, name string) ([]DirFile, error) {
 	}
 	var out []DirFile
 	werr := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
+			return nil
+		}
+		// 隐藏文件/目录（.git、.DS_Store、.venv 等）不展示：既不是 playbook 资产，
+		// 递归进去还可能拖慢列表
+		if info.Name() != filepath.Base(root) && strings.HasPrefix(info.Name(), ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
 			return nil
 		}
 		rel, rerr := filepath.Rel(root, p)
@@ -97,6 +108,10 @@ func WriteDirFile(baseDir, name, rel, content string) error {
 	if err != nil {
 		return err
 	}
+	// 与读侧同一个 1MB 上限：不设限会写出永远读不回来的文件，也可被用来占盘
+	if len(content) > dirContentMaxBytes {
+		return errors.New("文件过大（>1MB）")
+	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return fmt.Errorf("创建目录失败: %w", err)
 	}
@@ -120,9 +135,14 @@ func SaveDirUpload(baseDir, name, rel string, r io.Reader) (int64, error) {
 		return 0, fmt.Errorf("创建文件失败: %w", err)
 	}
 	defer f.Close()
-	n, err := io.Copy(f, r)
+	// 多读 1 字节用于判断是否超限；超限删除半成品，避免留下读不回来的文件
+	n, err := io.Copy(f, io.LimitReader(r, dirContentMaxBytes+1))
 	if err != nil {
 		return 0, fmt.Errorf("写入文件失败: %w", err)
+	}
+	if n > dirContentMaxBytes {
+		_ = os.Remove(p)
+		return 0, errors.New("文件过大（>1MB）")
 	}
 	return n, nil
 }

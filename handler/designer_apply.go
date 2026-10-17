@@ -330,14 +330,28 @@ func (h *DesignerHandler) ApplyStatus(c *gin.Context) {
 		Success(c, gin.H{"id": id, "status": st.Status, "steps": st.Steps, "error": st.Error, "mode": st.Mode})
 		return
 	}
-	// 回退：查该计划最近一条落地/收敛任务（payload 含 plan_id）
-	var t model.Task
-	q := h.DB.Where("type IN ? AND payload LIKE ?", []string{"designer_apply", "designer_reconcile"}, `%"plan_id":"`+id+`"%`).
-		Order("id DESC").First(&t)
-	if q.Error != nil {
+	// 回退：查该计划最近一条落地/收敛任务（payload 含 plan_id）。
+	// 不用 SQL LIKE：计划 id 互为子串时（e2e-1 / e2e-10）会串到别的计划；
+	// 取最近 50 条再精确解析 plan_id（designer 任务量很小，代价可忽略）。
+	var recent []model.Task
+	var hit *model.Task
+	if err := h.DB.Where("type IN ?", []string{"designer_apply", "designer_reconcile"}).
+		Order("id DESC").Limit(50).Find(&recent).Error; err == nil {
+		for i := range recent {
+			var p struct {
+				PlanID string `json:"plan_id"`
+			}
+			if json.Unmarshal([]byte(recent[i].Payload), &p) == nil && p.PlanID == id {
+				hit = &recent[i]
+				break
+			}
+		}
+	}
+	if hit == nil {
 		Success(c, gin.H{"id": id, "status": "idle"})
 		return
 	}
+	t := *hit
 	steps := []string{}
 	if t.Result != "" {
 		steps = strings.Split(t.Result, "\n")

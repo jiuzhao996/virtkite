@@ -11,6 +11,7 @@ package handler
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -190,6 +191,11 @@ func (h *StackHandler) Deploy(c *gin.Context) {
 		return
 	}
 	if err := h.Docker.ComposeUpFromFile(target); err != nil {
+		// 栈锁冲突语义是 409（与回滚预检、docker compose 写操作一致），不是 500
+		if errors.Is(err, dockerx.ErrStackBusy) {
+			Fail(c, http.StatusConflict, err.Error())
+			return
+		}
 		ErrorWithMessage(c, http.StatusInternalServerError, "部署失败："+err.Error(), err)
 		return
 	}
@@ -219,27 +225,32 @@ func (h *StackHandler) Detail(c *gin.Context) {
 	}
 	copyPath := config.DataPath("stacks", id, "docker-compose.yml")
 	copyRaw, copyErr := os.ReadFile(copyPath)
-	deployed := copyErr == nil
+	// deployed 口径与 List 对齐：compose 项目仍存在即算已部署。
+	// 只认副本文件会出现「列表说已部署、抽屉说未部署」的分叉（副本被手工删除/移动）。
+	var composeStatus string
+	projectRunning := false
+	if projects, perr := h.Docker.ComposeList(); perr == nil {
+		for _, p := range projects {
+			if p.Name == id {
+				composeStatus = p.Status
+				projectRunning = true
+				break
+			}
+		}
+	}
+	hasCopy := copyErr == nil
+	deployed := hasCopy || projectRunning
 	content := tmplRaw
-	if deployed {
+	if hasCopy {
 		content = copyRaw
 	}
-	drift := deployed && !bytes.Equal(bytes.TrimSpace(copyRaw), bytes.TrimSpace(tmplRaw))
+	drift := hasCopy && !bytes.Equal(bytes.TrimSpace(copyRaw), bytes.TrimSpace(tmplRaw))
 
 	services := []interface{}{}
 	if deployed {
 		if list, serr := h.Docker.ComposeServices(id); serr == nil {
 			for _, s := range list {
 				services = append(services, s)
-			}
-		}
-	}
-	var composeStatus string
-	if projects, perr := h.Docker.ComposeList(); perr == nil {
-		for _, p := range projects {
-			if p.Name == id {
-				composeStatus = p.Status
-				break
 			}
 		}
 	}
@@ -263,6 +274,11 @@ func (h *StackHandler) File(c *gin.Context) {
 	id := c.Param("id")
 	if !dockerx.SafeStackID(id) {
 		Fail(c, http.StatusBadRequest, "栈 ID 非法（仅允许字母数字与 -_.）")
+		return
+	}
+	// 升级/回滚正在读 compose 时保存会替换它读取中的文件（无锁），行为不确定
+	if h.Docker.IsStackBusy(id) {
+		Fail(c, http.StatusConflict, dockerx.ErrStackBusy.Error())
 		return
 	}
 	var body struct {
@@ -316,6 +332,11 @@ func (h *StackHandler) Upgrade(c *gin.Context) {
 	}
 	if h.Tasks == nil {
 		ErrorWithMessage(c, http.StatusInternalServerError, "任务系统未就绪", nil)
+		return
+	}
+	// 与回滚一致：先做一次栈忙预检，避免受理后任务才因抢锁失败（用户以为已开始）
+	if h.Docker.IsStackBusy(id) {
+		Fail(c, http.StatusConflict, dockerx.ErrStackBusy.Error())
 		return
 	}
 	uid, uname := taskUserFromContext(c)

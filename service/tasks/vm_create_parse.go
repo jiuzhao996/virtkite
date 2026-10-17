@@ -5,6 +5,7 @@ package tasks
 import (
 	"fmt"
 
+	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/virt"
 )
 
@@ -32,10 +33,14 @@ type createDiskReq struct {
 }
 
 // parseTaskCloudInit 从 payload 子项安全解析 cloud-init 配置（非 map 时返回 nil）。
-func parseTaskCloudInit(v interface{}) *virt.CloudInitSpec {
+//
+// 口令在 handler 边界已加密为 password_enc + salt（明文不落 tasks.payload）；
+// 这里用任务主密钥解回 Password 供生成 seed ISO。解密失败必须让任务失败而不是
+// 静默产出无密码的 seed（否则用户会拿到一台登不进去的机器）。
+func parseTaskCloudInit(v interface{}, masterSecret string) (*virt.CloudInitSpec, error) {
 	m, ok := v.(map[string]interface{})
 	if !ok || m == nil {
-		return nil
+		return nil, nil
 	}
 	spec := &virt.CloudInitSpec{}
 	if s, ok := strParam(m, "hostname"); ok {
@@ -46,6 +51,20 @@ func parseTaskCloudInit(v interface{}) *virt.CloudInitSpec {
 	}
 	if s, ok := strParam(m, "password"); ok {
 		spec.Password = s
+	}
+	// 边界加密字段（新路径）：password 为空时解密还原
+	if spec.Password == "" {
+		if enc, ok := strParam(m, "password_enc"); ok && enc != "" {
+			salt, _ := strParam(m, "salt")
+			if masterSecret == "" {
+				return nil, fmt.Errorf("服务端未配置凭据主密钥，无法解密 cloud-init 口令")
+			}
+			plain, err := secretbox.OpenWithMaster(masterSecret, salt, enc)
+			if err != nil {
+				return nil, fmt.Errorf("cloud-init 口令解密失败: %w", err)
+			}
+			spec.Password = string(plain)
+		}
 	}
 	if s, ok := strParam(m, "ssh_key"); ok {
 		spec.SSHKey = s
@@ -70,14 +89,14 @@ func parseTaskCloudInit(v interface{}) *virt.CloudInitSpec {
 			spec.DNS = dns
 		}
 	}
-	return spec
+	return spec, nil
 }
 
 // parseTaskDisks 从 payload 安全解析磁盘列表。
-func parseTaskDisks(v interface{}) []createDiskReq {
+func parseTaskDisks(v interface{}, masterSecret string) ([]createDiskReq, error) {
 	arr, ok := v.([]interface{})
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	out := make([]createDiskReq, 0, len(arr))
 	for _, e := range arr {
@@ -99,11 +118,15 @@ func parseTaskDisks(v interface{}) []createDiskReq {
 			d.SourceImageID = uint(n)
 		}
 		if ci, ok := m["cloud_init"]; ok && ci != nil {
-			d.CloudInit = parseTaskCloudInit(ci)
+			spec, err := parseTaskCloudInit(ci, masterSecret)
+			if err != nil {
+				return nil, err
+			}
+			d.CloudInit = spec
 		}
 		out = append(out, d)
 	}
-	return out
+	return out, nil
 }
 
 // parseTaskInterfaces 从 payload 安全解析网卡列表。

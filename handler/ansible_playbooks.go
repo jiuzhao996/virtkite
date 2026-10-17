@@ -209,6 +209,12 @@ func (h *AnsibleHandler) CreatePlaybook(c *gin.Context) {
 		Fail(c, http.StatusConflict, "同名 playbook 已存在")
 		return
 	}
+	// 同名目录也要拦：目录形态 <id>/site.yml 与单文件 <id>.yml 会互相遮蔽，
+	// 允许创建会让 ResolvePlaybook 的优先级行为看起来像"文件被吞了"。
+	if _, err := os.Stat(filepath.Join(playbookDir(), req.ID)); err == nil {
+		Fail(c, http.StatusConflict, "同名 playbook 目录已存在")
+		return
+	}
 	if err := ansible.SyntaxCheck(req.Content); err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return

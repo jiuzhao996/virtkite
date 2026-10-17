@@ -167,7 +167,7 @@ func (h *DockerHandler) BuildImage(c *gin.Context) {
 	userID, username := taskUserFromContext(c)
 	task, err := h.Tasks.Submit("image_build", "构建镜像 "+req.Tag, payload, userID, username, "", nil)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		SubmitTaskError(c, err)
 		return
 	}
 	Accepted(c, "构建任务已提交", gin.H{"task_id": task.ID})

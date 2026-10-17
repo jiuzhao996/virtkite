@@ -8,6 +8,7 @@ import (
 
 	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
+	"github.com/jiuzhao/vmops/service/secretbox"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
 )
@@ -365,7 +366,10 @@ func TestParseTaskInterfaces(t *testing.T) {
 func TestParseTaskDisks(t *testing.T) {
 	t.Run("真实参数：新建卷 + 引用云镜像", func(t *testing.T) {
 		payload := decodePayload(t, realCreateVMPayload)
-		got := parseTaskDisks(payload["disks"])
+		got, err := parseTaskDisks(payload["disks"], "")
+		if err != nil {
+			t.Fatalf("解析磁盘失败: %v", err)
+		}
 
 		if len(got) != 2 {
 			t.Fatalf("磁盘数量错误：期望 2，实际 %d", len(got))
@@ -432,7 +436,10 @@ func TestParseTaskDisks(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.raw), &raw); err != nil {
 				t.Fatalf("测试数据非法 JSON: %v", err)
 			}
-			got := parseTaskDisks(raw)
+			got, err := parseTaskDisks(raw, "")
+			if err != nil {
+				t.Fatalf("解析磁盘失败: %v", err)
+			}
 			if len(got) != tc.wantLen {
 				t.Fatalf("磁盘数量错误：期望 %d，实际 %d（%#v）", tc.wantLen, len(got), got)
 			}
@@ -447,10 +454,43 @@ func TestParseTaskDisks(t *testing.T) {
 //
 // 风险点：dns 是数组，元素类型不受控；实现要求逐元素断言并过滤空串，
 // 否则会把空条目写进 network-config，cloud-init 解析失败 → 虚拟机拿不到网络配置。
+func TestParseTaskCloudInitEncrypted(t *testing.T) {
+	cipherB64, saltHex, err := secretbox.SealWithMaster("test-master-secret", "p@ss")
+	if err != nil {
+		t.Fatalf("加密失败: %v", err)
+	}
+	// 边界加密后的 payload：只有 password_enc/salt，没有明文 password
+	raw := map[string]interface{}{
+		"hostname":     "web-01",
+		"user":         "ubuntu",
+		"password_enc": cipherB64,
+		"salt":         saltHex,
+	}
+	spec, err := parseTaskCloudInit(raw, "test-master-secret")
+	if err != nil {
+		t.Fatalf("解密失败: %v", err)
+	}
+	if spec.Password != "p@ss" {
+		t.Fatalf("口令还原错误：期望 p@ss，实际 %q", spec.Password)
+	}
+
+	// 主密钥不匹配必须报错，不能静默产出无口令 seed
+	if _, err := parseTaskCloudInit(raw, "wrong-master"); err == nil {
+		t.Fatal("错误主密钥应解密失败")
+	}
+	// 未注入主密钥同样 fail-closed
+	if _, err := parseTaskCloudInit(raw, ""); err == nil {
+		t.Fatal("空主密钥应解密失败")
+	}
+}
+
 func TestParseTaskCloudInit(t *testing.T) {
 	t.Run("完整配置", func(t *testing.T) {
 		payload := decodePayload(t, realCreateVMPayload)
-		disks := parseTaskDisks(payload["disks"])
+		disks, err := parseTaskDisks(payload["disks"], "")
+		if err != nil {
+			t.Fatalf("解析磁盘失败: %v", err)
+		}
 		got := disks[0].CloudInit
 		if got == nil {
 			t.Fatal("cloud_init 未解析")
@@ -528,7 +568,11 @@ func TestParseTaskCloudInit(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.raw), &raw); err != nil {
 				t.Fatalf("测试数据非法 JSON: %v", err)
 			}
-			tc.check(t, parseTaskCloudInit(raw))
+			spec, err := parseTaskCloudInit(raw, "")
+			if err != nil {
+				t.Fatalf("解析失败: %v", err)
+			}
+			tc.check(t, spec)
 		})
 	}
 }

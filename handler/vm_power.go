@@ -124,7 +124,7 @@ func (h *VMHandler) StopVM(c *gin.Context) {
 	vmID := vm.ID
 	task, err := h.Tasks.Submit("stop_vm", "停止虚拟机 "+vm.Name, payload, userID, username, vm.Name, &vmID)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		SubmitTaskError(c, err)
 		return
 	}
 	Accepted(c, "任务已提交", gin.H{"task_id": task.ID})

@@ -98,6 +98,8 @@ func (m *Manager) run(id uint) {
 		Report:  m.reporter(id),
 		Ctx:     ctx,
 		Log:     lg,
+		// 边界加密的 cloud-init 口令由 executor 解密；明文不落 tasks.payload
+		MasterSecret: m.secret(),
 	}
 	// 执行级超时：executor 挂死（libvirt RPC 无响应 / 下载僵死 / 死循环）时，
 	// 任务永久停在 running——worker 白白少一个，四角全卡死时整个任务系统瘫痪，

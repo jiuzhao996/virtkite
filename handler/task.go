@@ -107,8 +107,10 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusNotFound, "任务不存在", err)
 		return
 	}
-	if task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusFailed {
-		Fail(c, http.StatusConflict, "仅允许删除已完成(success/failed)的任务")
+	// cancelled 也是终态：允许清理，否则取消过的任务永久占着列表
+	// （UI 早已把 cancelled 当可删终态，后端此前只认 success/failed，两边矛盾）。
+	if task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
+		Fail(c, http.StatusConflict, "仅允许删除已完成(success/failed/cancelled)的任务")
 		return
 	}
 	if err := h.DB.Delete(&model.Task{}, task.ID).Error; err != nil {

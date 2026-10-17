@@ -72,7 +72,11 @@ func execCreateVM(ctx *ExecContext, masterSecret string) error {
 
 	var disks []createDiskReq
 	if raw, ok := payload["disks"]; ok && raw != nil {
-		disks = parseTaskDisks(raw)
+		var derr error
+		disks, derr = parseTaskDisks(raw, masterSecret)
+		if derr != nil {
+			return derr
+		}
 	}
 	var interfaces []virt.InterfaceSpec
 	if raw, ok := payload["interfaces"]; ok && raw != nil {
@@ -80,7 +84,11 @@ func execCreateVM(ctx *ExecContext, masterSecret string) error {
 	}
 	var cloudInit *virt.CloudInitSpec
 	if raw, ok := payload["cloud_init"]; ok && raw != nil {
-		cloudInit = parseTaskCloudInit(raw)
+		var cerr error
+		cloudInit, cerr = parseTaskCloudInit(raw, masterSecret)
+		if cerr != nil {
+			return cerr
+		}
 	}
 
 	// 查宿主机：未指定时取平台登记的首台。

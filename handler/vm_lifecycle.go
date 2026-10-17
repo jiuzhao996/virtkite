@@ -94,6 +94,12 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 	if payload == nil {
 		payload = map[string]interface{}{}
 	}
+	// 口令边界加密：cloud_init.password 绝不能明文进 tasks.payload（会落库）。
+	// executor 用同一主密钥解回明文生成 seed ISO。
+	if err := sealPayloadCloudInit(payload); err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "初始化配置加密失败", err)
+		return
+	}
 	// 可选「自动初始化」（向导勾选）：建机任务在 define 后自动 开机 → 等 IP → 托管凭据，
 	// 与设计器落地共用 create_vm 的 provision 块。口令在此边界加密，payload/日志不留明文。
 	var autoReq struct {
@@ -117,7 +123,7 @@ func (h *VMHandler) CreateVM(c *gin.Context) {
 	userID, username := taskUserFromContext(c)
 	task, err := h.Tasks.Submit("create_vm", "创建虚拟机 "+req.Name, payload, userID, username, req.Name, nil)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		SubmitTaskError(c, err)
 		return
 	}
 	Accepted(c, "任务已提交", gin.H{"task_id": task.ID})
@@ -201,7 +207,7 @@ func (h *VMHandler) CloneVM(c *gin.Context) {
 	srcID := src.ID
 	task, err := h.Tasks.Submit("clone_vm", "克隆虚拟机 "+req.Name, payload, userID, username, req.Name, &srcID)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		SubmitTaskError(c, err)
 		return
 	}
 	Accepted(c, "任务已提交", gin.H{"task_id": task.ID})
@@ -247,7 +253,7 @@ func (h *VMHandler) DeleteVM(c *gin.Context) {
 	vmID := vm.ID
 	task, err := h.Tasks.Submit("delete_vm", "删除虚拟机 "+vm.Name, payload, userID, username, vm.Name, &vmID)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "提交任务失败", err)
+		SubmitTaskError(c, err)
 		return
 	}
 	Accepted(c, "任务已提交", gin.H{"task_id": task.ID})
