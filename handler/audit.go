@@ -12,17 +12,21 @@ import (
 	"gorm.io/gorm"
 )
 
-// AuditHandler 审计日志处理器
+// AuditHandler 审计日志处理器（查询/导出/统计，均 admin 专属）。
+// 审计记录的写入在 middleware.AuditMiddleware，本文件只负责读侧；
+// 中间件只记写操作（不记 GET），因此列表天然不会被执行读请求刷屏。
 type AuditHandler struct {
 	DB *gorm.DB
 }
 
-// NewAuditHandler 创建审计日志处理器
+// NewAuditHandler 创建审计日志处理器。
 func NewAuditHandler(db *gorm.DB) *AuditHandler {
 	return &AuditHandler{DB: db}
 }
 
-// ListAuditLogs 查询审计日志（支持多条件筛选与分页）
+// ListAuditLogs 查询审计日志（支持多条件筛选与分页）。
+// 先 Count 再分页查询：Count 失败直接 500，不带着 total=0 继续查——
+// 否则前端会显示「共 0 条」却又有数据，比报错更难排查。
 func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 	// 筛选条件与 CSV 导出共用 applyAuditFilters（同一口径，防两处漂移）
 	query := h.applyAuditFilters(c)
@@ -56,6 +60,9 @@ func (h *AuditHandler) ListAuditLogs(c *gin.Context) {
 }
 
 // applyAuditFilters 审计查询的共用筛选器（列表与 CSV 导出同一套口径，防两处漂移）。
+// 所有条件均参数化（? 占位），绝不拼接用户输入；无法解析的日期静默忽略，
+// 避免一个坏参数让整个筛选 500。
+// end 用「次日 0 点 + <」而非「当日 23:59:59 + <=」：精确覆盖整天且不受秒级舍入影响。
 func (h *AuditHandler) applyAuditFilters(c *gin.Context) *gorm.DB {
 	query := h.DB.Model(&model.AuditLog{})
 	if action := c.Query("action"); action != "" {
@@ -65,6 +72,7 @@ func (h *AuditHandler) applyAuditFilters(c *gin.Context) *gorm.DB {
 		query = query.Where("object_type = ?", objectType)
 	}
 	if username := c.Query("username"); username != "" {
+		// LIKE 通配符由服务端加在参数值上，用户名本身仍走占位符参数化
 		query = query.Where("username LIKE ?", "%"+username+"%")
 	}
 	if status := c.Query("status"); status != "" {
@@ -88,24 +96,31 @@ func (h *AuditHandler) applyAuditFilters(c *gin.Context) *gorm.DB {
 // 万条级审计会卡浏览器；此处 FindInBatches 每千条 flush 一次，内存占用恒定。
 // Excel 兼容：UTF-8 BOM 头；encoding/csv 自带引号转义（含逗号/换行的单元格安全）。
 func (h *AuditHandler) ExportAuditCSV(c *gin.Context) {
+	// 响应头在写任何内容前设置；一旦开始写 CSV 就无法再改状态码
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", "attachment; filename=audit-logs.csv")
 
 	_, _ = c.Writer.WriteString("\ufeff") // BOM：Excel 双击打开不乱码
 	w := csv.NewWriter(c.Writer)
 
+	// 表头固定 10 列；导出中断时补的说明行必须同宽（见下方错误分支）
 	_ = w.Write([]string{"ID", "时间", "用户", "操作", "操作文案", "对象类型", "对象ID", "来源IP", "状态", "详情"})
 
+	// 复用列表筛选口径；按时间倒序，导出的顺序与页面一致
 	query := h.applyAuditFilters(c).Order("created_at desc")
 	const batch = 1000
 	var rows []model.AuditLog
+	// FindInBatches 由 GORM 按主键游标分批取数：每批 1000 条处理完即释放，
+	// 内存占用与总记录数无关（这是替代「前端循环拉全量」的核心）。
 	err := query.FindInBatches(&rows, batch, func(_ *gorm.DB, _ int) error {
 		out := make([][]string, 0, len(rows))
 		for _, l := range rows {
+			// ObjectID 可空（登录/登出等无对象操作），NULL 导出为空单元格
 			objID := ""
 			if l.ObjectID != nil {
 				objID = strconv.FormatUint(uint64(*l.ObjectID), 10)
 			}
+			// 操作文案查 ActionLabels；未登记的新 action 回退原始 action，避免导出空白列
 			label, hasLabel := ActionLabels[l.Action]
 			if !hasLabel {
 				label = l.Action
@@ -123,6 +138,8 @@ func (h *AuditHandler) ExportAuditCSV(c *gin.Context) {
 				l.Detail,
 			})
 		}
+		// 每批写完后 Flush 并显式刷新 HTTP：让浏览器边下边收，
+		// 大导出不会在服务端攒满整个响应体
 		if err := w.WriteAll(out); err != nil {
 			return err
 		}
@@ -146,6 +163,7 @@ func (h *AuditHandler) ExportAuditCSV(c *gin.Context) {
 
 // ActionLabels 审计操作类型 → 中文文案映射（供审计页筛选/展示、仪表盘统计标签使用）。
 // 与 middleware.AuditMiddleware 的 determineAction 产物保持一致。
+// 新增写操作时两边要同步：漏登记不会报错，只会让前端显示原始 action 字符串。
 var ActionLabels = map[string]string{
 	"login": "登录", "logout": "登出",
 
@@ -177,11 +195,13 @@ var ActionLabels = map[string]string{
 }
 
 // ListAuditActions 返回操作类型 → 中文文案映射（前端下拉/标签展示）。
+// 直接返回包级 map：调用方只读，不修改（若未来需要写，应返回副本）。
 func (h *AuditHandler) ListAuditActions(c *gin.Context) {
 	Success(c, ActionLabels)
 }
 
-// AuditActionSummary 操作类型分布统计（用于仪表盘/论文图表）
+// AuditActionSummary 操作类型分布统计（用于仪表盘/论文图表）。
+// GROUP BY action 后按次数倒序；空表返回 [] 而非 null，前端图表无需判空。
 func (h *AuditHandler) AuditActionSummary(c *gin.Context) {
 	type actionCount struct {
 		Action string `json:"action"`

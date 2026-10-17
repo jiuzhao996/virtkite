@@ -15,6 +15,8 @@ import (
 )
 
 // SettingsHandler 系统设置处理器：GET 运维可见的生效配置快照，PUT 修改可写配置项。
+// 配置读写的权威在 service/setting（白名单 + 校验 + DB 持久化 + 进程内缓存），
+// handler 只负责 HTTP 边界：鉴权（路由层 admin-only）、参数绑定、错误出口。
 type SettingsHandler struct {
 	DB       *gorm.DB
 	Virt     *virt.Virt
@@ -29,9 +31,13 @@ func NewSettingsHandler(db *gorm.DB, mgr *setting.Manager) *SettingsHandler {
 // GetSettings 返回平台生效配置快照（仅管理员）。
 // 前端"系统设置"页分组展示；轮询偏好等纯前端配置由浏览器 localStorage 维护，不经过后端。
 // tasks.worker/queue 与 sessions.vnc_stale_min 读真实生效值（含 DB 可写配置覆盖）。
+//
+// 只读快照，不返回任何密钥：writable 走 setting.All()，该函数刻意排除 ai_* 三键
+// （ai_api_key 永不下发前端，见 service/setting.All 注释）。
 func (h *SettingsHandler) GetSettings(c *gin.Context) {
 	cfg := config.GlobalConfig
 
+	// 存储池/网络枚举 best-effort：libvirt 暂不可用时列表为空，设置页其余部分仍可查看
 	pools, _ := h.Virt.ListPools()
 	networks, _ := h.Virt.ListNetworks()
 	netNames := make([]string, 0, len(networks))
@@ -72,6 +78,13 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 
 // UpdateSettings 修改可写配置项（仅管理员）。请求体字段全部可选，只更新出现的键。
 // 白名单与取值范围由 service/setting.Validate 把关；写入即生效（消费方每次实时读取）。
+//
+// 实现约定：
+//   - 字段用指针：nil=本次不改，非 nil（含空串/0）=显式改成该值。
+//   - 每个键独立「Validate → Set」：校验失败 400 回显固定中文文案，落库失败 500
+//     且完整错误只进日志（handler 边界不泄漏内部错误）。
+//   - 不是事务：若第 N 个键落库失败，前 N-1 个已生效。这是刻意的取舍——配置项彼此
+//     独立、失败可重试，为一次保存引入事务反而会让部分成功场景更难排查。
 func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 	var req struct {
 		DefaultStoragePool *string `json:"default_storage_pool"`
@@ -91,8 +104,10 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
+	// updated 只用于生成「已更新: ...」的中文回执；实际生效与否以 Set 返回值为准
 	updated := make([]string, 0, 8)
-	// AI 三键（v3 批次 B）：同样的「Validate 400 固定文案 / Set DB 错误收口」分层
+	// AI 三键（v3 批次 B）：同样的「Validate 400 固定文案 / Set DB 错误收口」分层。
+	// ai_api_key 是 write-only：可写、可判空（Status 返回 configured），但永不回显。
 	if req.AIBaseURL != nil {
 		if err := setting.Validate(setting.KeyAIBaseURL, *req.AIBaseURL); err != nil {
 			Fail(c, http.StatusBadRequest, err.Error())
@@ -233,11 +248,13 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		}
 		updated = append(updated, "告警通知")
 	}
+	// 空请求体（所有指针均为 nil）视为参数错误：避免前端误发空保存却显示成功
 	if len(updated) == 0 {
 		Fail(c, http.StatusBadRequest, "没有需要更新的配置项")
 		return
 	}
 
+	// 返回最新快照，前端可直接用它刷新表单，无需再发一次 GET
 	Success(c, gin.H{
 		"message":  "已更新: " + strings.Join(updated, "、"),
 		"writable": h.Settings.All(),

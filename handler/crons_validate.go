@@ -21,6 +21,10 @@ import (
 
 // applyCronReq 把请求中出现的字段合并到任务上，并对合并后的完整任务做校验与参数归一化。
 // 返回的 error 均为固定中文文案（可直接回显），不含内部细节。
+//
+// 请求字段全部用指针：nil=「本次没改」，非 nil=「显式改成该值」。这是 PATCH 语义，
+// 让编辑页可以只提交用户实际改动的字段；因此合并后再整体校验，而不是逐字段校验
+// （例如只改名字时，存量 cron 表达式也必须仍然合法）。
 func applyCronReq(st *model.ScheduledTask, req cronTaskReq) error {
 	if req.Name != nil {
 		st.Name = strings.TrimSpace(*req.Name)
@@ -71,6 +75,8 @@ func applyCronReq(st *model.ScheduledTask, req cronTaskReq) error {
 }
 
 // nilIfZero 把 0 转成 nil（链式引用清空语义：任务 id 从 1 起，0 表示不链）。
+// 前端用 0 表示「取消链式引用」，DB 里用 NULL 表示同一语义；
+// 这里做边界转换，避免把 0 当成真实任务 id 去查库。
 func nilIfZero(v uint) *uint {
 	if v == 0 {
 		return nil
@@ -79,11 +85,14 @@ func nilIfZero(v uint) *uint {
 }
 
 // ensureChainTargets 校验链式下一跳任务存在且不自指。返回 false 表示响应已写好。
+// 成功/失败链各自独立校验；只查存在性，不递归检查环（A→B→A 在执行侧靠
+// 任务深度/状态兜底，建链时不做图遍历，避免一次保存引发大量查询）。
 func (h *CronsHandler) ensureChainTargets(c *gin.Context, st *model.ScheduledTask) bool {
 	for _, ref := range []*uint{st.OnSuccessTaskID, st.OnFailureTaskID} {
 		if ref == nil {
 			continue
 		}
+		// 自指只可能在更新场景出现（新建时 ID 还是 0）
 		if st.ID != 0 && *ref == st.ID {
 			Fail(c, http.StatusBadRequest, "链式下一跳不能指向任务自身")
 			return false
@@ -104,6 +113,10 @@ func (h *CronsHandler) ensureChainTargets(c *gin.Context, st *model.ScheduledTas
 // validateCronTask 校验任务的名称/cron 表达式/动作/参数（纯校验，不查库），
 // 并把 Params 归一化为白名单键的 JSON。vm_snapshot 时返回解析出的 vm_id（>0）。
 // 错误消息为固定中文文案，调用方可直接 Fail 回显。
+//
+// 「归一化」是安全设计：Params 是用户可控 JSON，原样落库会被执行侧整包解析；
+// 每个 action 只挑出自己认识的键重新序列化，多余键一律丢弃，既屏蔽脏数据，
+// 也缩小未来执行侧误用未知字段的攻击面。
 func validateCronTask(st *model.ScheduledTask) (uint, error) {
 	if st.Name == "" {
 		return 0, errors.New("任务名不能为空")
@@ -122,6 +135,7 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 	if st.GraceMinutes < 0 || st.GraceMinutes > 1440 {
 		return 0, fmt.Errorf("grace_minutes（死开关宽限分钟）必须在 0-1440 之间，当前为 %d（0 表示关闭）", st.GraceMinutes)
 	}
+	// 重试次数/间隔上限都很小：定时任务的重试是「抖动补偿」，不是无限重跑
 	if st.RetryCount < 0 || st.RetryCount > 3 {
 		return 0, fmt.Errorf("retry_count（失败重试次数）必须在 0-3 之间，当前为 %d", st.RetryCount)
 	}
@@ -137,6 +151,7 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 		return 0, errors.New("cron 表达式在未来 366 天内没有可执行时刻，请检查字段取值")
 	}
 
+	// 按 action 分派参数校验与归一化；未知 action 一律拒绝（白名单，不是黑名单）
 	switch st.Action {
 	case cron.ActionVMSnapshot:
 		var params struct {
@@ -154,6 +169,7 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 			return 0, errors.New("params 序列化失败")
 		}
 		st.Params = string(b)
+		// 返回 vm_id 供调用方做存在性/权限校验（本函数刻意不查库）
 		return params.VMID, nil
 	case cron.ActionDBBackup:
 		st.Params = "{}" // 预留扩展位，当前无可配参数
@@ -172,15 +188,18 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 		if err := json.Unmarshal([]byte(st.Params), &params); err != nil {
 			return 0, errors.New(`params 必须为 JSON，例如 {"playbook":"sysctl-tuning","targets":[89]}`)
 		}
+		// playbook 名会拼进 data/ansible/playbooks/<id>.yml，必须先过正则白名单防目录穿越
 		if !cron.AnsiblePlaybookIDRe.MatchString(params.Playbook) {
 			return 0, errors.New("playbook ID 非法（字母数字与 -_，字母开头）")
 		}
 		if _, err := os.Stat(config.DataPath("ansible", "playbooks", params.Playbook+".yml")); err != nil {
 			return 0, fmt.Errorf("playbook 不存在: %s", params.Playbook)
 		}
+		// targets 与 group_id 至少给一个：否则任务会「成功执行 0 台」，看起来像静默失败
 		if len(params.Targets) == 0 && params.GroupID == 0 {
 			return 0, errors.New("目标不能为空（targets 或 group_id 至少其一）")
 		}
+		// 单次 50 台上限：批量执行是串行/小并发，放开会导致任务长时间占用 worker
 		if len(params.Targets) > 50 {
 			return 0, errors.New("单次执行最多 50 台")
 		}
@@ -198,7 +217,8 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 		st.Params = string(b)
 		return 0, nil
 	case cron.ActionContainerHealthcheck:
-		// 归一化：只保留白名单键 notify（默认 true），屏蔽多余内容
+		// 归一化：只保留白名单键 notify（默认 true），屏蔽多余内容。
+		// 解析失败也放行并按默认值处理：健康巡检本身无危险动作，不值得因脏参数拒绝。
 		notifyOn := true
 		if strings.TrimSpace(st.Params) != "" {
 			var params struct {
@@ -227,6 +247,7 @@ func validateCronTask(st *model.ScheduledTask) (uint, error) {
 
 // ensureVMExists 校验 vm_snapshot 任务的 vm_id 指向存在的虚拟机（软删的查不到）。
 // 返回 false 表示响应已写好（DB 故障 500 / 查无此项 400），调用方直接 return。
+// 非快照动作直接放行；权限层面由路由中间件与执行侧负责，这里只保证目标存在。
 func (h *CronsHandler) ensureVMExists(c *gin.Context, st *model.ScheduledTask) bool {
 	if st.Action != cron.ActionVMSnapshot {
 		return true
