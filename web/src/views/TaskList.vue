@@ -282,6 +282,7 @@ import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 import TaskKVList from './tasks/components/TaskKVList.vue'
 import TaskLogPanel from './tasks/components/TaskLogPanel.vue'
+import { useTaskLogStream } from '../composables/useTaskLogStream'
 import { useAuth } from '../store/auth'
 import { taskTypeText, taskStatusText, taskStatusTag, fmtDateTime, errMsg, isCancel } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
@@ -353,143 +354,18 @@ const detail = ref(null)
 
 // ==================== 结构化执行日志 + 实时增量 WS ====================
 
-// logEntries：结构化日志条目 [{seq,ts,kind,text,hidden}]；
-// logStructured：true 走日志面板（TaskLogPanel 子组件），false（老任务 result 是纯文本/业务 JSON）
-// 回退到既有 result 渲染。
-const logEntries = ref([])
-const logStructured = ref(false)
-const logLive = ref(false)
-const showDebug = ref(false)
 // 日志面板子组件实例：仅用于把「滚到底」能力暴露出来（模板 ref）
 const logPanelRef = ref(null)
-let logWs = null
-let logRetryTimer = null
-let logRetry = 0
-let logManualClose = false
-let logLastSeq = 0
-let logTaskId = null
-
-// hiddenCount / visibleLogEntries / fmtLogTs 已随日志面板下沉到 TaskLogPanel.vue
-// （它自行折叠调试行并格式化时间戳，页面只喂原始 entries）
-
-/** 按 seq 去重追加：GET 首屏全量与 WS 增量可能重叠，seq 保证幂等。 */
-function appendLogEntries(list) {
-  if (!Array.isArray(list) || !list.length) return
-  const have = new Set(logEntries.value.map((e) => e.seq))
-  let added = false
-  for (const e of list) {
-    if (!e || have.has(e.seq)) continue
-    have.add(e.seq)
-    logEntries.value.push(e)
-    if (e.seq > logLastSeq) logLastSeq = e.seq
-    added = true
-  }
-  if (added) scrollLogToBottom()
-}
-
 // 滚到底交给日志面板子组件（它持有滚动容器 ref），页面只转发调用
 function scrollLogToBottom() {
   logPanelRef.value?.scrollToBottom()
 }
 
-function closeLogStream() {
-  logManualClose = true
-  if (logRetryTimer) {
-    clearTimeout(logRetryTimer)
-    logRetryTimer = null
-  }
-  if (logWs) {
-    try {
-      logWs.close()
-    } catch (e) {
-      /* 已关闭 */
-    }
-    logWs = null
-  }
-  logLive.value = false
-}
-
-/** 打开任务日志：首屏 GET 全量 → 记下最大 seq → 非终态则连 WS 追平增量。 */
-async function openLogStream(task) {
-  closeLogStream()
-  logManualClose = false
-  logEntries.value = []
-  logStructured.value = false
-  showDebug.value = false
-  logLastSeq = 0
-  logRetry = 0
-  logTaskId = task.id
-  try {
-    const res = await api.getTaskLogs(task.id)
-    // 请求期间用户可能已切换任务/关闭抽屉：过期响应不得写入新详情
-    if (logTaskId !== task.id) return
-    const data = (res && res.data) || {}
-    logStructured.value = !!data.structured
-    if (logStructured.value) appendLogEntries(data.entries)
-  } catch (e) {
-    // 日志端点不可用（如后端未上线）：静默回退到既有 result 渲染，不打扰用户
-    logStructured.value = false
-    return
-  }
-  // 活动任务即使首屏还没有结构化日志（pending / 刚启动 2s 内）也要连 WS：
-  // 后端会在 logger 出现后补订阅，否则用户必须关闭再打开才能看到实时日志。
-  if (!isTaskActive(task)) return // 终态任务：首屏全量已足够，无需连 WS
-  connectLogWS(task.id)
-}
-
-/** 连接日志增量 WS（票据一次性，重连会重新取票）。 */
-async function connectLogWS(id) {
-  let ticket = ''
-  try {
-    const res = await api.mintTaskLogTicket(id)
-    ticket = (res.data && res.data.ticket) || ''
-  } catch (e) {
-    return // 取票失败：降级为「仅首屏全量」，不空转重连
-  }
-  if (logManualClose || logTaskId !== id) return // 取票期间抽屉已关/已切换任务
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const url = `${proto}//${location.host}/api/tasks/${id}/logs/ws?since=${logLastSeq}&ticket=${encodeURIComponent(ticket)}`
-  logWs = new WebSocket(url)
-  const openTimer = setTimeout(() => {
-    try {
-      logWs.close()
-    } catch (e) {
-      /* 已关闭 */
-    }
-  }, 10000)
-  logWs.onopen = () => clearTimeout(openTimer)
-  logWs.onmessage = (ev) => {
-    let msg
-    try {
-      msg = JSON.parse(ev.data)
-    } catch (e) {
-      return
-    }
-    if (msg.type === 'ready') {
-      clearTimeout(openTimer)
-      logLive.value = true
-    } else if (msg.type === 'entries') {
-      // pending 任务首屏没有结构化日志；WS 第一批到达时切到结构化面板
-      if (Array.isArray(msg.entries) && msg.entries.length) logStructured.value = true
-      appendLogEntries(msg.entries)
-    } else if (msg.type === 'done') {
-      logLive.value = false
-      if (detailDrawer.value) refreshDetail() // 终态：让抽屉里的进度/状态走到终点
-      closeLogStream()
-    } else if (msg.type === 'error') {
-      closeLogStream()
-    }
-  }
-  logWs.onclose = () => {
-    clearTimeout(openTimer)
-    logLive.value = false
-    if (logManualClose || logTaskId !== id) return
-    if (logRetry >= 3) return
-    logRetry++
-    logRetryTimer = setTimeout(() => connectLogWS(id), 1000 * 2 ** (logRetry - 1))
-  }
-  logWs.onerror = () => clearTimeout(openTimer)
-}
+// 任务结构化日志流（GET 首屏 + WS 增量 + 一次性票据 + 退避重连）收进 composable，
+// 与 AppInstallLogDrawer 共用同一套语义，避免两边行为漂移。
+// onAppend 由 composable 在每次追加后回调，页面借它把面板滚到底。
+const { entries: logEntries, structured: logStructured, live: logLive, debug: showDebug,
+  open: openLogStream, close: closeLogStream } = useTaskLogStream(scrollLogToBottom)
 
 // ==================== 批量操作（XXL-JOB 手感：按选中数自动启停）====================
 
