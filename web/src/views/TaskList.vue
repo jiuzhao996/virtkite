@@ -23,6 +23,7 @@
                查看详情=selectOnlyOne（恰好选 1 条）；批量取消/删除=selectAny（选中里有可处理项即可） -->
           <el-button :icon="View" :disabled="!selectOnlyOne" @click="openSelectedDetail">查看详情</el-button>
           <el-button
+            v-if="isAdmin"
             type="warning"
             plain
             :disabled="!canBatchCancel"
@@ -89,6 +90,7 @@
           <template #default="{ row }">
             <span v-if="row.status === 'failed'" class="err-text">{{ row.error || '失败' }}</span>
             <span v-else-if="row.status === 'success'" class="ok-text">完成</span>
+            <span v-else-if="row.status === 'cancelled'" class="muted-text">已取消</span>
             <span v-else class="muted-text">执行中…</span>
           </template>
         </el-table-column>
@@ -98,7 +100,7 @@
         <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button
-              v-if="row.status === 'running'"
+              v-if="isAdmin && row.status === 'running'"
               text type="warning" size="small"
               :loading="cancellingId === row.id"
               @click.stop="cancelTask(row)"
@@ -429,7 +431,8 @@ async function openLogStream(task) {
     logStructured.value = false
     return
   }
-  if (!logStructured.value) return
+  // 活动任务即使首屏还没有结构化日志（pending / 刚启动 2s 内）也要连 WS：
+  // 后端会在 logger 出现后补订阅，否则用户必须关闭再打开才能看到实时日志。
   if (!isTaskActive(task)) return // 终态任务：首屏全量已足够，无需连 WS
   connectLogWS(task.id)
 }
@@ -466,6 +469,8 @@ async function connectLogWS(id) {
       clearTimeout(openTimer)
       logLive.value = true
     } else if (msg.type === 'entries') {
+      // pending 任务首屏没有结构化日志；WS 第一批到达时切到结构化面板
+      if (Array.isArray(msg.entries) && msg.entries.length) logStructured.value = true
       appendLogEntries(msg.entries)
     } else if (msg.type === 'done') {
       logLive.value = false
@@ -778,11 +783,13 @@ const detailTimeline = computed(() => {
   }
   if (!Number.isNaN(finished)) {
     const ok = d.status === 'success'
+    const cancelled = d.status === 'cancelled'
     nodes.push({
       key: 'finished',
-      label: ok ? '执行成功' : '执行失败',
+      // cancelled 不是「失败」：误标 danger 会让用户以为系统出错
+      label: ok ? '执行成功' : cancelled ? '已取消' : '执行失败',
       time: fmtDateTime(d.updated_at),
-      type: ok ? 'success' : 'danger',
+      type: ok ? 'success' : cancelled ? 'info' : 'danger',
       duration: Number.isNaN(started)
         ? '总耗时 ' + fmtDuration(finished - created)
         : '执行 ' + fmtDuration(finished - started)
@@ -857,17 +864,8 @@ const filteredItems = computed(() => {
 // 异常自行捕获提示（fetcher 契约），返回 total 由 composable 同步
 async function fetchTaskPage({ page, pageSize }) {
   try {
-    // "进行中"= pending+running 两请求并发合并（原"整页拉取再前端过滤"分页数与可见条数漂移）
-    if (q.value.status === 'active') {
-      const [run, pend] = await Promise.all([
-        api.listTasks({ page, page_size: pageSize, status: 'running' }),
-        api.listTasks({ page, page_size: pageSize, status: 'pending' })
-      ])
-      const rl = (run.data && run.data.items) || []
-      const pl = (pend.data && pend.data.items) || []
-      items.value = [...rl, ...pl]
-      return ((run.data && run.data.total) || 0) + ((pend.data && pend.data.total) || 0)
-    }
+    // "进行中"由后端按 status IN (pending,running) 统一分页/排序；
+    // 前端各查一次再拼接会导致一页 2×pageSize、排序错乱、total 语义漂移。
     const params = { page, page_size: pageSize }
     if (q.value.status) params.status = q.value.status
     const res = await api.listTasks(params)

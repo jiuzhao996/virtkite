@@ -212,7 +212,9 @@ export const core = {
 
   // 声明式部署栈（P2A）：清单含部署状态；deploy admin；docs 返回 markdown 原文
   listStacks: () => unwrap(http.get('/stacks')),
-  deployStack: (id) => unwrap(http.post(`/stacks/${id}/deploy`)),
+  // 部署是同步接口（后端 compose up 最长 10 分钟），必须覆盖全局 15s 超时，
+  // 否则拉镜像稍慢就报「部署失败」，而后端仍在跑、状态分叉。
+  deployStack: (id) => unwrap(http.post(`/stacks/${id}/deploy`, null, { timeout: 11 * 60 * 1000 })),
   stackDocs: (id, path) => http.get(`/stacks/${id}/docs`, { params: { path } }).then((r) => r.data),
   // 版本历史与回滚（回滚走 stack_rollback 异步任务，需 admin）
   stackVersions: (id) => unwrap(http.get(`/stacks/${id}/versions`)),

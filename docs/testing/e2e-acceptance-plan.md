@@ -457,6 +457,12 @@ python3 -m http.server 18080 --directory /tmp/e2e-tree
 | `web/e2e/docker-apps.spec.js` | 容器创建/停止/删除 | `@docker` |
 | `web/e2e/automation.spec.js` | Playbook 新建/语法校验/删除、计划任务新建/删除 | `@auto` |
 | `web/e2e/rbac.spec.js` | 三角色权限负例、未授权 VM 404 | `@rbac` |
+| `web/e2e/ws-ticket.spec.js` | 无凭证/伪造、跨资源、一次性、过期、任务日志票 | `@ws-ticket` |
+| `web/e2e/task-center.spec.js` | 长任务取消、cancelled 删除、日志可读、参数校验 | `@task-center` |
+| `web/e2e/recycle-bin.spec.js` | 软删 → 恢复（域已 undefine）→ 再删 → 彻底清除 | `@recycle` |
+| `web/e2e/ansible-run.spec.js` | 真实建机 → adhoc ping → 任务成功/输出 → 清理 | `@ansible-run` |
+| `web/e2e/designer.spec.js` | 计划保存、连线 kind 持久化、导出单个 stacks、删除 | `@designer` |
+| `web/e2e/apps.spec.js` | 应用参数 schema、SSH 白名单、use_saved 缺凭据 | `@apps` |
 
 公共设施（`web/e2e/helpers/`）：
 
@@ -561,6 +567,50 @@ CHROME_PATH=/usr/bin/google-chrome npx lighthouse "http://127.0.0.1:8080/#/login
 
 ---
 
+### 11.2 第二批深挖发现并修复的缺陷（2026-10-17，任务/WS/Ansible/回收站/设计器/应用栈）
+
+| 缺陷 | 现象 | 修复 |
+|---|---|---|
+| **cloud-init 明文口令落库** | `tasks.payload.cloud_init.password` 是明文（实测 task 236，31 位）。任务详情虽隐藏 payload，但 DB 可直接读到，违反「口令不得落库」 | 新增 `handler/cloud_init_seal.go`：建机 / 镜像克隆 / 设计器三条路径在提交前把 password 换成 `password_enc`+`salt`；executor 用主密钥解密（`parseTaskCloudInit`），解密失败 fail-closed |
+| cancelled 任务不可删 | UI 把 cancelled 当终态可删，后端只认 success/failed → 取消过的任务永远清不掉 | 后端允许删除 cancelled；E2E 断言删除后 404 |
+| 「进行中」分页错乱 | 前端并发查 running/pending 再拼接：一页最多 2×pageSize、排序非全局、total 相加 | 后端 `status=active` 统一 `IN (pending,running)` 分页；前端单请求 |
+| cancelled 显示成「执行中…」/「执行失败」 | 结果列与时间线误标 | 结果列「已取消」；时间线 info 色「已取消」 |
+| pending 任务无实时日志 | 首屏 `structured=false` 直接 return，不连 WS | 活动任务一律连 WS；首批 entries 到达时切结构化面板 |
+| Ansible 失败丢 RECAP | executor 在 `eng.Run` 出错时直接 return，Result 为空，页面只剩「部分主机执行失败」 | 失败也写 `Result`（output/recap/recap_raw） |
+| `setup` 模块被要求填 args | 无参模块被 400 拦截 | ping/setup 放行空 args |
+| 组执行脱敏漏成员 | 脱敏集合只展开 targets，group_id 成员口令可能进日志 | 展开 `host_groups.vm_ids` 纳入脱敏 |
+| 目录形态 playbook 被判不存在 | 定时任务/设计器只 `Stat(<id>.yml)` | 改走 `ansible.ResolvePlaybook`（支持 `<id>/site.yml`） |
+| 单文件可遮蔽同名目录 | 创建只查 `<id>.yml` | 同名目录也 409 |
+| 文件树可写 >1MB / 列隐藏文件 | 写入/上传无上限，`.git` 等进清单 | 读写统一 1MB；隐藏文件/目录跳过 |
+| 栈忙语义 | 升级无预检（受理后任务才失败）；部署忙返回 500 | 升级预检 409；部署 `ErrStackBusy` → 409 |
+| 彻底清除留孤儿 | 不 undefine 域；只删 `<name>.qcow2`，漏 `-diska/-sys` | 先 undefine（容忍不存在）；三种命名逐个过四重守卫 |
+| 恢复误认领同名域 | 只按名字判断域存在，不校验 UUID | 比对 UUID，不一致按「域不存在」走重建 |
+| 设计器连线类型丢失 | 后端 `dsgLink` 无 kind，保存后全变 net | `dsgLink` 增加 `kind` 并持久化 |
+| 导出 YAML 非法 | 多个容器节点产生重复顶层 `stacks:`；未校验计划 ID | 聚合为单个 stacks 列表；ID 白名单 |
+| apply-status 串计划 | `payload LIKE '%"plan_id":"x"%'`，`e2e-1` 命中 `e2e-10` | 取最近 50 条精确解析 plan_id |
+| 栈部署前端假失败 | 全局 axios 15s，同步部署最长 10min | 部署请求单独 11min 超时 |
+|「重新部署」文案行为不符 | 文案说「按当前编排文件」，实际用仓库模板覆盖 | 文案明确「会覆盖当前编排文件，修改先存版本历史」 |
+| 恢复缺盘用 success | exact_missing 危险信息被绿色提示带过 | 含「磁盘文件已不存在」时用 warning |
+| Automation 输出卡 | 运行中关闭无效；执行后强制切 tab；凭据提示指向不存在的入口 | 关闭后不再弹回；不再切 tab；提示改为「建机自动托管/管理员预置」 |
+| 取消按钮权限不一致 | operator 可见取消/批量取消，点击 403 | 仅 admin 显示 |
+| 取消竞态 | Cancel 读-改无 CAS，可能把刚完成的任务覆盖成 cancelled | `WHERE status='running'` 条件更新，RowsAffected=0 视为未取消 |
+| 终态日志缺尾 | TaskLogger.Close 先关订阅再 flush，WS 收到 done 时最后一批未落库 | 先 flush 再关通道 |
+| survey 解析失败泄明文 | 解析出错当作无 survey，secret 答案以明文进 extra_vars | 解析失败 400 fail-closed |
+| 凭据含换行可注入 inventory | 口令只做单引号转义 | 保存时拒绝换行/控制字符 |
+
+**仍未修复（已登记，下一批处理）**：
+
+- 设计器 Apply 是全量新增，预览却来自 reconcile 差异；重复 Apply 会同名建机失败并把软删记录推进回收站（R5/R6）；首次失败后无基线，收敛退化为全量新增（R7）。
+- 恢复不恢复资产授权/托管凭据/主机组成员（R8）——删除时已物理清理，恢复只回记录。
+- 设计器等建机 12min < 任务 15min（R13）；运行位仅内存，重启/多实例失效（R14）。
+- 任务列表/详情/日志对 viewer 全量可见（D-08）；任务日志 WS 取票仅 admin，operator 看不到「实时」徽标（D-49）。
+- 应用安装 UI 强制填密码、走不了 use_saved（R20）；不校验 VM 运行态（R21）；前端轮询 10min < 任务 15min（R30）。
+- 栈 Detail 与 List 的 `deployed` 口径不一致（R16）；保存编排不持锁、不记版本（R19）。
+- 任务日志 WS 终态最后一条可能未落库就发 done（D-16）。
+- **Docker 域深挖未完成**（盘点代理因服务端 503 中断）：容器创建/健康检查/构建上下文/compose 服务级操作/日志 WS 重连等仍只有基础 CRUD 覆盖。
+
+---
+
 ## 12. 已知限制与待补
 1. **需要管理员口令**才能跑 L5；无口令只跑登录页与 L1–L3。
 2. FTP 安装树依赖本机 FTP 服务；未部署标 BLOCKED（HTTP 用例覆盖解析与下载）。
@@ -568,4 +618,4 @@ CHROME_PATH=/usr/bin/google-chrome npx lighthouse "http://127.0.0.1:8080/#/login
 4. 容器/应用依赖 Docker；Ansible 依赖引擎；缺失整域 BLOCKED。
 5. 监控曲线依赖 Prometheus；未配置只验证「未配置」降级文案。
 6. 破坏性用例默认关闭；开启前必须确认目标全部为 `e2e-` 前缀。
-7. **当前尚未覆盖**（下一批补）：WS 票据一次性负例、异步任务取消/重试、回收站恢复的「域已 undefine」分支、设计器 reconcile 删除分支、栈回滚版本冲突。
+7. **当前尚未覆盖**（下一批补）：自动重试（image_build/image_download/stop_vm）、设计器 reconcile 删除分支与重复 Apply、栈回滚版本冲突、应用商店真实安装、Docker 全链路。WS 票据一次性/跨资源/过期、任务取消、回收站恢复已由 `ws-ticket.spec.js`、`task-center.spec.js`、`recycle-bin.spec.js` 覆盖。

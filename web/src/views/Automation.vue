@@ -73,7 +73,7 @@
             </el-form-item>
             <el-form-item>
               <el-button type="primary" :loading="submitting" @click="runAdhoc">执 行</el-button>
-              <span class="auto-hint">目标需运行中、已获 IP 且保存过托管凭据（虚拟机详情页可保存）</span>
+              <span class="auto-hint">目标需运行中、已获 IP 且保存过托管凭据（建机时勾选「自动初始化」会自动托管；存量机需管理员预置）</span>
             </el-form-item>
           </el-form>
         </el-card>
@@ -157,7 +157,7 @@
       :is-running="isRunning"
       :status-tag="statusTag"
       :status-label="statusLabel"
-      @close="runTask = null"
+      @close="closeRunCard"
     />
 
     <!-- Playbook 编辑抽屉 -->
@@ -179,7 +179,7 @@
     <el-dialog v-model="roleDialogOpen" title="新建 Role" width="480px" append-to-body>
       <el-form label-width="72px">
         <el-form-item label="名称">
-          <el-input v-model="roleForm.name" placeholder="字母数字开头，可含 _ . -（如 web-baseline）" />
+          <el-input v-model="roleForm.name" placeholder="字母数字开头，可含 _ -（如 web-baseline）" />
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="roleForm.desc" placeholder="一句话说明，写进 role 头部与清单页" />
@@ -385,6 +385,8 @@ const submitting = ref(false)
 const deploying = ref(false)
 const extraVars = reactive({})
 const runTask = ref(null)
+// 用户手动关闭输出卡后置 true：运行中的轮询不再把卡片弹回来
+const runDismissed = ref(false)
 // 执行输出卡子组件实例：经它转发 scrollToBottom（滚动容器在子组件内）
 const outputCardRef = ref(null)
 let pollTimer = null
@@ -743,7 +745,7 @@ function createRole() {
 async function submitRole() {
   const name = roleForm.name.trim()
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) {
-    return ElMessage.warning('名称非法：字母数字开头，可含 _ . -，≤64 字符')
+    return ElMessage.warning('名称非法：字母数字开头，可含 _ -，≤64 字符')
   }
   roleCreating.value = true
   try {
@@ -844,11 +846,13 @@ async function removePlaybook(id) {
 // 轮询
 function startPolling(taskId) {
   stopPolling()
-  activeTab.value = 'adhoc'
+  // 输出卡在 tab 外共用，不必把用户从当前 tab 拽走（回归：此前强制切到快速执行）
+  runDismissed.value = false
   const tick = async () => {
     try {
       const res = await api.getTask(taskId)
-      runTask.value = res.data
+      // 用户手动关闭后不再把卡片塞回来（运行中关闭此前无效）
+      if (!runDismissed.value) runTask.value = res.data
       scrollToBottom()
       if (res.data.status !== 'running' && res.data.status !== 'pending') {
         stopPolling()
@@ -861,6 +865,11 @@ function startPolling(taskId) {
   tick()
   pollTimer = setInterval(tick, 1500)
 }
+/** 关闭执行输出卡：运行中也不允许下一轮轮询重新弹开 */
+function closeRunCard() {
+  runDismissed.value = true
+  runTask.value = null
+}
 function stopPolling() {
   if (pollTimer) {
     clearInterval(pollTimer)
@@ -869,6 +878,7 @@ function stopPolling() {
 }
 function viewHistoryTask(row) {
   stopPolling()
+  runDismissed.value = false
   runTask.value = row
   scrollToBottom()
 }

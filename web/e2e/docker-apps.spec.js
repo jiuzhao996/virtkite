@@ -76,4 +76,65 @@ test.describe('容器 @docker', () => {
       }
     }
   })
+
+  test('容器参数校验与暂停/恢复/重启/重命名', async ({ page }) => {
+    await login(page)
+    const probe = await api(page, 'GET', '/api/docker/containers')
+    test.skip(probe.status !== 200, 'Docker 不可用')
+
+    // 非法名称 / 非法端口格式必须在入口被拒
+    const badName = await api(page, 'POST', '/api/docker/containers', { name: 'bad name', image: 'alpine:3.24' })
+    expect(badName.status, '非法容器名应 400').toBe(400)
+    const badPort = await api(page, 'POST', '/api/docker/containers', {
+      name: e2eName('badport'),
+      image: 'alpine:3.24',
+      ports: ['not-a-port'],
+    })
+    expect(badPort.status, '非法端口映射应 400').toBe(400)
+
+    // 合法创建 → 暂停/恢复/重启/重命名 → 删除
+    const name = e2eName('ctr2')
+    const created = await api(page, 'POST', '/api/docker/containers', {
+      name,
+      image: 'alpine:3.24',
+      command: 'sleep 60',
+      envs: ['E2E=1'],
+      restart: 'no',
+    })
+    expect(created.status, `创建失败：${created.message || ''}`).toBe(200)
+    const id = created.data?.id
+    expect(id, '创建应返回容器 ID').toBeTruthy()
+
+    try {
+      for (const action of ['pause', 'unpause', 'restart']) {
+        const r = await api(page, 'POST', `/api/docker/containers/${id}/${action}`)
+        expect(r.status, `${action} 失败：${r.message || ''}`).toBe(200)
+      }
+      const renamed = `${name}-r`
+      const rn = await api(page, 'POST', `/api/docker/containers/${id}/rename`, { name: renamed })
+      expect(rn.status, `重命名失败：${rn.message || ''}`).toBe(200)
+      const list = await api(page, 'GET', '/api/docker/containers')
+      expect((list.data?.items || []).some((c) => (c.Names || '').includes(renamed))).toBe(true)
+    } finally {
+      await api(page, 'DELETE', `/api/docker/containers/${id}?force=true`).catch(() => {})
+    }
+  })
+
+  test('Docker 卷：创建 → 列表 → 删除', async ({ page }) => {
+    await login(page)
+    const probe = await api(page, 'GET', '/api/docker/volumes')
+    test.skip(probe.status !== 200, 'Docker 不可用')
+
+    const name = e2eName('vol')
+    const created = await api(page, 'POST', '/api/docker/volumes', { name })
+    expect(created.status, `创建卷失败：${created.message || ''}`).toBe(200)
+    try {
+      const list = await api(page, 'GET', '/api/docker/volumes')
+      const items = list.data?.items || list.data || []
+      expect((Array.isArray(items) ? items : []).some((v) => v.Name === name)).toBe(true)
+    } finally {
+      const del = await api(page, 'DELETE', `/api/docker/volumes/${encodeURIComponent(name)}`)
+      expect([200, 404]).toContain(del.status)
+    }
+  })
 })

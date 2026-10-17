@@ -346,9 +346,11 @@ async function upgrade() {
 
 async function redeploy() {
   try {
-    await ElMessageBox.confirm('按当前编排文件重新部署（compose up -d），确定？', '重新部署', {
-      type: 'warning', confirmButtonText: '重新部署'
-    })
+    await ElMessageBox.confirm(
+      '将用仓库模板覆盖当前编排文件并重新部署（compose up -d）。你在「编排文件」里保存的修改会先存档到版本历史，但会被模板覆盖；确定继续？',
+      '重新部署',
+      { type: 'warning', confirmButtonText: '重新部署' }
+    )
   } catch (e) {
     if (!isCancel(e)) ElMessage.error(errMsg(e, '操作失败'))
     return

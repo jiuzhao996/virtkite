@@ -290,6 +290,9 @@ async function restore(row) {
     // 域已 undefine 的记录只能恢复数据库行：诚实提示而非假装「干净恢复」
     if (d.domain_defined === false) {
       ElMessage.warning(d.message || '记录已恢复，但虚拟机定义已不存在，可在创建向导用同名卷重新定义')
+    } else if (d.message && d.message.includes('磁盘文件已不存在')) {
+      // exact_missing：定义重建成功但缺盘，危险信息不能用绿色 success 一笔带过
+      ElMessage.warning(d.message)
     } else {
       ElMessage.success(d.message || `已恢复 ${row.name}`)
     }
