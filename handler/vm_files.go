@@ -75,11 +75,20 @@ func (h *VMFilesHandler) resolve(c *gin.Context, req *vmFilesReq, op string) (vm
 		ErrorWithMessage(c, http.StatusBadRequest, "参数错误（需提供主机、用户名和密码）", err)
 		return nil, vmssh.Options{}, false
 	}
-	// use_saved：从凭据托管取 SSH 凭据（v3.2 批次 I+），host/port 仍由请求提供
+	// use_saved：从凭据托管取 SSH 凭据（v3.2 批次 I+），host/port 仍由请求提供。
+	// 注意这里必须用 record：命名返回值 vm 要到函数末尾 return &record 时才赋值，
+	// 在分支里写 vm.ID 会解引用 nil（2026-10-17 E2E 实测：use_saved=true 必 500）。
 	if req.UseSaved {
-		user, port, password, ok2 := h.VMCred.ResolveFor(c, vm.ID)
+		// 依赖注入缺失时绝不能直接解引用：nil 指针会被 gin Recovery 吞成 500 空响应，
+		// 前端只看到「请求失败」而拿不到任何原因。
+		if h.VMCred == nil {
+			log.Printf("[vm-files] !!! 凭据托管未注入（VMCred=nil），use_saved 不可用 vm=%s(%d)", record.Name, record.ID)
+			Fail(c, http.StatusServiceUnavailable, "凭据托管未初始化，请手动填写用户名与密码")
+			return nil, vmssh.Options{}, false
+		}
+		user, port, password, ok2 := h.VMCred.ResolveFor(c, record.ID)
 		if !ok2 {
-			return
+			return nil, vmssh.Options{}, false
 		}
 		req.User = user
 		req.Password = password
