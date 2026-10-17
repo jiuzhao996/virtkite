@@ -60,16 +60,6 @@ func IsDirPlaybook(baseDir, id string) bool {
 	return err == nil && st.IsDir()
 }
 
-// SyntaxCheckDir 目录形态 playbook 的语法校验：整目录复制到临时目录再 --syntax-check
-// （roles/templates 等相对引用必须同目录可见，否则误报「角色不存在」）。
-func SyntaxCheckDir(mainFile string) error {
-	raw, err := os.ReadFile(mainFile)
-	if err != nil {
-		return fmt.Errorf("读取主文件失败: %w", err)
-	}
-	return SyntaxCheckContentInDir(mainFile, string(raw))
-}
-
 // SyntaxCheckContentInDir 用给定内容覆盖主文件后做整目录语法校验（保存前预检用）。
 func SyntaxCheckContentInDir(mainFile, newContent string) error {
 	return SyntaxCheckFileInDir(mainFile, mainFile, newContent)

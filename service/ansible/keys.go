@@ -88,10 +88,3 @@ func FingerprintPair(pubKey string) string {
 	sum := sha256.Sum256([]byte(parts[1]))
 	return fmt.Sprintf("%s:%x", parts[0], sum[:8])
 }
-
-// ForceReloadKeyPair 清缓存重读（测试用；生产无调用方）。
-func ForceReloadKeyPair() {
-	keyMu.Lock()
-	defer keyMu.Unlock()
-	keyPrivate, keyPublicKey = "", ""
-}

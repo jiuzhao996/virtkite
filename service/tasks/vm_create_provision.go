@@ -141,8 +141,9 @@ func leaseIPByMAC(ctx *ExecContext, mac string) string {
 }
 
 // upsertVMCredential 写入/覆盖 VM 的托管凭据（密文落库）。
-// 与 handler.VMCredentialHandler.UpsertForVM 同义——tasks 包禁 import handler（handler 已 import tasks），
-// 故此处自实现一份；两处语义必须同步（一 VM 一条，唯一索引 vm_id，端口固定 22）。
+// tasks 包禁 import handler（handler 已 import tasks），故此处自实现一份，
+// 与 handler 侧保存凭据的语义必须同步（一 VM 一条，唯一索引 vm_id，端口固定 22）。
+// 注：handler.VMCredentialHandler 曾有一个同义的 UpsertForVM，实际零调用，已删除。
 func upsertVMCredential(ctx *ExecContext, masterSecret string, vmID uint, user, password string) error {
 	if user == "" || password == "" {
 		return errors.New("托管凭据需要非空的用户名与口令")

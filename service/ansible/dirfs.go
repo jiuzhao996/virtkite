@@ -28,9 +28,6 @@ type DirFile struct {
 	Size int64  `json:"size"`
 }
 
-// ValidDirName 目录名白名单校验（handler 侧先查一次，给出友好的 400 文案）。
-func ValidDirName(name string) bool { return dirNameRe.MatchString(name) }
-
 // safeDirPath 把相对路径解析到 <baseDir>/<name> 内（词法守卫：必须落在根内且带分隔符边界）。
 // 唯一的路径注入面，所有文件操作都必须先过这里。
 func safeDirPath(baseDir, name, rel string) (string, error) {
