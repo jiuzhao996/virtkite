@@ -1,0 +1,5 @@
+# 鸢航 VirtKite 是内部管理平台，不需要被搜索引擎收录。
+# 同时提供合法 robots.txt，避免 SPA 回退把 index.html 当作 robots.txt 返回
+# （Lighthouse 会因此报「robots.txt 无效，26 个错误」）。
+User-agent: *
+Disallow: /

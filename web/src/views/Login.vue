@@ -209,7 +209,9 @@ async function submit() {
 .login-brand h1 .en {
   font-size: 1.05rem;
   font-weight: 600;
-  opacity: 0.85;
+  /* 品牌青的深端：主色 #2a9da5 在白色背景上对比度约 3.3:1，正文级文字不达 WCAG AA（4.5:1）；
+     axe-core 扫描报 serious。这里只压暗这一处副标题，不动全局主色 */
+  color: #1f7e84;
   letter-spacing: 1px;
 }
 .login-brand p {

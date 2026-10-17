@@ -195,7 +195,10 @@ func main() {
 				r.Static("/"+sub, dir)
 			}
 		}
-		for _, f := range []string{"favicon.svg", "favicon-32.png", "favicon-16.png"} {
+		// 根级静态文件白名单：favicon 三件套 + robots.txt。
+		// robots.txt 必须显式托管——否则会被 NoRoute 当 SPA 路由兜底成 index.html，
+		// 搜索引擎/Lighthouse 拿 HTML 当 robots.txt 解析，报几十条语法错误。
+		for _, f := range []string{"favicon.svg", "favicon-32.png", "favicon-16.png", "robots.txt"} {
 			fp := filepath.Join(webDir, f)
 			if _, statErr := os.Stat(fp); statErr == nil {
 				r.GET("/"+f, func(c *gin.Context) {

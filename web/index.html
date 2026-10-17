@@ -7,12 +7,26 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>鸢航 VirtKite · 基于 KVM 的轻量级私有云管理平台</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
-      rel="stylesheet"
+    <meta
+      name="description"
+      content="鸢航 VirtKite —— 基于 KVM 的轻量级私有云管理平台，提供虚拟机、存储、网络、容器与运维自动化的一体化管理。"
     />
+    <!-- 字体非阻塞加载：Google Fonts 在国内网络常不可达，同步 <link rel="stylesheet">
+         会把首屏渲染拖到 6s+（Lighthouse FCP/LCP 实测）。改用 media="print" 先以
+         低优先级拉取，加载完成再切回 all；拉不到时直接回退系统黑体（font-display: swap）。
+         注意：这里刻意不加 preconnect——目标不可达时预连接同样要等超时。 -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      />
+    </noscript>
   </head>
   <body>
     <div id="app"></div>
