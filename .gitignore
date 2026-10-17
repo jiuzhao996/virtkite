@@ -18,6 +18,13 @@
 web/node_modules/
 web/dist/
 
+# 前端测试 / 审计产物（Vitest 覆盖率、Playwright 报告与失败现场）
+web/coverage/
+web/test-results/
+/test-results/
+web/e2e-report/
+web/playwright-report/
+
 # Go
 *.test
 
