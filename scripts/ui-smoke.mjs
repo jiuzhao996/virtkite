@@ -469,6 +469,56 @@ async function main() {
     await shot('99-向导确认页')
     // 到此为止：不点「创建虚拟机」——建机是 smoke.sh（API 层）的职责，UI 脚本保持零副作用
 
+    // ---------- 5) 按钮验收：各页「打开类」按钮点一遍，靠全局 JS 异常检查兜住坏按钮 ----------
+    // 只点会打开弹层/抽屉/下拉的按钮（新建/添加/查看/编辑/刷新/安装…），点开即关，零副作用。
+    // 危险动作（删除/清除/重启/关机/批量/保存/执行/部署…）**一律跳过**——自动化误点删除的代价太大，
+    // 留给人工验收。这里点一遍的意义：把"按钮 handler 写坏 / 绑定错 / 点一下就抛异常"暴露到 jsErrors。
+    step = '按钮验收'
+    const BTN_OPEN = /新建|添加|上传|刷新|查看|详情|编辑|导入|导出|安装|脚本|配置|管理|调整|关联|绑定|登记|克隆|复制|预览|展开|筛选|重置|更多|设置/
+    const BTN_DANGER = /删除|清除|彻底|回收|重启|关机|停止|暂停|恢复|启动|开机|批量|保存|确定|提交|执行|运行|部署|应用|注销|退出|移除|摘除|下线|销毁|清空/
+    const BTN_PAGES = ['#/vms', '#/containers', '#/apps', '#/storage', '#/networks', '#/images', '#/tasks', '#/audit', '#/users', '#/automation', '#/hosts', '#/settings', '#/logs']
+    let btnClicked = 0, btnOpened = 0
+    for (const pg of BTN_PAGES) {
+      await goto(pg, 2000)
+      const labels = JSON.parse(await ev(`(() => JSON.stringify(
+        Array.from(document.querySelectorAll('.el-main .el-button'))
+          .filter((b) => b.offsetParent !== null && !b.disabled && !b.classList.contains('is-disabled'))
+          .map((b) => (b.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 16))
+          .filter(Boolean)
+      ))()`))
+      for (const t of labels) {
+        if (BTN_DANGER.test(t) || !BTN_OPEN.test(t)) continue
+        // 按文本精确匹配点击（页面可能重渲染，故每次重新查找）
+        const r = await ev(`(() => {
+          const el = Array.from(document.querySelectorAll('.el-main .el-button'))
+            .find((b) => (b.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 16) === ${JSON.stringify(t)} && b.offsetParent !== null && !b.disabled)
+          if (!el) return 'gone'
+          el.click()
+          return 'ok'
+        })()`)
+        if (r !== 'ok') continue
+        btnClicked++
+        await sleep(600)
+        const st = JSON.parse(await ev(`(() => JSON.stringify({
+          dialog: !!document.querySelector('.el-dialog:not([style*="display: none"])'),
+          drawer: !!document.querySelector('.el-drawer:not([style*="display: none"])'),
+          msg: !!document.querySelector('.el-message'),
+        }))()`))
+        if (st.dialog || st.drawer || st.msg) btnOpened++
+        // 关掉弹层/下拉，避免影响后续点击
+        await ev(`(() => {
+          document.querySelector('.el-dialog__headerbtn')?.click()
+          document.querySelector('.el-drawer__close-btn')?.click()
+          document.querySelector('.el-message__closeBtn')?.click()
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        })()`)
+        await sleep(250)
+        drain()
+      }
+    }
+    check('按钮验收：打开类按钮可点（无异常）', btnClicked > 0, `未点到任何打开类按钮（共 ${btnClicked}）`)
+    console.log(`  按钮验收：点击 ${btnClicked} 个，其中 ${btnOpened} 个出现弹层/消息`)
+
     drain()
     for (const e of jsErrors) fail(`JS 异常 @${e.step}`, e.text)
     for (const e of httpErrors) fail(`HTTP ${e.status} @${e.step}`, e.url)
