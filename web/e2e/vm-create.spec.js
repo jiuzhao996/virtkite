@@ -167,11 +167,14 @@ test.describe('真实建机 @vm-create', () => {
           .toMatch(/^running\|.+/)
 
         const cur = await findVMByName(page, name)
-        const ssh = await api(page, 'POST', `/api/vms/${cur.id}/files/list`, {
-          host: cur.ip,
-          use_saved: true,
-          path: '/',
-        })
+        // 刚拿到 IP 时 sshd/cloud-init 可能还在启动，轮询到 SSH 真正可用（最多 2 分钟）
+        const sshCall = () =>
+          api(page, 'POST', `/api/vms/${cur.id}/files/list`, { host: cur.ip, use_saved: true, path: '/' })
+        await expect
+          .poll(async () => (await sshCall()).status, { timeout: 120_000, intervals: [3000] })
+          .toBe(200)
+
+        const ssh = await sshCall()
         expect(ssh.status, `SSH 目录读取失败：${ssh.message || ''}`).toBe(200)
         expect(
           Array.isArray(ssh.data?.items),

@@ -40,6 +40,18 @@ export async function getTask(page, taskId) {
   return r.data || {}
 }
 
+/** VM 详情（data 即 VM 对象） */
+export async function getVM(page, id) {
+  const r = await api(page, 'GET', `/api/vms/${id}`)
+  return r.data || null
+}
+
+/** VM spec（{vm, spec}）；spec.autostart / disks / interfaces 用于断言 */
+export async function getVMSpec(page, id) {
+  const r = await api(page, 'GET', `/api/vms/${id}/spec`)
+  return r.data || {}
+}
+
 /** 轮询任务直到终态；success 返回任务对象，failed/超时抛错 */
 export async function waitTask(page, taskId, { timeout = 300000, interval = 1500 } = {}) {
   const deadline = Date.now() + timeout
@@ -66,11 +78,11 @@ export async function findVMByName(page, name) {
 /** 存储池 / 网络 / 镜像的只读清单（前置检查用） */
 export async function listPools(page) {
   const r = await api(page, 'GET', '/api/storage/pools')
-  return r.data || []
+  return (r.data && r.data.items) || []
 }
 export async function listNetworks(page) {
   const r = await api(page, 'GET', '/api/networks')
-  return r.data || []
+  return (r.data && r.data.items) || []
 }
 export async function listImages(page) {
   const r = await api(page, 'GET', '/api/images')
