@@ -1,3 +1,15 @@
+// user.go：平台用户账号管理（仅 admin）与当前登录用户自助改密。
+//
+// 职责边界：本文件只负责 HTTP 参数绑定、角色/密码策略校验与 GORM 读写；
+// 口令哈希与校验委托 middleware.HashPassword / CheckPassword，密码强度规则委托
+// service/setting（支持运行时调整），handler 内不硬编码强度规则。
+//
+// 安全约定：
+//   - 路径主键一律先经 paramID 解析成 uint 再交给 GORM，禁止直传 c.Param
+//     （GORM 会把非纯数字字符串当原始 SQL 片段拼接，见 AGENTS 第 8 条）；
+//   - 密码哈希列永不序列化给前端（model.User.PasswordHash 带 json:"-"）；
+//   - users 属资产表，走 GORM 软删除（DeletedAt），删除后记录仍可追溯。
+
 package handler
 
 import (
@@ -14,7 +26,11 @@ import (
 // 仅在 settingMgr 未接线时兜底使用，避免「忘记注入」静默放开已有的口令强度约束。
 const legacyPasswordMinLength = 6
 
-// UserHandler 用户处理器
+// UserHandler 用户处理器（仅挂载在 AdminMiddleware 之后的管理路由上）。
+//
+// settingMgr 采用「构造后注入」而非构造参数：NewUserHandler 的签名保持不变，
+// routes.go 里补一行 SetSettingMgr 即可；未接线时 passwordPolicy 回落到
+// legacyPasswordMinLength，避免因漏注入而静默放开口令强度。
 type UserHandler struct {
 	DB         *gorm.DB
 	settingMgr *setting.Manager // 系统可写配置（SetSettingMgr 注入，未注入时用改造前硬底线）
@@ -39,7 +55,11 @@ func (h *UserHandler) passwordPolicy() int {
 	return h.settingMgr.PasswordMinLength()
 }
 
-// ListUsers 获取用户列表
+// ListUsers 获取用户列表。
+//
+// 平台用户量级很小（教学/团队场景），因此不分页、一次返回全量；GORM 默认过滤
+// 软删除记录。nil 切片显式替换成空切片，保证 JSON 序列化为 [] 而不是 null，
+// 前端表格可直接渲染。
 func (h *UserHandler) ListUsers(c *gin.Context) {
 	var users []model.User
 	if err := h.DB.Find(&users).Error; err != nil {
@@ -56,10 +76,17 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 	})
 }
 
-// validRoles 角色白名单，与 model.User.Role 的取值一致
+// validRoles 角色白名单，与 model.User.Role 的取值一致：
+// admin（管理员，全部权限）/ operator（运维，可操作资源）/ viewer（只读）。
+// 用白名单而非「非空即合法」，避免拼写错误或未知角色被写入后在鉴权处产生歧义。
 var validRoles = map[string]bool{"admin": true, "operator": true, "viewer": true}
 
-// CreateUser 创建用户
+// CreateUser 创建用户（POST /api/users，仅 admin）。
+//
+// 校验顺序：请求体 → 密码策略 → 角色白名单 → 哈希 → 入库。用户名唯一性由
+// users.username 的唯一索引兜底；冲突时统一返回「创建用户失败」，不把底层
+// 数据库错误泄漏给前端。注意（既有实现）：这里用的是 Fail 而非 ErrorResponse，
+// 底层错误不会进日志，排查唯一键冲突需依赖数据库侧日志。
 func (h *UserHandler) CreateUser(c *gin.Context) {
 	var req struct {
 		Username string `json:"username" binding:"required"`
@@ -121,7 +148,11 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 	Created(c, "创建成功", user)
 }
 
-// UpdateUser 更新用户
+// UpdateUser 更新用户（PUT /api/users/:id，仅 admin）。
+//
+// 请求体全部用指针字段：nil 表示「本次未提交该字段」，从而区分「不改」与
+// 「改成零值」（例如 is_active=false、real_name=""）。只把出现的字段放进
+// updates map，未提交的列保持原值。角色仍必须过白名单。
 func (h *UserHandler) UpdateUser(c *gin.Context) {
 	id, ok := paramID(c, "id")
 	if !ok {
@@ -177,7 +208,11 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	Created(c, "更新成功", nil)
 }
 
-// ChangeMyPassword 当前登录用户修改密码（所有角色可用，需校验旧密码）。
+// ChangeMyPassword 当前登录用户修改密码（PUT /api/users/me/password，所有角色可用）。
+//
+// 安全要点：旧密码只用于身份确认，不参与强度策略；新密码走系统策略；新旧相同
+// 直接拒绝，避免「改了个寂寞」。改密成功只回提示，前端负责清理本地登录态并
+// 引导重新登录（JWT 无状态，服务端不维护吊销列表）。
 func (h *UserHandler) ChangeMyPassword(c *gin.Context) {
 	uid, ok := c.Get("user_id")
 	if !ok || uid == nil {
@@ -224,7 +259,11 @@ func (h *UserHandler) ChangeMyPassword(c *gin.Context) {
 	Success(c, gin.H{"message": "密码修改成功，请重新登录"})
 }
 
-// DeleteUser 删除用户
+// DeleteUser 删除用户（DELETE /api/users/:id，仅 admin）。
+//
+// 两个约束：
+//   - 禁止删除自己：避免管理员误操作后把自己锁在系统外（也防止最后一个 admin 自删）；
+//   - 软删除：users 是资产表，记录保留供审计/恢复，GORM 自动加 deleted_at 条件。
 func (h *UserHandler) DeleteUser(c *gin.Context) {
 	// 路径参数主键必须经 paramID 解析（防 GORM 内联条件注入），禁止直传 c.Param
 	id, ok := paramID(c, "id")

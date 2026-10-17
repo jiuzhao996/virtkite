@@ -18,6 +18,11 @@ import (
 )
 
 // TopoNode 网络拓扑节点。Kind: host / nic / libvirt_net / docker_net / vm / container
+//
+// ID 采用「类型前缀 + 业务名」的稳定格式（见字段注释），前端据此做节点去重、
+// 边连接与钻取；Name 才是展示名。State/Subtitle/Meta 都是展示辅助字段，
+// 不参与图结构。LinkType/LinkID 表示该节点可跳转到的平台资源，前端点击节点
+// 时用它打开对应详情页（network/vm/container）。
 type TopoNode struct {
 	ID       string            `json:"id"` // host / nic:<name> / libvirt:<name> / docker:<name> / vm:<name> / container:<短id>
 	Kind     string            `json:"kind"`
@@ -33,6 +38,9 @@ type TopoNode struct {
 }
 
 // TopoEdge 拓扑边（当前仅桥接挂靠一种语义）。
+// From/To 是 TopoNode.ID；Kind 固定 "attach"，表示「下层资源挂接在上层网络上」。
+// 方向约定：host→nic / host→net / nic→net / net→vm / net→container，
+// 前端按层次布局时可直接依赖这个方向。
 type TopoEdge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
@@ -40,6 +48,10 @@ type TopoEdge struct {
 }
 
 // NetworkTopologyHandler 网络拓扑处理器。
+//
+// Virt/Docker 都是封装层实例（service/virt、service/dockerx），handler 不直接
+// 调 libvirt/docker；两者均允许为 nil，调用前逐个判空，使「libvirt 不可用但
+// Docker 可用」时仍能画出 Docker 侧拓扑。
 type NetworkTopologyHandler struct {
 	Virt   *virt.Virt
 	Docker *dockerx.Dockerx
@@ -51,6 +63,9 @@ func NewNetworkTopologyHandler() *NetworkTopologyHandler {
 }
 
 // netCIDR 由网关 + 掩码合成网络 CIDR（libvirt 的 NetworkInfo.CIDR 实为 netmask 字符串）。
+//
+// 只处理 IPv4：平台网络与 Docker 默认网络均为 IPv4，To4() 同时承担「非法地址」
+// 与「IPv6」的过滤，返回空串让调用方跳过该展示字段，而不是报错中断整张图。
 func netCIDR(gateway, mask string) string {
 	ip := net.ParseIP(gateway).To4()
 	m := net.ParseIP(mask).To4()
@@ -88,12 +103,21 @@ func countKind(nodes []TopoNode, kind string) int {
 }
 
 // Topology GET /api/networks/topology —— 宿主机 → 桥/虚拟网络 → VM/容器 三层关系图。
+//
+// 数据全部来自实时采集（libvirt / Docker / ip 命令），不落库、不缓存：拓扑是
+// 「此刻机器长什么样」，缓存反而会展示过期连接。任一数据源失败只丢对应图层，
+// 不返回 500——半张图仍比空白页有诊断价值（错误不向前端暴露内部细节）。
+//
+// 构图顺序：先放 host/物理网卡/libvirt 网络/Docker 网络，再补 nic→net 的桥接
+// 边，最后挂 VM 与容器；这样 VM/容器的挂靠目标一定已经存在。
 func (h *NetworkTopologyHandler) Topology(c *gin.Context) {
 	nodes := []TopoNode{}
 	edges := []TopoEdge{}
+	// 小闭包：add 追加节点，link 追加一条 attach 边，避免每个分支重复 append 字面量
 	add := func(n TopoNode) { nodes = append(nodes, n) }
 	link := func(from, to string) { edges = append(edges, TopoEdge{From: from, To: to, Kind: "attach"}) }
 
+	// 宿主机名取不到时用中文占位，保证图上永远有根节点
 	hostname := "宿主机"
 	if hn, err := os.Hostname(); err == nil && hn != "" {
 		hostname = hn
@@ -128,6 +152,7 @@ func (h *NetworkTopologyHandler) Topology(c *gin.Context) {
 		if nets, err := h.Virt.ListNetworks(); err == nil {
 			for _, n := range nets {
 				id := "libvirt:" + n.Name
+				// Meta 的键直接用中文：这是纯展示字段，前端原样渲染，不做键名映射
 				m := map[string]string{}
 				if n.Bridge != "" {
 					m["网桥"] = n.Bridge
@@ -207,7 +232,9 @@ func (h *NetworkTopologyHandler) Topology(c *gin.Context) {
 		}
 	}
 
-	// DHCP 租约：MAC → 实际 IP（VM 补 IP 用）
+	// DHCP 租约：MAC → 实际 IP（VM 补 IP 用）。
+	// 只覆盖由 libvirt dnsmasq 分配地址的域；静态 IP / 桥接直连的 VM 可能查不到，
+	// 此时节点只是没有 IP 展示，不影响拓扑结构。
 	leaseByMAC := map[string]string{}
 	if h.Virt != nil {
 		if leases, err := h.Virt.ListDHCPLeases(); err == nil {
@@ -222,6 +249,8 @@ func (h *NetworkTopologyHandler) Topology(c *gin.Context) {
 	// VM 节点 + 网络→VM 边
 	if h.Virt != nil {
 		if doms, err := h.Virt.ListAllDomainNetworks(); err == nil {
+			// idx: vm 节点 id → 在 nodes 中的下标。一台 VM 可能有多块网卡，
+			// 每块网卡都要连边，但节点只能出现一次，故用下标回写 IP/MAC。
 			idx := map[string]int{}
 			for _, d := range doms {
 				hasNet := false
@@ -232,7 +261,7 @@ func (h *NetworkTopologyHandler) Topology(c *gin.Context) {
 					}
 				}
 				if !hasNet {
-					continue // 无网络挂接的 VM 不上图
+					continue // 无网络挂接的 VM 不上图（没有边可画，只会成为孤立节点）
 				}
 				vmID := "vm:" + d.Name
 				if _, ok := idx[vmID]; !ok {

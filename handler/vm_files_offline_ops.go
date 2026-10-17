@@ -17,6 +17,10 @@ import (
 )
 
 // offlineWritable 取挂载并要求读写模式（写操作前置守卫）。
+//
+// 只在锁内读取 map 中的指针，随后释放锁：offlineMount 内容在挂载生命周期内
+// 不变（卸载由独立流程处理），无需长期持锁。只读挂载直接 403 而不是静默失败，
+// 是为了让前端明确提示「卸载后改用读写挂载」。
 func offlineWritable(c *gin.Context, vmID uint) (*offlineMount, bool) {
 	offlineMu.Lock()
 	m, ok := offlineMounts[vmID]
@@ -34,6 +38,14 @@ func offlineWritable(c *gin.Context, vmID uint) (*offlineMount, bool) {
 
 // offlineSafePath 清洗写操作目标路径：必须在挂载点内，且**父目录**经 realpath 解析后仍在挂载点内。
 // 写目标可能尚不存在（上传/建目录），故守卫父目录而非目标本身。
+//
+// 两道防线：
+//  1. 词法检查：Clean 后必须仍以 mountpoint+"/" 开头，挡住 ../ 穿越与挂载根本身；
+//  2. 真实路径检查：对父目录跑 realpath -e，挡住 guest 预置的符号链接（绝对链接
+//     会被宿主内核按宿主根解析，词法前缀看不出来）。
+//
+// 返回的是「解析后的父目录 + 原始基名」，后续 rm/mkdir/tee 都在真实目录下操作。
+// 注意调用方一律用 `--` 分隔选项，避免以 - 开头的文件名被当成命令参数。
 func offlineSafePath(c *gin.Context, m *offlineMount, reqPath string) (string, bool) {
 	clean := filepath.Clean(filepath.Join(m.Mountpoint, reqPath))
 	if clean == m.Mountpoint {
@@ -97,6 +109,8 @@ func offlineTarget(c *gin.Context, vmID uint, reqPath string, needDir bool) (*of
 }
 
 // OfflineDelete POST /api/vms/:id/files/offline/delete  body {path}（需读写挂载）
+// rm -rf 是递归删除：路径已由 offlineSafePath 收敛到挂载点内的真实父目录，
+// 且用 `--` 终止选项解析，防止用户提交 "-rf" 之类的文件名造成参数注入。
 func (h *VMFilesHandler) OfflineDelete(c *gin.Context) {
 	vm := h.offlineVM(c)
 	if vm == nil {
@@ -125,6 +139,7 @@ func (h *VMFilesHandler) OfflineDelete(c *gin.Context) {
 }
 
 // OfflineMkdir POST /api/vms/:id/files/offline/mkdir  body {path}（需读写挂载）
+// mkdir -p 允许一次创建多级目录；目标父目录已通过 offlineSafePath 校验。
 func (h *VMFilesHandler) OfflineMkdir(c *gin.Context) {
 	vm := h.offlineVM(c)
 	if vm == nil {
@@ -154,6 +169,16 @@ func (h *VMFilesHandler) OfflineMkdir(c *gin.Context) {
 
 // OfflineUpload POST /api/vms/:id/files/offline/upload（multipart：file + path=目标目录；需读写挂载）
 // 经 sudo tee 写入（FUSE 挂载点仅挂载者可见，web 用户写不进去）。
+//
+// 目标文件名只取上传文件的 Base，丢弃客户端可能带上的目录部分；path 视为
+// 「目标目录」，与文件名拼接后再过 offlineSafePath。整个写入包在 5 分钟超时
+// 的 context 里，避免大文件/异常流把请求永久挂住。
+//
+// 注意（既有实现，本注释批次不改行为）：下方先把 cmd.Stdout 设为 io.Discard，
+// 随后调用 CombinedOutput；Go 标准库规定 CombinedOutput 要求 Stdout/Stderr
+// 均未设置，否则直接返回 "exec: Stdout already set"，命令不会执行。因此该
+// 上传路径实际会稳定失败，需后续单独修复（保留 stdin 流式写入 + 捕获 stderr
+// 的正确做法是改用 cmd.Output()/自定义 buffer，而不是 CombinedOutput）。
 func (h *VMFilesHandler) OfflineUpload(c *gin.Context) {
 	vm := h.offlineVM(c)
 	if vm == nil {
@@ -192,6 +217,8 @@ func (h *VMFilesHandler) OfflineUpload(c *gin.Context) {
 }
 
 // OfflineList POST /api/vms/:id/files/offline/list  body {path}
+// needDir=true 时先确认目标确实是目录（stat），再交给 ls；返回的 path 是
+// realpath 解析后的真实路径，前端后续操作应以它为准。
 func (h *VMFilesHandler) OfflineList(c *gin.Context) {
 	vm := h.offlineVM(c)
 	if vm == nil {
@@ -219,6 +246,11 @@ func (h *VMFilesHandler) OfflineList(c *gin.Context) {
 
 // OfflineDownload GET /api/vms/:id/files/offline/download?path=/etc/hostname
 // 直接返回文件内容（octet-stream，非统一信封）。
+//
+// 这是本文件里唯一不走 {code,message,data} 的端点：浏览器下载需要原始字节流
+// 与 Content-Disposition，包一层 JSON 反而要前端再解码。needDir=false 允许
+// 目标是任意文件；sudoRun 在 cat 成功但内容为空时也会返回 nil，故只有
+// 「err != nil 且 data == ""」才判定失败（空文件是合法结果）。
 func (h *VMFilesHandler) OfflineDownload(c *gin.Context) {
 	vm := h.offlineVM(c)
 	if vm == nil {
@@ -241,7 +273,7 @@ func (h *VMFilesHandler) OfflineDownload(c *gin.Context) {
 	}
 	c.Header("Content-Disposition", "attachment; filename="+filepath.Base(clean))
 	c.Data(http.StatusOK, "application/octet-stream", []byte(data))
-	_ = m
+	_ = m // m 仅用于确认挂载存在；下载只依赖已清洗的真实路径 clean
 }
 
 // listRoot 挂载成功后返回根目录文件名预览。

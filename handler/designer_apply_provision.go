@@ -2,6 +2,14 @@
 // provisionNode 按节点类型分发到 provisionNet（网络，同名幂等跳过）/ provisionVM（虚拟机，
 // 走 create_vm→app_install→ansible_run 任务管线编排）/ 容器栈部署；resolveVMNetwork 解析
 // VM 相连的网络节点。全量落地（Apply）与按差异收敛（Reconcile）共用本文件的落地逻辑。
+//
+// 设计原则：
+//   - 复用既有任务管线：VM 的建机/装应用/跑 playbook 都提交给 tasks.Manager，
+//     与页面手工操作完全同链路，不另写一套 libvirt/SSH 调用；
+//   - 幂等优先：网络同名跳过、容器栈按 compose 重建；重复落地不应产生重复资源；
+//   - 机密不落明文：SSH 口令在边界处用 secretbox 加密后放进任务 payload，
+//     由 executor 解密使用，payload/日志/任务历史都看不到明文。
+
 package handler
 
 import (
@@ -23,10 +31,18 @@ import (
 
 // provisionNode 落地单个节点（net/vm/container）。原 Apply 内联循环抽出，供全量落地
 // 与按差异收敛共用；本身对已存在的网络幂等（provisionNet 同名跳过）。
+//
+// 每个分支把人类可读进度追加到 st.Steps（前端轮询展示），失败时返回带 %w 的
+// 中文错误，由上层决定「整体失败」还是「记录后继续」。未知节点类型不报错，
+// 只记一条跳过——设计器可能包含纯注释/占位节点，不应阻断其余资源落地。
 func (h *DesignerHandler) provisionNode(p *dsgPlan, n dsgNode, st *dsgApplyState, userID *uint, username string) error {
 	switch n.Kind {
 	case "container":
 		st.Steps = append(st.Steps, "部署栈 "+n.Ref+"（"+n.Name+"）…")
+		// 从栈模板库取 compose 原文。注意（既有实现）：Ref 来自计划文件，保存
+		// 计划时没有对容器节点的 Ref 做白名单校验，这里直接拼进 filepath.Join；
+		// 若 Ref 含 "../" 可读到 stacks 目录之外，target 也会被带到目录外。
+		// 注释批次不改行为，后续应在 SavePlan/落地前用与 dsgIDRe 同级的规则校验 Ref。
 		meta, sraw, err := parseStackMeta(filepath.Join(stacksDir(), n.Ref+".yml"))
 		if err != nil {
 			return fmt.Errorf("栈不存在：%s", n.Ref)
@@ -35,6 +51,9 @@ func (h *DesignerHandler) provisionNode(p *dsgPlan, n dsgNode, st *dsgApplyState
 		if err := os.MkdirAll(target, 0o755); err != nil {
 			return fmt.Errorf("创建部署目录失败: %w", err)
 		}
+		// 注意（既有实现）：这里忽略了 WriteFile 的错误。写失败时若目录里已有旧
+		// compose 文件，ComposeUp 会继续用旧内容部署，与设计器当前定义不一致。
+		// 注释批次不改行为，后续应检查并返回该错误。
 		_ = os.WriteFile(filepath.Join(target, "docker-compose.yml"), sraw, 0o644)
 		if err := h.Docker.ComposeUpFromFile(target); err != nil {
 			return fmt.Errorf("栈 %s 部署失败: %w", n.Ref, err)
@@ -90,6 +109,10 @@ func (h *DesignerHandler) provisionNet(n dsgNode) (bool, error) {
 }
 
 // netGatewayFromCIDR 若是 CIDR（如 10.10.0.0/24）返回其第一个可用地址作网关，否则空串。
+//
+// 「第一个可用地址」= 网络地址 +1（跳过网络号）。+1 后仍用 Contains 校验，
+// 防止 255.255.255.255 之类边界值溢出到网段外；非 CIDR/非 IPv4 返回空串，
+// 由调用方回落到默认网关。
 func netGatewayFromCIDR(s string) string {
 	_, ipnet, err := net.ParseCIDR(strings.TrimSpace(s))
 	if err != nil {
@@ -108,6 +131,10 @@ func netGatewayFromCIDR(s string) string {
 
 // resolveVMNetwork 找与本 VM 相连的 net 节点，返回其节点名（= libvirt 网络名，provisionNet 即按此建网）；
 // 无 net 连线时回落 "default"。
+//
+// 连线不区分方向（From/To 任一等于 VM 节点即可）：画布上的连线可能是任意
+// 拖拽方向，不能假设「网络 → VM」。多网卡/多网络连线时取第一条匹配，当前
+// 设计器一个 VM 只落地一张网卡。
 func resolveVMNetwork(p *dsgPlan, n dsgNode) string {
 	if p == nil {
 		return "default"
@@ -149,6 +176,8 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 	if err := h.DB.First(&img, imgID).Error; err != nil {
 		return 0, fmt.Errorf("云镜像不存在（id=%s）", n.Ref)
 	}
+	// 资源默认值：设计器允许只填节点名就落地，缺省按最小可用规格（1C1G）建机；
+	// 存储池未指定时用任务管线的默认池解析器，与页面建机保持同一默认。
 	pool := n.Pool
 	if pool == "" {
 		pool = tasks.DefaultStoragePoolResolver()
@@ -169,10 +198,14 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 	// 1) 提交 create_vm（payload 与镜像管理页「基于云镜像创建」同构：source_image_id 引用不拷贝）。
 	// 网络接画布上与本 VM 相连的 net 节点（无连线回落 default）；口令以密文进 provision 块，
 	// 由 executor 解密后做 cloud-init seed 并托管到 vm_credentials——payload/日志不留明文。
+	// 单机部署：取登记的第一台宿主机作为建机目标（多宿主机能力已砍除，
+	// 虚拟化连接固定 qemu:///system）。没有宿主机记录时直接给出可操作的提示。
 	var host model.Host
 	if err := h.DB.First(&host).Error; err != nil {
 		return 0, fmt.Errorf("请先登记宿主机")
 	}
+	// cloud-init 文本先过统一校验（主机名/用户名/口令的字符与长度），避免把
+	// 非法内容写进 seed ISO 后才在开机阶段失败。
 	ciSpec := &virt.CloudInitSpec{Hostname: n.Name, User: sshUser, Password: n.SSHSecret}
 	if verr := validateCloudInitText(ciSpec); verr != nil {
 		return 0, fmt.Errorf("VM 节点 %s 的 cloud-init 配置不合法: %w", n.Name, verr)
@@ -180,6 +213,9 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 	netName := resolveVMNetwork(p, n)
 	prov := map[string]interface{}{"start": true, "wait_ip": true, "ssh_user": sshUser}
 	if n.SSHSecret != "" {
+		// 口令在进入任务队列前就地加密：payload 会落 tasks 表并出现在任务详情里，
+		// 明文一旦写入就难以彻底清除（历史清洗脚本即为此存在）。salt 随密文一起
+		// 存放，executor 用同一主密钥解出明文后写 cloud-init 并托管到 vm_credentials。
 		cipherB64, saltHex, err := secretbox.SealWithMaster(h.VMCred.MasterSecret, n.SSHSecret)
 		if err != nil {
 			return 0, fmt.Errorf("SSH 口令加密失败: %w", err)
@@ -187,6 +223,9 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 		prov["password_enc"] = cipherB64
 		prov["salt"] = saltHex
 	}
+	// disks 用 source_image_id 直接引用云镜像（不拷贝）：与镜像页「基于云镜像
+	// 创建」同构，create_gb 取镜像登记大小作为目标盘容量。interfaces/network
+	// 同时给出，兼容 executor 不同版本的取值路径。
 	createPayload := map[string]interface{}{
 		"name":         n.Name,
 		"host_id":      host.ID,
@@ -209,7 +248,8 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 	if err != nil {
 		return 0, err
 	}
-	// create_vm 成功结果 {vm_id: N}
+	// create_vm 成功结果 {vm_id: N}。这里忽略 Unmarshal 错误：解析失败时 res.VMID
+	// 保持 0，由下面的 vmID == 0 统一报「未返回 vm_id」，不额外暴露内部格式细节。
 	var res struct {
 		VMID uint `json:"vm_id"`
 	}
@@ -228,6 +268,10 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 	}
 
 	// 2) app_install 逐个装（口令边界就地加密；凭据不落明文）
+	//
+	// 每次循环重新加密而不是复用第一次的密文：secretbox 每次 Seal 生成新 salt/
+	// nonce，且任务 payload 独立落库，复用同一密文没有收益。app_install executor
+	// 负责 SSH 连接、凭据解密与安装，handler 只负责串行编排并等待结果。
 	for _, appID := range n.Apps {
 		cipherB64, saltHex, err := secretbox.SealWithMaster(h.VMCred.MasterSecret, n.SSHSecret)
 		if err != nil {
@@ -255,7 +299,11 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 
 	// 5) playbook 逐个跑（P4-S3 编排联动）：复用 ansible_run 任务管线（凭据解析/
 	// inventory 生成/RECAP 全在 executor），这里只编排。playbook 跑的是初始化/加固/
-	// 优化类动作，与应用安装互补
+	// 优化类动作，与应用安装互补。
+	//
+	// 存在性检查只认单文件 <id>.yml：设计器节点存的是 playbook ID，目录形态
+	// （<id>/site.yml）需走 ansible.ResolvePlaybook；当前这里不支持目录形态，
+	// 传目录 ID 会得到「playbook 不存在」。
 	for _, pbID := range n.Playbooks {
 		if !playbookIDRe.MatchString(pbID) {
 			return vmID, fmt.Errorf("playbook ID 非法: %s", pbID)

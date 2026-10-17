@@ -1,5 +1,11 @@
 // ansible_playbooks.go：运维自动化——playbook 库（清单/CRUD/语法校验/目录内文件读写）。
 // 单文件 <id>.yml 或目录形态 <id>/（role 结构）均支持；seed 与目录约定见 ansible.go。
+//
+// 安全边界：所有 :id 与相对路径都先过 playbookIDRe / service/ansible 的路径守卫，
+// handler 不把用户输入直接拼进文件系统路径；语法校验在落盘前执行（目录形态还需
+// 整目录可见以解析 roles 相对引用）。本文件只做编排，ansible 解析/执行在
+// service/ansible，handler 不直接起 ansible 进程。
+
 package handler
 
 import (
@@ -15,6 +21,11 @@ import (
 )
 
 // playbookMeta 列表条目：头部机器可读行解析（# vmops-playbook: name=x | desc=y | targets=z）。
+//
+// 元数据全部来自 playbook 文件头部注释，不落库——文件即事实来源，用户直接用
+// 编辑器/Ansible 工具改文件后刷新列表即可看到变化。BuiltIn 标记随程序分发的
+// seed 文件（isSeedFile），前端据此禁止删除/给出「内置」徽标；IsDir 区分
+// 单文件与 role 目录形态，决定编辑器是否展示文件树。
 type playbookMeta struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
@@ -60,6 +71,10 @@ func validatePlaybookSurvey(content string) error {
 // parsePlaybookHeader 读文件头部找 vmops-playbook 元数据行（只看前 8 行）。
 // vars 逗号分隔的变量名清单（S4 vars 表单化约定）：执行对话框按它渲染输入框，
 // 值经 -e JSON 注入，优先级高于 playbook 内 vars 段。
+//
+// 只扫前 8 行：元数据约定写在文件头部，限制扫描范围既省一次全文件解析，
+// 也避免正文里恰好出现的同款注释被误认成元数据。找到第一条即 break，
+// 后面即使再有元数据行也不覆盖（第一条为准）。
 func parsePlaybookHeader(raw []byte) (name, desc, targets string, vars []string) {
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
@@ -96,6 +111,10 @@ func parsePlaybookHeader(raw []byte) (name, desc, targets string, vars []string)
 }
 
 // ListPlaybooks GET /api/ansible/playbooks —— playbook 清单（按更新时间倒序）。
+//
+// 目录不存在时返回空清单而非错误：playbook 目录是运行时数据，尚未创建等价于
+// 「还没有 playbook」。单个条目读取失败只跳过该条目，不拖垮整个列表；
+// 排序用格式化后的时间字符串（time.DateTime 定长）做字典序比较，等价于时间序。
 func (h *AnsibleHandler) ListPlaybooks(c *gin.Context) {
 	entries, err := os.ReadDir(playbookDir())
 	if err != nil {
@@ -142,6 +161,10 @@ func (h *AnsibleHandler) ListPlaybooks(c *gin.Context) {
 }
 
 // GetPlaybook GET /api/ansible/playbooks/:id —— 原文（编辑器用）。
+//
+// 先校验 ID 白名单再做文件解析：ID 会被拼进文件路径，正则（字母开头、
+// 仅字母数字/-/_、≤64）从根上排除 ../ 与绝对路径。ResolvePlaybook 负责
+// 在单文件与目录形态之间选择主文件。
 func (h *AnsibleHandler) GetPlaybook(c *gin.Context) {
 	id := c.Param("id")
 	if !playbookIDRe.MatchString(id) {
@@ -163,6 +186,10 @@ func (h *AnsibleHandler) GetPlaybook(c *gin.Context) {
 
 // CreatePlaybook POST /api/ansible/playbooks —— 新建（先语法校验后落盘）。
 // body: {id*, content*}；content 头部建议带 # vmops-playbook: 元数据行。
+//
+// 只允许创建单文件形态；目录/role 形态通过上传或文件接口构建。落盘前依次做
+// ID 白名单、同名冲突、YAML/Ansible 语法校验、survey 定义校验——任何一步失败
+// 都不会产生半成品文件。文件权限 0644（可读即可，playbook 不含机密）。
 func (h *AnsibleHandler) CreatePlaybook(c *gin.Context) {
 	var req struct {
 		ID      string `json:"id"`
@@ -199,6 +226,10 @@ func (h *AnsibleHandler) CreatePlaybook(c *gin.Context) {
 
 // UpdatePlaybook PUT /api/ansible/playbooks/:id —— 覆盖更新（先语法校验）。
 // 目录形态写回主文件（site.yml），不会在目录旁另建 <id>.yml。
+//
+// 目录形态的校验走 SyntaxCheckContentInDir：把新内容放进原目录上下文里校验，
+// 这样 roles/、templates/ 等相对引用才能被解析；单文件形态用普通 SyntaxCheck。
+// 两种形态都额外校验 survey 定义，避免执行对话框拿到非法参数定义。
 func (h *AnsibleHandler) UpdatePlaybook(c *gin.Context) {
 	id := c.Param("id")
 	if !playbookIDRe.MatchString(id) {
@@ -270,6 +301,7 @@ func (h *AnsibleHandler) DeletePlaybook(c *gin.Context) {
 }
 
 // CheckPlaybook POST /api/ansible/playbooks/check —— 只校验不保存（编辑器按钮）。
+// 与保存路径使用同一套语法 + survey 校验，保证「校验通过」意味着「能保存」。
 func (h *AnsibleHandler) CheckPlaybook(c *gin.Context) {
 	var req struct {
 		Content string `json:"content"`
@@ -290,6 +322,7 @@ func (h *AnsibleHandler) CheckPlaybook(c *gin.Context) {
 }
 
 // ListPlaybookFiles GET /api/ansible/playbooks/:id/files —— 目录形态 playbook 的文件清单（递归）。
+// 只对目录形态有意义；路径拼接、隐藏文件过滤与越界防护都在 ansible.ListDirFiles 内。
 func (h *AnsibleHandler) ListPlaybookFiles(c *gin.Context) {
 	files, err := ansible.ListDirFiles(playbookDir(), c.Param("id"))
 	if err != nil {
@@ -300,6 +333,8 @@ func (h *AnsibleHandler) ListPlaybookFiles(c *gin.Context) {
 }
 
 // ReadPlaybookFile GET /api/ansible/playbooks/:id/file?path=roles/x/tasks/main.yml
+// path 是相对 playbook 目录的路径，由 ansible.ReadDirFile 做 Clean + 前缀校验，
+// 拒绝绝对路径与 ../ 逃逸；handler 不自行拼接文件系统路径。
 func (h *AnsibleHandler) ReadPlaybookFile(c *gin.Context) {
 	content, err := ansible.ReadDirFile(playbookDir(), c.Param("id"), c.Query("path"))
 	if err != nil {
@@ -354,6 +389,8 @@ func (h *AnsibleHandler) WritePlaybookFile(c *gin.Context) {
 }
 
 // UploadPlaybookFile POST /api/ansible/playbooks/:id/upload（multipart：file + path=相对路径）
+// 未提供 path 时退回上传文件的原始文件名。落盘路径与大小限制由 ansible.SaveDirUpload
+// 统一守卫（相对路径、目录内、覆盖策略），流式拷贝，不在内存里缓存整个文件。
 func (h *AnsibleHandler) UploadPlaybookFile(c *gin.Context) {
 	id := c.Param("id")
 	rel := strings.TrimSpace(c.PostForm("path"))
@@ -380,6 +417,7 @@ func (h *AnsibleHandler) UploadPlaybookFile(c *gin.Context) {
 }
 
 // DeletePlaybookFile DELETE /api/ansible/playbooks/:id/file?path=
+// 只允许删目录内的文件/子目录，根目录本身由 ansible.DeleteDirFile 拒绝。
 func (h *AnsibleHandler) DeletePlaybookFile(c *gin.Context) {
 	if err := ansible.DeleteDirFile(playbookDir(), c.Param("id"), c.Query("path")); err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())

@@ -2,6 +2,13 @@ package handler
 
 // crons.go 计划任务的 HTTP 处理器：列表/预览/执行历史、创建/更新/删除/启停/手动触发/复制
 // 与内置模板查询。数据结构见 crons_types.go，校验与参数归一化见 crons_validate.go。
+//
+// 分层约定：本文件只做路由参数解析、调用校验/调度器、组织响应；cron 表达式解析与
+// 下次执行时间计算在 service/cron，真正的执行由 Scheduler 的 worker 完成。
+// 计划任务属平台管理语义，路由统一挂 AdminMiddleware（仅管理员）。
+//
+// 错误边界：校验类错误是固定中文文案，可直接回显；执行/数据库错误经
+// ErrorResponse/ErrorWithMessage 记录细节，前端只拿中文提示。
 
 import (
 	"log"
@@ -28,6 +35,10 @@ const (
 
 // CronsHandler 计划任务处理器：CRUD + 启停 + 手动触发。
 // 属平台管理语义，路由应挂 AdminMiddleware（仅管理员）。
+//
+// Scheduler 允许为 nil：测试或未接线的实例仍可做 CRUD，列表也会跳过死开关
+// 标记；RunNow 要求 Scheduler 非 nil（由 routes.go 装配时保证），不在 handler
+// 内重复判空。
 type CronsHandler struct {
 	DB        *gorm.DB
 	Scheduler *cron.Scheduler
@@ -39,6 +50,10 @@ func NewCronsHandler(db *gorm.DB, sched *cron.Scheduler) *CronsHandler {
 }
 
 // List GET /api/crons：全部任务 + 每条的下次执行时间预览 + 最近 3 条执行记录。
+//
+// 一次性把所有列表附加信息组装好，前端列表页无需再逐条请求。表达式解析失败
+// 时 NextRun 保持 nil（存量脏数据不应让整页 500）；stale 来自调度器的死开关
+// 检测，用于提示「预期该跑但没跑」（常见于调度器未启动）。
 func (h *CronsHandler) List(c *gin.Context) {
 	var tasks []model.ScheduledTask
 	if err := h.DB.Order("id").Find(&tasks).Error; err != nil {
@@ -120,12 +135,18 @@ func (h *CronsHandler) recentRuns(taskID uint, limit int) []cronRunItem {
 }
 
 // Templates GET /api/crons/templates：内置任务模板（只读）。
+// 模板是编译进二进制的出厂预设（crons_types.go），不查库、不可编辑；
+// 前端「从模板新建」用它一键填表，保存仍走 Create 的完整校验。
 func (h *CronsHandler) Templates(c *gin.Context) {
 	Success(c, gin.H{"items": cronTemplates})
 }
 
 // Duplicate POST /api/crons/:id/duplicate：复制任务为副本。
 // 副本默认停用——先改好配置再启用，避免与原任务同时跑出重复产物。
+//
+// 只复制可编辑的配置列：ID/LastRun/RunCount 重置，链式引用不复制（副本不应
+// 自动接进原任务的编排链）。Select 显式列出字段，确保 Enabled=false 这类
+// 零值也能落库（GORM 的 default:true 会省略零值，见 Create 的同款处理）。
 func (h *CronsHandler) Duplicate(c *gin.Context) {
 	id, ok := paramID(c, "id")
 	if !ok {
@@ -161,6 +182,9 @@ func truncateNameRunes(s string, max int) string {
 // ListRuns GET /api/crons/:id/runs?page=&page_size=：分页返回该任务的执行历史（倒序）。
 // page 从 1 起，page_size 默认 20、上限 100，兼容 limit 参数（语义等价 page_size）。
 // 返回 {total, page, page_size, items}，total 为该任务执行记录的真实总数。
+//
+// 先确认任务存在再查历史：既保持与其他端点一致的 404 口径，也避免对不存在的
+// 任务做无意义的 COUNT/分页查询。分页参数统一走 parsePageQuery（越界回退默认值）。
 func (h *CronsHandler) ListRuns(c *gin.Context) {
 	id, ok := paramID(c, "id")
 	if !ok {
@@ -198,6 +222,11 @@ func (h *CronsHandler) ListRuns(c *gin.Context) {
 }
 
 // Create POST /api/crons：新建计划任务。
+//
+// 先填默认值再 applyCronReq：请求体字段全是指针，未提交的项沿用默认值
+// （Enabled=true、Keep=7 等），提交了的项覆盖默认值，最后对「合并后的完整
+// 任务」统一校验，避免 action 与 params 不配套。ensureVMExists/ensureChainTargets
+// 负责跨表引用校验（快照目标 VM、链式下一跳任务必须真实存在）。
 func (h *CronsHandler) Create(c *gin.Context) {
 	var req cronTaskReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -226,6 +255,11 @@ func (h *CronsHandler) Create(c *gin.Context) {
 }
 
 // Update PUT /api/crons/:id：修改计划任务（只更新请求中出现的字段）。
+//
+// 实现是「读出完整实体 → 用请求中出现的字段覆盖 → 校验完整实体 → Save」，
+// 而不是直接 Updates(map)：这样校验看到的永远是合并后的完整配置，不会因为
+// 只提交 name 而把 action/params 校验成空值。Save 会写回全部列（含未改字段
+// 的原值），语义仍是部分更新。
 func (h *CronsHandler) Update(c *gin.Context) {
 	id, ok := paramID(c, "id")
 	if !ok {
@@ -259,6 +293,10 @@ func (h *CronsHandler) Update(c *gin.Context) {
 }
 
 // Delete DELETE /api/crons/:id：删除计划任务（不影响已产生的快照与备份文件）。
+//
+// 删除后主动清理其他任务指向它的链式引用（on_success/on_failure），避免悬空：
+// 运行时虽然会查不到而跳过，但主动断干净能让数据一致、前端展示也更清晰。
+// 清理失败只记日志不阻断——任务本体已删，残留引用属于可后续修复的脏数据。
 func (h *CronsHandler) Delete(c *gin.Context) {
 	id, ok := paramID(c, "id")
 	if !ok {
@@ -286,6 +324,10 @@ func (h *CronsHandler) Delete(c *gin.Context) {
 }
 
 // Toggle POST /api/crons/:id/toggle：启用/停用翻转（停用后调度器跳过，定义保留）。
+//
+// 读当前值再取反写回；并发双击时两个请求可能读到同一旧值、最终只翻转一次
+// （结果仍是合法的二态之一），前端按钮应做防抖。返回值里带上翻转后的完整
+// 任务，前端可直接刷新行状态。
 func (h *CronsHandler) Toggle(c *gin.Context) {
 	id, ok := paramID(c, "id")
 	if !ok {
@@ -305,6 +347,11 @@ func (h *CronsHandler) Toggle(c *gin.Context) {
 }
 
 // RunNow POST /api/crons/:id/run：手动触发一次，与定时执行共用同一执行通道。
+//
+// 手动执行不检查 Enabled：停用的任务也应允许「先试跑一次」再决定是否启用。
+// ExecuteNow 同步等待执行结束并更新 LastRun/RunCount；失败细节只进日志，
+// 前端拿固定中文提示。执行后尽力重读最新任务返回，重读失败不影响「已执行」
+// 这一事实（此时只回 message）。
 func (h *CronsHandler) RunNow(c *gin.Context) {
 	id, ok := paramID(c, "id")
 	if !ok {

@@ -2,6 +2,12 @@ package handler
 
 // image_manage.go 镜像的写入运维：multipart 上传磁盘镜像、登记既有存储卷为云镜像、
 // 删除镜像（软删除 DB 记录 + 引用守卫后删磁盘文件）。镜像库池约定与列表见 image.go。
+//
+// 三个入口的共同安全底线：
+//   - 落盘/登记的路径必须位于已登记的存储池内（pathInAnyPool），否则任意宿主机
+//     文件都能被登记后挂进 VM 读出来；
+//   - 文件名/路径做穿越清洗，池路径比较带 "/" 边界（防 images-evil 命中 images）；
+//   - 删除前查在用引用（VM 挂载 + 子卷 backing），宁可删不掉也不损坏在用磁盘。
 
 import (
 	"fmt"
@@ -23,6 +29,13 @@ import (
 // 上传文件落到 pool 指定池（默认 img）的目标路径下，直接作为池卷被 libvirt 识别，
 // 不强制走 StorageVolCreateXML（目录池扫描路径即见卷，注释说明）。
 // 文件名清洗 + 时间戳防冲突，沿用既有安全命名逻辑。
+//
+// 流程与失败处理：
+//  1. 只自动创建 img 池；显式指定其他池时必须已存在（避免上传动作隐式建池）；
+//  2. 文件名取 Base 后清洗，再用纳秒时间戳前缀化，避免同名覆盖；
+//  3. io.Copy 流式落盘，不在内存缓存整个镜像；写失败立即删除半成品；
+//  4. DB 记录创建失败也删除刚落盘的文件，保证「有记录必有文件」；
+//  5. 格式按扩展名推断（raw/vmdk/qcow2），未知扩展名按 qcow2 记录。
 func (h *ImageHandler) UploadImage(c *gin.Context) {
 	name := c.PostForm("name")
 	if name == "" {
@@ -39,7 +52,9 @@ func (h *ImageHandler) UploadImage(c *gin.Context) {
 	osVersion := c.PostForm("os_version")
 	isTemplate := c.PostForm("is_template") == "true" || c.PostForm("is_template") == "1"
 
-	// 目标池：默认 img；不存在则自动建目录池（镜像统一存 img 池）
+	// 目标池：默认 img；不存在则自动建目录池（镜像统一存 img 池）。
+	// 显式指定其他池时只校验存在性，不自动创建——建池是管理动作，不应由一次
+	// 上传请求隐式完成。
 	pool := c.PostForm("pool")
 	if pool == "" {
 		pool = imagePool
@@ -162,6 +177,10 @@ func pathInAnyPool(v *virt.Virt, path string) bool {
 // 用于把 base 等池里已存在的模板/云镜像纳入镜像库，打通「基于云镜像创建」链路——
 // 这些文件是 VM 正在引用或将被 backing 的共享盘，登记只是建目录索引，不复制不移动。
 // body: {name*, path*, os_version?, description?, is_template?}；同路径重复登记返回 409。
+//
+// 去重查询用 Unscoped：软删除记录也参与匹配。若命中已软删的同一路径，视为
+// 「恢复登记」（清空 deleted_at 复用原记录），而不是新建一条——否则同一文件会
+// 在镜像库里出现两条历史记录。格式按扩展名推断（iso/raw，其余按 qcow2）。
 func (h *ImageHandler) RegisterImage(c *gin.Context) {
 	var req struct {
 		Name        string `json:"name" binding:"required"`
@@ -231,7 +250,15 @@ func (h *ImageHandler) RegisterImage(c *gin.Context) {
 	Created(c, "登记成功", img)
 }
 
-// DeleteImage 删除镜像
+// DeleteImage 删除镜像（DELETE /api/images/:id，admin）。
+//
+// 顺序是先软删 DB 记录、再尝试删磁盘文件：记录消失后镜像不再出现在列表/创建
+// 选项中，即使文件删除失败也不会被继续使用（文件残留由运维清理）。只删
+// img 池或配置的 ImageDir 目录内的文件。
+//
+// 注意（既有顺序，本注释批次不改行为）：引用检查在软删之后才执行。若命中在用
+// 引用返回 409，此时 DB 记录已经被软删——前端看到「拒绝删除」，但镜像实际已
+// 从列表消失。正确顺序应是「先查引用、再软删」，后续修复时需一并调整。
 func (h *ImageHandler) DeleteImage(c *gin.Context) {
 	id, ok := paramID(c, "id")
 	if !ok {
@@ -263,6 +290,8 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 		inPool := poolPath != "" && strings.HasPrefix(img.Path, strings.TrimRight(poolPath, "/")+"/")
 		inDir := strings.HasPrefix(img.Path, strings.TrimRight(config.GlobalConfig.ImageDir, "/")+"/")
 		if inPool || inDir {
+			// 引用查询失败时当前实现按「无引用」放行（fail-open），与删卷守卫
+			// shouldKeepVol 的 fail-closed 取向不同；这是既有取舍，记录在此便于审计。
 			if refs, refErr := h.imageRefs(img.Path); refErr == nil && refs != "" {
 				Fail(c, http.StatusConflict, "镜像正被使用，拒绝删除："+refs)
 				return
@@ -278,8 +307,13 @@ func (h *ImageHandler) DeleteImage(c *gin.Context) {
 }
 
 // imageRefs 计算文件路径的在用引用：被 VM 挂载 / 被任何池内卷当 backing 父盘。
-// 返回空串 = 无引用。查不到的部分静默跳过（与删除守卫的保守取向一致——查不到引用时放行删除，
-// 但虚拟机侧挂载查询失败会记日志，避免完全盲删）。
+// 返回空串 = 无引用。查不到的部分静默跳过（与删除守卫的保守取向一致——查不到
+// 引用时放行删除）。注意：挂载查询失败会返回 error，而 DeleteImage 目前忽略该
+// error 并按「无引用」继续（fail-open），见 DeleteImage 内的说明。
+//
+// 挂载查询覆盖全部域（ListAllDomainDiskSources）；backing 查询只扫 base/images/exten
+// 三个常见池——增量克隆父盘基本都落在这里，全池扫描成本更高。若将来新增存放
+// 增量卷的池，需要同步扩充这个列表，否则会漏判 backing 引用。
 func (h *ImageHandler) imageRefs(path string) (string, error) {
 	var refs []string
 	sources, err := h.Virt.ListAllDomainDiskSources()
