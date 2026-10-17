@@ -1,7 +1,9 @@
 # 多阶段构建：golang 构建 → alpine 运行
 # 构建：docker build -t vmops:latest .
-# 基础镜像必须满足 go.mod 的 `go 1.26.0`（golang:1.21 会直接报版本不足）
-FROM golang:1.26-alpine AS builder
+# 基础镜像必须满足 go.mod 的 `go 1.26.9`（golang:1.21 会直接报版本不足）。
+# 钉补丁版本号而非浮动 tag：govulncheck 曾扫出 go1.26.6 标准库 HTTP/2/HTTP/1 漏洞
+# （GO-2026-6612/6613/6617），钉死可保证容器构建产物与本地二进制同为修复版，且构建可复现。
+FROM golang:1.26.9-alpine AS builder
 
 WORKDIR /build
 
