@@ -451,12 +451,21 @@ python3 -m http.server 18080 --directory /tmp/e2e-tree
 | 文件 | 覆盖 | 标签 |
 |---|---|---|
 | `web/e2e/acceptance.spec.js` | 登录页、18 页遍历、全按钮点击、axe | `@smoke` |
-| `web/e2e/vm-create.spec.js`（待建） | VT-VM-101 ~ 127 | `@vm-create` |
+| `web/e2e/vm-create.spec.js` | 向导三方式切换/校验、安装源探测、真实建机（门控） | `@vm-create` |
+| `web/e2e/rbac.spec.js` | 三角色权限负例、未授权 VM 404 | `@rbac` |
 | `web/e2e/vm-lifecycle.spec.js`（待建） | VT-VM-201 ~ 217 | `@vm-life` |
 | `web/e2e/infra.spec.js`（待建） | VT-STG / VT-NET / VT-IMG | `@infra` |
 | `web/e2e/docker-apps.spec.js`（待建） | VT-DKR / VT-APP | `@docker` |
 | `web/e2e/automation.spec.js`（待建） | VT-AUT | `@auto` |
-| `web/e2e/rbac.spec.js`（待建） | VT-AUTH / VT-RBAC / VT-USR | `@rbac` |
+
+公共设施（`web/e2e/helpers/`）：
+
+| 文件 | 作用 |
+|---|---|
+| `env.js` | runId、`e2e-` 命名生成与守卫、账号、破坏性开关 |
+| `auth.js` | 登录/清会话/取 token |
+| `ui.js` | JS 异常收集、弹层关闭、按钮分类与安全点击 |
+| `api.js` | 测试数据准备/清理、任务轮询、按名找 VM |
 
 运行：
 
