@@ -92,6 +92,7 @@
    - **例外（不是图标，保留字符）**：`●`／`○` 作状态圆点（`.term-status`、`.card-badge`）属纯装饰指示符，非 Unicode emoji 区段，无需换成图标组件——换成图标反而会破坏与文字的紧凑排版。
    - 落地情况：`ConsolePage.vue` 25 处、`Login.vue` 1 处已全部换成图标组件（其中 17 处原本是 emoji，另 9 处是被当图标用的几何字符 `▮ ▶ « » ←`），详见「控制台设计约定」。
 4. 新增页面遵循现有目录结构（`views/`、`api/index.js`、`store/auth.js`）。
+5. **前端静态检查**：`cd web && npm run lint`（ESLint 10 + eslint-plugin-vue，配置见 `web/eslint.config.js`）。只启用「真问题」规则（未定义变量、死分支、空块等），风格类关闭。2026-10-17 首次接入即扫出 4 个运行时缺陷（缺 `api`/`h` 导入、缺函数定义、`v-else-if` 死分支），**提交前端改动前必须 lint 通过**。`vue/no-mutating-props` 因建机向导整体下传 reactive 对象而关闭，属已论证的推迟项。
 
 ## Skills 适配清单（先读这里再加载 skill，豁免条款具有项目级效力）
 
