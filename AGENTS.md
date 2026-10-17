@@ -110,6 +110,8 @@
 
 **gosec 已知误报（2026-10-17 全量定性，勿重复追）**：G304 变量路径（内部配置/数据目录）、G204 变量子进程（ansible/docker 按设计）、G301/G306/G302 权限（playbook 可读、磁盘镜像 qemu 可读、脚本可执行）、G115 整型转换（统计展示、上游已夹紧）、G104 错误路径的 Close/Remove。真实需关注的是 G703 路径穿越与 G101 硬编码凭据——新增时必须逐条核实。
 
+**`go.mod` 已声明 `ignore ./web/node_modules`**（Go 1.26 ignore 指令）：前端依赖里夹带的 Go 包（`flatted/golang`）此前会被 `./...` 当成仓库包扫描，污染 build/test/vet 输出。
+
 ### 前端（`cd web`）
 
 | 命令 | 作用 | 门槛 |
