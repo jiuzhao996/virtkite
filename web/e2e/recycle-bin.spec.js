@@ -33,8 +33,8 @@ async function createFixture(page) {
   return vm
 }
 
-async function softDelete(page, id) {
-  const del = await api(page, 'DELETE', `/api/vms/${id}`)
+async function softDelete(page, id, name) {
+  const del = await api(page, 'DELETE', `/api/vms/${id}`, undefined, { guard: name })
   if (del.data?.task_id) await waitTask(page, del.data.task_id, { timeout: 180_000 })
 }
 
@@ -52,7 +52,7 @@ test.describe('回收站 @recycle', () => {
 
     try {
       // 1) 软删
-      await softDelete(page, vm.id)
+      await softDelete(page, vm.id, name)
       await expect.poll(async () => !(await findVMByName(page, name)), { timeout: 60_000 }).toBe(true)
 
       // 2) 回收站里应能看到
@@ -81,7 +81,7 @@ test.describe('回收站 @recycle', () => {
       expect(restored.status, '恢复后应为关机态').toBe('shut off')
 
       // 5) 再删 + 彻底清除（先绕一跳，避免同 hash 导航不重挂组件导致列表陈旧）
-      await softDelete(page, restored.id)
+      await softDelete(page, restored.id, name)
       await page.goto('/#/vms')
       await page.goto('/#/recycle-bin')
       const row2 = page.locator('.el-table__row', { hasText: name })
@@ -101,12 +101,12 @@ test.describe('回收站 @recycle', () => {
         // 兜底：仍在列表则软删 + 彻底清除
         const leftover = await findVMByName(page, name).catch(() => null)
         if (leftover) {
-          await softDelete(page, leftover.id).catch(() => {})
+          await softDelete(page, leftover.id, name).catch(() => {})
         }
         const recycle = await api(page, 'GET', '/api/vms-recycle').catch(() => ({}))
         const items = recycle.data?.items || recycle.data || []
         const hit = (Array.isArray(items) ? items : []).find((x) => x.name === name)
-        if (hit) await api(page, 'DELETE', `/api/vms-recycle/${hit.id}/purge?purge_volumes=true`).catch(() => {})
+        if (hit) await api(page, 'DELETE', `/api/vms-recycle/${hit.id}/purge?purge_volumes=true`, undefined, { guard: name }).catch(() => {})
       }
     }
   })

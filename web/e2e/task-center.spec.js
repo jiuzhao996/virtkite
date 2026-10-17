@@ -6,7 +6,7 @@
 // 取消用例用「云镜像 + cloud-init 自动初始化」造一个长任务（等 IP 窗口 3 分钟），
 // 稳定命中 running 态；结束后清理半成品 VM。
 import { test, expect } from '@playwright/test'
-import { ACCOUNTS, ALLOW_DESTRUCTIVE, e2eName } from './helpers/env.js'
+import { ACCOUNTS, ALLOW_DESTRUCTIVE, RUN_ID, e2eGuardOf, e2eName } from './helpers/env.js'
 import { login } from './helpers/auth.js'
 import { api, findVMByName, getTask, getVMOptions, waitTask } from './helpers/api.js'
 
@@ -66,16 +66,16 @@ test.describe('任务中心 @task-center', () => {
 
       // cancelled 是终态，应可删除（回归：此前后端只认 success/failed，
       // 而 UI 把 cancelled 当可删终态，取消过的任务永远清不掉）
-      const del = await api(page, 'DELETE', `/api/tasks/${taskId}`)
+      const del = await api(page, 'DELETE', `/api/tasks/${taskId}`, undefined, { guard: name })
       expect(del.status, 'cancelled 任务应可删除').toBe(200)
       expect((await api(page, 'GET', `/api/tasks/${taskId}`)).status).toBe(404)
     } finally {
       // 清理半成品 VM（取消发生在 provision 阶段，VM 可能已创建）
       const leftover = await findVMByName(page, name)
       if (leftover) {
-        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`)
+        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`, undefined, { guard: name })
         if (del.data?.task_id) await waitTask(page, del.data.task_id, { timeout: 180_000 }).catch(() => {})
-        await api(page, 'DELETE', `/api/vms-recycle/${leftover.id}/purge?purge_volumes=true`).catch(() => {})
+        await api(page, 'DELETE', `/api/vms-recycle/${leftover.id}/purge?purge_volumes=true`, undefined, { guard: name }).catch(() => {})
       }
     }
   })
@@ -88,19 +88,20 @@ test.describe('任务中心 @task-center', () => {
     // 不存在：404
     expect((await api(page, 'GET', '/api/tasks/99999999')).status).toBe(404)
 
-    // 删除一个非终态任务 → 409（找一个 running 的；没有则跳过）
-    const list = await api(page, 'GET', '/api/tasks?status=running&page_size=1')
-    const running = (list.data?.items || [])[0]
+    // 删除一个非终态任务 → 409。只挑本轮自己产的任务（标题含 runId），
+    // 否则守卫会拦下——那正是守卫的价值，不该为了跑通用例去删用户任务。
+    const list = await api(page, 'GET', `/api/tasks?status=running&page_size=50`)
+    const running = (list.data?.items || []).find((x) => String(x.title || '').includes(RUN_ID))
     if (running) {
-      const del = await api(page, 'DELETE', `/api/tasks/${running.id}`)
+      const del = await api(page, 'DELETE', `/api/tasks/${running.id}`, undefined, { guard: e2eGuardOf(running.title) })
       expect(del.status, '运行中任务删除应 409').toBe(409)
     }
 
-    // 删除终态任务：只删本套 e2e 产生的（标题含 e2e-），不碰用户历史
-    const done = await api(page, 'GET', '/api/tasks?status=success&page_size=50')
-    const t = (done.data?.items || []).find((x) => String(x.title || '').includes('e2e-'))
+    // 删除终态任务：只删本轮产生的（标题含 runId），不碰用户历史
+    const done = await api(page, 'GET', `/api/tasks?status=success&page_size=50`)
+    const t = (done.data?.items || []).find((x) => String(x.title || '').includes(RUN_ID))
     if (t) {
-      const del = await api(page, 'DELETE', `/api/tasks/${t.id}`)
+      const del = await api(page, 'DELETE', `/api/tasks/${t.id}`, undefined, { guard: e2eGuardOf(t.title) })
       expect([200, 409]).toContain(del.status) // 409 = 已被并发清理
     }
   })

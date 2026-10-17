@@ -98,7 +98,7 @@ test.describe('运维自动化 @auto', () => {
       const list = await api(page, 'GET', '/api/crons').catch(() => ({}))
       const items = list.data?.items || []
       const hit = items.find((c) => c.name === name)
-      if (hit) await api(page, 'DELETE', `/api/crons/${hit.id}`).catch(() => {})
+      if (hit) await api(page, 'DELETE', `/api/crons/${hit.id}`, undefined, { guard: hit.name }).catch(() => {})
     }
   })
 })

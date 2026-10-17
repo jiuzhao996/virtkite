@@ -185,11 +185,11 @@ test.describe('真实建机 @vm-create', () => {
       // 失败也清理：只删本轮 e2e 前缀的 VM；软删后再彻底清除，避免回收站堆积
       const leftover = await findVMByName(page, name)
       if (leftover) {
-        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`)
+        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`, undefined, { guard: name })
         if (del.data && del.data.task_id) {
           await waitTask(page, del.data.task_id, { timeout: 180_000 }).catch(() => {})
         }
-        await api(page, 'DELETE', `/api/vms-recycle/${leftover.id}/purge?purge_volumes=true`).catch(() => {})
+        await api(page, 'DELETE', `/api/vms-recycle/${leftover.id}/purge?purge_volumes=true`, undefined, { guard: name }).catch(() => {})
       }
     }
 

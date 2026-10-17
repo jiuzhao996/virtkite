@@ -66,7 +66,13 @@
 ### 3.1 命名与归属
 
 - 所有测试资源统一前缀 `e2e-<runId>-`（`runId` 默认时间戳，`E2E_RUN_ID` 可覆盖）。
-- **只允许删除/修改自己创建且带 `e2e-` 前缀的资源**；删除前统一过 `isE2EName()`。
+- **只允许删除/修改自己创建且带 `e2e-` 前缀的资源**。
+- **守卫在 `helpers/api.js` 的 `api()` 里统一拦截，不在各用例重复写**：所有 `DELETE` 必经该函数，
+  非 `e2e-` 前缀直接抛错、请求根本不发。放在这一层才无法被绕过——早期版本只在文档里写了
+  「删除前过 `isE2EName()`」，实测 24 个删除点零调用，承诺等于落空（2026-10-18 修正）。
+- 传参：`api(page, 'DELETE', path, undefined, { guard: <e2e 名> })`。数字型主键（VM/任务/容器 ID）
+  无法从 URL 判断归属，**必须显式传 guard**，否则抛错。任务标题形如「创建虚拟机 e2e-xxx」时，
+  用 `e2eGuardOf(title)` 抽出名称。
 - 每轮结束按「VM → 快照/授权 → 镜像/卷 → 网络/池 → 用户/组」顺序清理；清理失败保留并打印，禁止强删。
 
 ### 3.2 危险操作开关
@@ -505,11 +511,13 @@ ADMIN_PASS=<口令> E2E_ALLOW_DESTRUCTIVE=1 npm run e2e -- --grep @vm-create
 ADMIN_PASS=<口令> npm run e2e -- --grep @vm-life
 ADMIN_PASS=<口令> npm run e2e -- --grep "@infra|@docker|@auto|@rbac"
 
-# 4) 性能/可访问性
-CHROME_PATH=/usr/bin/google-chrome npx lighthouse "http://127.0.0.1:8080/#/login" \
+# 4) 性能（可选；lighthouse 不进依赖，按需 npx 临时调用）
+CHROME_PATH=/usr/bin/google-chrome npx --yes lighthouse "http://127.0.0.1:8080/#/login" \
   --chrome-flags="--headless=new --no-sandbox" --quiet \
   --only-categories=performance,accessibility,best-practices
 ```
+
+可访问性日常以 axe-core 为准（随 `@smoke` 每次跑，门槛无 critical）；Lighthouse 只在需要性能基线时临时跑。
 
 报告字段：`用例 | 结果(PASS/FAIL/SKIPPED/BLOCKED) | 耗时 | 证据 | 缺陷编号`。
 
@@ -608,6 +616,38 @@ CHROME_PATH=/usr/bin/google-chrome npx lighthouse "http://127.0.0.1:8080/#/login
 - 栈 Detail 与 List 的 `deployed` 口径不一致（R16）；保存编排不持锁、不记版本（R19）。
 - 任务日志 WS 终态最后一条可能未落库就发 done（D-16）。
 - **Docker 域深挖未完成**（盘点代理因服务端 503 中断）：容器创建/健康检查/构建上下文/compose 服务级操作/日志 WS 重连等仍只有基础 CRUD 覆盖。
+
+---
+
+## 12. 已知限制与待补
+
+### 11.3 第三批：冗余清理与守卫落地（2026-10-18）
+
+**守卫落地（安全承诺兑现）**：文档 §3.1 一直写「删除前统一过 `isE2EName()`」，但实测 24 个
+`DELETE` 调用点**零调用**——`isE2EName` 从未被任何用例引用，承诺落空。已改为在
+`helpers/api.js` 的 `api()` 里统一拦截（所有 DELETE 必经此处，无法绕过），非 `e2e-` 前缀
+直接抛错不发请求；数字型主键必须显式传 `guard`，并新增 `e2eGuardOf()` 从任务标题
+（形如「创建虚拟机 e2e-xxx」）抽出名称。
+
+守卫上线后立即拦到一个真实误删风险：`task-center.spec.js` 原取「最新一条 success 任务」
+直接删——那可能是用户的真实建机/备份记录。已改为只删本轮 `RUN_ID` 产生的任务。
+
+**冗余清理**：
+
+| 项 | 处置 |
+|---|---|
+| 13 个未使用导出（knip） | 内部使用的改为非导出；完全未用的删除（clearSession/getToken/logout/listPools/listNetworks/listImages/deleteVM 等薄封装） |
+| `lighthouse` 依赖 | 移除（体积大、仅基线时用一次、knip 判未使用）；改为按需 `npx --yes lighthouse` 临时调用，不进 devDependencies |
+| `VMCredentialHandler.UpsertForVM` | 删（零调用；tasks 包有自己的 upsertVMCredential，禁反向 import） |
+| `ansible.ValidDirName` | 删（零调用；handler 直接用 `dirNameRe`） |
+| `ansible.ForceReloadKeyPair` | 删（注释自认无调用方，测试也未调） |
+| `ansible.SyntaxCheckDir` | 删（零调用；实际用 `SyntaxCheckContentInDir`） |
+
+**保留不删**（有测试覆盖，非真死代码）：`handler.itoa`（terminal_test 断言其行为）、
+`vmGrantActive`（单测）、`vmssh.Options.Host/Port/User`（字段刻意不可导出的安全设计，
+getter 供本包与测试读取）。
+
+清理后：knip 零输出、ESLint 零告警、deadcode 从 8 处降到 5 处（均为测试专用）。
 
 ---
 

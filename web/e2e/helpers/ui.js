@@ -17,8 +17,8 @@ export function collectPageErrors(page, ctx = {}) {
   return errors
 }
 
-/** 关闭当前打开的弹窗/抽屉/消息，并补一次 ESC */
-export async function closeOverlays(page) {
+/** 关闭当前打开的弹窗/抽屉/消息，并补一次 ESC（clickSafeButtons 内部用） */
+async function closeOverlays(page) {
   await page.evaluate(() => {
     document.querySelector('.el-dialog__headerbtn')?.click()
     document.querySelector('.el-drawer__close-btn')?.click()
@@ -28,8 +28,8 @@ export async function closeOverlays(page) {
   await page.waitForTimeout(200)
 }
 
-/** 当前是否出现了弹层/消息 */
-export async function hasOverlay(page) {
+/** 当前是否出现了弹层/消息（clickSafeButtons 内部用） */
+async function hasOverlay(page) {
   return page.evaluate(() => {
     const visible = (sel) =>
       Array.from(document.querySelectorAll(sel)).some(
@@ -39,8 +39,8 @@ export async function hasOverlay(page) {
   })
 }
 
-/** 取当前页可见、未禁用的按钮文案（去重） */
-export async function visibleButtonLabels(page) {
+/** 取当前页可见、未禁用的按钮文案（去重；clickSafeButtons 内部用） */
+async function visibleButtonLabels(page) {
   return page.locator('.el-main .el-button:visible').evaluateAll((els) => {
     const labels = els
       .filter((b) => !b.disabled && !b.classList.contains('is-disabled'))
@@ -50,11 +50,11 @@ export async function visibleButtonLabels(page) {
   })
 }
 
-// 打开类：点开即关，零副作用
-export const BTN_OPEN =
+// 打开类：点开即关，零副作用（clickSafeButtons 内部用，不导出）
+const BTN_OPEN =
   /新建|添加|上传|刷新|查看|详情|编辑|导入|导出|安装|脚本|配置|管理|调整|关联|绑定|登记|克隆|复制|预览|展开|筛选|重置|更多|设置/
-// 危险类：自动化一律跳过（专项用例在确认目标是 e2e- 资源后才点）
-export const BTN_DANGER =
+// 危险类：自动化一律跳过（专项用例在确认目标是 e2e- 资源后才点；clickSafeButtons 内部用）
+const BTN_DANGER =
   /删除|清除|彻底|回收|重启|关机|停止|暂停|恢复|启动|开机|批量|保存|确定|提交|执行|运行|部署|应用|注销|退出|移除|摘除|下线|销毁|清空/
 
 /**

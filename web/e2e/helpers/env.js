@@ -21,6 +21,17 @@ export function isE2EName(name) {
   return typeof name === 'string' && name.startsWith('e2e-')
 }
 
+/**
+ * 从「含 e2e 资源名的文本」里抽出可过守卫的名称。
+ * 任务标题形如「创建虚拟机 e2e-<runId>-ui-vm」——资源名嵌在中间，
+ * 直接把标题当守卫会被 isE2EName 拒掉（它要求以 e2e- 开头）。
+ * 抽不到时返回空串，由 api() 的守卫抛错，绝不放行。
+ */
+export function e2eGuardOf(text) {
+  const m = String(text || '').match(/e2e-[A-Za-z0-9._-]*/)
+  return m ? m[0] : ''
+}
+
 /** 是否允许执行破坏性用例（批量删除/清空/改系统设置） */
 export const ALLOW_DESTRUCTIVE = process.env.E2E_ALLOW_DESTRUCTIVE === '1'
 

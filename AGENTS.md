@@ -139,16 +139,21 @@
 
 **测试数据纪律（强制）**：所有资源名必须 `e2e-<runId>-` 前缀；删除/修改前过 `isE2EName()`；批量删除/清空/改系统设置需 `E2E_ALLOW_DESTRUCTIVE=1` 且目标全为 e2e 资源。接口只用于「摆前置数据 + 收尾」，被验收的行为本身必须走 UI 点击。
 
-### 性能 / 可访问性（Lighthouse + axe-core）
+### 性能（Lighthouse，可选）
+
+Lighthouse **不进 devDependencies**（它体积大、只在需要基线数据时用一次，常驻只会让 `npm i` 变慢且被 knip 判为未使用依赖）。需要跑时临时调用：
 
 ```bash
-cd web && CHROME_PATH=/usr/bin/google-chrome npx lighthouse "http://127.0.0.1:8080/#/login" \
+cd web && CHROME_PATH=/usr/bin/google-chrome npx --yes lighthouse \
+  "http://127.0.0.1:8080/#/login" \
   --chrome-flags="--headless=new --no-sandbox --disable-gpu" --quiet \
   --only-categories=performance,accessibility,best-practices
 ```
 
 2026-10-17 基线（登录页）：performance **74** / accessibility **96** / best-practices **100**。
-门槛：performance ≥ 70、accessibility ≥ 95、best-practices = 100。**SEO 不设门槛**——`robots.txt` 刻意 `Disallow: /`（内部平台不收录），Lighthouse 会因此扣 `is-crawlable` 分，属预期。
+门槛：performance ≥ 70、best-practices = 100。**SEO 不设门槛**——`robots.txt` 刻意 `Disallow: /`（内部平台不收录），Lighthouse 会因此扣 `is-crawlable` 分，属预期。
+
+可访问性**日常以 axe-core 为准**（已随 Playwright `@smoke` 每次都跑，门槛：无 critical），不必每次跑 Lighthouse。
 
 **已知可访问性例外**：登录页主按钮白字压在品牌青 `#2a9da5` 上，对比度约 3.3:1（axe 报 serious）。这是品牌色决策，改它等于全站换主色；副标题 `.en` 已单独压暗到 `#1f7e84` 达标。除此之外新增 serious 必须修。
 

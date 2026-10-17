@@ -73,9 +73,9 @@ test.describe('Ansible 真实执行 @ansible-run', () => {
     } finally {
       const leftover = await findVMByName(page, vm.name)
       if (leftover) {
-        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`)
+        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`, undefined, { guard: vm.name })
         if (del.data?.task_id) await waitTask(page, del.data.task_id, { timeout: 180_000 }).catch(() => {})
-        await api(page, 'DELETE', `/api/vms-recycle/${leftover.id}/purge?purge_volumes=true`).catch(() => {})
+        await api(page, 'DELETE', `/api/vms-recycle/${leftover.id}/purge?purge_volumes=true`, undefined, { guard: vm.name }).catch(() => {})
       }
     }
   })

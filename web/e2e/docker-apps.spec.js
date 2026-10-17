@@ -71,7 +71,7 @@ test.describe('容器 @docker', () => {
       if (!page.isClosed()) {
         const leftover = await findContainer(page, name).catch(() => null)
         if (leftover) {
-          await api(page, 'DELETE', `/api/docker/containers/${leftover.ID}?force=true`).catch(() => {})
+          await api(page, 'DELETE', `/api/docker/containers/${leftover.ID}?force=true`, undefined, { guard: name }).catch(() => {})
         }
       }
     }
@@ -116,7 +116,7 @@ test.describe('容器 @docker', () => {
       const list = await api(page, 'GET', '/api/docker/containers')
       expect((list.data?.items || []).some((c) => (c.Names || '').includes(renamed))).toBe(true)
     } finally {
-      await api(page, 'DELETE', `/api/docker/containers/${id}?force=true`).catch(() => {})
+      await api(page, 'DELETE', `/api/docker/containers/${id}?force=true`, undefined, { guard: name }).catch(() => {})
     }
   })
 

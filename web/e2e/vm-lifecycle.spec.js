@@ -111,10 +111,10 @@ test.describe('虚拟机生命周期 @vm-life', () => {
       // 兜底：软删 + 回收站彻底清除（只针对本轮 e2e 资源）
       const leftover = await findVMByName(page, name)
       if (leftover) {
-        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`)
+        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`, undefined, { guard: name })
         if (del.data?.task_id) await waitTask(page, del.data.task_id, { timeout: 180_000 }).catch(() => {})
       }
-      await api(page, 'DELETE', `/api/vms-recycle/${id}/purge?purge_volumes=true`).catch(() => {})
+      await api(page, 'DELETE', `/api/vms-recycle/${id}/purge?purge_volumes=true`, undefined, { guard: name }).catch(() => {})
     }
   })
 })
