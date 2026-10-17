@@ -53,11 +53,11 @@
         </el-table-column>
         <el-table-column label="动作" width="120">
           <template #default="{ row }">
-            <el-tag :type="actionTag(row.action)" effect="light" size="small">{{ actionText(row.action) }}</el-tag>
+            <el-tag :type="cronActionTag(row.action)" effect="light" size="small">{{ cronActionText(row.action) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="参数" min-width="150" show-overflow-tooltip>
-          <template #default="{ row }">{{ paramsText(row) }}</template>
+          <template #default="{ row }">{{ cronParamsText(row, vms) }}</template>
         </el-table-column>
         <el-table-column prop="keep" label="保留" width="70" align="center" />
         <el-table-column label="启用" width="80">
@@ -77,13 +77,13 @@
         <el-table-column label="最近执行" width="110" align="center">
           <template #default="{ row }">
             <!-- 死开关命中优先展示（预期已过宽限期仍无执行记录，说明调度器可能没运行） -->
-            <el-tooltip v-if="row.stale" :content="staleTip(row)" placement="top">
+            <el-tooltip v-if="row.stale" :content="cronStaleTip(row)" placement="top">
               <el-tag type="danger" effect="dark" size="small">超时未跑</el-tag>
             </el-tooltip>
             <!-- 列表接口内嵌 recent_runs（最近 3 条、倒序），首条即最近一次 -->
-            <el-tooltip v-else-if="latestRun(row)" :content="latestRunTip(row)" placement="top">
-              <el-tag :type="runStatusTag(latestRun(row).status)" effect="light" size="small">
-                {{ runStatusText(latestRun(row).status) }}
+            <el-tooltip v-else-if="cronLatestRun(row)" :content="cronLatestRunTip(row)" placement="top">
+              <el-tag :type="cronRunStatusTag(cronLatestRun(row).status)" effect="light" size="small">
+                {{ cronRunStatusText(cronLatestRun(row).status) }}
               </el-tag>
             </el-tooltip>
             <span v-else class="mono">—</span>
@@ -97,7 +97,7 @@
         <el-table-column prop="run_count" label="次数" width="70" align="center" />
         <el-table-column label="链" width="56" align="center">
           <template #default="{ row }">
-            <el-tooltip v-if="row.on_success_task_id || row.on_failure_task_id" :content="chainTip(row)" placement="top">
+            <el-tooltip v-if="row.on_success_task_id || row.on_failure_task_id" :content="cronChainTip(row, items)" placement="top">
               <el-tag size="small" effect="plain" type="warning">链</el-tag>
             </el-tooltip>
             <span v-else class="mono">—</span>
@@ -185,6 +185,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, MagicStick } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, isCancel, fmtDateTime } from '../utils/format'
+import {
+  cronActionText, cronActionTag, cronRunStatusText, cronRunStatusTag,
+  cronChainTip, cronStaleTip, cronLatestRun, cronLatestRunTip, cronParamsText,
+} from '../utils/cron-format'
 import { usePagination } from '../composables/usePagination'
 import PageHead from '../components/PageHead.vue'
 import CronFormDialog from './cron/components/CronFormDialog.vue'
@@ -205,7 +209,7 @@ const enabledFilter = ref('')
 const actionFilterOptions = computed(() => {
   const seen = new Map()
   items.value.forEach((it) => {
-    if (it.action && !seen.has(it.action)) seen.set(it.action, actionText(it.action))
+    if (it.action && !seen.has(it.action)) seen.set(it.action, cronActionText(it.action))
   })
   return Array.from(seen, ([value, label]) => ({ value, label }))
 })
@@ -220,76 +224,8 @@ const filteredItems = computed(() =>
 )
 
 // 动作 → 中文 / tag 颜色
-function actionText(a) {
-  return { vm_snapshot: '虚拟机快照', db_backup: '数据库备份', ansible_playbook: 'Playbook 执行' }[a] || a
-}
-function actionTag(a) {
-  return { vm_snapshot: 'primary', db_backup: 'success', ansible_playbook: 'warning' }[a] || 'info'
-}
-
-// 执行状态 → 中文 / tag 颜色（success 绿 / failed 红 / running 蓝）
-function runStatusText(s) {
-  return { success: '成功', failed: '失败', running: '执行中', skipped: '跳过' }[s] || s || '未知'
-}
-function runStatusTag(s) {
-  return { success: 'success', failed: 'danger', running: 'primary', skipped: 'warning' }[s] || 'info'
-}
-
 // 可选的链式下一跳（排除自身）
 const otherTasks = computed(() => items.value.filter((t) => t.id !== editingId.value))
-
-// 列表「链」标记的提示：解析下一跳任务名
-function chainTip(row) {
-  const nameOf = (id) => {
-    const t = items.value.find((x) => x.id === id)
-    return t ? t.name : `#${id}`
-  }
-  const parts = []
-  if (row.on_success_task_id) parts.push('成功 → ' + nameOf(row.on_success_task_id))
-  if (row.on_failure_task_id) parts.push('失败 → ' + nameOf(row.on_failure_task_id))
-  return parts.join('；')
-}
-
-// 死开关提示：预期时刻 + 处置建议
-function staleTip(row) {
-  const due = row.stale_due ? fmtDateTime(row.stale_due) : '预期时刻'
-  return `预期 ${due} 执行，已过宽限期仍无执行记录——请检查调度器是否在运行`
-}
-
-// 最近一次执行记录（recent_runs 倒序，首条最新）
-function latestRun(row) {
-  return (row.recent_runs && row.recent_runs[0]) || null
-}
-function latestRunTip(row) {
-  const r = latestRun(row)
-  if (!r) return ''
-  // 摘要过长截断，避免 tooltip 撑爆屏幕
-  const out = r.output
-    ? '；结果：' + (r.output.length > 80 ? r.output.slice(0, 80) + '…' : r.output)
-    : ''
-  return `时间：${fmtDateTime(r.started_at)}${out}`
-}
-
-// 参数列：JSON 字符串解析后给中文摘要（vm_id 尽量翻译成虚拟机名）
-function paramsText(row) {
-  let obj = null
-  try {
-    obj = JSON.parse(row.params || '{}')
-  } catch (e) {
-    return row.params || '—'
-  }
-  if (!obj || typeof obj !== 'object') return String(row.params)
-  if (obj.vm_id != null) {
-    const vm = vms.value.find((v) => v.id === obj.vm_id)
-    return vm ? `虚拟机：${vm.name}` : `vm_id: ${obj.vm_id}`
-  }
-  if (obj.playbook) {
-    const names = (obj.targets || []).map((id) => vms.value.find((v) => v.id === id)?.name || `#${id}`)
-    return `playbook：${obj.playbook} → ${names.length ? names.join('、') : '未选目标'}`
-  }
-  const keys = Object.keys(obj)
-  return keys.length === 0 ? '（无参数）' : JSON.stringify(obj)
-}
 
 async function load() {
   loading.value = true
