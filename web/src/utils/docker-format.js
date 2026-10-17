@@ -16,7 +16,7 @@ export function stateTag(state) {
 }
 
 // Docker 容器状态 → 中文（docker ps 的 State 全取值集）；未知状态原样返回便于暴露新取值
-export const DOCKER_STATE_TEXT = {
+const DOCKER_STATE_TEXT = {
   running: '运行中',
   exited: '已退出',
   paused: '已暂停',
@@ -69,7 +69,7 @@ export function dockerTime(v) {
 // relativeTimeZh docker 相对时间串（「3 days ago」「About an hour ago」）→ 中文；不匹配返回空串
 const REL_TIME_ZH_UNITS = { second: '秒', minute: '分钟', hour: '小时', day: '天', week: '周', month: '个月', year: '年' }
 
-export function relativeTimeZh(v) {
+function relativeTimeZh(v) {
   const s = String(v).trim()
   let m = s.match(/^(\d+)\s*(second|minute|hour|day|week|month|year)s?\s+ago$/i)
   if (m) return `${m[1]} ${REL_TIME_ZH_UNITS[m[2].toLowerCase()]}前`

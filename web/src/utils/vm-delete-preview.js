@@ -2,7 +2,7 @@
 // 详情页（单台）与列表页（批量）共用，保证两处口径一致。
 
 /** 容量格式化：GB → 人读（<1GB 显示 MB） */
-export function gbText(gb) {
+function gbText(gb) {
   const n = Number(gb) || 0
   if (n <= 0) return '未知大小'
   if (n < 1) return (n * 1024).toFixed(0) + ' MB'

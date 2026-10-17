@@ -6,7 +6,7 @@
 // 刻意不随明暗主题反转：终端在两种主题下恒为深色（太空/控制台风），这是设计决定。
 
 // ANSI 16 色（GitHub Dark）
-export const ANSI = {
+const ANSI = {
   black: '#1b2838', red: '#f85149', green: '#3fb950', yellow: '#d2991d',
   blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#b1bac4',
   brightBlack: '#30363d', brightRed: '#ff6e6a', brightGreen: '#56d364',
@@ -14,8 +14,8 @@ export const ANSI = {
   brightCyan: '#56d4dd', brightWhite: '#f0f6fc'
 }
 
-export const TERM_CURSOR = '#58a6ff'
-export const TERM_SELECTION = 'rgba(31, 58, 95, 0.7)'
+const TERM_CURSOR = '#58a6ff'
+const TERM_SELECTION = 'rgba(31, 58, 95, 0.7)'
 
 // 两个终端只差「表面」：VM 控制台悬浮在星空背景图上用半透明底（透出背景），
 // 容器终端无背景图用实底。
