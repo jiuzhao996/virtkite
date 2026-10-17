@@ -1,158 +1,76 @@
+<!--
+  虚拟机详情页（薄壳）
+  ────────────────────────────────────────────────────────────────
+  职责：页头电源操作编排、左侧分区菜单与 activeView 切换、stats 轮询编排、基础数据获取（loadSpec / XML / 健康检查）。
+  数据流：
+    GET /vms/:id/spec → vm/spec（同时驱动菜单、概览与各分区）
+    GET /vms/:id/stats 每 vmstats 间隔 → 壳拉取后交 VmPerfCard 追加采样/重绘
+    分区自持数据（快照/授权/guest 指标/硬件）各自请求，不经过壳
+  子组件（./vm-detail/components/）：
+    VmDetailToolbar   顶部工具栏（返回/控制台/电源/固化模板/删除）
+    VmHealthAlert     域定义健康告警（幽灵盘摘除）
+    VmSideMenu        左侧分区导航
+    VmOverviewPanel   概览信息行
+    VmXmlPanel        XML 定义编辑
+    VmPerfCard / GuestMetricsCard / VmHardwarePanels / VmSnapshotCard / VmGrantCard（既有重分区）
+  刻意没拆：文件管理分区（仅 10 行，直接复用 VmFileBrowser）与 stats 轮询编排（壳只拉取分发，
+  与 activeView/perfCardRef 紧耦合）；分区显隐全部保持 v-show 常驻挂载语义，不许改成 v-if。
+-->
 <template>
   <div class="vm-detail" v-loading="loading">
     <!-- 顶部工具栏：返回 / 名称 / 状态 / IP / 操作 -->
-    <div class="toolbar">
-      <div class="tb-left">
-        <el-button text :icon="ArrowLeft" @click="back">返回</el-button>
-        <span class="tb-name">{{ vmName }}</span>
-        <el-tag v-if="vm" :type="vmStatusTag(vm.status)" effect="dark" size="small">{{ vmStatusText(vm.status, '—') }}</el-tag>
-        <span v-if="vm && vm.ip" class="tb-ip">{{ vm.ip }}</span>
-      </div>
-      <div class="tb-actions">
-        <el-button type="primary" :icon="Monitor" :disabled="!isRunning" :title="isRunning ? '' : '开机后可用控制台'" @click="goConsole">控制台</el-button>
-        <!-- 电源 / 挂起 状态切换按钮：一个按钮按当前状态显示对应动作（运行中→关机/暂停，关机→开机，暂停→恢复）。
-             语义保持与拆分版一致：暂停态须先恢复（电源钮禁用），关机态禁用挂起钮；busy 期间锁定防止动作切换闪烁 -->
-        <el-button
-          v-if="canOperate && vm"
-          :icon="isRunning ? SwitchButton : VideoPlay"
-          :loading="busy === 'stop' || busy === 'start'"
-          :disabled="isPaused || (!!busy && busy !== 'resume')"
-          @click="act(isRunning ? 'stop' : 'start')"
-        >{{ isRunning ? '关机' : '开机' }}</el-button>
-        <el-button
-          v-if="canOperate && vm"
-          :icon="isPaused ? VideoPlay : VideoPause"
-          :loading="busy === 'pause' || busy === 'resume'"
-          :disabled="(!isRunning && !isPaused) || (!!busy && busy !== 'stop' && busy !== 'start')"
-          @click="act(isPaused ? 'resume' : 'pause')"
-        >{{ isPaused ? '恢复' : '暂停' }}</el-button>
-        <el-button v-if="canOperate && vm" :icon="RefreshRight" :loading="busy === 'restart'" :disabled="!isRunning" :title="isRunning ? '' : '开机后才能重启'" @click="act('restart')">重启</el-button>
-        <!-- 模板制作：关机态把本机清洗固化为模板（此后可增量克隆批量建机） -->
-        <el-button
-          v-if="canOperate && vm && !isRunning"
-          :icon="Files"
-          :disabled="!finalizeCap.guestfs_available"
-          :title="finalizeCap.guestfs_available ? '清洗镜像并固化为模板' : '镜像清洗工具不可用：' + (finalizeCap.reason || '请在宿主机安装 guestfs-tools')"
-          @click="openFinalize"
-        >固化为模板</el-button>
-        <el-button v-if="canOperate" type="danger" :icon="Delete" :loading="busy === 'delete'" @click="doDelete">删除</el-button>
-      </div>
-    </div>
+    <VmDetailToolbar
+      :vm-name="vmName"
+      :vm="vm"
+      :is-running="isRunning"
+      :is-paused="isPaused"
+      :can-operate="canOperate"
+      :busy="busy"
+      :finalize-cap="finalizeCap"
+      @back="back"
+      @console="goConsole"
+      @act="act"
+      @finalize="openFinalize"
+      @delete="doDelete"
+    />
 
     <!-- 域定义健康检查：磁盘源文件缺失（幽灵盘）会让 libvirt 拒绝启动整个域，而报错
          只在开机时出现、文案是「无法访问存储文件 + uid/gid」，与当初的加盘操作完全脱节 -->
-    <el-alert
+    <VmHealthAlert
       v-if="health && health.checked && !health.ok"
-      type="error"
-      :closable="false"
-      show-icon
-      class="health-alert"
-    >
-      <template #title>
-        域定义异常：{{ health.missing_disks.filter((d) => d.fatal).length }} 块磁盘的文件不存在，虚拟机无法开机
-      </template>
-      <div v-for="d in health.missing_disks" :key="d.target" class="health-row">
-        <span class="mono health-src">{{ d.target }} → {{ d.source }}</span>
-        <span v-if="!d.fatal" class="health-note">光驱介质缺失，不影响开机</span>
-        <el-button
-          size="small" type="danger" plain
-          :loading="busy === 'detach-' + d.target"
-          @click="detachBrokenDisk(d)"
-        >摘除该磁盘</el-button>
-      </div>
-      <div class="health-tip">
-        摘除只从域定义移除该磁盘条目，不动任何文件；若文件仍需要，可先补齐文件再开机。
-      </div>
-    </el-alert>
+      :health="health"
+      :busy="busy"
+      @detach="detachBrokenDisk"
+    />
 
     <el-container class="body">
       <!-- 左侧导航 -->
       <el-aside width="216px" class="side">
-        <el-menu :default-active="activeMenu" @select="onMenuSelect" class="side-menu">
-          <el-menu-item index="overview">
-            <el-icon><Odometer /></el-icon>
-            <span>概览</span>
-          </el-menu-item>
-          <el-menu-item index="perf">
-            <el-icon><TrendCharts /></el-icon>
-            <span>性能</span>
-          </el-menu-item>
-          <el-menu-item index="cpu">
-            <el-icon><Cpu /></el-icon>
-            <span>处理器</span>
-          </el-menu-item>
-          <el-menu-item index="memory">
-            <el-icon><Coin /></el-icon>
-            <span>内存</span>
-          </el-menu-item>
-          <el-menu-item-group title="磁盘">
-            <el-menu-item v-for="item in diskMenuItems" :key="item.index" :index="item.index">
-              <el-icon><FolderOpened /></el-icon>
-              <span class="mono">{{ item.target }}</span>
-            </el-menu-item>
-          </el-menu-item-group>
-          <el-menu-item-group title="网卡">
-            <el-menu-item v-for="item in nicMenuItems" :key="item.index" :index="item.index">
-              <el-icon><Connection /></el-icon>
-              <span>{{ item.label }}</span>
-            </el-menu-item>
-          </el-menu-item-group>
-          <el-menu-item index="snapshots">
-            <el-icon><CameraFilled /></el-icon>
-            <span>快照</span>
-          </el-menu-item>
-          <el-menu-item index="xml">
-            <el-icon><Document /></el-icon>
-            <span>XML 定义</span>
-          </el-menu-item>
-          <el-menu-item v-if="canOperate" index="files">
-            <el-icon><FolderOpened /></el-icon>
-            <span>文件管理</span>
-          </el-menu-item>
-          <el-menu-item v-if="isAdmin" index="grants">
-            <el-icon><User /></el-icon>
-            <span>授权管理</span>
-          </el-menu-item>
-        </el-menu>
+        <VmSideMenu
+          :active-menu="activeMenu"
+          :disk-menu-items="diskMenuItems"
+          :nic-menu-items="nicMenuItems"
+          :can-operate="canOperate"
+          :is-admin="isAdmin"
+          @select="onMenuSelect"
+        />
       </el-aside>
 
       <!-- 右侧内容区：概览 / XML / 文件管理留在壳，其余分区为 vm-detail/components 下的自持子组件
            （均 v-show 常驻挂载——切走再切回不丢状态、性能曲线不重置） -->
       <el-main class="content">
         <!-- 概览 -->
-        <section v-show="activeView === 'overview'" class="panel">
-          <div class="panel-head">
-            <h3 class="panel-title">概览</h3>
-          </div>
-          <el-card shadow="never">
-            <!-- 腾讯云式信息行：无框线、label 灰色固定宽，一行一条信息，可读性优于带框表格 -->
-            <el-descriptions :column="2" class="ov-desc">
-              <el-descriptions-item label="名称">{{ spec ? spec.name : '—' }}</el-descriptions-item>
-              <el-descriptions-item label="UUID">{{ spec ? spec.uuid : '—' }}</el-descriptions-item>
-              <el-descriptions-item label="状态">
-                <el-tag :type="vmStatusTag(vm ? vm.status : '')" effect="light">{{ vmStatusText(vm ? vm.status : '', '—') }}</el-tag>
-              </el-descriptions-item>
-              <el-descriptions-item label="宿主机">{{ hostName }}</el-descriptions-item>
-              <el-descriptions-item label="存储池">{{ vm ? vm.storage_pool || '—' : '—' }}</el-descriptions-item>
-              <el-descriptions-item label="IP">{{ vm ? vm.ip || '—' : '—' }}</el-descriptions-item>
-              <el-descriptions-item label="vCPU">{{ spec ? spec.vcpu + ' 核' : '—' }}</el-descriptions-item>
-              <el-descriptions-item label="内存">{{ spec ? spec.memory_mb + ' MB' : '—' }}</el-descriptions-item>
-              <el-descriptions-item label="系统类型">{{ spec ? spec.os_type : (vm && vm.os_type) || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="架构">{{ spec ? spec.arch : '—' }}</el-descriptions-item>
-              <el-descriptions-item label="机器类型">{{ spec ? spec.machine : '—' }}</el-descriptions-item>
-              <el-descriptions-item label="创建时间">{{ createdText }}</el-descriptions-item>
-              <el-descriptions-item label="MAC 地址">{{ macText }}</el-descriptions-item>
-              <el-descriptions-item label="开机自启">
-                <el-switch
-                  :model-value="!!(spec && spec.autostart)"
-                  :loading="busy === 'autostart'"
-                  :disabled="!spec || !canOperate"
-                  @change="onAutostartChange"
-                />
-              </el-descriptions-item>
-            </el-descriptions>
-          </el-card>
-        </section>
+        <VmOverviewPanel
+          v-show="activeView === 'overview'"
+          :vm="vm"
+          :spec="spec"
+          :host-name="hostName"
+          :created-text="createdText"
+          :mac-text="macText"
+          :busy="busy"
+          :can-operate="canOperate"
+          @autostart-change="onAutostartChange"
+        />
 
         <!-- 性能（曲线 echarts / 60 采样拼装 / Prometheus 预填内聚在 VmPerfCard，壳只编排轮询） -->
         <VmPerfCard
@@ -183,24 +101,14 @@
         <VmSnapshotCard :vm-id="id" :active="activeView === 'snapshots'" :can-operate="canOperate" :reload="loadSpec" />
 
         <!-- XML 定义 -->
-        <section v-show="activeView === 'xml'" class="panel">
-          <div class="panel-head">
-            <h3 class="panel-title">XML 定义</h3>
-          </div>
-          <el-alert
-            type="info"
-            :closable="false"
-            class="xml-alert"
-            title="双通道编辑：左侧各结构化页面为推荐方式；此处可直接编辑原始 XML（getVMXML / updateVMXML）。"
-          />
-          <el-card shadow="never">
-            <div class="xml-toolbar">
-              <el-button :icon="Refresh" @click="loadXML">重新加载</el-button>
-              <el-button v-if="canOperate" type="primary" :loading="xmlSaving" @click="saveXML">保存</el-button>
-            </div>
-            <el-input v-model="xmlText" type="textarea" :rows="18" class="xml-area" placeholder="加载中…" />
-          </el-card>
-        </section>
+        <VmXmlPanel
+          v-show="activeView === 'xml'"
+          v-model:xml-text="xmlText"
+          :xml-saving="xmlSaving"
+          :can-operate="canOperate"
+          @reload="loadXML"
+          @save="saveXML"
+        />
 
         <!-- 文件管理（v2：SSH 在线通道，浏览/下载/上传/删除 VM 内文件） -->
         <section v-show="activeView === 'files'" class="panel">
@@ -223,15 +131,15 @@
 
 <script setup>
 // 虚拟机详情页薄壳：只持页头电源操作、左侧分区菜单与 activeView 切换、stats 轮询编排、
-// 基础数据获取（loadSpec / XML）。四个重分区已拆至 ./vm-detail/components/：
+// 基础数据获取（loadSpec / XML）。重分区已拆至 ./vm-detail/components/：
 //   VmPerfCard（性能曲线 + 60 采样）、VmHardwarePanels（处理器/内存/磁盘/网卡 + 硬件对话框）、
-//   VmSnapshotCard（快照）、VmGrantCard（授权管理）。
+//   VmSnapshotCard（快照）、VmGrantCard（授权管理）；展示壳拆为 VmDetailToolbar / VmHealthAlert /
+//   VmSideMenu / VmOverviewPanel / VmXmlPanel。
 // 分区显隐全部保持 v-show 常驻挂载语义（不许改成 v-if），切走再切回不丢状态。
 // 共享数据流：vm/spec/busy/activeView 在壳；分区自持数据各自的 API 调用不经过壳。
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Monitor, VideoPlay, VideoPause, SwitchButton, RefreshRight, Delete, Refresh, Odometer, TrendCharts, Cpu, Coin, FolderOpened, Connection, CameraFilled, Document, User, Files } from '@element-plus/icons-vue'
 import { api } from '../api'
 import VmFileBrowser from '../components/VmFileBrowser.vue'
 import VmFinalizeDialog from '../components/VmFinalizeDialog.vue'
@@ -239,8 +147,13 @@ import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId, taskErrorMessage } from '../utils/task.js'
 import { POLL_DEFAULTS, getPollInterval } from '../utils/settings'
 import { useAutoRefresh } from '../composables/useAutoRefresh'
-import { vmStatusText, vmStatusTag, isCancel, fmtDateTime, errMsg } from '../utils/format'
+import { isCancel, fmtDateTime, errMsg } from '../utils/format'
 import { deletePreviewHtml } from '../utils/vm-delete-preview'
+import VmDetailToolbar from './vm-detail/components/VmDetailToolbar.vue'
+import VmHealthAlert from './vm-detail/components/VmHealthAlert.vue'
+import VmSideMenu from './vm-detail/components/VmSideMenu.vue'
+import VmOverviewPanel from './vm-detail/components/VmOverviewPanel.vue'
+import VmXmlPanel from './vm-detail/components/VmXmlPanel.vue'
 import VmPerfCard from './vm-detail/components/VmPerfCard.vue'
 import GuestMetricsCard from './vm-detail/components/GuestMetricsCard.vue'
 import VmHardwarePanels from './vm-detail/components/VmHardwarePanels.vue'
@@ -545,65 +458,6 @@ onMounted(async () => {
   min-height: 100%;
 }
 
-/* 顶部工具栏 */
-/* 域定义健康检查横幅（幽灵盘）：磁盘文件缺失时置顶告警并提供摘除入口 */
-.health-alert {
-  margin: 8px 0 0;
-}
-.health-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-}
-.health-src {
-  font-size: 0.8rem;
-  word-break: break-all;
-}
-.health-note {
-  font-size: 0.78rem;
-  color: var(--el-color-info);
-}
-.health-tip {
-  margin-top: 8px;
-  font-size: 0.78rem;
-  opacity: 0.85;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  background: var(--color-card);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: 12px 16px;
-  box-shadow: var(--shadow-sm);
-  margin-bottom: 16px;
-}
-.tb-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.tb-name {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--color-foreground);
-}
-.tb-ip {
-  color: var(--color-muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-}
-.tb-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 /* 主体：左侧导航 + 右侧内容 */
 .body {
   flex: 1;
@@ -620,25 +474,11 @@ onMounted(async () => {
   align-self: flex-start;
   max-height: calc(100vh - 140px);
 }
-.side-menu {
-  border-right: none;
-  height: 100%;
-  padding: 8px;
-}
-.side-menu :deep(.el-menu-item) {
-  border-radius: var(--radius-sm);
-  margin-bottom: 2px;
-}
-.side-menu :deep(.el-menu-item.is-active) {
-  background: var(--el-color-primary-light-9);
-  color: var(--color-primary);
-  font-weight: 600;
-}
 .content {
   padding: 0 0 0 16px;
 }
 
-/* 面板头（概览 / XML / 文件管理留在壳的分区；子组件分区各自带同样式副本） */
+/* 面板头（仅文件管理分区留在壳；概览/XML 子组件各自带同样式副本，改一处须同步） */
 .panel-head {
   display: flex;
   align-items: center;
@@ -650,21 +490,6 @@ onMounted(async () => {
   font-size: 1rem;
   font-weight: 600;
   color: var(--color-foreground);
-}
-
-/* XML */
-.xml-alert {
-  margin-bottom: 12px;
-}
-.xml-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.xml-area :deep(textarea) {
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
 }
 
 @media (max-width: 900px) {
@@ -680,14 +505,5 @@ onMounted(async () => {
   .content {
     padding: 0;
   }
-}
-/* 概览信息行（腾讯云式）：label 灰色固定宽，值区留足行距 */
-.ov-desc :deep(.el-descriptions__label) {
-  color: var(--el-text-color-secondary);
-  min-width: 78px;
-}
-.ov-desc :deep(.el-descriptions__cell) {
-  padding-bottom: 16px;
-  vertical-align: middle;
 }
 </style>

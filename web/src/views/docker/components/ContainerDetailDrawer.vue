@@ -1,3 +1,21 @@
+<!--
+  容器详情旗舰抽屉（Portainer 式多 tab）
+  ────────────────────────────────────────────────────────────────
+  职责：抽屉开关/头部快捷操作、inspect 拉取、统计轮询与曲线、日志 WS/HTTP 降级、网络挂接、
+        重命名/删除/调整资源；对外暴露 open(row, initialTab)。
+  数据流：
+    open(row) → GET inspect（概要/原始 JSON 共用）
+    统计 tab 激活且运行中 → GET stats 每 3s → 60 点滚动窗 → echarts
+    日志 tab 激活 → WS 实时流（useLogStream）；重试用尽 → HTTP 每 2s 轮询
+  子组件（./）：
+    ContainerSummaryTab  概要 tab（描述项/端口/挂载/网络接入）
+    ContainerStatsTab    统计 tab（指标块 + 图表挂载点）
+    ContainerLogsTab     日志 tab（LogViewer 薄包装，暴露 scrollToEndOnce）
+    ContainerUpdateDialog 调整资源/健康检查弹窗（自持表单）
+    ContainerFilesTab / LogViewer 为既有组件
+  刻意没拆：头部快捷操作组与 act() —— 与 row 状态、emit('changed')、统计轮询启停强耦合；
+  原始 JSON tab 仅 10 行且与 inspectText 共享状态，拆出收益低。
+-->
 <template>
     <!-- 容器详情旗舰抽屉（Portainer 式多 tab）：概要 / 统计 / 日志 / 原始 JSON；
          头部为行内快捷操作组，终端仍走父级既有 termDrawer（xterm 生命周期不进 tab 体系） -->
@@ -21,75 +39,19 @@
 
       <el-tabs v-model="tab">
         <el-tab-pane label="概要" name="summary">
-          <el-descriptions :column="2" border size="small">
-            <el-descriptions-item label="名称"><span class="mono">{{ row.Names || '—' }}</span></el-descriptions-item>
-            <el-descriptions-item label="状态"><el-tag :type="stateTag(row.State)" effect="light" size="small">{{ stateText(row.State) }}</el-tag></el-descriptions-item>
-            <el-descriptions-item label="镜像" :span="2">
-              <router-link v-if="row.Image" class="mono lk" to="/images">{{ row.Image }}</router-link>
-              <span v-else>—</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="容器 ID" :span="2"><span class="mono">{{ shortId(row.ID) }}</span></el-descriptions-item>
-            <el-descriptions-item label="启动命令" :span="2"><span class="mono">{{ vm.summary.command || '—' }}</span></el-descriptions-item>
-            <el-descriptions-item label="重启策略">{{ vm.summary.restartPolicy || 'no' }}</el-descriptions-item>
-            <el-descriptions-item label="网络模式">{{ vm.summary.networkMode || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="已接入网络" :span="2">
-              <div class="net-row">
-                <el-tag v-for="n in connectedNetworks" :key="n" size="small" closable @close="disconnectNetwork(n)">{{ n }}</el-tag>
-                <el-select
-                  v-model="connectTarget"
-                  size="small"
-                  placeholder="接入网络"
-                  style="width: 170px"
-                  :disabled="!connectableNetworks.length"
-                  @change="connectNetwork"
-                >
-                  <el-option v-for="n in connectableNetworks" :key="n" :label="n" :value="n" />
-                </el-select>
-              </div>
-            </el-descriptions-item>
-            <el-descriptions-item label="创建时间" :span="2">{{ dockerTime(row.CreatedAt || row.Created) }}</el-descriptions-item>
-          </el-descriptions>
-
-          <div v-if="vm.ports.length" class="cd-sec">
-            <div class="cd-sec-title">端口映射</div>
-            <el-table :data="vm.ports" size="small" stripe>
-              <el-table-column label="映射" min-width="200"><template #default="{ row: p }"><span class="mono">{{ portText(p) }}</span></template></el-table-column>
-              <el-table-column label="" width="50"><template #default="{ row: p }"><CopyButton :text="portCopyText(p)" tip="复制 host:port" /></template></el-table-column>
-            </el-table>
-          </div>
-
-          <div v-if="vm.mounts.length" class="cd-sec">
-            <div class="cd-sec-title">挂载</div>
-            <el-table :data="vm.mounts" size="small" stripe>
-              <el-table-column label="源" min-width="180"><template #default="{ row: m }"><span class="mono">{{ m.source }}</span></template></el-table-column>
-              <el-table-column label="目标" min-width="180"><template #default="{ row: m }"><span class="mono">{{ m.destination }}</span></template></el-table-column>
-              <el-table-column label="读写" width="70"><template #default="{ row: m }"><el-tag size="small" :type="m.rw ? 'success' : 'warning'" effect="light">{{ m.mode }}</el-tag></template></el-table-column>
-            </el-table>
-          </div>
+          <ContainerSummaryTab
+            :row="row"
+            :vm="vm"
+            :connected-networks="connectedNetworks"
+            :connectable-networks="connectableNetworks"
+            v-model:connect-target="connectTarget"
+            @connect="connectNetwork"
+            @disconnect="disconnectNetwork"
+          />
         </el-tab-pane>
 
         <el-tab-pane label="统计" name="stats" :disabled="row.State !== 'running'">
-          <div v-if="row.State !== 'running'" class="cd-placeholder">容器未运行，无实时统计</div>
-          <template v-else>
-            <div class="cd-tiles">
-              <div class="cd-tile"><span class="cd-tile-k">CPU</span><b class="mono">{{ tiles.cpu }}</b></div>
-              <div class="cd-tile"><span class="cd-tile-k">内存</span><b class="mono">{{ tiles.mem }}</b></div>
-              <div class="cd-tile"><span class="cd-tile-k">网络 I/O</span><b class="mono">{{ tiles.net }}</b></div>
-              <div class="cd-tile"><span class="cd-tile-k">块 I/O</span><b class="mono">{{ tiles.block }}</b></div>
-              <div class="cd-tile"><span class="cd-tile-k">PIDs</span><b class="mono">{{ tiles.pids }}</b></div>
-            </div>
-            <div class="cd-charts">
-              <div class="cd-chart-box">
-                <div class="cd-chart-title">CPU %</div>
-                <div :ref="setChartRef('cpu')" class="cd-chart" />
-              </div>
-              <div class="cd-chart-box">
-                <div class="cd-chart-title">内存 %</div>
-                <div :ref="setChartRef('mem')" class="cd-chart" />
-              </div>
-            </div>
-            <div class="cd-hint">滚动窗口约 3 分钟（每 3 秒采样一次）</div>
-          </template>
+          <ContainerStatsTab :running="row.State === 'running'" :tiles="tiles" :set-chart-ref="setChartRef" />
         </el-tab-pane>
 
         <el-tab-pane label="文件" name="files" lazy>
@@ -97,24 +59,22 @@
         </el-tab-pane>
 
         <el-tab-pane label="日志" name="logs" lazy class="pane-logs">
-          <div v-loading="logsLoading">
-            <div v-if="logsMode === 'ws' || wsFallback" class="ls-bar">
-              <span class="ls-dot" :class="dotClass">●</span>
-              <span>{{ wsStatusText }}</span>
-            </div>
-            <LogViewer
-              ref="logViewerRef"
-              :text="logsMode === 'http' ? logsText : ''"
-              :rows="logsMode === 'ws' ? streamLines : null"
-              :loading="logsLoading"
-              :follow="logsFollow"
-              :timestamps="logsTimestamps"
-              :filename="displayName"
-              @update:follow="(v) => (logsFollow = v)"
-              @update:timestamps="onTsChange"
-              @refresh="reloadLogs"
-            />
-          </div>
+          <ContainerLogsTab
+            ref="logsTabRef"
+            :logs-loading="logsLoading"
+            :logs-mode="logsMode"
+            :ws-fallback="wsFallback"
+            :dot-class="dotClass"
+            :ws-status-text="wsStatusText"
+            :logs-text="logsText"
+            :stream-lines="streamLines"
+            :logs-follow="logsFollow"
+            :logs-timestamps="logsTimestamps"
+            :display-name="displayName"
+            @update:follow="(v) => (logsFollow = v)"
+            @timestamps-change="onTsChange"
+            @refresh="reloadLogs"
+          />
         </el-tab-pane>
 
         <el-tab-pane label="原始 JSON" name="raw" lazy>
@@ -128,38 +88,26 @@
     </el-drawer>
 
     <!-- 调整资源 / 健康检查（docker update，运行中亦可；留空项不动原值） -->
-    <el-dialog v-model="updateDlg" title="调整资源与健康检查" width="480px" :close-on-click-modal="false" append-to-body>
-      <el-form label-width="110px">
-        <el-form-item label="CPU 上限"><el-input v-model="updateForm.cpus" placeholder="如 1.5（核数）" clearable /></el-form-item>
-        <el-form-item label="内存上限"><el-input v-model="updateForm.memory" placeholder="如 512m / 1g" clearable /></el-form-item>
-        <el-form-item label="内存+Swap"><el-input v-model="updateForm.memory_swap" placeholder="如 1g；-1 表示不限 swap" clearable /></el-form-item>
-        <el-form-item label="CPU 集"><el-input v-model="updateForm.cpuset_cpus" placeholder="如 0-2 或 0,2" clearable /></el-form-item>
-        <el-form-item label="检测间隔"><el-input v-model="updateForm.health_interval" placeholder="如 30s" clearable /></el-form-item>
-        <el-form-item label="失败次数"><el-input v-model="updateForm.health_retries" placeholder="如 3" clearable /></el-form-item>
-        <el-form-item label="检测超时"><el-input v-model="updateForm.health_timeout" placeholder="如 5s" clearable /></el-form-item>
-        <el-form-item label="启动宽限"><el-input v-model="updateForm.health_start_period" placeholder="如 60s（启动慢的应用必需）" clearable /></el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="updateDlg = false">取消</el-button>
-        <el-button type="primary" :loading="updateBusy" @click="submitUpdate">更新</el-button>
-      </template>
-    </el-dialog>
+    <ContainerUpdateDialog ref="updateDialogRef" :container-id="row.ID" @updated="onUpdateDone" />
 </template>
 
 <script setup>
 // 容器详情旗舰抽屉（R3）：把行内「详情」从 JSON 查看器升级为容器域枢纽页。
 // 概要/统计/日志/原始 JSON 四 tab + 头部快捷操作组；统计复用单容器 stats 端点（此前前端从未调用），
 // 60 点 × 3s 滚动窗口；关闭抽屉或切离统计 tab 即停轮询。
-import { ref, reactive, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import CopyButton from '../../../components/CopyButton.vue'
-import LogViewer from './LogViewer.vue'
 import ContainerFilesTab from './ContainerFilesTab.vue'
+import ContainerSummaryTab from './ContainerSummaryTab.vue'
+import ContainerStatsTab from './ContainerStatsTab.vue'
+import ContainerLogsTab from './ContainerLogsTab.vue'
+import ContainerUpdateDialog from './ContainerUpdateDialog.vue'
 import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
-import { containerName, stateTag, stateText, dockerTime, shortId } from '../../../utils/docker-format'
-import { parseInspect, portText, portCopyText } from '../../../utils/docker-inspect'
+import { containerName, stateTag, stateText } from '../../../utils/docker-format'
+import { parseInspect } from '../../../utils/docker-inspect'
 import { useLogStream } from '../../../composables/useLogStream'
 import { useChart } from '../../../composables/useChart'
 
@@ -286,7 +234,7 @@ const logsFollow = ref(true) // 进日志就是要看最新,默认跟随贴底
 const logsTimestamps = ref(false)
 const logsTail = 200
 const logsMode = ref('ws')
-const logViewerRef = ref(null)
+const logsTabRef = ref(null)
 const { lines: streamLines, status, errorMsg, fallback: wsFallback, start: startStream, stop: stopStream, reset: resetStream } = useLogStream()
 
 const dotClass = computed(() => ({ live: 'ok', connecting: 'wait', closed: 'off', error: 'err' }[status.value] || 'off'))
@@ -301,7 +249,7 @@ const wsStatusText = computed(() => {
 
 // 打开/刷新时兜底贴底:多次幂等滚动,覆盖 WS 首批行晚于 DOM 稳定到达的各种时序
 function stickLogsBottom() {
-  const v = logViewerRef.value
+  const v = logsTabRef.value
   if (!v) return
   v.scrollToEndOnce()
   setTimeout(() => v.scrollToEndOnce(), 250)
@@ -314,7 +262,7 @@ async function fetchLogs() {
   try {
     const res = await api.dockerContainerLogs(row.value.ID, logsTail, logsTimestamps.value)
     logsText.value = (res.data || {}).logs || ''
-    if (logsFollow.value && logViewerRef.value) logViewerRef.value.scrollToEndOnce()
+    if (logsFollow.value && logsTabRef.value) logsTabRef.value.scrollToEndOnce()
   } catch (e) {
     ElMessage.error(errMsg(e, '获取日志失败'))
   } finally {
@@ -478,34 +426,16 @@ async function disconnectNetwork(name) {
 }
 
 /* ── 调整资源 / 健康检查（docker update，运行中亦可）── */
-const updateDlg = ref(false)
-const updateBusy = ref(false)
-const updateForm = reactive({
-  cpus: '', memory: '', memory_swap: '', cpuset_cpus: '',
-  health_interval: '', health_retries: '', health_timeout: '', health_start_period: ''
-})
+const updateDialogRef = ref(null)
 
 function openUpdate() {
-  Object.assign(updateForm, {
-    cpus: '', memory: '', memory_swap: '', cpuset_cpus: '',
-    health_interval: '', health_retries: '', health_timeout: '', health_start_period: ''
-  })
-  updateDlg.value = true
+  updateDialogRef.value?.open()
 }
 
-async function submitUpdate() {
-  updateBusy.value = true
-  try {
-    await api.dockerContainerUpdate(row.value.ID, { ...updateForm })
-    ElMessage.success('已更新容器资源 / 健康检查')
-    updateDlg.value = false
-    await fetchInspect()
-    emit('changed')
-  } catch (e) {
-    ElMessage.error(errMsg(e, '更新失败'))
-  } finally {
-    updateBusy.value = false
-  }
+// 更新成功：先刷新 inspect，再通知父列表（保持原来的刷新时序）
+async function onUpdateDone() {
+  await fetchInspect()
+  emit('changed')
 }
 
 function open(r, initialTab) {
@@ -541,13 +471,6 @@ defineExpose({ open })
 <style>
 /* 详情抽屉布局:外层 body 锁死不滚(双滚动容器会让「贴底」滚错对象),
    tabs 拉伸填满,日志 pane 内 .lv-pre 成为唯一滚动容器(flex 吃剩余高度)。 */
-/* 已接入网络：标签 + 接入下拉横排 */
-.net-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .cd-drawer .el-drawer__body {  display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -605,77 +528,6 @@ defineExpose({ open })
 .cd-spacer {
   flex: 1;
 }
-.cd-sec {
-  margin-top: 14px;
-}
-.cd-sec-title {
-  font-weight: 600;
-  font-size: 0.9rem;
-  margin-bottom: 6px;
-}
-.cd-tiles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.cd-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 14px;
-  border: 1px solid var(--color-border, #e4e7ed);
-  border-radius: var(--radius-md, 8px);
-  min-width: 110px;
-}
-.cd-tile-k {
-  font-size: 0.75rem;
-  color: var(--color-muted-foreground, #909399);
-}
-.cd-charts {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.cd-chart-box {
-  border: 1px solid var(--color-border, #e4e7ed);
-  border-radius: var(--radius-md, 8px);
-  padding: 8px;
-}
-.cd-chart-title {
-  font-size: 0.82rem;
-  color: var(--color-muted-foreground, #909399);
-  margin-bottom: 4px;
-}
-.cd-chart {
-  height: 180px;
-}
-.cd-hint {
-  margin-top: 8px;
-  font-size: 0.78rem;
-  color: var(--color-muted-foreground, #909399);
-}
-.cd-placeholder {
-  padding: 40px 0;
-  text-align: center;
-  color: var(--color-muted-foreground, #909399);
-}
-/* 日志流状态条（WS 实时/降级提示） */
-.ls-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-  font-size: 0.82rem;
-  color: var(--el-text-color-secondary, #909399);
-}
-.ls-dot {
-  font-size: 0.7rem;
-}
-.ls-dot.ok { color: #67c23a; }
-.ls-dot.wait { color: #e6a23c; }
-.ls-dot.off { color: #909399; }
-.ls-dot.err { color: #f56c6c; }
 .logs-toolbar {
   display: flex;
   align-items: center;
@@ -697,12 +549,5 @@ defineExpose({ open })
   white-space: pre-wrap;
   word-break: break-all;
   user-select: text;
-}
-.lk {
-  color: var(--el-color-primary);
-  text-decoration: none;
-}
-.lk:hover {
-  text-decoration: underline;
 }
 </style>
