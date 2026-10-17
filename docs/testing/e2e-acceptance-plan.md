@@ -608,14 +608,27 @@ CHROME_PATH=/usr/bin/google-chrome npx --yes lighthouse "http://127.0.0.1:8080/#
 
 **仍未修复（已登记，下一批处理）**：
 
-- 设计器 Apply 是全量新增，预览却来自 reconcile 差异；重复 Apply 会同名建机失败并把软删记录推进回收站（R5/R6）；首次失败后无基线，收敛退化为全量新增（R7）。
+- ~~设计器 Apply 是全量新增，预览却来自 reconcile 差异；重复 Apply 会同名建机失败并把软删记录推进回收站（R5/R6）~~ —— **已修复（2026-10-18）**：Apply 改用与预览同源的 `reconcilePlan`（无基线→全量 added，有基线→只补差异），`provisionVM` 增加同名 VM 跳过；补 5 个回归测试。
+- 首次失败后无基线，收敛退化为全量新增（R7）——部分改善（Apply 现已按差异），但**失败后仍不写基线**，需人工确认或重试。
 - 恢复不恢复资产授权/托管凭据/主机组成员（R8）——删除时已物理清理，恢复只回记录。
 - 设计器等建机 12min < 任务 15min（R13）；运行位仅内存，重启/多实例失效（R14）。
 - 任务列表/详情/日志对 viewer 全量可见（D-08）；任务日志 WS 取票仅 admin，operator 看不到「实时」徽标（D-49）。
 - 应用安装 UI 强制填密码、走不了 use_saved（R20）；不校验 VM 运行态（R21）；前端轮询 10min < 任务 15min（R30）。
-- 栈 Detail 与 List 的 `deployed` 口径不一致（R16）；保存编排不持锁、不记版本（R19）。
-- 任务日志 WS 终态最后一条可能未落库就发 done（D-16）。
+- 栈 Detail 与 List 的 `deployed` 口径不一致（R16）—— 已修复；保存编排仍不持锁之外的版本记录缺失（R19）。
+- 任务日志 WS 终态最后一条可能未落库就发 done（D-16）—— 已修复（`TaskLogger.Close` 改为先 flush 再关订阅通道）。
 - **Docker 域深挖未完成**（盘点代理因服务端 503 中断）：容器创建/健康检查/构建上下文/compose 服务级操作/日志 WS 重连等仍只有基础 CRUD 覆盖。
+
+### 11.4 第四批：设计器幂等 + 前端拆分（2026-10-18）
+
+| 改动 | 内容 |
+|---|---|
+| 设计器 Apply 幂等 | 与预览同源算法 + 同名 VM 跳过，消灭「重复落地 → 同名 define 失败 → 回收站垃圾」链路 |
+| `DesignerPalette.vue` 新组件 | 从 `DesignerPage.vue` 抽出设备栏/模板/计划列表（拖拽 emit 上抛，不 import X6），父文件 996 → 953 行 |
+| `useShellChrome.js` 新 composable | 从 `MainLayout.vue` 抽出深色模式/侧栏折叠/全屏切换（含 fullscreenchange 监听与卸载清理），与本地键名逐字节兼容 |
+| 前端拆分收益 | TaskList 1101 / DesignerPage 996→953 / Automation 984 / MainLayout 726→702 行，均已有子组件支撑；进一步拆分见下 |
+
+**下一批拆分建议**：`TaskList.vue` 详情抽屉（依赖日志 WS、时间线、KV 等约 490 行，需整体搬迁）；
+`Automation.vue`（快速执行/Playbook/Role/历史四块可按 tab 切）；`CronList.vue` 的表格列渲染。
 
 ---
 

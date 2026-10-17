@@ -55,7 +55,7 @@
       <!-- 底部常驻收起/展开条：顶部 brand 角落的收缩键太隐蔽（用户反馈"压根看不出来"），这里给全宽可点的显式入口 -->
       <!-- 折叠态只剩图标，必须给 tooltip 提示（用户反馈"没有任何提示"）；展开态有文字，tooltip 关掉 -->
       <el-tooltip :content="collapsed ? '展开侧栏' : '收起侧栏'" placement="right" :disabled="!collapsed" :show-after="200">
-        <div class="aside-collapse-bar" @click="collapsed = !collapsed">
+        <div class="aside-collapse-bar" @click="toggleSidebar">
           <el-icon class="bar-arrow"><component :is="collapsed ? ArrowRight : ArrowLeft" /></el-icon>
           <span v-if="!collapsed">收起侧栏</span>
         </div>
@@ -203,6 +203,7 @@ import { useAuth } from '../store/auth'
 import { api } from '../api'
 import { roleText, vmStatusText, vmStatusTag } from '../utils/format'
 import { getPollInterval, POLL_DEFAULTS } from '../utils/settings'
+import { useShellChrome } from '../composables/useShellChrome'
 import AlertBell from '../components/AlertBell.vue'
 
 // AI 助手抽屉：异步组件避免 marked/DOMPurify 进入口 chunk；el-drawer 首次打开才渲染内容，
@@ -210,28 +211,12 @@ import AlertBell from '../components/AlertBell.vue'
 const AiChat = defineAsyncComponent(() => import('../views/AiChat.vue'))
 const aiOpen = ref(false)
 
-// 深色模式：与 main.js 启动初始化同一 localStorage 键；切 html.dark 即全站联动
-const isDark = ref(document.documentElement.classList.contains('dark'))
-function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.classList.toggle('dark', isDark.value)
-  try { localStorage.setItem('vmops-theme', isDark.value ? 'dark' : 'light') } catch (e) { /* 隐私模式忽略 */ }
-}
+// 外壳三件套（主题 / 侧栏折叠 / 全屏）收进 composable，布局文件不再混排这些细节
+const { isDark, toggleTheme, collapsed, toggleSidebar, toggleFullscreen } = useShellChrome()
 
 const route = useRoute()
 const router = useRouter()
 const { state, isAdmin, canOperate, logout } = useAuth()
-
-// 侧栏折叠状态持久化：ref 工厂读初始值，watch 写回（刷新后保持上次的折叠选择）
-const COLLAPSED_KEY = 'vmops-sidebar-collapsed'
-const collapsed = ref(localStorage.getItem(COLLAPSED_KEY) === '1')
-watch(collapsed, (v) => {
-  try {
-    localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0')
-  } catch (e) {
-    /* localStorage 不可用（隐私模式等）时仅本次会话生效 */
-  }
-})
 
 const role = computed(() => (state.user && state.user.role) || '')
 
@@ -318,15 +303,6 @@ function goSearchVM(id) {
   if (!id) return
   searchSel.value = ''
   router.push({ name: 'vm-detail', params: { id: String(id) } })
-}
-
-// 全屏切换（演示投屏用）
-function toggleFullscreen() {
-  if (document.fullscreenElement) {
-    document.exitFullscreen()
-  } else {
-    document.documentElement.requestFullscreen()
-  }
 }
 
 // 任务铃轮询：pending/running 两路合并；失败静默（铃铛只是辅助入口，不打扰用户）

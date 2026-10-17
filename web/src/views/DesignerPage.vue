@@ -3,35 +3,19 @@
     <PageHead title="架构设计" subtitle="拖拽编排 → 拉线连线 → 一键落地（容器栈 compose 部署 + VM 建机装应用，口令仅落地时填写不随计划保存）；漂移检查（画布/基线/现实三方对比）→ 按差异收敛" />
 
     <div class="ds-layout">
-      <!-- 左：设备栏（拖进画布，置顶——最高频入口沉底要滚才能拖，用户实测反馈）
-           + 预置架构 + 已保存计划；桌面端面板自身内部滚动 -->
-      <el-card shadow="never" class="ds-left">
-        <div class="ds-h ds-hrow"><span>设备栏</span><span class="ds-hint">拖进画布添加</span></div>
-        <template v-for="g in paletteGroups" :key="g.kind">
-          <div class="ds-palette-title" :style="{ color: g.color }">{{ g.title }}</div>
-          <div class="ds-palette">
-            <div
-              v-for="it in g.items" :key="it.ref"
-              class="ds-palette-item" :style="{ borderLeftColor: g.color }"
-              :title="it.label + '（按住拖入画布）'"
-              @mousedown="startDrag($event, g.kind, it)"
-            >{{ it.label }}</div>
-          </div>
-        </template>
-        <el-divider />
-        <span class="ds-h">预置架构</span>
-        <div v-for="t in templates" :key="t.id" class="ds-tpl" @click="loadTemplate(t)">
-          <span class="ds-tpl-name">{{ t.name }}</span>
-          <span class="ds-tpl-desc">{{ t.desc }}</span>
-        </div>
-        <el-divider />
-        <span class="ds-h">已保存计划</span>
-        <div v-for="p in plans" :key="p.id" class="ds-plan" @click="loadPlan(p)">
-          <span class="ds-tpl-name mono">{{ p.id }}</span>
-          <el-button text size="small" type="primary" :icon="CopyDocument" title="复制计划" @click.stop="duplicatePlan(p)" />
-          <el-button text size="small" type="danger" :icon="Delete" @click.stop="removePlan(p.id)" />
-        </div>
-      </el-card>
+      <!-- 左：设备栏（拖入建节点）+ 预置架构 + 已保存计划
+           （渲染下沉到 designer/components/DesignerPalette.vue，本文件只喂数据与事件） -->
+      <DesignerPalette
+        class="ds-left"
+        :groups="paletteGroups"
+        :templates="templates"
+        :plans="plans"
+        @drag-start="startDrag"
+        @load-template="loadTemplate"
+        @load-plan="loadPlan"
+        @duplicate-plan="duplicatePlan"
+        @remove-plan="removePlan"
+      />
 
       <!-- 中：X6 画布（拖拽/连线/对齐） -->
       <el-card shadow="never" class="ds-mid">
@@ -157,6 +141,7 @@ import PageHead from '../components/PageHead.vue'
 import DesignerDriftPanel from './designer/components/DesignerDriftPanel.vue'
 import DesignerDiffDialog from './designer/components/DesignerDiffDialog.vue'
 import DesignerNodeForm from './designer/components/DesignerNodeForm.vue'
+import DesignerPalette from './designer/components/DesignerPalette.vue'
 import { Graph, Shape } from '@antv/x6'
 import { Snapline } from '@antv/x6-plugin-snapline'
 import { Selection } from '@antv/x6-plugin-selection'
@@ -917,34 +902,6 @@ onUnmounted(() => {
 @media (max-width: 1100px) {
   .ds-layout { grid-template-columns: 1fr; }
 }
-.ds-h { font-weight: 600; font-size: 0.9rem; }
-.ds-hrow { display: flex; align-items: baseline; justify-content: space-between; }
-.ds-hint { font-weight: 400; font-size: 0.72rem; color: var(--color-muted-foreground); }
-.ds-tpl {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 8px 10px; margin-bottom: 6px;
-  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
-  cursor: pointer; transition: all 0.15s ease;
-}
-.ds-tpl:hover { border-color: var(--el-color-primary); transform: translateY(-1px); }
-.ds-tpl-name { font-weight: 600; font-size: 0.88rem; }
-.ds-tpl-desc { font-size: 0.78rem; color: var(--color-muted-foreground); }
-.ds-plan {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 10px; margin-bottom: 4px;
-  border-radius: var(--radius-sm); cursor: pointer;
-}
-.ds-plan:hover { background: var(--el-fill-color-light); }
-.ds-palette-title { font-size: 0.75rem; font-weight: 600; margin: 8px 0 5px; }
-.ds-palette { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-.ds-palette-item {
-  padding: 5px 8px; font-size: 0.78rem;
-  border: 1px solid var(--color-border); border-left: 3px solid;
-  border-radius: var(--radius-sm); cursor: grab; user-select: none;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  transition: all 0.15s ease; background: var(--el-bg-color);
-}
-.ds-palette-item:hover { border-color: var(--el-color-primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .ds-canvas {
   position: relative;
   height: 520px; /* 窄屏堆叠布局兜底高；桌面端由上方 media 覆盖为 flex 撑满 */
