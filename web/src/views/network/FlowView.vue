@@ -83,7 +83,10 @@ const barPct = (v) => Math.max(2, Math.round((v / maxRate.value) * 100)) + '%'
 const fmtRate = (v) => fmtRateBytes(v || 0)
 
 function renderChart() {
-  if (!chartRef.value) return
+  // 切到别的 tab 后容器 display:none，此时继续 setOption 会让 ECharts 的力导向动画
+  // 在零尺寸/隐藏容器里渲染，zrender 可能抛「Cannot read properties of null」。
+  // 隐藏时直接跳过；切回来由 tab 的重新显示 + 定时刷新补渲染。
+  if (!chartRef.value || !chartRef.value.offsetParent) return
   if (!chart) chart = echarts.init(chartRef.value)
   const maxConns = Math.max(...edges.value.map((e) => e.conns), 1)
   chart.setOption(
@@ -172,7 +175,12 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
   if (chart) {
-    chart.dispose()
+    // 力导向动画进行中 dispose 可能让 zrender 的下一帧访问已释放实例；吞掉这一帧的异常
+    try {
+      chart.dispose()
+    } catch (_) {
+      /* 已销毁 / 动画帧竞态，忽略 */
+    }
     chart = null
   }
 })

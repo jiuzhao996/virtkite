@@ -547,14 +547,15 @@ CHROME_PATH=/usr/bin/google-chrome npx lighthouse "http://127.0.0.1:8080/#/login
 | 图标按钮无无障碍名称 | axe **critical** `button-name`：全屏按钮、活动流刷新 | 补 `aria-label` |
 | 下拉/勾选框无标签 | axe **critical** `label`：全局搜索、状态筛选、VM 卡片勾选框 | 补 `aria-label`（Element Plus 的 `aria-label` prop） |
 | 铃铛 ARIA 属性非法 | axe serious `aria-prohibited-attr`：告警铃/任务铃的 `aria-label` 挂在无角色的 `div` 上 | 补 `role="button" tabindex="0"` 与 Enter/Space 触发 |
+| ECharts 隐藏 tab 渲染异常 | 切到其他 tab 后力导向图仍在零尺寸容器里 setOption，zrender 抛 `Cannot read properties of null` | `FlowView` 在容器隐藏时跳过 render；`dispose` 包 try/catch |
 
 修复后全量 E2E（2026-10-17，`ADMIN_PASS=... OPERATOR_PASS=... VIEWER_PASS=... E2E_ALLOW_DESTRUCTIVE=1 npm run e2e`）：
 
 ```
-21 passed (2.8m)
+21 passed (3.6m)
 ```
 
-覆盖：登录页 + 18 页遍历 + 24 个打开类按钮点击 + axe；真实建机（云镜像 + cloud-init → running → 拿 IP → 托管凭据 SSH 列目录 → 删除+彻底清除）；生命周期（快照/开机/关机/回滚/自启/删除）；存储卷与虚拟网络 CRUD；容器创建/停止/删除；Playbook 与计划任务 CRUD；三角色 RBAC 负例。全程无残留 `e2e-` 资源。
+覆盖：登录页 + 18 页遍历 + **35 个 tab 逐个点开** + **55 个打开类按钮逐个点击**（23 个出现弹层/消息）+ axe；真实建机（云镜像 + cloud-init → running → 拿 IP → 托管凭据 SSH 列目录 → 删除+彻底清除）；生命周期（快照/开机/关机/回滚/自启/删除）；存储卷与虚拟网络 CRUD；容器创建/停止/删除；Playbook 与计划任务 CRUD；三角色 RBAC 负例。全程无残留 `e2e-` 资源。
 
 已知未覆盖（下一批）：WS 票据一次性负例、任务取消/重试、回收站「域已 undefine」分支、设计器 reconcile 删除分支、应用商店真实安装（API 层由 `scripts/e2e-provision.sh` 覆盖）。
 

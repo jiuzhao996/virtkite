@@ -10,7 +10,7 @@ import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { ACCOUNTS } from './helpers/env.js'
 import { login } from './helpers/auth.js'
-import { collectPageErrors, clickSafeButtons } from './helpers/ui.js'
+import { collectPageErrors, clickSafeButtons, clickTabs } from './helpers/ui.js'
 
 const PASS = ACCOUNTS.admin.pass
 
@@ -104,19 +104,42 @@ test.describe('登录后冒烟 @smoke', () => {
   })
 
   test('全按钮点击：打开类可点且无异常', async ({ page }) => {
-    const errors = collectPageErrors(page)
+    test.setTimeout(300_000) // 35 个 tab × 每 tab 按钮遍历，90s 不够
+    // ctx.step 会带进异常信息：能直接看出是哪个页面、哪个 tab、哪个按钮炸的
+    const ctx = { step: '登录' }
+    const errors = collectPageErrors(page, ctx)
     await login(page)
 
     let clicked = 0
     let opened = 0
+    let tabs = 0
     for (const hash of BTN_PAGES) {
+      ctx.step = `${hash} 加载`
       await gotoPage(page, hash)
-      const r = await clickSafeButtons(page)
-      clicked += r.clicked
-      opened += r.opened
+
+      // 每个 tab 的内容不同（尤其 lazy 视图），逐个 tab 里都要点一遍按钮
+      const clickButtonsInTab = async (tabLabel) => {
+        ctx.step = `${hash} tab:${tabLabel} 按钮`
+        const r = await clickSafeButtons(page, (label) => {
+          ctx.step = `${hash} tab:${tabLabel} 按钮:${label}`
+        })
+        clicked += r.clicked
+        opened += r.opened
+      }
+
+      const nTabs = await clickTabs(
+        page,
+        (label) => {
+          ctx.step = `${hash} tab:${label}`
+        },
+        clickButtonsInTab
+      )
+      tabs += nTabs
+      // 没有 tab 的页面（虚拟机/用户等）直接点一遍
+      if (nTabs === 0) await clickButtonsInTab('默认')
     }
 
-    console.log(`按钮验收：点击 ${clicked} 个，其中 ${opened} 个出现弹层/消息`)
+    console.log(`按钮验收：切换 ${tabs} 个 tab，点击 ${clicked} 个按钮，其中 ${opened} 个出现弹层/消息`)
     expect(clicked, '未点到任何打开类按钮，选择器可能已失效').toBeGreaterThan(0)
     expect(errors, `点击过程中出现 JS 异常：\n${errors.join('\n')}`).toHaveLength(0)
   })
