@@ -94,6 +94,57 @@
 4. 新增页面遵循现有目录结构（`views/`、`api/index.js`、`store/auth.js`）。
 5. **前端静态检查**：`cd web && npm run lint`（ESLint 10 + eslint-plugin-vue，配置见 `web/eslint.config.js`）。只启用「真问题」规则（未定义变量、死分支、空块等），风格类关闭。2026-10-17 首次接入即扫出 4 个运行时缺陷（缺 `api`/`h` 导入、缺函数定义、`v-else-if` 死分支），**提交前端改动前必须 lint 通过**。`vue/no-mutating-props` 因建机向导整体下传 reactive 对象而关闭，属已论证的推迟项。
 
+## 验收工具链（固定标准，2026-10-17 用户拍板，长期有效）
+
+**约定：以后说「验收 / 测一下 / 扫一扫」默认跑完下列全部适用项，不是只跑一条。** 只跑其中某条时必须在回复里写明「仅跑了 X，未跑 Y」。
+
+### 后端（仓库根目录）
+
+| 命令 | 作用 | 门槛 |
+|---|---|---|
+| `go build ./...` | 编译 | 必须通过 |
+| `go test ./...` | 单元/集成测试 | 全绿（允许无测试的包，但不得有 FAIL） |
+| `golangci-lint run` | 静态检查（v2 schema，`.golangci.yml`） | 0 发现 |
+| `govulncheck ./...` | Go 依赖/标准库 CVE | `Your code is affected by 0 vulnerabilities` |
+| `gosec -quiet -exclude-dir=web ./...` | 安全扫描（G304/G204/G301/G306/G115 等在本项目属既定设计，见下方「已知误报」） | 不新增 G703/G101/G110/G117 类发现；新增项须逐条定性 |
+
+**gosec 已知误报（2026-10-17 全量定性，勿重复追）**：G304 变量路径（内部配置/数据目录）、G204 变量子进程（ansible/docker 按设计）、G301/G306/G302 权限（playbook 可读、磁盘镜像 qemu 可读、脚本可执行）、G115 整型转换（统计展示、上游已夹紧）、G104 错误路径的 Close/Remove。真实需关注的是 G703 路径穿越与 G101 硬编码凭据——新增时必须逐条核实。
+
+### 前端（`cd web`）
+
+| 命令 | 作用 | 门槛 |
+|---|---|---|
+| `npm run lint` | ESLint（`eslint.config.js`） | 0 error / 0 warning |
+| `npm run test` | Vitest 单测（`src/**/*.test.js`，jsdom） | 全绿；`npm run test:coverage` 看覆盖率 |
+| `npm run build` | Vite 构建 | 必须通过（后端托管 `dist/`） |
+| `ADMIN_PASS=<口令> npm run e2e` | Playwright 验收：登录 → 18 个页面遍历 → 打开类按钮逐个点击 → axe 可访问性 | 0 failed；无 pageerror；无 critical a11y |
+| 无口令时 `npm run e2e` | 只跑登录页（渲染 + axe），登录后用例自动 skip | 同上 |
+| `node scripts/ui-smoke.mjs`（仓库根，需 `ADMIN_PASS`） | CDP 深链/重定向/截图冒烟（Playwright 之外的补充，含全页截图） | 全绿 |
+
+**Playwright 约定**：默认 `channel: 'chrome'` 复用系统 Chrome，不下载浏览器；串行 `workers: 1`（共享同一后端）。按钮点击只允许「打开类」（新建/刷新/查看/编辑…），**危险类（删除/关机/重启/保存/执行/部署…）一律跳过**，自动化误点删除的代价太大。新增页面时同步 `web/e2e/acceptance.spec.js` 的 `PAGES` 清单。
+
+### 性能 / 可访问性（Lighthouse + axe-core）
+
+```bash
+cd web && CHROME_PATH=/usr/bin/google-chrome npx lighthouse "http://127.0.0.1:8080/#/login" \
+  --chrome-flags="--headless=new --no-sandbox --disable-gpu" --quiet \
+  --only-categories=performance,accessibility,best-practices
+```
+
+2026-10-17 基线（登录页）：performance **74** / accessibility **96** / best-practices **100**。
+门槛：performance ≥ 70、accessibility ≥ 95、best-practices = 100。**SEO 不设门槛**——`robots.txt` 刻意 `Disallow: /`（内部平台不收录），Lighthouse 会因此扣 `is-crawlable` 分，属预期。
+
+**已知可访问性例外**：登录页主按钮白字压在品牌青 `#2a9da5` 上，对比度约 3.3:1（axe 报 serious）。这是品牌色决策，改它等于全站换主色；副标题 `.en` 已单独压暗到 `#1f7e84` 达标。除此之外新增 serious 必须修。
+
+### 一次跑完
+
+```bash
+# 后端
+go build ./... && go test ./... && golangci-lint run && govulncheck ./... && gosec -quiet -exclude-dir=web ./...
+# 前端
+cd web && npm run lint && npm run test && npm run build && ADMIN_PASS=<口令> npm run e2e
+```
+
 ## Skills 适配清单（先读这里再加载 skill，豁免条款具有项目级效力）
 
 **用法**：写代码前按本清单加载对应 skill；标记「豁免」的条款以本清单为准，不视为违规。本清单是项目级决策记录。原「skills 本体不修改不删除」条款已于 2026-10-01 按用户拍板作废：52 个无关 skill 已从 `~/.agents/skills/` 物理删除（Golang 不适用 25 个 + element-plus 零使用组件 27 个），目录从 131 收敛到 79；「不适用」清单随之消失，选型论证见 git 历史。
