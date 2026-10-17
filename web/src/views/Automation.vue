@@ -24,60 +24,15 @@
 
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- Tab 1 快速执行 -->
-      <el-tab-pane label="快速执行" name="adhoc">
-        <el-card shadow="never">
-          <el-form label-width="96px" :disabled="!engine.installed">
-<div class="auto-groups">
-            <span class="auto-groups-label">主机组</span>
-            <el-tag v-for="g in hostGroups" :key="g.id" class="auto-group-chip" effect="plain"
-              :title="'点击选中「' + g.name + '」组成员（并集）'" @click="applyGroup(g)">
-              {{ g.name }} ×{{ groupRunnableCount(g) }}
-            </el-tag>
-            <el-button text size="small" :icon="Setting" @click="groupDrawerOpen = true">
-              {{ hostGroups.length ? '管理' : '建主机组' }}
-            </el-button>
-          </div>
-            <el-form-item label="目标方式">
-              <el-radio-group v-model="targetMode">
-                <el-radio-button value="vms">按虚拟机</el-radio-button>
-                <el-radio-button value="group">按主机组（动态）</el-radio-button>
-              </el-radio-group>
-              <span class="auto-hint">按组执行：成员在触发时动态解析，改组即生效</span>
-            </el-form-item>
-            <el-form-item v-if="targetMode === 'group'" label="主机组">
-              <el-select v-model="groupId" placeholder="选择主机组" style="width: 300px">
-                <el-option v-for="g in hostGroups" :key="g.id" :label="g.name + '（' + groupRunnableCount(g) + ' 台可执行）'" :value="g.id" />
-              </el-select>
-            </el-form-item>
-            <el-form-item v-else label="目标虚拟机">
-              <div class="auto-targets">
-                <el-select v-model="targets" multiple filterable placeholder="选择运行中的虚拟机（可多选）" style="flex: 1; min-width: 320px">
-                  <el-option v-for="vm in runnableVMs" :key="vm.id" :label="vmOptionLabel(vm)" :value="vm.id">
-                    <span>{{ vm.name }}（{{ vm.ip }}）</span>
-                    <el-tag v-if="!sshOK(vm.id)" type="danger" size="small" effect="plain" class="auto-cred-tag">无凭据</el-tag>
-                  </el-option>
-                </el-select>
-                <el-button size="small" @click="selectAll" :disabled="!runnableVMs.length">全选</el-button>
-                <span class="auto-count">已选 {{ targets.length }} / {{ runnableVMs.length }} 台</span>
-              </div>
-            </el-form-item>
-            <el-form-item label="模块">
-              <el-radio-group v-model="module">
-                <el-radio-button value="ping">ping（连通性）</el-radio-button>
-                <el-radio-button value="command">command（命令）</el-radio-button>
-                <el-radio-button value="shell">shell（含管道/重定向）</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item v-if="module !== 'ping'" label="执行参数">
-              <el-input v-model="args" placeholder="如 free -m ｜ df -h ｜ hostnamectl | grep Operating" class="mono" />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" :loading="submitting" @click="runAdhoc">执 行</el-button>
-              <span class="auto-hint">目标需运行中、已获 IP 且保存过托管凭据（建机时勾选「自动初始化」会自动托管；存量机需管理员预置）</span>
-            </el-form-item>
-          </el-form>
-        </el-card>
-      </el-tab-pane>
+        <!-- 快速执行表单（目标选择/模块/参数）→ automation/components/AnsibleAdhocForm.vue -->
+        <AnsibleAdhocForm
+          ref="adhocFormRef"
+          :engine="engine"
+          :vms="vms"
+          :host-groups="hostGroups"
+          @run="runAdhoc"
+          @manage-groups="groupDrawerOpen = true"
+        />
 
       <!-- Tab 2 Playbook 库 -->
       <el-tab-pane :label="'Playbook 库（' + playbooks.length + '）'" name="playbooks">
@@ -340,6 +295,7 @@ import { api } from '../api'
 import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
 import AnsibleOutputCard from './automation/components/AnsibleOutputCard.vue'
+import AnsibleAdhocForm from './automation/components/AnsibleAdhocForm.vue'
 import AnsiblePlaybookTable from './automation/components/AnsiblePlaybookTable.vue'
 import AnsibleRoleTable from './automation/components/AnsibleRoleTable.vue'
 import AnsibleHistoryTable from './automation/components/AnsibleHistoryTable.vue'
@@ -375,12 +331,6 @@ function onTabChange(name) {
 const engine = ref({})
 const statusLoading = ref(true)
 const vms = ref([])
-const targets = ref([])
-// 目标方式：vms=按选中的虚拟机；group=按主机组（后端在触发时动态解析成员，改组即生效）
-const targetMode = ref('vms')
-const groupId = ref(null)
-const module = ref('ping')
-const args = ref('')
 const submitting = ref(false)
 const deploying = ref(false)
 const extraVars = reactive({})
@@ -389,6 +339,8 @@ const runTask = ref(null)
 const runDismissed = ref(false)
 // 执行输出卡子组件实例：经它转发 scrollToBottom（滚动容器在子组件内）
 const outputCardRef = ref(null)
+// 快速执行表单实例：Playbook 执行弹窗借它取目标/清空选择（两份入口共用一套选择状态）
+const adhocFormRef = ref(null)
 let pollTimer = null
 
 // playbook 库
@@ -504,23 +456,6 @@ const sshOKSet = computed(() => {
 function sshOK(id) {
   return sshOKSet.value.has(Number(id))
 }
-function vmOptionLabel(vm) {
-  const base = vm.name + '（' + vm.ip + '）'
-  return sshOK(vm.id) ? base : base + ' · 无凭据'
-}
-function groupRunnableCount(g) {
-  const ids = new Set((g.vm_ids || []).map(Number))
-  return runnableVMs.value.filter((v) => ids.has(v.id)).length
-}
-// 点组标签 = 该组成员并入已选（并集；只并入当前可执行的）
-function applyGroup(g) {
-  const ids = new Set((g.vm_ids || []).map(Number))
-  const pick = runnableVMs.value.filter((v) => ids.has(v.id)).map((v) => v.id)
-  if (!pick.length) return ElMessage.warning(`「${g.name}」当前没有可执行成员（需运行中且有 IP）`)
-  targets.value = [...new Set([...targets.value, ...pick])]
-  ElMessage.success(`已并入「${g.name}」可执行成员 ${pick.length} 台`)
-}
-
 const groupFormOpen = ref(false)
 const groupFormId = ref(null)
 const groupFormName = ref('')
@@ -640,20 +575,8 @@ async function loadHistory() {
   }
 }
 
-function selectAll() {
-  targets.value = runnableVMs.value.map((v) => v.id)
-}
-
-async function runAdhoc() {
-  const payload = { module: module.value, args: args.value.trim() }
-  if (targetMode.value === 'group') {
-    if (!groupId.value) return ElMessage.warning('请选择主机组')
-    payload.group_id = groupId.value
-  } else {
-    if (!targets.value.length) return ElMessage.warning('请选择目标虚拟机')
-    payload.targets = targets.value
-  }
-  if (module.value !== 'ping' && !args.value.trim()) return ElMessage.warning('请填写执行参数')
+// 快速执行提交：表单校验与 payload 组装已下沉到 AnsibleAdhocForm，这里只提交 + 起轮询
+async function runAdhoc(payload) {
   submitting.value = true
   try {
     const res = await api.ansibleRun(payload)
@@ -668,7 +591,7 @@ async function runAdhoc() {
 
 function openRunDialog(pb) {
   runPb.value = pb
-  targets.value = []
+  adhocFormRef.value?.resetTargets()
   Object.keys(extraVars).forEach((k) => delete extraVars[k])
   // 预填默认值（Survey DefaultValue）：int 转数字，其余按字符串
   for (const v of (pb.survey || [])) {
@@ -702,13 +625,10 @@ async function runPlaybook() {
   if (runDiff.value) payload.diff = true
   if (runTags.value.trim()) payload.tags = runTags.value.trim()
   if (runSkipTags.value.trim()) payload.skip_tags = runSkipTags.value.trim()
-  if (targetMode.value === 'group') {
-    if (!groupId.value) return ElMessage.warning('请选择主机组')
-    payload.group_id = groupId.value
-  } else {
-    if (!targets.value.length) return ElMessage.warning('请选择目标虚拟机')
-    payload.targets = targets.value
-  }
+  // 目标与「快速执行」共用同一份选择（vm 或主机组），由子组件暴露取值
+  const sel = adhocFormRef.value?.getTargets()
+  if (!sel) return
+  Object.assign(payload, sel)
   submitting.value = true
   try {
     const res = await api.ansibleRun(payload)
