@@ -215,6 +215,16 @@ func (h *DesignerHandler) provisionVM(p *dsgPlan, n dsgNode, st *dsgApplyState, 
 		return 0, fmt.Errorf("VM 节点 %s 的 cloud-init 配置不合法: %w", n.Name, verr)
 	}
 	netName := resolveVMNetwork(p, n)
+
+	// 幂等：同名 VM 已存在则跳过。此前无此检查，重复「一键落地」会提交同名建机任务，
+	// libvirt 因域名唯一性 define 失败 → executor 软删刚建的 DB 行 → 回收站多一条记录，
+	// 整体 apply 失败且留下垃圾（验收文档 R5/R6）。
+	var exist model.VM
+	if err := h.DB.Where("name = ?", n.Name).First(&exist).Error; err == nil {
+		st.Steps = append(st.Steps, "· VM "+n.Name+" 已存在（id="+strconv.FormatUint(uint64(exist.ID), 10)+"），跳过建机")
+		return exist.ID, nil
+	}
+
 	prov := map[string]interface{}{"start": true, "wait_ip": true, "ssh_user": sshUser}
 	// cloud-init 只放边界加密后的口令：与 provision 块同源同密钥，
 	// executor 解密后生成 seed；payload 里绝不能出现明文 password。

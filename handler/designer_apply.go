@@ -220,10 +220,16 @@ func (h *DesignerHandler) Apply(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// 全量落地 = 每个节点都当作「需要落地」（provisionNet 对已存在网络幂等跳过）
-	ops := make([]dsgOp, 0, len(p.Nodes))
-	for _, n := range p.Nodes {
-		ops = append(ops, dsgOp{Action: dsgActionAdded, Node: n, Reason: "全量落地"})
+	// 与预览同源：前端「一键落地」的弹窗来自 GET /reconcile-plan，这里必须用同一套
+	// 算法算动作，否则「预览显示无需动作、确认后却全量重建」（验收文档 R5/R6）。
+	//   - 从没成功落地过（无基线）→ 计划内节点全部 added，即首次部署；
+	//   - 已有基线 → 只补差异，已就绪的资源不动。
+	// 每个分支的 provisionNode 还各自幂等（网络同名跳过、compose up -d 幂等、
+	// VM 同名跳过），因此重复点「一键落地」不会重复建机、不产生回收站垃圾。
+	_, ops := reconcilePlan(&p, loadLatestSnapshot(id), h.loadReality(), id)
+	if len(ops) == 0 {
+		Success(c, gin.H{"message": "计划内资源已全部就绪，无需重复落地", "actions": 0})
+		return
 	}
 	h.startRun(c, p, ops, "designer_apply", "落地架构 "+p.Name, "apply")
 }
