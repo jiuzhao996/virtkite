@@ -8,7 +8,7 @@
 // - 默认只做「走到确认页但不提交」的只读走查；
 // - 真实建机需要 E2E_ALLOW_DESTRUCTIVE=1，且资源名带 e2e- 前缀，结束时清理。
 import { test, expect } from '@playwright/test'
-import { ACCOUNTS, ALLOW_DESTRUCTIVE, e2eName } from './helpers/env.js'
+import { ACCOUNTS, ALLOW_DESTRUCTIVE, RUN_ID, e2eName } from './helpers/env.js'
 import { login } from './helpers/auth.js'
 import { collectPageErrors } from './helpers/ui.js'
 import { api, findVMByName, getVMOptions, waitTask } from './helpers/api.js'
@@ -33,11 +33,11 @@ test.describe('建机向导走查 @vm-create', () => {
 
     // 云镜像：云镜像选择器 + 系统盘说明
     await page.locator('.mode-card', { hasText: '云镜像 + cloud-init' }).click()
-    await expect(page.getByText('云镜像 / 模板')).toBeVisible()
+    await expect(page.getByText('云镜像 / 模板', { exact: true })).toBeVisible()
 
     // 克隆：源虚拟机 + 新名称
     await page.locator('.mode-card', { hasText: '克隆现有 VM' }).click()
-    await expect(page.getByText('源虚拟机')).toBeVisible()
+    await expect(page.getByText('源虚拟机', { exact: true })).toBeVisible()
 
     expect(errors, `切换安装方式出现 JS 异常：\n${errors.join('\n')}`).toHaveLength(0)
   })
@@ -74,9 +74,9 @@ test.describe('建机向导走查 @vm-create', () => {
 test.describe('真实建机 @vm-create', () => {
   test.skip(!PASS, '未提供 ADMIN_PASS')
   test.skip(!ALLOW_DESTRUCTIVE, '未开启 E2E_ALLOW_DESTRUCTIVE，跳过真实建机')
-  test.setTimeout(420_000)
+  test.setTimeout(480_000)
 
-  test('UI 建机（ISO 或云镜像）→ 任务成功 → 清理', async ({ page }) => {
+  test('UI 建机（云镜像 + cloud-init）→ 开机拿 IP → SSH 连通 → 清理', async ({ page }) => {
     await login(page)
     const options = await getVMOptions(page)
     const pools = (options.storage_pools || []).filter((p) => p.active)
@@ -85,7 +85,6 @@ test.describe('真实建机 @vm-create', () => {
     await page.goto('/#/vms/new')
     await expect(page.getByText('选择安装方式')).toBeVisible()
 
-    // 优先云镜像（启动快、可验证 cloud-init），否则退回 ISO
     const images = (options.cloud_images || []).filter((i) => !String(i.format || '').includes('iso'))
     const isoMode = !images.length
     if (!isoMode) {
@@ -93,48 +92,104 @@ test.describe('真实建机 @vm-create', () => {
     }
 
     if (isoMode) {
-      // ISO 列表为空则无法建机
-      const isoSelect = page.getByPlaceholder('选择 ISO 安装镜像（全部存储池）')
-      await isoSelect.click()
-      const firstIso = page.locator('.el-select-dropdown__item').first()
+      // Element Plus 的 select 占位符渲染成 span，不是 input placeholder；
+      // 按表单项标签定位更稳。
+      await page.locator('.el-form-item', { hasText: '安装介质' }).locator('.el-select').click({ timeout: 15000 })
+      const firstIso = page.locator('.el-select-dropdown:visible .el-select-dropdown__item').first()
       test.skip(!(await firstIso.count()), '存储池中没有 ISO')
       await firstIso.click()
+      const osSelect = page.locator('.el-form-item', { hasText: '操作系统' }).locator('.el-select')
+      if (await osSelect.count()) {
+        const selected = await osSelect.evaluate(
+          (el) => el.querySelector('.el-select__selected-item')?.textContent || ''
+        )
+        if (!selected || !selected.trim()) {
+          await osSelect.click()
+          await page.locator('.el-select-dropdown:visible .el-select-dropdown__item').first().click({ timeout: 15000 })
+        }
+      }
     } else {
-      await page.getByPlaceholder('选择云镜像或模板').click()
-      await page.locator('.el-select-dropdown__item').first().click()
+      await page.locator('.el-form-item', { hasText: '云镜像 / 模板' }).locator('.el-select').click({ timeout: 15000 })
+      await page.locator('.el-select-dropdown:visible .el-select-dropdown__item').first().click({ timeout: 15000 })
     }
 
-    // 操作系统：ISO 若未自动识别则手动选第一个
-    const osSelect = page.getByPlaceholder('选择操作系统（可按 ISO 文件名自动识别）')
-    if (isoMode && (await osSelect.count())) {
-      const selected = await osSelect.evaluate((el) => el.closest('.el-select')?.querySelector('.el-select__selected-item')?.textContent || '')
-      if (!selected || !selected.trim()) {
-        await osSelect.click()
-        await page.locator('.el-select-dropdown__item').first().click()
-      }
+    // 云镜像：若该镜像被识别为支持 cloud-init，开启并填 root 口令，
+    // 这样第 4 步的「创建后自动开机并初始化」才有意义（等 IP + 托管凭据）。
+    const ciSwitch = page.locator('.el-form-item', { hasText: 'cloud-init' }).locator('.el-switch')
+    const ciPass = `E2e-${RUN_ID}-a1`
+    let cloudInit = false
+    if (!isoMode && (await ciSwitch.count())) {
+      await ciSwitch.click()
+      await page.getByText('cloud-init 配置', { exact: true }).click()
+      await page.getByPlaceholder('如 ubuntu / root，可选').fill('root')
+      await page.locator('.ci-collapse input[type="password"]').fill(ciPass)
+      cloudInit = true
     }
 
     await page.getByRole('button', { name: '下一步' }).click()
 
     // 第 2 步：名称与规格
     const name = e2eName('ui-vm')
-    const nameInput = page.getByPlaceholder(/虚拟机名称|名称/)
-    await nameInput.fill(name)
+    await page.getByPlaceholder('仅字母、数字、_、-').first().fill(name)
     await page.getByRole('button', { name: '下一步' }).click()
     await page.getByRole('button', { name: '下一步' }).click()
 
-    // 第 4 步：确认创建
+    // 第 4 步：确认自动初始化开关（cloud-init 且填了口令时应为勾选）
+    if (cloudInit) {
+      const auto = page.locator('.el-checkbox', { hasText: '创建后自动开机并初始化' })
+      if (await auto.count()) {
+        const checked = await auto.locator('input[type="checkbox"]').isChecked()
+        if (!checked) await auto.click()
+      }
+    }
+
     await expect(page.getByRole('button', { name: /创建虚拟机/ })).toBeVisible()
     await page.getByRole('button', { name: /创建虚拟机/ }).click()
 
-    // 前端会轮询任务并跳回列表；最多等 5 分钟（后端 create_vm 上限 15 分钟）
-    await expect(page).toHaveURL(/#\/vms/, { timeout: 360_000 })
+    let vm = null
+    try {
+      // 注意必须锚定结尾：`/#\/vms/` 会匹配 `#/vms/new`，导致创建还没完成就提前通过
+      await expect(page).toHaveURL(/#\/vms(\?.*)?$/, { timeout: 420_000 })
 
-    const vm = await findVMByName(page, name)
-    expect(vm, `建机后列表未找到 ${name}`).toBeTruthy()
+      vm = await findVMByName(page, name)
+      expect(vm, `建机后列表未找到 ${name}`).toBeTruthy()
 
-    // 清理：软删 + 回收站彻底清除（仅 e2e 资源）
-    const del = await api(page, 'DELETE', `/api/vms/${vm.id}`)
-    if (del.data && del.data.task_id) await waitTask(page, del.data.task_id, { timeout: 180_000 })
+      // 云镜像 + cloud-init：验证开机、IP 回填、SSH 可登录（托管凭据）
+      if (cloudInit) {
+        await expect
+          .poll(
+            async () => {
+              const cur = await findVMByName(page, name)
+              return cur ? `${cur.status}|${cur.ip || ''}` : ''
+            },
+            { timeout: 180_000, intervals: [3000] }
+          )
+          .toMatch(/^running\|.+/)
+
+        const cur = await findVMByName(page, name)
+        const ssh = await api(page, 'POST', `/api/vms/${cur.id}/files/list`, {
+          host: cur.ip,
+          use_saved: true,
+          path: '/',
+        })
+        expect(ssh.status, `SSH 目录读取失败：${ssh.message || ''}`).toBe(200)
+        expect(
+          Array.isArray(ssh.data?.items),
+          `SSH 返回目录项（实际响应：${JSON.stringify(ssh).slice(0, 400)}）`
+        ).toBe(true)
+      }
+    } finally {
+      // 失败也清理：只删本轮 e2e 前缀的 VM；软删后再彻底清除，避免回收站堆积
+      const leftover = await findVMByName(page, name)
+      if (leftover) {
+        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`)
+        if (del.data && del.data.task_id) {
+          await waitTask(page, del.data.task_id, { timeout: 180_000 }).catch(() => {})
+        }
+        await api(page, 'DELETE', `/api/vms-recycle/${leftover.id}/purge?purge_volumes=true`).catch(() => {})
+      }
+    }
+
+    await expect.poll(async () => !(await findVMByName(page, name)), { timeout: 60_000 }).toBe(true)
   })
 })

@@ -46,7 +46,7 @@
             :prefix-icon="Search"
             style="width: 240px"
           />
-          <el-select v-model="q.status" placeholder="状态筛选" clearable style="width: 140px">
+          <el-select v-model="q.status" aria-label="状态筛选" placeholder="状态筛选" clearable style="width: 140px">
             <el-option label="运行中" value="running" />
             <el-option label="已关机" value="shut off" />
             <el-option label="已暂停" value="paused" />

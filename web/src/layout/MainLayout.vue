@@ -81,6 +81,7 @@
             class="global-search"
             filterable
             clearable
+            aria-label="搜索虚拟机"
             placeholder="搜索虚拟机名称，回车直达详情"
             :loading="searchLoading"
             @visible-change="onSearchVisible"
@@ -95,7 +96,7 @@
             <template #empty>无匹配虚拟机</template>
           </el-select>
           <el-tooltip content="全屏切换" placement="bottom">
-            <el-button text :icon="FullScreen" class="fs-btn" @click="toggleFullscreen" />
+            <el-button text :icon="FullScreen" class="fs-btn" aria-label="全屏切换" @click="toggleFullscreen" />
           </el-tooltip>
         </div>
         <div class="header-right">
@@ -129,7 +130,11 @@
                 :hidden="!activeTasks.length"
                 :max="99"
                 class="task-bell"
+                role="button"
+                tabindex="0"
                 aria-label="任务通知"
+                @keydown.enter.prevent="$event.currentTarget.click()"
+                @keydown.space.prevent="$event.currentTarget.click()"
               >
                 <el-icon :size="18"><Bell /></el-icon>
               </el-badge>

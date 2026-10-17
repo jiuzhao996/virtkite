@@ -3,7 +3,7 @@
     <template #header>
       <div class="af-head">
         <span class="af-title">最近动态</span>
-        <el-button text size="small" :icon="Refresh" :loading="loading" @click="load" />
+        <el-button text size="small" :icon="Refresh" :loading="loading" aria-label="刷新活动流" @click="load" />
       </div>
     </template>
     <div v-loading="loading" class="af-body">

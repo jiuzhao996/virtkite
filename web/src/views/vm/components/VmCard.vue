@@ -10,6 +10,7 @@
         v-if="canOperate"
         :model-value="checked"
         :disabled="busy"
+        aria-label="选择该虚拟机"
         @change="$emit('check', vm, $event)"
       />
       <span class="vm-name" :title="vm.name">{{ vm.name }}</span>

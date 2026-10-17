@@ -8,7 +8,11 @@
         :hidden="!unread"
         :max="99"
         class="alert-bell"
+        role="button"
+        tabindex="0"
         aria-label="告警通知"
+        @keydown.enter.prevent="$event.currentTarget.click()"
+        @keydown.space.prevent="$event.currentTarget.click()"
       >
         <el-icon :size="18"><Warning /></el-icon>
       </el-badge>

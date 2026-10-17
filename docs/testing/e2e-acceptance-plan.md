@@ -533,10 +533,20 @@ CHROME_PATH=/usr/bin/google-chrome npx lighthouse "http://127.0.0.1:8080/#/login
 24. **审计 `status` 只反映 HTTP 提交**，后台任务 failed 时审计仍 success（R-11）。
 25. **`pollTask` 不识别 `cancelled`**：取消后前端轮询到超时才停（R-10）。
 
+### 11.1 首轮验收发现并修复的缺陷（2026-10-17）
+
+| 缺陷 | 现象 | 修复 |
+|---|---|---|
+| `use_saved` 空指针 | 任何 `POST /vms/:id/files/list {use_saved:true}` 都 panic，gin Recovery 吞成 **500 空响应**；文件管理「用已保存凭据」整条链路不可用 | `resolve` 的命名返回值 `vm` 尚未赋值，改用 `record.ID`；补 nil 守卫；新增 `handler/vm_files_resolve_test.go` 两例回归 |
+| 图标按钮无无障碍名称 | axe **critical** `button-name`：全屏按钮、活动流刷新 | 补 `aria-label` |
+| 下拉/勾选框无标签 | axe **critical** `label`：全局搜索、状态筛选、VM 卡片勾选框 | 补 `aria-label`（Element Plus 的 `aria-label` prop） |
+| 铃铛 ARIA 属性非法 | axe serious `aria-prohibited-attr`：告警铃/任务铃的 `aria-label` 挂在无角色的 `div` 上 | 补 `role="button" tabindex="0"` 与 Enter/Space 触发 |
+
+修复后全量 E2E：`@smoke` 页面遍历 + 24 个按钮点击无异常；`@vm-create` 真实建机（云镜像 + cloud-init → running → 拿 IP → 托管凭据 SSH 列目录 → 删除+彻底清除）通过。
+
 ---
 
 ## 12. 已知限制与待补
-
 1. **需要管理员口令**才能跑 L5；无口令只跑登录页与 L1–L3。
 2. FTP 安装树依赖本机 FTP 服务；未部署标 BLOCKED（HTTP 用例覆盖解析与下载）。
 3. 云镜像 SSH 验证依赖镜像内置 cloud-init 与 sshd；不满足时改为验证 cloud-init 日志与 IP 回填。
