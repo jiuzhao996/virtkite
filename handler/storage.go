@@ -1,61 +1,18 @@
 package handler
 
-// storage.go 存储池与卷的基础管理：名称/路径/格式校验、存储池 CRUD（目录型池）、卷创建、
-// 池角色推断与平台侧元数据（角色/描述）、cloud-init 种子目录与默认池查询。
+// storage.go 存储池与卷的基础管理：处理器装配、池列表/详情、目录型池 CRUD 与卷创建。
+// 名称/路径/格式校验见 storage_validate.go，池角色推断与平台侧元数据见 storage_meta.go。
 // 卷的在用引用与删除守卫见 storage_refs.go，克隆家谱见 storage_graph.go。
 
 import (
-	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jiuzhao/vmops/config"
-	"github.com/jiuzhao/vmops/model"
-	"github.com/jiuzhao/vmops/service/setting"
 	"github.com/jiuzhao/vmops/service/tasks"
 	"github.com/jiuzhao/vmops/service/virt"
 	"gorm.io/gorm"
 )
-
-// volNameRegex 卷/池名称允许字母数字下划线连字符和点（卷名含扩展名）
-var volNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
-
-// poolPathRegex 存储池宿主机路径字符白名单：以 / 开头，只允许字母、数字、下划线、连字符、点和斜杠。
-// 排除引号、尖括号等 XML 元字符，与 virt 层的 encoding/xml 序列化构成纵深防御。
-var poolPathRegex = regexp.MustCompile(`^/[a-zA-Z0-9_./-]+$`)
-
-// validVolName 校验卷/池名称合法性
-func validVolName(name string) bool {
-	return volNameRegex.MatchString(name)
-}
-
-// validPoolPath 校验目录型存储池的宿主机路径（对应 virsh pool-define-as --target）。
-// 目录池的 path 决定该池所有卷的落盘位置，零校验等于让调用方指定宿主机任意目录，// 因此要求：绝对路径 + 字符白名单 + 规范写法（filepath.Clean 后与原值一致，
-// 借此拒绝 ..、// 与结尾斜杠）+ 不得为根目录本身。
-func validPoolPath(p string) bool {
-	if !filepath.IsAbs(p) || !poolPathRegex.MatchString(p) {
-		return false
-	}
-	clean := filepath.Clean(p)
-	if clean != p || clean == "/" || strings.Contains(clean, "..") {
-		return false
-	}
-	return true
-}
-
-// validVolFormat 校验卷格式白名单：只允许 qcow2 / raw（与前端下拉选项一致）。
-// 空值保持原行为不变（由 virt 层 CreateVolumeCustom 默认 qcow2）。
-func validVolFormat(format string) bool {
-	switch format {
-	case "", "qcow2", "raw":
-		return true
-	}
-	return false
-}
 
 // StorageHandler 存储池处理器
 type StorageHandler struct {
@@ -67,139 +24,6 @@ type StorageHandler struct {
 // NewStorageHandler 创建存储池处理器
 func NewStorageHandler(db *gorm.DB, taskMgr *tasks.Manager) *StorageHandler {
 	return &StorageHandler{DB: db, Virt: virt.New(), Tasks: taskMgr}
-}
-
-// poolRoleNames 平台认池角色的全集（pool_meta.role 白名单；空串 = 跟随自动推断）。
-var poolRoleNames = []string{"模板基盘", "系统盘", "数据盘", "安装镜像", "系统池", "其他"}
-
-// inferPoolRole 按池名/路径推断池角色（纯函数，供列表展示与单测）。
-// libvirt 池 XML 没有语义字段，这里按本平台的目录约定给缺省角色：
-// base=模板基盘兼镜像库（backing 父盘、模板与上传/下载镜像）、images=系统盘（增量克隆子卷）、
-// exten=数据盘（热挂数据盘）、iso=安装镜像（ISO）。
-func inferPoolRole(name, path string) string {
-	switch {
-	case name == "base" || strings.HasSuffix(path, "/storage/base"):
-		return "模板基盘"
-	case name == "images" || strings.HasSuffix(path, "/storage/images"):
-		return "系统盘"
-	case name == "exten" || strings.HasSuffix(path, "/storage/exten"):
-		return "数据盘"
-	case name == "iso" || strings.HasSuffix(path, "/storage/iso"):
-		return "安装镜像"
-	default:
-		return ""
-	}
-}
-
-// inferPoolDesc 按池角色给出缺省描述（纯函数）。
-//
-// 与 inferPoolRole 同一套路：libvirt 池 XML 没有语义字段，而描述又是纯平台概念，
-// 不补缺省的话卡片上就是一片空白——此前只能显示「点击编辑添加描述」诱导用户去点，
-// 反而让整行成了误触热区。这里把文案内置，用户不需要为此动手。
-// DB 里显式设过描述时以 DB 为准（见列表装配处）。
-func inferPoolDesc(name, path string) string {
-	switch inferPoolRole(name, path) {
-	case "模板基盘":
-		return "模板与云镜像落点，增量克隆的父盘"
-	case "系统盘":
-		return "平台主力系统盘池，增量克隆落点"
-	case "数据盘":
-		return "给虚拟机热挂的扩展数据盘"
-	case "安装镜像":
-		return "系统安装 ISO 存放处"
-	default:
-		return ""
-	}
-}
-
-// loadPoolMeta 读取池元数据（角色覆盖 + 描述），key 为池名。
-func (h *StorageHandler) loadPoolMeta() map[string]model.PoolMeta {
-	metas := map[string]model.PoolMeta{}
-	var rows []model.PoolMeta
-	if err := h.DB.Find(&rows).Error; err != nil {
-		return metas
-	}
-	for _, r := range rows {
-		metas[r.PoolName] = r
-	}
-	return metas
-}
-
-// seedDirInfo cloud-init 种子目录信息（路径 + seed 文件数）：seed 是每 VM 一份的生成物，
-// 不进池管理，在存储页汇总条展示。
-func (h *StorageHandler) seedDirInfo() gin.H {
-	dir := config.GlobalConfig.SeedDir
-	if dir == "" {
-		dir = "/home/jiuzhao/vmops/data/seed"
-	}
-	count := 0
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), "-seed.iso") {
-				count++
-			}
-		}
-	}
-	return gin.H{"path": dir, "count": count}
-}
-
-// defaultPoolName 平台默认存储池（建机未指定池时落点），读系统设置，缺省走 setting 兜底值。
-func (h *StorageHandler) defaultPoolName() string {
-	var row model.Setting
-	if err := h.DB.Where("`key` = ?", "default_storage_pool").First(&row).Error; err == nil && row.Value != "" {
-		return row.Value
-	}
-	return setting.DefaultStoragePoolFallback
-}
-
-// UpdatePoolMeta 更新池的平台侧元数据（PUT /api/storage/pools/:name/meta）。
-// role 必须在白名单内或空串（空 = 跟随自动推断）；description 最长 500 字符。
-func (h *StorageHandler) UpdatePoolMeta(c *gin.Context) {
-	name := c.Param("name")
-	if !validVolName(name) {
-		Fail(c, http.StatusBadRequest, "存储池名称不合法")
-		return
-	}
-	var req struct {
-		Role        string `json:"role"`
-		Description string `json:"description"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
-		return
-	}
-	validRole := req.Role == ""
-	for _, r := range poolRoleNames {
-		if req.Role == r {
-			validRole = true
-		}
-	}
-	if !validRole {
-		Fail(c, http.StatusBadRequest, "角色只允许："+strings.Join(poolRoleNames, "/")+"或留空自动推断")
-		return
-	}
-	if len(req.Description) > 500 {
-		Fail(c, http.StatusBadRequest, "描述最长 500 字符")
-		return
-	}
-
-	var meta model.PoolMeta
-	err := h.DB.Where("pool_name = ?", name).First(&meta).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			meta = model.PoolMeta{PoolName: name}
-		} else {
-			ErrorWithMessage(c, http.StatusInternalServerError, "查询池元数据失败", err)
-			return
-		}
-	}
-	meta.Role = req.Role
-	meta.Description = req.Description
-	if err := h.DB.Save(&meta).Error; err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "保存池元数据失败", err)
-		return
-	}
-	Success(c, meta)
 }
 
 // ListPools 存储池列表（含详情与平台侧角色/描述）

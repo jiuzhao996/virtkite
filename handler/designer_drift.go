@@ -1,94 +1,20 @@
-// designer_drift.go：架构设计器——快照基线、漂移三方对比与收敛预演。
-// 快照 = 已落地基线（data/designer/snapshots/）；三方对比 = 计划(期望) / 基线(上次期望)
-// / 现实(DB+docker+libvirt)，产出漂移项与收敛动作集合。真正的落地/收敛执行见 designer_apply.go。
+// designer_drift.go：架构设计器——漂移三方对比（计划/基线/现实）与漂移汇总巡检。
+// 快照基线读写见 designer_snapshot.go，收敛动作预演与落地排序见 designer_reconcile.go，
+// 真正的落地/收敛执行见 designer_apply.go。
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jiuzhao/vmops/config"
 	"github.com/jiuzhao/vmops/model"
 )
-
-// ── 快照 = 已落地基线（DE2）────────────────────────────────
-
-// snapshotDir 快照目录：data/designer/snapshots/。<plan>.latest.json 是当前基线
-// （上次成功落地/收敛时的期望——由落地器写，前端点「保存」不写）；<plan>-<unixts>.json
-// 为历史存档（不可变，保留追溯）。
-//
-// 为什么基线必须与「期望」同源：三方对比要拿基线直接与 JSON 计划、与平台现实逐节点
-// 比较。基线存的就是一份 dsgPlan（nodes+links），与计划文件结构完全一致，才能零转换 diff。
-func snapshotDir() string { return config.DataPath("designer", "snapshots") }
-
-// saveSnapshot 落地/收敛成功后覆盖基线：latest（当前基线）+ 带时间戳历史档。
-// 只在 Apply/Reconcile 成功路径调用——这就是「快照语义 = 已落地基线」的落点。
-//
-// 写盘前强制剥离 VM 口令：Apply/Reconcile 的 plan 里带着请求体 overlay 进来的明文口令，
-// 直接 Marshal 会把明文落到快照文件（与计划文件写盘前剥离同一口径的兜底）。
-// 用副本再剥离，避免改动调用方共享的 Nodes 切片底层数组。
-func (h *DesignerHandler) saveSnapshot(p dsgPlan) {
-	snap := p
-	snap.DeployedAt = time.Now().Format(time.RFC3339)
-	snap.Nodes = make([]dsgNode, len(p.Nodes))
-	copy(snap.Nodes, p.Nodes)
-	for i := range snap.Nodes {
-		snap.Nodes[i].SSHSecret = ""
-	}
-	raw, err := json.MarshalIndent(snap, "", "  ")
-	if err != nil {
-		log.Printf("[designer] 快照序列化失败 plan=%s err=%v", p.ID, err)
-		return
-	}
-	if err := os.MkdirAll(snapshotDir(), 0o755); err != nil {
-		log.Printf("[designer] 快照目录创建失败 plan=%s err=%v", p.ID, err)
-		return
-	}
-	ts := time.Now().Unix()
-	hist := filepath.Join(snapshotDir(), fmt.Sprintf("%s-%d.json", p.ID, ts))
-	latest := filepath.Join(snapshotDir(), p.ID+".latest.json")
-	if err := os.WriteFile(hist, raw, 0o644); err != nil {
-		log.Printf("[designer] 历史快照写入失败 plan=%s err=%v", p.ID, err)
-	}
-	if err := os.WriteFile(latest, raw, 0o644); err != nil {
-		log.Printf("[designer] 基线快照写入失败 plan=%s err=%v", p.ID, err)
-	}
-}
-
-// loadLatestSnapshot 读某计划的当前基线；无基线（从未落地）返回 nil。
-func loadLatestSnapshot(planID string) *dsgPlan {
-	raw, err := os.ReadFile(filepath.Join(snapshotDir(), planID+".latest.json"))
-	if err != nil {
-		return nil
-	}
-	var p dsgPlan
-	if json.Unmarshal(raw, &p) != nil {
-		return nil
-	}
-	return &p
-}
-
-// loadPlanFile 读计划文件（= 期望 / intended）；不存在或解析失败返回 nil（无画布）。
-func loadPlanFile(planID string) *dsgPlan {
-	raw, err := os.ReadFile(filepath.Join(designerDir(), planID+".json"))
-	if err != nil {
-		return nil
-	}
-	var p dsgPlan
-	if json.Unmarshal(raw, &p) != nil {
-		return nil
-	}
-	return &p
-}
 
 // 收敛动作枚举（对齐 containerlab 的 reconcile 动作集）。每个差异项都要带「为什么是
 // 这个动作」的理由，而不是只给动作名——理由才是用户判断要不要收敛的依据。
@@ -369,59 +295,6 @@ func (h *DesignerHandler) ComputeDrift(planID string) DriftResult {
 	return res
 }
 
-// ReconcileAction 一条收敛动作（收敛预演的列表项 + 执行依据）。
-type ReconcileAction struct {
-	Action string `json:"action"` // added | deleted | recreated | restarted
-	Node   string `json:"node"`   // 资源名
-	Name   string `json:"name,omitempty"`
-	Kind   string `json:"kind"` // vm | container | net
-	Side   string `json:"side"` // pending | external
-	Reason string `json:"reason"`
-}
-
-// ReconcileResult 收敛计划：先列现状 → 算出需要 added/deleted/recreated/restarted 的集合。
-type ReconcileResult struct {
-	PlanID    string            `json:"plan_id"`
-	HasSnap   bool              `json:"has_snap"` // false=从未落地，收敛退化为全量落地
-	Actions   []ReconcileAction `json:"actions"`
-	Counts    map[string]int    `json:"counts"` // 动作 → 条数
-	CheckedAt time.Time         `json:"checked_at"`
-}
-
-// reconcilePlan 由三方对比算出收敛动作集合与可执行 ops。
-//   - baseline 为 nil（从未落地）：退化为全量落地，所有节点视作 added；
-//   - 否则逐条取 computeDiff 里 action != none 的项。VMID 已在 computeDiff 里带出。
-func reconcilePlan(plan, baseline *dsgPlan, reality dsgReality, planID string) (ReconcileResult, []dsgOp) {
-	res := ReconcileResult{PlanID: planID, HasSnap: baseline != nil, Actions: []ReconcileAction{}, Counts: map[string]int{}, CheckedAt: time.Now()}
-	ops := []dsgOp{}
-	if plan == nil {
-		return res, ops
-	}
-	if baseline == nil {
-		for _, n := range orderNodes(plan.Nodes, plan.Links) {
-			reason := "首次落地：创建" + dsgKindLabel(n.Kind)
-			ops = append(ops, dsgOp{Action: dsgActionAdded, Node: n, Reason: reason})
-			res.Actions = append(res.Actions, ReconcileAction{Action: dsgActionAdded, Node: nodeResource(n), Name: n.Name, Kind: n.Kind, Side: dsgSidePending, Reason: reason})
-			res.Counts[dsgActionAdded]++
-		}
-		return res, ops
-	}
-	for _, d := range computeDiff(plan, baseline, reality) {
-		if d.Item.Action == "" || d.Item.Action == dsgActionNone {
-			continue
-		}
-		ops = append(ops, dsgOp{Action: d.Item.Action, Node: d.Node, Reason: d.Item.Reason})
-		res.Actions = append(res.Actions, ReconcileAction{Action: d.Item.Action, Node: d.Item.Node, Name: d.Item.Name, Kind: d.Item.Resource, Side: d.Item.Side, Reason: d.Item.Reason})
-		res.Counts[d.Item.Action]++
-	}
-	return res, ops
-}
-
-// computeReconcile 从磁盘计划读期望并算出收敛集合（收敛预演用）。
-func (h *DesignerHandler) computeReconcile(planID string) (ReconcileResult, []dsgOp) {
-	return reconcilePlan(loadPlanFile(planID), loadLatestSnapshot(planID), h.loadReality(), planID)
-}
-
 // DriftSummary 遍历全部快照逐计划对比，汇总给人读摘要（DE2 的 cron 巡检入口）。
 // 只巡检有 latest 快照的计划（从未落地谈不上漂移）。
 func (h *DesignerHandler) DriftSummary() (checked int, drifted int, summary string) {
@@ -467,67 +340,4 @@ func (h *DesignerHandler) Drift(c *gin.Context) {
 		return
 	}
 	Success(c, h.ComputeDrift(id))
-}
-
-// orderNodes 落地顺序：按 plan.Links 做拓扑排序（to 依赖 from），入度 0 中按 kind 优先级
-// net(0) → vm(1) → container(2) 挑选；有环或链接不足时退化为 kind 优先级稳定排序。
-// 目标：net 先建（VM/容器要接入），vm 先于依赖它的 container。
-func orderNodes(nodes []dsgNode, links []dsgLink) []dsgNode {
-	priority := func(kind string) int {
-		switch kind {
-		case "net":
-			return 0
-		case "vm":
-			return 1
-		case "container":
-			return 2
-		default:
-			return 3
-		}
-	}
-	ids := make(map[string]bool, len(nodes))
-	for _, n := range nodes {
-		ids[n.ID] = true
-	}
-	// dep[to] = 依赖的 from 集合；indeg[to] = 未满足的依赖数
-	dep := make(map[string][]string)
-	indeg := make(map[string]int, len(nodes))
-	for _, n := range nodes {
-		indeg[n.ID] = 0
-	}
-	for _, l := range links {
-		if l.From == l.To || !ids[l.From] || !ids[l.To] {
-			continue
-		}
-		dep[l.To] = append(dep[l.To], l.From)
-		indeg[l.To]++
-	}
-	remaining := append([]dsgNode(nil), nodes...)
-	out := make([]dsgNode, 0, len(nodes))
-	for len(remaining) > 0 {
-		best := -1
-		for i, n := range remaining {
-			if indeg[n.ID] == 0 && (best == -1 || priority(n.Kind) < priority(remaining[best].Kind)) {
-				best = i
-			}
-		}
-		if best == -1 {
-			// 有环：剩余节点退化为 kind 优先级稳定排序后收尾
-			rest := append([]dsgNode(nil), remaining...)
-			sort.SliceStable(rest, func(i, j int) bool { return priority(rest[i].Kind) < priority(rest[j].Kind) })
-			out = append(out, rest...)
-			break
-		}
-		chosen := remaining[best]
-		out = append(out, chosen)
-		remaining = append(remaining[:best], remaining[best+1:]...)
-		for _, n := range remaining {
-			for _, f := range dep[n.ID] {
-				if f == chosen.ID {
-					indeg[n.ID]--
-				}
-			}
-		}
-	}
-	return out
 }

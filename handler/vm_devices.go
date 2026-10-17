@@ -1,7 +1,8 @@
-// vm_devices.go —— 虚拟机设备读写：磁盘与网卡的热插拔、域定义健康检查、标准设备补齐。
+// vm_devices.go —— 虚拟机磁盘热插拔：挂盘/一键加盘/摘盘（含删卷三重安全守卫）。
+// 网卡热插拔见 vm_interfaces.go，域定义健康检查与标准设备补齐见 vm_devices_health.go。
 //
-// 两条贯穿全文件的约定：
-//  1. 凡改动域定义的操作（加/删盘、加/删网卡）都属生命周期写操作：先 guardVMIdle
+// 两条贯穿本文件的约定：
+//  1. 凡改动域定义的操作（加/删盘）都属生命周期写操作：先 guardVMIdle
 //     再 lockVM（AGENTS 条款 16）——分别封堵「HTTP 已返回、后台任务仍在跑」与
 //     「同一瞬间并发进来的两个请求」两类窗口，缺一不可。
 //  2. 删卷遵循「宁可留一个文件，也不损坏共享数据」：镜像库共享镜像、增量克隆父盘、
@@ -83,61 +84,6 @@ func (h *VMHandler) AttachDisk(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"vm": vm.Name, "disk": req.Disk})
-}
-
-// missingDiskSources 从域配置里挑出源文件不存在的磁盘（幽灵盘）。
-// 返回条目与「是否存在致命项」——光驱 ISO 缺失不影响开机，单独标 fatal=false。
-func missingDiskSources(spec *virt.DomainSpec) ([]gin.H, bool) {
-	missing := []gin.H{}
-	fatal := false
-	if spec == nil {
-		return missing, false
-	}
-	for _, d := range spec.Disks {
-		if d.Source == "" {
-			continue
-		}
-		if _, serr := os.Stat(d.Source); serr != nil {
-			isFatal := d.Device == "disk"
-			if isFatal {
-				fatal = true
-			}
-			missing = append(missing, gin.H{
-				"target": d.Target,
-				"source": d.Source,
-				"device": d.Device,
-				"fatal":  isFatal,
-			})
-		}
-	}
-	return missing, fatal
-}
-
-// DomainHealth GET /api/vms/:id/domain-health —— 域定义健康检查。
-// 目前只查一类问题：磁盘源文件不存在（幽灵盘）。它会让 libvirt 拒绝启动整个域，
-// 而报错只出现在开机时刻、文案是「无法访问存储文件 + uid/gid」，与当初的加盘操作
-// 完全脱节。此端点把该问题提前暴露在虚拟机详情页，并给出一键摘除的落点。
-func (h *VMHandler) DomainHealth(c *gin.Context) {
-	vm, ok := h.findVM(c)
-	if !ok {
-		return
-	}
-	spec, err := h.Virt.GetDomainSpec(vm.Name)
-	if err != nil {
-		// 域不存在（已删除/名字漂移）不是「不健康」，如实返回空结果而非 500
-		Success(c, gin.H{"vm": vm.Name, "ok": true, "checked": false, "missing_disks": []gin.H{}})
-		return
-	}
-	missing, fatal := missingDiskSources(spec)
-	msg := ""
-	if fatal {
-		msg = "存在文件缺失的数据盘，虚拟机将无法开机（libvirt 会拒绝启动整个域），请摘除该磁盘或补齐文件"
-	}
-	Success(c, gin.H{
-		"vm": vm.Name, "ok": !fatal, "checked": true,
-		"missing_disks": missing,
-		"message":       msg,
-	})
 }
 
 // QuickAttachDisk 一键添加数据盘：在存储池创建 qcow2 卷并挂载到虚拟机（对应
@@ -231,25 +177,6 @@ func (h *VMHandler) QuickAttachDisk(c *gin.Context) {
 		return
 	}
 	Success(c, gin.H{"vm": vm.Name, "disk": disk, "volume": volName + ".qcow2", "pool": req.Pool, "size_gb": req.SizeGB})
-}
-
-// EnsureStandardDevices 补齐标准设备（guest-agent 通道 + virtio-rng），幂等。
-// 用于把存量虚拟机配置对齐到新装机的标准设备集；响应返回本次实际添加的设备列表。
-func (h *VMHandler) EnsureStandardDevices(c *gin.Context) {
-	vm, ok := h.findVM(c)
-	if !ok {
-		return
-	}
-	attached, err := h.Virt.EnsureStandardDevices(vm.Name)
-	if err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-	if len(attached) == 0 {
-		Success(c, gin.H{"vm": vm.Name, "attached": attached, "message": "已是标准配置，无需补齐"})
-		return
-	}
-	Success(c, gin.H{"vm": vm.Name, "attached": attached, "message": "已补齐：" + strings.Join(attached, "、")})
 }
 
 // detachVolKeepReason 分离磁盘后删除单卷的安全守卫判定（纯函数，供单测）。
@@ -434,71 +361,4 @@ func (h *VMHandler) DetachDisk(c *gin.Context) {
 
 	resp["volume_deleted"] = true
 	Success(c, resp)
-}
-
-// AttachInterface 添加网卡（对应 virsh attach-interface，运行中生效并落配置）。
-// body: {interface: InterfaceSpec}；mac 为空自动生成。
-func (h *VMHandler) AttachInterface(c *gin.Context) {
-	vm, ok := h.findVM(c)
-	if !ok {
-		return
-	}
-	if !h.guardVMIdle(c, vm.ID) {
-		return
-	}
-	release, ok := h.lockVM(c, vm.ID)
-	if !ok {
-		return
-	}
-	defer release()
-
-	var req struct {
-		Interface virt.InterfaceSpec `json:"interface"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ErrorWithMessage(c, http.StatusBadRequest, "参数错误", err)
-		return
-	}
-	if req.Interface.Type == "" {
-		req.Interface.Type = "network"
-	}
-	if req.Interface.Source == "" {
-		req.Interface.Source = "default"
-	}
-	if req.Interface.MAC == "" {
-		mac, err := virt.RandomMAC()
-		if err != nil {
-			ErrorWithMessage(c, http.StatusInternalServerError, "生成网卡 MAC 失败", err)
-			return
-		}
-		req.Interface.MAC = mac
-	}
-
-	if err := h.Virt.AttachInterface(vm.Name, req.Interface); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-	Success(c, gin.H{"vm": vm.Name, "interface": req.Interface})
-}
-
-// DetachInterface 移除网卡（对应 virsh detach-interface，按 MAC 地址匹配）。
-func (h *VMHandler) DetachInterface(c *gin.Context) {
-	mac := c.Param("mac")
-	vm, ok := h.findVM(c)
-	if !ok {
-		return
-	}
-	if !h.guardVMIdle(c, vm.ID) {
-		return
-	}
-	release, ok := h.lockVM(c, vm.ID)
-	if !ok {
-		return
-	}
-	defer release()
-	if err := h.Virt.DetachInterface(vm.Name, mac); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
-		return
-	}
-	Success(c, gin.H{"vm": vm.Name, "mac": mac})
 }

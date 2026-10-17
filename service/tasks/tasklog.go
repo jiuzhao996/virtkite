@@ -10,19 +10,19 @@
 //
 // 兼容性：老任务的 log_entries 为空、result 是纯文本——前端据 log_entries 是否存在
 // 决定走「结构化渲染」还是「纯文本兜底」（见 handler.GetTaskLogs 的 structured 字段）。
+//
+// 条目解析与噪音折叠见 tasklog_parse.go，密钥脱敏见 tasklog_redact.go。
 package tasks
 
 import (
 	"encoding/json"
 	"log"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/jiuzhao/vmops/model"
 	"github.com/jiuzhao/vmops/service/dbx"
-	"github.com/jiuzhao/vmops/service/secretbox"
 	"gorm.io/gorm"
 )
 
@@ -35,11 +35,6 @@ const (
 	// taskLogSubBuffer 单个订阅者（日志 WS）的发送缓冲。满了丢帧并留痕——DB 才是权威源，
 	// 客户端凭 seq 重连即可补齐，绝不因一个慢客户端反压任务执行。
 	taskLogSubBuffer = 512
-	// taskLogRedacted 脱敏后的替换文本（与 Coolify 的 logRedactionValues 同义）。
-	taskLogRedacted = "REDACTED"
-	// taskLogMinSecretLen 参与脱敏的明文最小长度：太短的串（如 "a"、"1"）做全量替换会把
-	// 正常日志也打成 REDACTED，得不偿失。
-	taskLogMinSecretLen = 4
 )
 
 // TaskLogger 单个任务的结构化日志器。
@@ -280,191 +275,4 @@ func (lg *TaskLogger) Close() {
 	if lg.mgr != nil {
 		lg.mgr.unregisterLogger(lg.taskID, lg)
 	}
-}
-
-// ParseLogEntries 解析 log_entries 列：成功返回条目数组与 true；
-// 空串或非 JSON 数组（老任务的纯文本 result 被误传进来）返回 false，调用方回退纯文本渲染。
-// 导出供 handler（GET 日志 / 日志 WS）复用，保证前后端「结构化 vs 纯文本」判定口径一致。
-func ParseLogEntries(raw string) ([]model.TaskLogEntry, bool) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw[0] != '[' {
-		return nil, false
-	}
-	var entries []model.TaskLogEntry
-	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
-		return nil, false
-	}
-	return entries, true
-}
-
-// noiseLogSubstrings docker build / pull 过程中的进度噪音片段（小写匹配）：
-// 这类行数量大、信息量低，默认折叠成调试行，避免真实构建输出被淹没。
-var noiseLogSubstrings = []string{
-	"extracting sha256:",
-	"pulling fs layer",
-	"verifying checksum",
-	"download complete",
-	"already exists",
-	"waiting",
-}
-
-// isNoiseLogLine 启发式判断是否为可折叠的进度噪音行。best-effort：误判只影响默认折叠与否，
-// 用户可一键展开，不会丢数据。错误行通常不含这些片段。
-func isNoiseLogLine(text string) bool {
-	lower := strings.ToLower(text)
-	for _, sub := range noiseLogSubstrings {
-		if strings.Contains(lower, sub) {
-			return true
-		}
-	}
-	return false
-}
-
-// logRedactor 任务输出脱敏器（对应 Coolify 的 logRedactionValues）。
-//
-// 性能要点：明文集合在日志器创建时「一次性」收集（含 vm_credentials 解密），
-// 之后每行只做若干次 strings.ReplaceAll——绝不「每行输出都把全部凭据解密一遍」。
-type logRedactor struct {
-	secrets []string
-}
-
-// newLogRedactor 收集本任务相关的已知密钥明文。收集失败一律降级为「不脱敏」而非报错：
-// 日志脱敏是纵深防御，不能因为收集失败就阻断任务执行。
-func newLogRedactor(db *gorm.DB, taskID uint, masterSecret string) *logRedactor {
-	r := &logRedactor{}
-	if db == nil {
-		return r
-	}
-	var t model.Task
-	if err := db.Select("payload", "vm_id").First(&t, taskID).Error; err != nil {
-		return r
-	}
-	payload := map[string]interface{}{}
-	if len(t.Payload) > 0 {
-		_ = json.Unmarshal([]byte(t.Payload), &payload)
-	}
-	// 1) cloud-init 密码：payload 里本就是明文，直接收集（无需解密）
-	for _, pw := range collectCloudInitPasswords(payload) {
-		r.add(pw)
-	}
-	// 2) VM 托管凭据口令：只取「本任务相关 VM」的凭据解密，不遍历全表
-	if masterSecret != "" {
-		for _, cred := range collectRelatedCredentials(db, payload, t.VMID) {
-			if plain, err := secretbox.OpenWithMaster(masterSecret, cred.Salt, cred.PasswordEnc); err == nil {
-				r.add(string(plain))
-			}
-		}
-	}
-	return r
-}
-
-// add 登记一条待脱敏明文（去重、过滤过短串）。
-func (r *logRedactor) add(s string) {
-	s = strings.TrimSpace(s)
-	if len(s) < taskLogMinSecretLen {
-		return
-	}
-	for _, e := range r.secrets {
-		if e == s {
-			return
-		}
-	}
-	r.secrets = append(r.secrets, s)
-}
-
-// redact 把命中明文的片段替换为 REDACTED。
-func (r *logRedactor) redact(s string) string {
-	if len(r.secrets) == 0 {
-		return s
-	}
-	for _, sec := range r.secrets {
-		if strings.Contains(s, sec) {
-			s = strings.ReplaceAll(s, sec, taskLogRedacted)
-		}
-	}
-	return s
-}
-
-// collectCloudInitPasswords 从 payload 里收集所有 cloud-init 密码明文：
-// 顶层 cloud_init.password、多盘 disks[].cloud_init.password，以及历史遗留的顶层 password。
-func collectCloudInitPasswords(payload map[string]interface{}) []string {
-	var out []string
-	if payload == nil {
-		return out
-	}
-	if ci, ok := payload["cloud_init"].(map[string]interface{}); ok {
-		if pw, ok := ci["password"].(string); ok {
-			out = append(out, pw)
-		}
-	}
-	if disks, ok := payload["disks"].([]interface{}); ok {
-		for _, d := range disks {
-			dm, ok := d.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			if ci, ok := dm["cloud_init"].(map[string]interface{}); ok {
-				if pw, ok := ci["password"].(string); ok {
-					out = append(out, pw)
-				}
-			}
-		}
-	}
-	// 顶层 password 是 app_install 旧前端的明文通道（现已拒收），仍兜底收集以防历史 payload
-	if pw, ok := payload["password"].(string); ok {
-		out = append(out, pw)
-	}
-	return out
-}
-
-// collectRelatedCredentials 取本任务相关 VM 的托管凭据（只读这些 VM 的，不扫全表）。
-// 相关 VM = payload 的 vm_id / targets[] + 任务已关联的 VM。
-func collectRelatedCredentials(db *gorm.DB, payload map[string]interface{}, taskVMID *uint) []model.VMCredential {
-	ids := map[uint]bool{}
-	if taskVMID != nil && *taskVMID > 0 {
-		ids[*taskVMID] = true
-	}
-	if v, ok := payload["vm_id"]; ok {
-		if n, ok := toUint(v); ok {
-			ids[n] = true
-		}
-	}
-	if arr, ok := payload["targets"].([]interface{}); ok {
-		for _, item := range arr {
-			if n, ok := toUint(item); ok {
-				ids[n] = true
-			}
-		}
-	}
-	if len(ids) == 0 {
-		return nil
-	}
-	list := make([]uint, 0, len(ids))
-	for id := range ids {
-		list = append(list, id)
-	}
-	var creds []model.VMCredential
-	if err := db.Where("vm_id IN ?", list).Find(&creds).Error; err != nil {
-		return nil
-	}
-	return creds
-}
-
-// toUint 把 JSON 反序列化出的数值（float64）或整数转成 uint（失败返回 false）。
-func toUint(v interface{}) (uint, bool) {
-	switch n := v.(type) {
-	case float64:
-		if n > 0 && n == float64(uint(n)) {
-			return uint(n), true
-		}
-	case int:
-		if n > 0 {
-			return uint(n), true
-		}
-	case uint:
-		if n > 0 {
-			return n, true
-		}
-	}
-	return 0, false
 }
