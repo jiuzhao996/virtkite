@@ -35,7 +35,7 @@
 // （file_sd 目标带 vm_name 标签，附着到该目标全部序列）。数据源 GET /api/vms/:id/guest-metrics
 // （后端聚合根分区/内存/负载三条 query_range）；未安装 exporter 时 available=false 显示安装引导。
 // 懒加载：仅性能 tab 激活时拉取（active 驱动），切走不轮询（guest 指标变化慢）。
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { Cpu } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { cssVar, fmtDateTime } from '../../../utils/format'

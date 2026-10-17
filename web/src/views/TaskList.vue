@@ -490,7 +490,6 @@ async function connectLogWS(id) {
 
 const selectedRows = ref([])
 const batchBusy = ref(false)
-const selectAny = computed(() => selectedRows.value.length > 0)
 const selectOnlyOne = computed(() => selectedRows.value.length === 1)
 const canBatchCancel = computed(() => selectedRows.value.some((t) => t.status === 'running'))
 const canBatchDelete = computed(() => selectedRows.value.some((t) => isFinal(t.status)))

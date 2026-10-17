@@ -41,7 +41,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../../api'
-import { errMsg, FALLBACK_ACTION_LABELS } from '../../../utils/format'
+import { FALLBACK_ACTION_LABELS } from '../../../utils/format'
 
 const props = defineProps({
   // 是否可见（Dashboard 切换 tab 时停止轮询）

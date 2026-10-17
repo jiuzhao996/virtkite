@@ -125,7 +125,7 @@
 // 栈详情抽屉（R5，Dockge 式）：服务矩阵 + 组合日志（按服务着色）+ compose 在线编辑 + 一键升级。
 // 组合日志刻意用 HTTP 轮询而非每服务一条 WS：栈服务常达 5-8 个，全开 WS 连接数不划算，
 // 且栈日志关注的是「整体在不在动」；单服务实时日志仍走容器详情抽屉的 WS 流。
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../../api'

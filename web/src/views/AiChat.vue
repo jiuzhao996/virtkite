@@ -104,7 +104,7 @@ import AiComposer from './ai/components/AiComposer.vue'
 
 // embedded：抽屉形态（MainLayout 顶栏拉起）。true 时隐藏页头只留工具行，
 // 容器改为撑满抽屉体高度（会话状态仍在本组件内存，抽屉关闭仅隐藏不清空）
-const props = defineProps({
+defineProps({
   embedded: { type: Boolean, default: false }
 })
 

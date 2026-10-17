@@ -150,7 +150,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, Download, VideoPlay, DocumentChecked, Aim, Refresh } from '@element-plus/icons-vue'
+import { Delete, Download, VideoPlay, DocumentChecked, Aim, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, isCancel, cssVar } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
@@ -555,11 +555,6 @@ function loadIntoGraph(pNodes, pLinks) {
   if (graph.canUndo && graph.cleanHistory) graph.cleanHistory()
   applyLiveStatus()
   graph.centerContent()
-}
-function clearCanvas() {
-  loadIntoGraph([], [])
-  seq = 1
-  planName.value = ''
 }
 function loadTemplate(t) {
   planName.value = t.name

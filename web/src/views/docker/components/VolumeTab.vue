@@ -127,6 +127,22 @@ async function submitVolume() {
   }
 }
 
+// prune 结果展示：后端 message 已含释放空间，原始输出较长则折叠进弹窗。
+// 与 ImageTab 的同名函数逻辑一致——原实现漏了这个函数，清理成功后必抛
+// ReferenceError 被下面的 catch 接住，界面反而显示「清理失败」（假失败）。
+function showPruneResult(data) {
+  const msg = data.message || '清理完成'
+  if (data.output) {
+    ElMessageBox.alert(
+      h('pre', { style: 'max-height:260px;overflow:auto;margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;' }, String(data.output)),
+      msg,
+      { confirmButtonText: '知道了' }
+    )
+  } else {
+    ElMessage.success(msg)
+  }
+}
+
 async function pruneVolumes() {
   try {
     await ElMessageBox.confirm(

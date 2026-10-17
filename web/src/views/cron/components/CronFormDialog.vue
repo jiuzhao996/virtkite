@@ -47,7 +47,12 @@
           <el-radio-button value="group">按主机组（动态）</el-radio-button>
         </el-radio-group>
       </el-form-item>
-      <el-form-item v-else-if="form.action === 'ansible_playbook' && form.pb_target_mode === 'group'" label="主机组" required>
+      <!-- 目标方式与下面的主机组/虚拟机选择必须属于同一条 v-if 链：
+           上一版把「主机组」「目标虚拟机」写成 v-else-if，却接在「目标方式」的
+           v-if="action === 'ansible_playbook'" 后面——条件被前项完全覆盖，
+           两个分支永远不渲染，选 Playbook 时目标根本填不了。
+           这里让「主机组」另起一条链（v-if），「目标虚拟机」作为它的 v-else-if。 -->
+      <el-form-item v-if="form.action === 'ansible_playbook' && form.pb_target_mode === 'group'" label="主机组" required>
         <el-select v-model="form.pb_group_id" placeholder="选择主机组" style="width: 100%">
           <el-option v-for="g in hostGroups" :key="g.id" :label="g.name" :value="g.id" />
         </el-select>

@@ -50,7 +50,6 @@
 // 数据复用既有端点 listStoragePools + volumeGraph；X6 用法与网络拓扑同套
 // （shape 显式 / orth 路由 / fromJSON / 隐形端口 / 内层 absolute+inset:0 断回写环）。
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { Graph } from '@antv/x6'
 import { ElMessage } from 'element-plus'
 import { Refresh, FullScreen } from '@element-plus/icons-vue'
@@ -59,7 +58,6 @@ import { errMsg } from '../../../utils/format'
 import Toolbar from '../../../components/Toolbar.vue'
 
 const emit = defineEmits(['open-pool'])
-const router = useRouter()
 
 const canvasRef = ref(null)
 const loading = ref(false)

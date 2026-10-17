@@ -213,22 +213,6 @@ async function createNetwork() {
   }
 }
 
-function prettyXml(node, indent) {
-  const pad = indent == null ? '' : indent
-  const childPad = indent == null ? '  ' : indent + '  '
-  const attrs = Array.from(node.attributes || [])
-    .map((a) => ` ${a.name}="${a.value.replace(/"/g, '&quot;')}"`)
-    .join('')
-  const children = Array.from(node.children || [])
-  if (!children.length) {
-    const text = (node.textContent || '').trim()
-    return text ? `<${node.nodeName}${attrs}>${text}</${node.nodeName}>` : `<${node.nodeName}${attrs}/>`
-  }
-  const inner = children.map((c) => prettyXml(c, childPad)).join('\n')
-  return `<${node.nodeName}${attrs}>\n${inner}\n${pad}</${node.nodeName}>`
-}
-
-// 格式化 XML 编辑框内容：parseFromString 检查 parsererror，失败给中文提示不改动原文
 async function toggleAutostart(row, value) {
   autostartBusy.value.add(row.name)
   autostartBusy.value = new Set(autostartBusy.value)

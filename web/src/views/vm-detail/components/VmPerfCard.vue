@@ -60,6 +60,7 @@
 // v-show 常驻：分区切走再切回不丢历史采样、图表实例不重建。
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import echarts from '../../../utils/echarts'
+import { api } from '../../../api'
 import { usageColor, fmtRateBytes, nowClock, cssVar } from '../../../utils/format'
 
 const props = defineProps({

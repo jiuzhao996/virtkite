@@ -13,20 +13,6 @@
   </div>
 </template>
 
-<style scoped>
-.ph-inline {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-lg);
-  min-width: 0;
-}
-.page-desc-inline {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-</style>
-
 <script setup>
 // 页头骨架：左「标题 + 描述」、右动作区。样式全部走 global.css 的
 // .page-head / .page-title / .page-desc（原各列表页 scoped 逐字重复，已收口），本组件不重复定义。
@@ -40,3 +26,17 @@ defineProps({
   inline: { type: Boolean, default: false },
 })
 </script>
+
+<style scoped>
+.ph-inline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+.page-desc-inline {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+</style>

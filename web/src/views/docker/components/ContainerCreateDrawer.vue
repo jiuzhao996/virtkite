@@ -136,17 +136,14 @@
 
 <script setup>
 // 创建容器抽屉（从 ContainerTab 抽出为独立组件）：容器页与镜像页「从镜像运行」共用。
-// props.prefillImage 为空时行为不变；镜像页传入 Repository:Tag 预填镜像。
+// 预填镜像走 open(image) 参数（镜像页传 Repository:Tag），不经过 prop——
+// 原先声明的 prefillImage prop 无人读取、两个调用方也都没传，已删除。
 import { ref, reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { errMsg } from '../../../utils/format'
 
-const props = defineProps({
-  // 打开时预填的镜像名（可选）
-  prefillImage: { type: String, default: '' }
-})
 const emit = defineEmits(['created'])
 
 const visible = ref(false)

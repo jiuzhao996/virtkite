@@ -383,7 +383,6 @@ const poolGraphNodes = computed(() => {
 })
 
 const poolGraphEdges = computed(() => {
-  const pool = curPool.value
   const paths = new Set(poolGraphNodes.value.map((n) => n.path))
   return (poolGraphRaw.value.edges || []).filter((e) => paths.has(e.parent) && paths.has(e.child))
 })

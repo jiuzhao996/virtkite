@@ -130,7 +130,7 @@ import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 
 // embedded：嵌入设置页形态（隐藏独立页头与提示条，新建入口移到卡头）
-const props = defineProps({
+defineProps({
   embedded: { type: Boolean, default: false }
 })
 

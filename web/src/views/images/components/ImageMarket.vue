@@ -1,6 +1,7 @@
 <template>
   <div>
-    <PageHead title="云镜像" subtitle="qcow2 磁盘镜像，预装 cloud-init——创建虚拟机免安装流程，分钟级出机" />
+    <!-- embedded 模式由 ImageMarketHome 的返回条充当页头，这里不再重复渲染标题 -->
+    <PageHead v-if="!embedded" title="云镜像" subtitle="qcow2 磁盘镜像，预装 cloud-init——创建虚拟机免安装流程，分钟级出机" />
 
     <el-card shadow="never">
       <Toolbar>
@@ -82,8 +83,6 @@
 </template>
 
 <script setup>
-// embedded=true 时作为嵌入组件使用（镜像管理页「镜像市场」tab），隐藏独立页头
-const props = defineProps({ embedded: { type: Boolean, default: false } })
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, Download, CircleCheck } from '@element-plus/icons-vue'
@@ -92,6 +91,9 @@ import PageHead from '../../../components/PageHead.vue'
 import Toolbar from '../../../components/Toolbar.vue'
 import { errMsg, clampPct } from '../../../utils/format'
 import { pollTask, extractTaskId, taskErrorMessage } from '../../../utils/task.js'
+
+// embedded=true 时作为嵌入组件使用（镜像管理页「镜像市场」tab），隐藏独立页头
+defineProps({ embedded: { type: Boolean, default: false } })
 
 const items = ref([])
 const defaultPool = ref('')

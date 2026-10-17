@@ -104,7 +104,7 @@
 <script setup>
 // 镜像页（原镜像 tab，1Panel 式子路由化）：数据自持（不再由壳共享镜像列表），搜索 / 拉取 / 清理 / 删除自洽；
 // 取数失败经 inject('dockerPage') 上报布局壳（503 置门控 alert，其余 toast），操作成功后本地 refresh 重拉。
-import { ref, computed, inject, onMounted } from 'vue'
+import { ref, computed, inject, onMounted, h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, RefreshRight } from '@element-plus/icons-vue'
 import { api } from '../../../api'

@@ -1,11 +1,17 @@
 <template>
   <div>
+    <!-- embedded 模式由 ImageMarketHome 的返回条充当页头；
+         刷新按钮原本挂在 PageHead 右侧插槽，隐藏页头后需单独保留，否则嵌入态没法刷新 -->
     <PageHead
+      v-if="!embedded"
       title="安装 ISO"
       subtitle="传统光盘安装介质——走创建向导「本地安装介质 (ISO)」流程，适合演示装机过程"
     >
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </PageHead>
+    <div v-else class="iso-toolbar">
+      <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+    </div>
 
     <el-alert
       type="info"
@@ -62,7 +68,7 @@ import PageHead from '../../../components/PageHead.vue'
 import { api } from '../../../api'
 import { extractTaskId, pollTask, taskErrorMessage } from '../../../utils/task'
 
-const props = defineProps({
+defineProps({
   embedded: { type: Boolean, default: false }
 })
 
@@ -179,4 +185,6 @@ onUnmounted(() => { disposed.value = true })
 .section-title { font-size: 1.02rem; font-weight: 600; margin: 0 0 2px; }
 .section-tag { font-size: 0.75rem; font-weight: 500; color: var(--color-muted-foreground); background: var(--color-muted); padding: 2px 8px; border-radius: 999px; margin-left: 6px; }
 .section-desc { margin: 0; font-size: 0.85rem; color: var(--color-muted-foreground); }
+/* 嵌入态（ImageMarketHome 二级视图）没有 PageHead，刷新按钮单独占一行右对齐 */
+.iso-toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 </style>

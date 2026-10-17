@@ -357,7 +357,9 @@ async function save() {
   saving.value = true
   try {
     if (editingId.value) {
-      const { username, password, ...payload } = form.value
+      // 解构只为把 username/password 从 payload 里摘掉（编辑接口不接受这两项）；
+      // 下划线前缀表示「取出来但不用」，避免被未使用变量规则误报
+      const { username: _username, password: _password, ...payload } = form.value
       await api.updateUser(editingId.value, payload)
       ElMessage.success('已保存')
     } else {

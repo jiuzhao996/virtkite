@@ -35,7 +35,7 @@
 <script setup>
 // 镜像市场落地页（统称）：云镜像 / 安装 ISO 二选一进入。
 // sub = ''（入口）| 'cloud' | 'iso'；两视图各自持数据与下载状态，互不干扰。
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { ArrowLeft, CircleCheck, Files } from '@element-plus/icons-vue'
 import PageHead from '../../../components/PageHead.vue'
 import ImageMarket from './ImageMarket.vue'
