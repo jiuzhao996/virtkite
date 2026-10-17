@@ -1,6 +1,6 @@
 module github.com/jiuzhao/vmops
 
-go 1.26.0
+go 1.26.9
 
 require (
 	github.com/digitalocean/go-libvirt v0.0.0-20260814190004-1a83157e1858
@@ -13,7 +13,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/kdomanski/iso9660 v0.4.0
 	github.com/prometheus/client_golang v1.24.1
-	golang.org/x/crypto v0.56.0
+	golang.org/x/crypto v0.57.0
 	gorm.io/driver/mysql v1.5.2
 	gorm.io/gorm v1.25.5
 )
@@ -55,9 +55,9 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.8.0 // indirect
 	golang.org/x/arch v0.29.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	modernc.org/libc v1.22.5 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
