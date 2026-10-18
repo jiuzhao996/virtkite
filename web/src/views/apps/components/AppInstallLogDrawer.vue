@@ -23,38 +23,46 @@
 <script setup>
 // 应用安装日志抽屉：任务结构化日志的「首屏全量 + WS 增量」展示。
 // 数据流：AppStore.submitInstall 提交任务后调用 open(taskId, appName)，随后轮询把
-// progress/status 推给 setProgress/setStatus；本组件只负责日志拉取、去重、贴底与 WS 重连。
-import { ref, computed, nextTick } from 'vue'
-import { api } from '../../../api'
+// progress/status 推给 setProgress/setStatus。
+//
+// 日志流本身（GET 首屏 + 一次性票据 + seq 去重 + 退避重连）复用
+// composables/useTaskLogStream.js——此前这里另抄了一份约 86 行的同语义实现，
+// 与任务中心各写一遍，行为漂移没人发现。差异点用 open() 的 alwaysConnect 承接：
+// 安装任务轮询可能已结束、日志仍在写，故无论终态都连 WS。
+import { ref, computed } from 'vue'
+import { useTaskLogStream } from '../../../composables/useTaskLogStream'
 
 const visible = ref(false)
 const appName = ref('')
-const entries = ref([])
-const live = ref(false)
 const status = ref('running') // running | success | failed
 const progress = ref(0)
 const viewRef = ref(null)
-let taskId = 0
-let lastSeq = 0
-let ws = null
-let retryTimer = null
-let retry = 0
-let manualClose = false
+
+const { entries, live, open: openStream, close: closeStream } = useTaskLogStream(() => {
+  // 追加后贴底（composable 的 onAppend 回调）
+  const el = viewRef.value
+  if (el) el.scrollTop = el.scrollHeight
+})
 
 const title = computed(() => `安装日志${appName.value ? ' · ' + appName.value : ''}`)
 const running = computed(() => status.value === 'running')
 const statusText = computed(() => ({ running: '执行中', success: '安装完成', failed: '安装失败' }[status.value] || '执行中'))
 const statusTag = computed(() => ({ running: 'warning', success: 'success', failed: 'danger' }[status.value] || 'info'))
 
+function fmtLogTs(ts) {
+  const d = ts ? new Date(ts) : new Date()
+  if (isNaN(d.getTime())) return ''
+  const p = (n) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
 /** 父级入口：打开抽屉并从头拉取指定任务的日志。 */
 function open(id, name) {
   appName.value = name || ''
-  entries.value = []
-  live.value = false
   status.value = 'running'
   progress.value = 0
   visible.value = true
-  openStream(id)
+  openStream({ id }, { alwaysConnect: true })
 }
 
 /** 父级轮询回调：更新进度条（0-100）。 */
@@ -65,122 +73,6 @@ function setProgress(v) {
 /** 父级轮询终态：running | success | failed。 */
 function setStatus(s) {
   status.value = s
-}
-
-function fmtLogTs(ts) {
-  const d = ts ? new Date(ts) : new Date()
-  if (isNaN(d.getTime())) return ''
-  const p = (n) => String(n).padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
-/** 按 seq 去重追加：GET 首屏全量与 WS 增量可能重叠，seq 保证幂等。 */
-function appendEntries(list) {
-  if (!Array.isArray(list) || !list.length) return
-  const have = new Set(entries.value.map((e) => e.seq))
-  let added = false
-  for (const e of list) {
-    if (!e || have.has(e.seq)) continue
-    have.add(e.seq)
-    entries.value.push(e)
-    if (e.seq > lastSeq) lastSeq = e.seq
-    added = true
-  }
-  if (added) scrollToBottom()
-}
-
-function scrollToBottom() {
-  nextTick(() => {
-    const el = viewRef.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
-}
-
-function closeStream() {
-  manualClose = true
-  if (retryTimer) {
-    clearTimeout(retryTimer)
-    retryTimer = null
-  }
-  if (ws) {
-    try {
-      ws.close()
-    } catch (e) {
-      /* 已关闭 */
-    }
-    ws = null
-  }
-  live.value = false
-}
-
-/** 打开任务日志：首屏 GET 全量 → 记下最大 seq → 非终态则连 WS 追平增量。 */
-async function openStream(id) {
-  closeStream()
-  manualClose = false
-  taskId = id
-  lastSeq = 0
-  retry = 0
-  try {
-    const res = await api.getTaskLogs(id)
-    if (taskId !== id) return // 请求期间已切换任务
-    const data = (res && res.data) || {}
-    if (data.structured) appendEntries(data.entries)
-  } catch (e) {
-    // 日志端点不可用：静默降级（不打扰用户），仍可由轮询给出最终结果
-    return
-  }
-  connectWS(id)
-}
-
-/** 连接日志增量 WS（票据一次性，重连会重新取票）。 */
-async function connectWS(id) {
-  let ticket = ''
-  try {
-    const res = await api.mintTaskLogTicket(id)
-    ticket = (res.data && res.data.ticket) || ''
-  } catch (e) {
-    return // 取票失败：降级为「仅首屏全量」，不空转重连
-  }
-  if (manualClose || taskId !== id) return
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const url = `${proto}//${location.host}/api/tasks/${id}/logs/ws?since=${lastSeq}&ticket=${encodeURIComponent(ticket)}`
-  ws = new WebSocket(url)
-  const openTimer = setTimeout(() => {
-    try {
-      ws.close()
-    } catch (e) {
-      /* 已关闭 */
-    }
-  }, 10000)
-  ws.onopen = () => clearTimeout(openTimer)
-  ws.onmessage = (ev) => {
-    let msg
-    try {
-      msg = JSON.parse(ev.data)
-    } catch (e) {
-      return
-    }
-    if (msg.type === 'ready') {
-      clearTimeout(openTimer)
-      live.value = true
-    } else if (msg.type === 'entries') {
-      appendEntries(msg.entries)
-    } else if (msg.type === 'done') {
-      live.value = false
-      closeStream()
-    } else if (msg.type === 'error') {
-      closeStream()
-    }
-  }
-  ws.onclose = () => {
-    clearTimeout(openTimer)
-    live.value = false
-    if (manualClose || taskId !== id) return
-    if (retry >= 3) return
-    retry++
-    retryTimer = setTimeout(() => connectWS(id), 1000 * 2 ** (retry - 1))
-  }
-  ws.onerror = () => clearTimeout(openTimer)
 }
 
 defineExpose({ open, setProgress, setStatus })

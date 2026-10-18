@@ -128,9 +128,12 @@ export function useTaskLogStream(onAppend) {
 
   /**
    * 打开某任务日志。
-   * @param {{id:number,status:string}} task 只需 id 与 status（终态不连 WS）
+   * @param {{id:number,status?:string}} task status 缺省视为活动任务（一定连 WS）；
+   *        传 'running'/'pending' 之外的终态则只拉首屏、不连 WS。
+   * @param {{alwaysConnect?:boolean}} [opts] 传 {alwaysConnect:true} 时无视终态一律连 WS
+   *        （安装日志等「轮询已结束但日志可能仍在写」的场景）
    */
-  async function open(task) {
+  async function open(task, opts = {}) {
     close()
     manualClose = false
     entries.value = []
@@ -147,11 +150,12 @@ export function useTaskLogStream(onAppend) {
       structured.value = !!data.structured
       if (structured.value) append(data.entries)
     } catch (_e) {
-      // 日志端点不可用（如后端未上线）：静默回退到 result 渲染，不打扰用户
+      // 日志端点不可用（如后端未上线）：静默回退，不打扰用户
       structured.value = false
-      return
+      if (!opts.alwaysConnect) return
     }
-    const active = task.status === 'running' || task.status === 'pending'
+    const active =
+      opts.alwaysConnect || task.status === 'running' || task.status === 'pending' || task.status === undefined
     if (!active) return // 终态任务：首屏全量已足够
     connect(task.id)
   }
