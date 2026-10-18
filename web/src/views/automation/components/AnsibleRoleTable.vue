@@ -20,7 +20,7 @@
         <el-button text size="small" :icon="Folder" @click="emit('files', row)">文件</el-button>
         <el-popconfirm title="删除该 role？引用它的 playbook 会报「role 不存在」" confirm-button-text="删除" @confirm="emit('delete', row.name)">
           <template #reference>
-            <el-button text size="small" type="danger" :icon="Delete">删除</el-button>
+            <el-button v-if="!readonly" text size="small" type="danger" :icon="Delete">删除</el-button>
           </template>
         </el-popconfirm>
       </template>
@@ -37,7 +37,9 @@ defineProps({
   // role 列表项 [{ name, desc, file_count, built_in, updated_at }]
   roles: { type: Array, default: () => [] },
   // 表格 loading
-  loading: { type: Boolean, default: false }
+  loading: { type: Boolean, default: false },
+  // readonly：operator 只读视图——隐藏删除（后端写操作本就只对 admin 放行）
+  readonly: { type: Boolean, default: false }
 })
 // files(打开文件，含双击行) / delete(name)
 const emit = defineEmits(['files', 'delete'])

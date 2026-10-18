@@ -8,6 +8,9 @@
           <b>此处保留的是数据库记录，不保证磁盘还在</b>——域与磁盘都存在可原样恢复；
           域没了但磁盘还在会按记录重建精简定义（单系统盘 + 默认网络）；两者都不在则
           只能恢复一条空记录。彻底清除将物理删除记录与无主卷
+          <br />
+          <b>资产授权、托管凭据、主机组成员随删除一并清除，恢复不会还原</b>——
+          恢复后如需继续用，请在虚拟机详情重新授权、重新保存凭据
         </p>
       </template>
     </PageHead>
@@ -272,30 +275,47 @@ function restoreLevel(row) {
 }
 
 async function restore(row) {
-  // 域与磁盘都不在：先说清后果再动手（此前是恢复完才提示，用户已白点一次）
+  // B 方案（用户 2026-10-18 拍板）：删除已物理清理资产授权/托管凭据/主机组成员，
+  // 后端恢复只回记录——不做「删除时软删授权再还原」是因为授权语义跨 VM 生命周期，
+  // 改了反而更难讲清。改为在 UI 上讲清楚：动手前告知、成功后再次提醒。
   if (!row.domain_exists && !row.disk_exists) {
     try {
       await ElMessageBox.confirm(
-        `${row.name} 的 libvirt 域定义与系统盘卷都已不存在。恢复只会捞回一条数据库记录，该记录无法开机（可在创建向导用同名卷重新定义）。确定继续恢复？`,
+        `${row.name} 的 libvirt 域定义与系统盘卷都已不存在。恢复只会捞回一条数据库记录，该记录无法开机（可在创建向导用同名卷重新定义）。\n\n` +
+          `另外：资产授权、托管凭据、主机组成员随删除已清除，恢复不会还原，需要的话请在恢复后重新配置。\n确定继续恢复？`,
         '恢复后无法开机',
         { type: 'warning', confirmButtonText: '仍要恢复', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
       )
     } catch (e) {
       return
     }
+  } else {
+    // 能正常恢复的情况也告知一句：凭据/授权没了，恢复完不能直接免密登录
+    try {
+      await ElMessageBox.confirm(
+        `恢复 ${row.name}？\n\n注意：资产授权、托管凭据、主机组成员随删除已清除，恢复不会还原；` +
+          `需要免密登录或继续批量执行的，请在恢复后重新保存凭据。`,
+        '恢复确认',
+        { type: 'warning', confirmButtonText: '恢复', cancelButtonText: '取消' }
+      )
+    } catch (e) {
+      return
+    }
   }
   actingId.value = row.id
+  // 授权/凭据未还原的提醒文案：三条路径都要带（此前只在页头说，恢复成功那一下看不到）
+  const credNote = '（资产授权、托管凭据、主机组成员未还原，需要请重新配置）'
   try {
     const res = await api.recycleRestore(row.id)
     const d = res.data || {}
     // 域已 undefine 的记录只能恢复数据库行：诚实提示而非假装「干净恢复」
     if (d.domain_defined === false) {
-      ElMessage.warning(d.message || '记录已恢复，但虚拟机定义已不存在，可在创建向导用同名卷重新定义')
+      ElMessage.warning((d.message || '记录已恢复，但虚拟机定义已不存在，可在创建向导用同名卷重新定义') + credNote)
     } else if (d.message && d.message.includes('磁盘文件已不存在')) {
       // exact_missing：定义重建成功但缺盘，危险信息不能用绿色 success 一笔带过
-      ElMessage.warning(d.message)
+      ElMessage.warning(d.message + credNote)
     } else {
-      ElMessage.success(d.message || `已恢复 ${row.name}`)
+      ElMessage.success((d.message || `已恢复 ${row.name}`) + credNote)
     }
     detailOpen.value = false
     await reload()

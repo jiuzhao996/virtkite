@@ -1,6 +1,11 @@
 <template>
   <div v-loading="loading">
     <PageHead title="任务中心" subtitle="创建、克隆、删除、关机等耗时操作都在后台异步执行，这里看每个任务的进度和结果；点任务行可查看失败原因，以及删除虚拟机时被保护保留的共享卷" />
+    <!-- Q3-B（用户 2026-10-18 拍板）：任务读接口对三角色均放行（路由注释已论证
+         「viewer 本就能 GET 全量日志，不构成越权」），此处只做可见性说明，
+         不在前端假装收紧——那会让 viewer 以为自己没权限却能从接口读到。 -->
+    <el-alert v-if="!isAdmin" type="info" :closable="false" show-icon class="tl-visibility"
+      description="任务记录对所有登录角色可见（含执行人与失败原因）；取消与删除仅管理员可操作。" />
     <el-card shadow="never">
       <!-- 原左分组为 gap 8px + flex-wrap，经 wrap 传入保持不变；计数为 .toolbar 直接子元素走默认插槽 -->
       <Toolbar wrap>
@@ -974,5 +979,8 @@ onUnmounted(() => {
   font-size: 11px;
   color: var(--el-color-warning-dark-2);
 }
+/* 任务记录可见性说明（viewer/operator 才显示） */
+.tl-visibility { margin-bottom: 12px; }
+
 /* 结构化执行日志面板样式已随渲染下沉到 TaskLogPanel.vue */
 </style>

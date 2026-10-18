@@ -16,16 +16,23 @@
           <el-tag size="small" type="success" effect="plain">平台密钥</el-tag>
           <span class="mono auto-path">{{ engine.key_fingerprint }}</span>
           <span class="auto-count">免密 {{ engine.ansible_ready_count || 0 }} 台 / 已托管凭据 {{ engine.cred_count || 0 }} 台</span>
-          <el-button size="small" :loading="deploying" @click="deployKey">分发公钥到未免密 VM</el-button>
+          <el-button v-if="canWrite" size="small" :loading="deploying" @click="deployKey">分发公钥到未免密 VM</el-button>
+          <!-- Q3-B（用户 2026-10-18 拍板）：自动化写操作后端本就只对 admin 放行，
+               operator 进得来却每步都 403。前端改为直接隐藏写入口 + 说明原因，
+               不再让用户点穿后才看到报错。 -->
+          <span v-else class="auto-hint">自动化执行为管理员能力（写操作需管理员），此处为只读视图</span>
         </div>
       </template>
-      <el-empty v-else :description="engine.hint || '正在探测宿主机引擎…'" :image-size="60" />
+      <template v-else>
+        <EmptyState :description="engine.hint || '正在探测宿主机引擎…'" :image-size="60" />
+      </template>
     </el-card>
 
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- Tab 1 快速执行 -->
         <!-- 快速执行表单（目标选择/模块/参数）→ automation/components/AnsibleAdhocForm.vue -->
         <AnsibleAdhocForm
+          v-if="canWrite"
           ref="adhocFormRef"
           :engine="engine"
           :vms="vms"
@@ -33,16 +40,20 @@
           @run="runAdhoc"
           @manage-groups="groupDrawerOpen = true"
         />
+        <el-alert v-else type="info" :closable="false" show-icon
+          title="批量执行为管理员能力"
+          description="operator 可查看 Playbook / Role / 执行历史，执行与编辑需管理员账号。" />
 
       <!-- Tab 2 Playbook 库 -->
       <el-tab-pane :label="'Playbook 库（' + playbooks.length + '）'" name="playbooks">
         <el-card shadow="never">
           <div class="auto-pb-bar">
             <el-button size="small" :icon="Refresh" @click="loadPlaybooks">刷新</el-button>
-            <el-button type="primary" size="small" :icon="Plus" @click="openEditor(null)" :disabled="!engine.installed" :title="engine.installed ? '' : '宿主机未安装 Ansible'">新建 Playbook</el-button>
+            <el-button v-if="canWrite" type="primary" size="small" :icon="Plus" @click="openEditor(null)" :disabled="!engine.installed" :title="engine.installed ? '' : '宿主机未安装 Ansible'">新建 Playbook</el-button>
             <span class="auto-hint">内置种子出厂预设，删掉会复活；自建完全自治。保存前自动过 ansible-playbook --syntax-check</span>
           </div>
           <AnsiblePlaybookTable
+            :readonly="!canWrite"
             :playbooks="playbooks"
             :loading="pbLoading"
             :installed="engine.installed"
@@ -59,13 +70,14 @@
         <el-card shadow="never">
           <div class="auto-pb-bar">
             <el-button size="small" :icon="Refresh" @click="loadRoles">刷新</el-button>
-            <el-button type="primary" size="small" :icon="Plus" @click="createRole">新建 Role</el-button>
+            <el-button v-if="canWrite" type="primary" size="small" :icon="Plus" @click="createRole">新建 Role</el-button>
             <span class="auto-hint">
               存在 data/ansible/roles/，任何 playbook 都能 <code>roles: [名称]</code> 引用，不必各自复制一份；
               playbook 本地同名 role 会覆盖共享库里的（想单独特化某个 playbook 时用）
             </span>
           </div>
           <AnsibleRoleTable
+            :readonly="!canWrite"
             :roles="roles"
             :loading="roleLoading"
             @files="openRoleFiles"
@@ -163,7 +175,7 @@
               :title="'点击选中「' + g.name + '」组成员（并集）'" @click="applyGroup(g)">
             {{ g.name }} ×{{ groupRunnableCount(g) }}
         </el-tag>
-        <el-button text size="small" :icon="Setting" @click="groupDrawerOpen = true">
+        <el-button v-if="canWrite" text size="small" :icon="Setting" @click="groupDrawerOpen = true">
             {{ hostGroups.length ? '管理' : '建主机组' }}
         </el-button>
           </div>
@@ -228,7 +240,7 @@
     <!-- 主机组管理（AU1）：批量执行目标的快捷集合 -->
     <el-drawer v-model="groupDrawerOpen" title="主机组管理" size="440px">
       <div class="auto-group-bar">
-        <el-button type="primary" size="small" :icon="Plus" @click="openGroupForm(null)">新建主机组</el-button>
+        <el-button v-if="canWrite" type="primary" size="small" :icon="Plus" @click="openGroupForm(null)">新建主机组</el-button>
         <span class="auto-hint">点击上方组标签即可一键选中组成员</span>
       </div>
       <el-empty v-if="!hostGroups.length" description="还没有主机组" :image-size="70" />
@@ -238,8 +250,8 @@
           <span class="auto-group-desc">{{ g.description || '—' }}</span>
           <span class="auto-group-n">{{ (g.vm_ids || []).length }} 台成员 · 当前可执行 {{ groupRunnableCount(g) }} 台</span>
         </div>
-        <el-button text size="small" type="primary" :icon="Edit" @click="openGroupForm(g)">编辑</el-button>
-        <el-button text size="small" type="danger" :icon="Delete" @click="removeGroup(g)">删除</el-button>
+        <el-button v-if="canWrite" text size="small" type="primary" :icon="Edit" @click="openGroupForm(g)">编辑</el-button>
+        <el-button v-if="canWrite" text size="small" type="danger" :icon="Delete" @click="removeGroup(g)">删除</el-button>
       </div>
     </el-drawer>
 
@@ -294,6 +306,7 @@ import { syncTabToUrl } from '../utils/tab-url'
 import { api } from '../api'
 import { errMsg, isCancel } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
+import EmptyState from '../components/EmptyState.vue'
 import AnsibleOutputCard from './automation/components/AnsibleOutputCard.vue'
 import AnsibleAdhocForm from './automation/components/AnsibleAdhocForm.vue'
 import AnsiblePlaybookTable from './automation/components/AnsiblePlaybookTable.vue'
@@ -306,6 +319,9 @@ import DirFilesDialog from './ansible/DirFilesDialog.vue'
 const route = useRoute()
 const router = useRouter()
 const { isAdmin } = useAuth()
+// 写能力口径与后端中间件一致：/api/ansible 的写操作只对 admin 放行
+// （OperatorMiddleware 只允许 operator 写 /api/vms 前缀），故 operator 看到只读视图
+const canWrite = computed(() => isAdmin.value)
 // ?tab= 深链（/crons 重定向、任务中心出口、Role 库直达等用）。
 // 两条路径都要覆盖，少一条就有一半场景「点了没反应」：
 //   - 冷加载/换路由进来 → 组件重挂，取初始值（ref 初始化里判）

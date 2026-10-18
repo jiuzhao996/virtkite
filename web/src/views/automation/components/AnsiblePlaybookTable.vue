@@ -22,12 +22,12 @@
     <el-table-column prop="updated_at" label="更新时间" width="170" />
     <el-table-column label="操作" width="270" fixed="right">
       <template #default="{ row }">
-        <el-button text size="small" type="primary" :icon="VideoPlay" @click="emit('run', row)" :disabled="!installed" :title="installed ? '' : '宿主机未安装 Ansible'">执行</el-button>
+        <el-button v-if="!readonly" text size="small" type="primary" :icon="VideoPlay" @click="emit('run', row)" :disabled="!installed" :title="installed ? '' : '宿主机未安装 Ansible'">执行</el-button>
         <el-button v-if="row.is_dir" text size="small" :icon="Folder" @click="emit('files', row)">文件</el-button>
-        <el-button text size="small" :icon="Edit" @click="emit('edit', row)">编辑</el-button>
+        <el-button v-if="!readonly" text size="small" :icon="Edit" @click="emit('edit', row)">编辑</el-button>
         <el-popconfirm title="删除该 playbook？" confirm-button-text="删除" @confirm="emit('delete', row.id)">
           <template #reference>
-            <el-button text size="small" type="danger" :icon="Delete">删除</el-button>
+            <el-button v-if="!readonly" text size="small" type="danger" :icon="Delete">删除</el-button>
           </template>
         </el-popconfirm>
       </template>
@@ -46,7 +46,9 @@ defineProps({
   // 表格 loading
   loading: { type: Boolean, default: false },
   // 宿主机是否已装 Ansible（false 时禁用「执行」）
-  installed: { type: Boolean, default: false }
+  installed: { type: Boolean, default: false },
+  // readonly：operator 只读视图——隐藏执行/编辑/删除（后端写操作本就只对 admin 放行）
+  readonly: { type: Boolean, default: false }
 })
 // run(执行) / files(文件) / edit(编辑，含双击行) / delete(id)
 const emit = defineEmits(['run', 'files', 'edit', 'delete'])
