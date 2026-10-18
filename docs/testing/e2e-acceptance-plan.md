@@ -463,6 +463,10 @@ python3 -m http.server 18080 --directory /tmp/e2e-tree
 | `web/e2e/docker-apps.spec.js` | 容器创建/停止/删除 | `@docker` |
 | `web/e2e/automation.spec.js` | Playbook 新建/语法校验/删除、计划任务新建/删除 | `@auto` |
 | `web/e2e/rbac.spec.js` | 三角色权限负例、未授权 VM 404 | `@rbac` |
+| `web/e2e/rbac-ux.spec.js` | Q2/Q3 前端明示（只读视图/恢复提醒/可见性说明） | `@rbac-ux` |
+| `web/e2e/empty-state.spec.js` | 有数据不得渲染空态（10 个 tab） | `@empty-state` |
+| `web/e2e/dom-contract.spec.js` | 互斥元素/抽屉卸载/遮罩残留 | `@dom-contract` |
+| `web/e2e/data-consistency.spec.js` | 页面数字与接口交叉校验 | `@data-consistency` |
 | `web/e2e/ws-ticket.spec.js` | 无凭证/伪造、跨资源、一次性、过期、任务日志票 | `@ws-ticket` |
 | `web/e2e/task-center.spec.js` | 长任务取消、cancelled 删除、日志可读、参数校验 | `@task-center` |
 | `web/e2e/recycle-bin.spec.js` | 软删 → 恢复（域已 undefine）→ 再删 → 彻底清除 | `@recycle` |
@@ -632,6 +636,25 @@ CHROME_PATH=/usr/bin/google-chrome npx --yes lighthouse "http://127.0.0.1:8080/#
 新增验收用例 `web/e2e/rbac-ux.spec.js`（4 项）：operator 只读视图（含 lazy tab 切换后复验，防「没渲染所以不存在」的假通过）、admin 写入口齐全、回收站说明在位、viewer 任务说明在位。
 
 验收：lint 0 告警、66 单测、41 E2E 全绿。
+
+---
+
+### 11.6 第六批：新增两类巡检用例（2026-10-18）
+
+用户连报两批「有数据却显示暂无」后，意识到空态只是「条件渲染失效」的一种表现，
+且静态扫 `v-if` + lint 全绿**证明不了**这类正确性（丢掉的 v-if 是合法模板）。
+为此补两组通用巡检，把「反向断言」从空态扩展到更多模式：
+
+| 用例 | 查什么 | 为什么 lint/E2E 查不出 |
+|---|---|---|
+| `@empty-state`（10 个 tab） | 有数据时「暂无 X」必须不出现 | 无 `v-if` 是合法模板，lint 沉默；原 E2E 无空态断言 |
+| `@dom-contract`（2 项） | 互斥元素不同时出现；抽屉关闭后必须从可见 DOM 消失；loading 遮罩不得残留 | 需真实数据触发，静态扫不到 |
+| `@data-consistency`（4 项） | 页面条数/total/仪表盘计数与接口逐一相符；状态筛选真的在过滤 | 数字算错时页面照常渲染，毫无异常 |
+
+**方法论记录**：`v-if` 丢失有两种形态——单行 `<el-empty v-if=... />`（带 `v-else` 的会被 lint 发现）
+与**多行** `<el-empty\n v-if=...\n ... />`（属性跨行，按行比对必漏）。
+已按「解析 git diff 属性集」而非「按行匹配」重做排查；同时核实了 16 处「无 v-if」的空态，
+确认 15 处在 `<template #empty>` 插槽内、1 处为 `v-else` 分支，本就不该有 `v-if`。
 
 ---
 
