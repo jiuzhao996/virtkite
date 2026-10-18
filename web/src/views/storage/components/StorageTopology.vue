@@ -30,7 +30,11 @@
 
     <div class="st-canvas-wrap">
       <div ref="canvasRef" class="st-canvas" />
-      <EmptyState description="暂无存储池或卷（libvirt 未返回数据）" />
+      <EmptyState
+        v-if="!loading && !gNodes.length"
+        class="st-empty"
+        description="暂无存储池或卷（libvirt 未返回数据）"
+      />
     </div>
     <p class="st-hint">
       图为「池 → 卷」的静态关系；池之间的金色弧线是跨池克隆血缘（标注条数），卷级克隆链

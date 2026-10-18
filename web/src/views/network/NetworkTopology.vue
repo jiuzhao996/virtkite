@@ -26,7 +26,11 @@
 
     <div v-loading="loading" class="topo-canvas-wrap">
       <div ref="canvasRef" class="topo-canvas" />
-      <EmptyState description="暂无网络数据（libvirt / Docker 均未返回网络）" />
+      <EmptyState
+        v-if="!loading && !visibleNodes.length"
+        class="topo-empty"
+        description="暂无网络数据（libvirt / Docker 均未返回网络）"
+      />
     </div>
     <!-- 说明：同桥内 VM↔容器为二层直通、不经宿主协议栈，故本图展示挂接关系而非实时流量 -->
     <p class="topo-hint">

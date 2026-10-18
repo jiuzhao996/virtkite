@@ -12,13 +12,17 @@ import { ACCOUNTS } from './helpers/env.js'
 
 const PASS = ACCOUNTS.admin.pass
 
-// 每页的「数据标志元素」与「空态文案」。
+// 每页的「数据标志元素」与「空态文案」（整词精确匹配）。
 // 数据标志必须是列表渲染后一定出现的容器（卡片/表格行），空态文案取页面实际文案。
+// 拓扑两个 tab 与列表 tab 共用 URL（各自是默认 tab），靠 tabName 点进去区分；
+// 拓扑图的数据标志是画布内的 svg（X6/ECharts 渲染产物）。
 const PAGES = [
   { hash: '#/containers', listSel: '.ct-card', emptyText: '暂无容器' },
-  { hash: '#/containers?tab=compose', listSel: '.cp-card, .el-table__row', emptyText: '暂无 compose 编排项目' },
-  { hash: '#/storage', listSel: '.pool-card, .el-table__row', emptyText: '该池暂无存储卷' },
-  { hash: '#/networks', listSel: '.net-card, .el-table__row', emptyText: '暂无网络' },
+  { hash: '#/containers', tab: '编排', listSel: '.cp-card, .el-table__row', emptyText: '暂无 compose 编排项目（docker compose ls 为空）' },
+  { hash: '#/storage', listSel: '.st-canvas svg, .st-canvas canvas', emptyText: '暂无存储池或卷（libvirt 未返回数据）' },
+  { hash: '#/storage', tab: '存储池', listSel: '.pool-card, .el-table__row', emptyText: '该池暂无存储卷' },
+  { hash: '#/networks', listSel: '.topo-canvas svg, .topo-canvas canvas', emptyText: '暂无网络数据（libvirt / Docker 均未返回网络）' },
+  { hash: '#/networks', tab: '虚拟网络', listSel: '.net-card, .el-table__row', emptyText: '暂无网络' },
   { hash: '#/images', listSel: '.el-table__row, .el-card', emptyText: '暂无镜像' },
   { hash: '#/vms', listSel: '.vm-card', emptyText: '无匹配虚拟机' },
   { hash: '#/tasks', listSel: '.el-table__row', emptyText: '暂无任务' },
@@ -36,7 +40,11 @@ test.describe('空态契约 @empty-state', () => {
     const checked = []
     for (const pg of PAGES) {
       await page.goto('/' + pg.hash)
-      await page.waitForTimeout(1600) // 等列表接口落地
+      if (pg.tab) {
+        const tab = page.locator('.el-main .el-tabs__item', { hasText: pg.tab }).first()
+        if (await tab.count()) await tab.click().catch(() => {})
+      }
+      await page.waitForTimeout(1800) // 等列表接口/画布落地
 
       const listCount = await page.locator(`.el-main ${pg.listSel}`).count()
       if (!listCount) {
