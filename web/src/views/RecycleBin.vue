@@ -29,7 +29,7 @@
         </template>
       </Toolbar>
       <!-- 空态：回收站没有软删记录 -->
-      <el-empty v-if="!loading && items.length === 0" description="回收站是空的" :image-size="80" />
+      <EmptyState v-if="!loading && items.length === 0" description="回收站是空的" />
       <template v-else>
         <!-- 行点击进入原机信息抽屉（恢复/彻底清除操作已收进抽屉）；勾选列自绘复选框，勾选区 @click.stop 不触发行点击 -->
         <el-table :data="items" size="small" @row-click="openDetail" row-class-name="clickable-row">
@@ -217,6 +217,7 @@ import { errMsg, vmStatusText, vmStatusTag, fmtDateTime } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 // ===== 列表（GET /vms-recycle?page=&page_size= → {total, page, page_size, items}）=====
 const router = useRouter()

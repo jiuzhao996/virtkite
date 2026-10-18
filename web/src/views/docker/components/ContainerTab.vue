@@ -31,7 +31,7 @@
     <!-- 纯卡片视图（用户拍板：去表格只留卡片）：整卡可点进详情抽屉；
          勾选/操作钮在头部与操作区 .stop 防误触详情 -->
     <div v-loading="loading" class="ct-grid">
-      <el-empty v-if="!filteredContainers.length" description="暂无容器" :image-size="80" />
+      <EmptyState description="暂无容器" />
       <el-card v-for="row in filteredContainers" :key="row.ID" shadow="hover" class="ct-card" @click="openDetail(row)">
         <div class="ct-card-head">
           <el-checkbox
@@ -125,6 +125,7 @@ import { useAutoRefresh } from '../../../composables/useAutoRefresh'
 import ContainerTerminal from '../../../components/ContainerTerminal.vue'
 import ContainerCreateDrawer from './ContainerCreateDrawer.vue'
 import ContainerDetailDrawer from './ContainerDetailDrawer.vue'
+import EmptyState from '../../../components/EmptyState.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')

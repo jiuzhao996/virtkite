@@ -43,7 +43,7 @@
 
       <el-table v-loading="loading" :data="filteredItems" stripe size="small">
         <template #empty>
-          <el-empty description="暂无计划任务，点击新建创建第一个定时任务" :image-size="80" />
+          <EmptyState description="暂无计划任务，点击新建创建第一个定时任务" />
         </template>
         <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
         <el-table-column label="表达式" width="130">
@@ -197,6 +197,7 @@ import CronRunsDrawer from './cron/components/CronRunsDrawer.vue'
 // embedded：嵌入系统设置页时隐藏独立页头（IA 归并批次 2026-10）
 defineProps({ embedded: { type: Boolean, default: false } })
 import Toolbar from '../components/Toolbar.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 // ===== 列表 =====
 const items = ref([])

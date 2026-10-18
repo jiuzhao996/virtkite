@@ -34,7 +34,7 @@
     <div class="panel-head">
       <h3 class="panel-title">磁盘</h3>
     </div>
-    <el-empty v-if="!(spec && spec.disks && spec.disks.length)" description="暂无磁盘设备" :image-size="80" />
+    <EmptyState v-if="!(spec && spec.disks && spec.disks.length)" description="暂无磁盘设备" />
     <template v-else>
       <div
         v-for="(disk, i) in spec.disks"
@@ -75,7 +75,7 @@
     <div class="panel-head">
       <h3 class="panel-title">网卡</h3>
     </div>
-    <el-empty v-if="!(spec && spec.interfaces && spec.interfaces.length)" description="暂无网卡设备" :image-size="80" />
+    <EmptyState v-if="!(spec && spec.interfaces && spec.interfaces.length)" description="暂无网卡设备" />
     <template v-else>
       <div
         v-for="(nic, i) in spec.interfaces"
@@ -127,6 +127,7 @@ import { Delete, MagicStick, Connection, Plus } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { taskErrorMessage } from '../../../utils/task.js'
 import VmHardwareDialogs from './VmHardwareDialogs.vue'
+import EmptyState from '../../../components/EmptyState.vue'
 
 const props = defineProps({
   vmId: { type: [String, Number], required: true },

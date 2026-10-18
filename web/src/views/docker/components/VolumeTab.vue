@@ -5,7 +5,7 @@
       <span class="count ct-count">共 {{ volumes.length }} 个卷</span>
     </div>
     <el-table :data="volumes" v-loading="loading" stripe size="small">
-      <template #empty><el-empty description="暂无卷" :image-size="80" /></template>
+      <template #empty><EmptyState description="暂无卷" /></template>
       <el-table-column label="名称" min-width="260" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="mono">{{ row.Name || '—' }}</span>
@@ -45,6 +45,7 @@ import { ref, reactive, nextTick, h, inject, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
+import EmptyState from '../../../components/EmptyState.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')

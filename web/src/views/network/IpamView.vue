@@ -11,7 +11,7 @@
 
     <!-- 网段概览表：展开行显示「已用 / 空闲交错」的地址分配明细（NetBox Prefix 详情思路） -->
     <el-table :data="items" v-loading="loading" row-key="key" size="small" stripe>
-      <template #empty><el-empty description="暂无带网段的网络" :image-size="80" /></template>
+      <template #empty><EmptyState description="暂无带网段的网络" /></template>
 
       <!-- 展开行：已用地址与空闲区间按地址交错排成一张表，一眼看清空洞在哪 -->
       <el-table-column type="expand">
@@ -117,6 +117,7 @@ import { copyText } from '../../utils/clipboard'
 import { useAuth } from '../../store/auth'
 import Toolbar from '../../components/Toolbar.vue'
 import CopyButton from '../../components/CopyButton.vue'
+import EmptyState from '../../components/EmptyState.vue'
 
 const router = useRouter()
 const { canOperate } = useAuth()

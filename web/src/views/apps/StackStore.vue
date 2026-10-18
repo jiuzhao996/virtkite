@@ -33,7 +33,7 @@
         </el-card>
       </el-col>
     </el-row>
-    <el-empty v-if="!stacks.length && !loading" description="栈目录为空（stacks/*.yml）" :image-size="80" />
+    <EmptyState description="栈目录为空（stacks/*.yml）" />
 
     <!-- 栈详情抽屉（Dockge 式：服务 / 组合日志 / 编排文件编辑 / 升级） -->
     <StackDetailDrawer ref="detailDrawerRef" @changed="onStackChanged" @terminal="onStackTerminal" />
@@ -61,6 +61,7 @@ import { api } from '../../api'
 import { errMsg, isCancel } from '../../utils/format'
 import Toolbar from '../../components/Toolbar.vue'
 import StackDetailDrawer from './StackDetailDrawer.vue'
+import EmptyState from '../../components/EmptyState.vue'
 
 const router = useRouter()
 

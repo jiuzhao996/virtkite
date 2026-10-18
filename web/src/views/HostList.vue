@@ -15,7 +15,7 @@
 
       <!-- 宿主机健康大卡（腾讯云服务器概要风格）：单管理节点下对象少，一行表格太空；
            每台一张大卡：头=名称/状态/操作，体=连接信息行 + 描述；实时资源仍走「查看状态」弹窗（SSH 采集） -->
-      <el-empty v-if="!items.length && !loading" description="暂无宿主机，点击右上角「添加宿主机」登记本机信息" :image-size="80" />
+      <EmptyState v-if="!items.length && !loading" description="暂无宿主机，点击右上角「添加宿主机」登记本机信息" />
       <div v-else class="host-cards">
         <el-card v-for="row in items" :key="row.id" shadow="hover" class="host-card">
           <div class="hc-head">
@@ -84,6 +84,7 @@ import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { hostStatusText, hostStatusTag, errMsg, isCancel, fmtDateTime } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 // embedded：嵌入系统设置页时隐藏独立页头（IA 归并批次 2026-10）
 defineProps({ embedded: { type: Boolean, default: false } })

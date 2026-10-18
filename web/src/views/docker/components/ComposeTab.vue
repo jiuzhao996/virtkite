@@ -6,7 +6,7 @@
     <!-- 卡片视图（与容器页同观感）：服务芯片一排展示项目内服务（状态点着色），
          商店部署的栈（ConfigFiles 含 data/stacks）整卡可点进栈详情抽屉 -->
     <div v-loading="loading" class="cp-grid">
-      <el-empty v-if="!composeProjects.length" description="暂无 compose 编排项目（docker compose ls 为空）" :image-size="80" />
+      <EmptyState description="暂无 compose 编排项目（docker compose ls 为空）" />
       <el-card
         v-for="row in composeProjects" :key="row.Name" shadow="hover"
         class="cp-card" :class="{ 'cp-clickable': !!stackIdOf(row) }"
@@ -113,6 +113,7 @@ import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { composeTag } from '../../../utils/docker-format'
 import StackDetailDrawer from '../../apps/StackDetailDrawer.vue'
+import EmptyState from '../../../components/EmptyState.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')

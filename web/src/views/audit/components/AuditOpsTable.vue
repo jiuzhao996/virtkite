@@ -2,7 +2,7 @@
   <!-- 行点击钻取：整行可点开详情抽屉（详情单元格同入口，操作列已无冗余按钮）；clickable-table 只作用于本表，
        不波及「控制台会话」tab（SessionList 为独立组件，行内另有虚拟机链接与断开按钮） -->
   <el-table :data="items" stripe border style="width: 100%" class="clickable-table" @row-click="(row) => emit('row-click', row)">
-    <template #empty><el-empty description="暂无审计记录" :image-size="80" /></template>
+    <template #empty><EmptyState description="暂无审计记录" /></template>
     <el-table-column label="时间" min-width="172">
       <template #default="{ row }">
         <span class="mono">{{ fmtDateTime(row.created_at) }}</span>
@@ -54,6 +54,7 @@
 // 详情单元格工具提示。整行/详情单元格点击统一 emit('row-click', row)（页面打开详情抽屉）。
 // actionMap（动作→中文）由页面传入并随 api.auditActions 更新，故用 props 而非本地常量。
 import { fmtDateTime } from '../../../utils/format'
+import EmptyState from '../../../components/EmptyState.vue'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },

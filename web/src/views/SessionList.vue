@@ -31,7 +31,7 @@
       />
 
       <el-table :data="items" stripe border style="width: 100%">
-        <template #empty><el-empty description="暂无会话" :image-size="80" /></template>
+        <template #empty><EmptyState description="暂无会话" /></template>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column label="虚拟机" min-width="140">
           <template #default="{ row }">
@@ -103,6 +103,7 @@ import { useAuth } from '../store/auth'
 import Toolbar from '../components/Toolbar.vue'
 import { sessionTypeText, sessionTypeTag, fmtDateTime, errMsg, isCancel } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
+import EmptyState from '../components/EmptyState.vue'
 
 const { isAdmin } = useAuth()
 

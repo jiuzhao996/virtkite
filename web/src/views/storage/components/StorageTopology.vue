@@ -30,12 +30,7 @@
 
     <div class="st-canvas-wrap">
       <div ref="canvasRef" class="st-canvas" />
-      <el-empty
-        v-if="!loading && !gNodes.length"
-        class="st-empty"
-        description="暂无存储池或卷（libvirt 未返回数据）"
-        :image-size="80"
-      />
+      <EmptyState description="暂无存储池或卷（libvirt 未返回数据）" />
     </div>
     <p class="st-hint">
       图为「池 → 卷」的静态关系；池之间的金色弧线是跨池克隆血缘（标注条数），卷级克隆链
@@ -56,6 +51,7 @@ import { Refresh, FullScreen } from '@element-plus/icons-vue'
 import { api } from '../../../api'
 import { errMsg } from '../../../utils/format'
 import Toolbar from '../../../components/Toolbar.vue'
+import EmptyState from '../../../components/EmptyState.vue'
 
 const emit = defineEmits(['open-pool'])
 

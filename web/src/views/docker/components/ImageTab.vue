@@ -14,7 +14,7 @@
       <span class="count ct-count">共 {{ filteredImages.length }} 个镜像</span>
     </div>
     <el-table :data="filteredImages" v-loading="loading" stripe size="small">
-      <template #empty><el-empty description="暂无镜像" :image-size="80" /></template>
+      <template #empty><EmptyState description="暂无镜像" /></template>
       <el-table-column label="仓库" min-width="220" show-overflow-tooltip>
         <template #default="{ row }">
           <span class="mono">{{ row.Repository || '—' }}</span>
@@ -112,6 +112,7 @@ import { errMsg, isCancel } from '../../../utils/format'
 import { shortId, dockerSize, imageTime } from '../../../utils/docker-format'
 import ContainerCreateDrawer from './ContainerCreateDrawer.vue'
 import DockerBuildDrawer from './DockerBuildDrawer.vue'
+import EmptyState from '../../../components/EmptyState.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')

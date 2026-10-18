@@ -16,7 +16,7 @@
     </template>
 
     <el-table :data="history" v-loading="historyLoading" stripe>
-      <template #empty><el-empty description="暂无告警历史记录" :image-size="80" /></template>
+      <template #empty><EmptyState description="暂无告警历史记录" /></template>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="row.status === 'firing' ? 'danger' : 'success'" effect="light" size="small">
@@ -79,6 +79,7 @@
 // status（筛选值）与 page（当前页）用 v-model 双向绑定页面状态，保持单一状态源在页面。
 import { AlarmClock, Refresh } from '@element-plus/icons-vue'
 import { fmtDateTime } from '../../../utils/format'
+import EmptyState from '../../../components/EmptyState.vue'
 
 defineProps({
   history: { type: Array, default: () => [] },

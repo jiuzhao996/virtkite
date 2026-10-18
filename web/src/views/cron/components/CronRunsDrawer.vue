@@ -13,7 +13,7 @@
     </template>
     <el-table v-loading="runsLoading" :data="runs" stripe size="small">
       <template #empty>
-        <el-empty description="该任务还没有执行记录" :image-size="80" />
+        <EmptyState description="该任务还没有执行记录" />
       </template>
       <el-table-column label="开始时间" width="170">
         <template #default="{ row }">
@@ -56,6 +56,7 @@
 // 主表共用（各留一份），改一处须同步。
 import { VideoPlay } from '@element-plus/icons-vue'
 import { fmtDateTime } from '../../../utils/format'
+import EmptyState from '../../../components/EmptyState.vue'
 
 defineProps({
   // 抽屉标题（页面按当前任务名拼好传入）

@@ -36,7 +36,7 @@
             </div>
           </template>
           <el-table :data="hostKeys" v-loading="keysLoading" size="small">
-            <template #empty><el-empty description="暂无已记录的主机指纹" :image-size="80" /></template>
+            <template #empty><EmptyState description="暂无已记录的主机指纹" /></template>
             <el-table-column prop="host" label="主机" min-width="140" show-overflow-tooltip />
             <el-table-column prop="port" label="端口" width="76" />
             <el-table-column prop="key_type" label="算法" width="110" />
@@ -252,6 +252,7 @@ import CloudInitTemplates from './CloudInitTemplates.vue'
 import HostList from './HostList.vue'
 import PageHead from '../components/PageHead.vue'
 import { onBeforeRouteLeave } from 'vue-router'
+import EmptyState from '../components/EmptyState.vue'
 
 // 左侧竖向 tab 的当前项；默认落在「宿主机」（单宿主机平台的「机器在哪」比调参更常看）。
 const activeTab = ref('hosts')

@@ -54,7 +54,7 @@
         </el-card>
       </el-col>
     </el-row>
-    <el-empty v-if="!items.length && !loading" description="清单为空" :image-size="80" />
+    <EmptyState description="清单为空" />
   </div>
 </template>
 
@@ -67,6 +67,7 @@ import { Refresh, Download } from '@element-plus/icons-vue'
 import PageHead from '../../../components/PageHead.vue'
 import { api } from '../../../api'
 import { extractTaskId, pollTask, taskErrorMessage } from '../../../utils/task'
+import EmptyState from '../../../components/EmptyState.vue'
 
 defineProps({
   embedded: { type: Boolean, default: false }

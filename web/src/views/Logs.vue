@@ -35,7 +35,7 @@
 
       <div v-if="notice" class="log-notice">{{ notice }}</div>
       <el-table v-else v-loading="loading" :data="rows" size="small" class="log-table">
-        <template #empty><el-empty description="没有匹配的日志" :image-size="80" /></template>
+        <template #empty><EmptyState description="没有匹配的日志" /></template>
         <el-table-column label="时间" width="180">
           <template #default="{ row }">{{ fmtTime(row._time) }}</template>
         </el-table-column>
@@ -64,6 +64,7 @@ import { Refresh, Search } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { errMsg, fmtDateTime } from '../utils/format'
 import PageHead from '../components/PageHead.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 const query = ref('')
 const source = ref('all')

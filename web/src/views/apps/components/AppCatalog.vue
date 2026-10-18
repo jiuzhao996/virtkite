@@ -19,7 +19,7 @@
       </div>
     </div>
 
-    <el-empty v-if="apps.length === 0" description="该分类下没有匹配的应用" :image-size="80" />
+    <EmptyState v-if="apps.length === 0" description="该分类下没有匹配的应用" />
     <el-row v-else :gutter="12">
       <el-col v-for="app in apps" :key="app.id" :xs="24" :sm="12" :md="8" style="margin-bottom: 12px">
         <el-card shadow="hover" class="app-card">
@@ -55,6 +55,7 @@
 <script setup>
 // 「脚本应用」目录区：分类/搜索展示层 + 卡片操作意图上抛；安装请求与任务编排留在 AppStore。
 import { Search } from '@element-plus/icons-vue'
+import EmptyState from '../../../components/EmptyState.vue'
 
 const props = defineProps({
   loading: { type: Boolean, default: false },

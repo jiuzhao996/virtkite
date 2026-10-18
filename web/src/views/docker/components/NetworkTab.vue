@@ -6,7 +6,7 @@
     <!-- 卡片化（与「虚拟网络」tab 卡片同形态，同页统一视觉语言）：
          内置网络禁删（bridge/host/none 是 docker 底座）；网段/网关由后端批量 inspect 补齐 -->
     <div v-loading="loading" class="net-cards">
-      <el-empty v-if="!networks.length" description="暂无网络" :image-size="80" />
+      <EmptyState description="暂无网络" />
       <el-card v-for="row in networks" :key="row.Name" shadow="hover" class="dn-card" @click="openDetail(row)">
         <div class="dn-head">
           <span class="dn-name mono">{{ row.Name }}</span>
@@ -62,6 +62,7 @@ import { api } from '../../../api'
 import { errMsg, isCancel } from '../../../utils/format'
 import { dockerTime } from '../../../utils/docker-format'
 import DockerNetworkDrawer from './DockerNetworkDrawer.vue'
+import EmptyState from '../../../components/EmptyState.vue'
 
 // 布局壳通信：失败上报 / 成功清 503 门控
 const { reportLoadError, clearLoadError } = inject('dockerPage')

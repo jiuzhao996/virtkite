@@ -52,7 +52,7 @@
 
       <!-- 行点击钻取：整行可点开任务详情抽屉；行内按钮/链接一律 .stop 防止误触发钻取 -->
       <el-table :data="filteredItems" stripe border style="width: 100%" row-class-name="task-row" @row-click="openDetail" @selection-change="onSelectionChange">
-        <template #empty><el-empty description="暂无任务" :image-size="80" /></template>
+        <template #empty><EmptyState description="暂无任务" /></template>
         <el-table-column type="selection" width="46" />
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="title" label="任务" min-width="200" show-overflow-tooltip />
@@ -286,6 +286,7 @@ import { useTaskLogStream } from '../composables/useTaskLogStream'
 import { useAuth } from '../store/auth'
 import { taskTypeText, taskStatusText, taskStatusTag, fmtDateTime, errMsg, isCancel } from '../utils/format'
 import { usePagination } from '../composables/usePagination'
+import EmptyState from '../components/EmptyState.vue'
 
 const router = useRouter()
 const route = useRoute()

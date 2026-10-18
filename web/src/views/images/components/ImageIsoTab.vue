@@ -18,7 +18,7 @@
       title="ISO 用于创建 VM 的「本地安装介质 (ISO)」方式：安装系统时从激活存储池选择 ISO 挂载光驱。可到「ISO 市场」tab 一键下载官方安装镜像。"
     />
     <el-table v-loading="isoLoading" :data="isoItems" stripe border style="width: 100%">
-      <template #empty><el-empty description="激活存储池中未发现 .iso 卷" :image-size="80" /></template>
+      <template #empty><EmptyState description="激活存储池中未发现 .iso 卷" /></template>
       <el-table-column label="名称" min-width="200">
         <template #default="{ row }">
           <span class="mono">{{ row.name }}</span>
@@ -45,6 +45,7 @@
 import { Refresh } from '@element-plus/icons-vue'
 import { fmtSizeBytes } from '../../../utils/format'
 import Toolbar from '../../../components/Toolbar.vue'
+import EmptyState from '../../../components/EmptyState.vue'
 
 defineProps({
   // 聚合后的 .iso 卷列表（每项 { name, capacity, pool, path }）
