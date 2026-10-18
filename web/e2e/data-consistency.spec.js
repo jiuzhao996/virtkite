@@ -80,4 +80,63 @@ test.describe('数据一致性 @data-consistency', () => {
       }
     }
   })
+
+  test('存储池：每个池的卷数与接口 vol_count 一致', async ({ page }) => {
+    await login(page)
+    const pools = await api(page, 'GET', '/api/storage/pools')
+    const items = pools.data?.items || []
+    test.skip(!items.length, '平台没有存储池')
+
+    await page.goto('/#/storage')
+    await page.locator('.el-main .el-tabs__item', { hasText: '存储池' }).click()
+    await page.waitForTimeout(1500)
+
+    // 卡片渲染数 = 接口池数
+    const cards = await page.locator('.el-main .pool-card').count()
+    expect(cards, `接口 ${items.length} 个池，页面渲染 ${cards} 张卡片`).toBe(items.length)
+
+    // 每池卡片上的「卷数 N」必须等于该池接口 vol_count。
+    // 注意：页面**不显示**「共 N 个池」汇总，所以只核对逐池卷数。
+    for (const p of items) {
+      const card = page.locator('.el-main .pool-card', { hasText: p.name }).first()
+      if (!(await card.count())) continue
+      const txt = await card.innerText()
+      const want = String(p.vol_count ?? 0)
+      expect(txt, `池 ${p.name} 卡片应含「卷数 ${want}」`).toContain(`卷数 ${want}`)
+    }
+    console.log(`存储池：${items.length} 个池、逐池卷数已核对（接口不提供汇总计数，页面也不显示）`)
+  })
+
+  test('网络：「运行/自启/共 N 个」与接口一致', async ({ page }) => {
+    await login(page)
+    const nets = await api(page, 'GET', '/api/networks')
+    const items = nets.data?.items || []
+    const running = items.filter((n) => n.active).length
+    const autostart = items.filter((n) => n.autostart).length
+
+    await page.goto('/#/networks')
+    await page.locator('.el-main .el-tabs__item', { hasText: '虚拟网络' }).click()
+    await page.waitForTimeout(1500)
+
+    const bodyText = await page.locator('.el-main').innerText()
+    expect(bodyText, `应含「共 ${items.length} 个网络」`).toContain(`共 ${items.length} 个网络`)
+    expect(bodyText, `运行数应为 ${running}`).toContain(`运行 ${running}`)
+    if (autostart) expect(bodyText).toContain(`自启 ${autostart}`)
+    console.log(`网络：共 ${items.length}、运行 ${running}、自启 ${autostart}`)
+  })
+
+  test('镜像：页数/total 与接口一致', async ({ page }) => {
+    await login(page)
+    const imgs = await api(page, 'GET', '/api/images')
+    const apiTotal = imgs.data?.total
+    const rendered = (imgs.data?.items || []).length
+
+    await page.goto('/#/images')
+    await page.waitForTimeout(1800) // 该页要逐个池查 iso，接口较多
+
+    const bodyText = await page.locator('.el-main').innerText()
+    // 云镜像 tab 显示「共 N 个」；模板盘 tab 各自计数
+    expect(bodyText).toContain(String(apiTotal))
+    console.log(`镜像：接口 total=${apiTotal}、items=${rendered}`)
+  })
 })

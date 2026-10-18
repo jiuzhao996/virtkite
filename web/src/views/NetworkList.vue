@@ -6,7 +6,7 @@
     </PageHead>
 
     <!-- Docker 资源拆分批次：拓扑图 + 通信流量 + 虚拟网络（libvirt）+ Docker 网络，语义归并统一网络入口 -->
-    <el-tabs v-model="activeTab" class="net-tabs">
+    <el-tabs v-model="activeTab" class="net-tabs" @tab-change="(n) => syncTabToUrl(router, route, n, 'topology')">
       <el-tab-pane label="拓扑图" name="topology">
         <NetworkTopology @open-network="onOpenNetwork" />
       </el-tab-pane>
@@ -129,12 +129,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus, VideoPlay, VideoPause, Delete } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { errMsg, isCancel } from '../utils/format'
+import { syncTabToUrl } from '../utils/tab-url'
 import PageHead from '../components/PageHead.vue'
 import Toolbar from '../components/Toolbar.vue'
 import DockerGate from '../components/DockerGate.vue'
@@ -146,7 +148,18 @@ import NetworkDetailDrawer from './network/NetworkDetailDrawer.vue'
 
 const { isAdmin, canOperate } = useAuth()
 // 默认落在拓扑图（N1：一眼看清网络如何通信），通信流量/列表 tab 备查
+const route = useRoute()
+const router = useRouter()
 const activeTab = ref('topology')
+// tab 白名单（值须与下方 el-tab-pane 的 name 一致）；URL 里别的值一律回落默认
+const NET_TABS = ['topology', 'ipam', 'flow', 'libvirt', 'docker']
+// 深链（与 StorageList/Dashboard 同款双向同步）：进来读 query、切 tab 写回 URL
+function applyQueryTab() {
+  const t = route.query.tab
+  activeTab.value = NET_TABS.includes(t) ? t : 'topology'
+}
+watch(() => route.query.tab, applyQueryTab)
+onMounted(applyQueryTab)
 const dockerNetRef = ref(null)
 const netDetailRef = ref(null)
 

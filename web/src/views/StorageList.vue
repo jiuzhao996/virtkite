@@ -9,7 +9,7 @@
     </PageHead>
 
     <!-- Docker 资源拆分批次：拓扑图 + 平台存储（qcow2 池）+ Docker 卷，统一存储入口 -->
-    <el-tabs v-model="activeTab" class="storage-tabs">
+    <el-tabs v-model="activeTab" class="storage-tabs" @tab-change="(n) => syncTabToUrl(router, route, n, 'topo')">
       <el-tab-pane label="拓扑图" name="topo">
         <StorageTopology @open-pool="activeTab = 'pools'" />
       </el-tab-pane>
@@ -127,12 +127,14 @@
 // ⚠️ refsInUse / refsTooltip 在页面与 VolumeDrawer 各留一份（页面用于孤儿卷筛选与
 //   删卷确认文案，抽屉用于表格「在用」列）——改一处须同步另一处。
 // ============================================================================
-import { ref, computed, h, onMounted } from 'vue'
+import { ref, computed, h, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus } from '@element-plus/icons-vue'
 import { api } from '../api'
 import { useAuth } from '../store/auth'
 import { pollTask, extractTaskId } from '../utils/task.js'
+import { syncTabToUrl } from '../utils/tab-url'
 import PageHead from '../components/PageHead.vue'
 import StorageTopology from './storage/components/StorageTopology.vue'
 import PoolSummary from './storage/components/PoolSummary.vue'
@@ -150,8 +152,20 @@ import VolumeTab from './docker/components/VolumeTab.vue'
 import { fmtGBSum, errMsg, isCancel, clampPct } from '../utils/format'
 
 const { isAdmin, canOperate } = useAuth()
+const route = useRoute()
+const router = useRouter()
 // 默认落在拓扑图（与网络页同款首屏），池列表/卷管理备查
 const activeTab = ref('topo')
+// tab 白名单：只认本页真实存在的 tab 名，URL 里塞别的值一律回落默认
+// （不做任意字符串透传，避免 ?tab=xxx 把页面带进无内容状态）
+const STORAGE_TABS = ['topo', 'pools', 'docker']
+// 深链（与 Dashboard/ImageList 同款双向同步）：进来读 query、切 tab 写回 URL
+function applyQueryTab() {
+  const t = route.query.tab
+  activeTab.value = STORAGE_TABS.includes(t) ? t : 'topo'
+}
+watch(() => route.query.tab, applyQueryTab)
+onMounted(applyQueryTab)
 const dockerVolRef = ref(null)
 
 const pools = ref([])

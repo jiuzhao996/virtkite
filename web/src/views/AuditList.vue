@@ -2,7 +2,7 @@
   <div v-loading="loading">
     <PageHead title="审计中心" subtitle="操作日志记录谁、何时、对哪个对象做了什么、成功还是失败；控制台会话记录谁连过哪台虚拟机。均为只读记录，用于安全追溯" />
 
-    <el-tabs v-model="activeTab">
+    <el-tabs v-model="activeTab" @tab-change="(n) => syncTabToUrl(router, route, n, isAdmin ? 'ops' : 'sessions')">
       <!-- 操作日志仅管理员可见（后端 /api/audit admin-only）；viewer 只能看会话流水 -->
       <el-tab-pane v-if="isAdmin" label="操作日志" name="ops">
         <!-- 近 7 天操作量（包B）：独立于下方列表筛选恒看近 7 天；柱条点击联动日期筛选，再点同一天取消。
@@ -83,6 +83,7 @@
 //   （后两者各自持一份 actionLabel）——改一处须同步。
 // ============================================================================
 import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api, TOKEN_KEY } from '../api'
 import echarts from '../utils/echarts'
@@ -90,6 +91,7 @@ import { BarChart } from 'echarts/charts'
 import { useChart } from '../composables/useChart'
 import { useAuth } from '../store/auth'
 import { FALLBACK_ACTION_LABELS, errMsg, cssVar } from '../utils/format'
+import { syncTabToUrl } from '../utils/tab-url'
 import { usePagination } from '../composables/usePagination'
 import SessionList from './SessionList.vue'
 import PageHead from '../components/PageHead.vue'
@@ -104,7 +106,21 @@ echarts.use([BarChart])
 
 const { isAdmin } = useAuth()
 // 默认 tab：管理员落在操作日志，普通用户只有会话流水可看
+const route = useRoute()
+const router = useRouter()
+// 默认 tab 依角色：admin 看操作日志，其余角色直接落控制台会话（权限最小面）
 const activeTab = ref(isAdmin.value ? 'ops' : 'sessions')
+// tab 白名单 + 深链（与 StorageList/NetworkList 同款双向同步）
+const AUDIT_TABS = ['ops', 'sessions']
+function applyQueryTab() {
+  const t = route.query.tab
+  // 非 admin 指定 ops 时仍回落 sessions：前端隐藏不等于后端放行，别给个点了 403 的 tab
+  const def = isAdmin.value ? 'ops' : 'sessions'
+  const picked = AUDIT_TABS.includes(t) ? t : def
+  activeTab.value = isAdmin.value ? picked : 'sessions'
+}
+watch(() => route.query.tab, applyQueryTab)
+onMounted(applyQueryTab)
 
 const items = ref([])
 const range = ref(null)

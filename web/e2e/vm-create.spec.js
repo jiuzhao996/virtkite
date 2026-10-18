@@ -167,11 +167,13 @@ test.describe('真实建机 @vm-create', () => {
           .toMatch(/^running\|.+/)
 
         const cur = await findVMByName(page, name)
-        // 刚拿到 IP 时 sshd/cloud-init 可能还在启动，轮询到 SSH 真正可用（最多 2 分钟）
+        // 刚拿到 IP 时 sshd/cloud-init 可能还在启动，轮询到 SSH 真正可用。
+        // 超时给到 3 分钟：全量跑时慢池只有 2 worker，VM 启动会被别的建机/删机
+        // 任务拖慢，2 分钟曾出现过 sshd 还没起导致假失败（单独跑 28 秒就能通）。
         const sshCall = () =>
           api(page, 'POST', `/api/vms/${cur.id}/files/list`, { host: cur.ip, use_saved: true, path: '/' })
         await expect
-          .poll(async () => (await sshCall()).status, { timeout: 120_000, intervals: [3000] })
+          .poll(async () => (await sshCall()).status, { timeout: 180_000, intervals: [3000] })
           .toBe(200)
 
         const ssh = await sshCall()
