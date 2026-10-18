@@ -54,7 +54,7 @@
         </el-card>
       </el-col>
     </el-row>
-    <EmptyState description="清单为空" />
+    <EmptyState v-if="!items.length && !loading" description="清单为空" />
   </div>
 </template>
 

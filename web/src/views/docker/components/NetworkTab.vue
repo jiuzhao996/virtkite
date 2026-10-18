@@ -6,7 +6,7 @@
     <!-- 卡片化（与「虚拟网络」tab 卡片同形态，同页统一视觉语言）：
          内置网络禁删（bridge/host/none 是 docker 底座）；网段/网关由后端批量 inspect 补齐 -->
     <div v-loading="loading" class="net-cards">
-      <EmptyState description="暂无网络" />
+      <EmptyState v-if="!networks.length" description="暂无网络" />
       <el-card v-for="row in networks" :key="row.Name" shadow="hover" class="dn-card" @click="openDetail(row)">
         <div class="dn-head">
           <span class="dn-name mono">{{ row.Name }}</span>

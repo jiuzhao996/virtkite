@@ -33,7 +33,7 @@
         </el-card>
       </el-col>
     </el-row>
-    <EmptyState description="栈目录为空（stacks/*.yml）" />
+    <EmptyState v-if="!stacks.length && !loading" description="栈目录为空（stacks/*.yml）" />
 
     <!-- 栈详情抽屉（Dockge 式：服务 / 组合日志 / 编排文件编辑 / 升级） -->
     <StackDetailDrawer ref="detailDrawerRef" @changed="onStackChanged" @terminal="onStackTerminal" />
