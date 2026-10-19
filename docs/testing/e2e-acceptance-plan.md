@@ -622,6 +622,49 @@ CHROME_PATH=/usr/bin/google-chrome npx --yes lighthouse "http://127.0.0.1:8080/#
 - 栈 Detail 与 List 的 `deployed` 口径不一致（R16）—— 已修复；保存编排仍不持锁之外的版本记录缺失（R19）。
 - 任务日志 WS 终态最后一条可能未落库就发 done（D-16）—— 已修复（`TaskLogger.Close` 改为先 flush 再关订阅通道）。
 - **Docker 域深挖未完成**（盘点代理因服务端 503 中断）：容器创建/健康检查/构建上下文/compose 服务级操作/日志 WS 重连等仍只有基础 CRUD 覆盖。
+### 11.3 第三批：冗余清理与守卫落地（2026-10-18）
+
+**守卫落地（安全承诺兑现）**：文档 §3.1 一直写「删除前统一过 `isE2EName()`」，但实测 24 个
+`DELETE` 调用点**零调用**——`isE2EName` 从未被任何用例引用，承诺落空。已改为在
+`helpers/api.js` 的 `api()` 里统一拦截（所有 DELETE 必经此处，无法绕过），非 `e2e-` 前缀
+直接抛错不发请求；数字型主键必须显式传 `guard`，并新增 `e2eGuardOf()` 从任务标题
+（形如「创建虚拟机 e2e-xxx」）抽出名称。
+
+守卫上线后立即拦到一个真实误删风险：`task-center.spec.js` 原取「最新一条 success 任务」
+直接删——那可能是用户的真实建机/备份记录。已改为只删本轮 `RUN_ID` 产生的任务。
+
+**冗余清理**：
+
+| 项 | 处置 |
+|---|---|
+| 13 个未使用导出（knip） | 内部使用的改为非导出；完全未用的删除（clearSession/getToken/logout/listPools/listNetworks/listImages/deleteVM 等薄封装） |
+| `lighthouse` 依赖 | 移除（体积大、仅基线时用一次、knip 判未使用）；改为按需 `npx --yes lighthouse` 临时调用，不进 devDependencies |
+| `VMCredentialHandler.UpsertForVM` | 删（零调用；tasks 包有自己的 upsertVMCredential，禁反向 import） |
+| `ansible.ValidDirName` | 删（零调用；handler 直接用 `dirNameRe`） |
+| `ansible.ForceReloadKeyPair` | 删（注释自认无调用方，测试也未调） |
+| `ansible.SyntaxCheckDir` | 删（零调用；实际用 `SyntaxCheckContentInDir`） |
+
+**保留不删**（有测试覆盖，非真死代码）：`handler.itoa`（terminal_test 断言其行为）、
+`vmGrantActive`（单测）、`vmssh.Options.Host/Port/User`（字段刻意不可导出的安全设计，
+getter 供本包与测试读取）。
+
+清理后：knip 零输出、ESLint 零告警、deadcode 从 8 处降到 5 处（均为测试专用）。
+
+---
+
+### 11.4 第四批：设计器幂等 + 前端拆分（2026-10-18）
+
+| 改动 | 内容 |
+|---|---|
+| 设计器 Apply 幂等 | 与预览同源算法 + 同名 VM 跳过，消灭「重复落地 → 同名 define 失败 → 回收站垃圾」链路 |
+| `DesignerPalette.vue` 新组件 | 从 `DesignerPage.vue` 抽出设备栏/模板/计划列表（拖拽 emit 上抛，不 import X6），父文件 996 → 953 行 |
+| `useShellChrome.js` 新 composable | 从 `MainLayout.vue` 抽出深色模式/侧栏折叠/全屏切换（含 fullscreenchange 监听与卸载清理），与本地键名逐字节兼容 |
+| 前端拆分收益 | TaskList 1101 / DesignerPage 996→953 / Automation 984 / MainLayout 726→702 行，均已有子组件支撑；进一步拆分见下 |
+
+**下一批拆分建议**：`TaskList.vue` 详情抽屉（依赖日志 WS、时间线、KV 等约 490 行，需整体搬迁）；
+`Automation.vue`（快速执行/Playbook/Role/历史四块可按 tab 切）；`CronList.vue` 的表格列渲染。
+
+---
 
 ### 11.5 第五批：Q1 收尾 + Q2/Q3 前端明示（2026-10-18，用户拍板 B 方案）
 
@@ -658,51 +701,18 @@ CHROME_PATH=/usr/bin/google-chrome npx --yes lighthouse "http://127.0.0.1:8080/#
 
 ---
 
-### 11.4 第四批：设计器幂等 + 前端拆分（2026-10-18）
+### 11.7 第七批：查询错误语义 + 空态尺寸 + 容器终端（2026-10-19）
 
-| 改动 | 内容 |
+| 项 | 内容 |
 |---|---|
-| 设计器 Apply 幂等 | 与预览同源算法 + 同名 VM 跳过，消灭「重复落地 → 同名 define 失败 → 回收站垃圾」链路 |
-| `DesignerPalette.vue` 新组件 | 从 `DesignerPage.vue` 抽出设备栏/模板/计划列表（拖拽 emit 上抛，不 import X6），父文件 996 → 953 行 |
-| `useShellChrome.js` 新 composable | 从 `MainLayout.vue` 抽出深色模式/侧栏折叠/全屏切换（含 fullscreenchange 监听与卸载清理），与本地键名逐字节兼容 |
-| 前端拆分收益 | TaskList 1101 / DesignerPage 996→953 / Automation 984 / MainLayout 726→702 行，均已有子组件支撑；进一步拆分见下 |
+| DB 错误不再伪装成 404 | 新增 `handler/lookupError`：`gorm.ErrRecordNotFound` → 404 + 业务文案，其余（DB 故障/连接池耗尽）→ 500「查询失败」并把完整错误写日志。收口 13 处配置/管理类查询（用户、计划任务、主机组、用户组、会话、资产申请）与 `task.go` 两处漏网；**资产类（VM/镜像/宿主机）刻意保持一律 404**——「查无此项」与「无权访问」必须同响应，否则泄露记录是否存在 |
+| 空态尺寸收敛 | 原有 48/50/56/60/70/80/90 七种取值，统一为两档：60（表格插槽/抽屉/卡片内小面板）×22、80（页面/面板级，`EmptyState` 默认）×15 |
+| 容器终端 E2E | 新增 `@docker` 用例：运行中 alpine → 卡片「终端」→ 断言「已连接」→ xterm 键入 `echo` → 断言 `.xterm-rows` 回显。此前只有单测，无端到端覆盖 |
 
-**下一批拆分建议**：`TaskList.vue` 详情抽屉（依赖日志 WS、时间线、KV 等约 490 行，需整体搬迁）；
-`Automation.vue`（快速执行/Playbook/Role/历史四块可按 tab 切）；`CronList.vue` 的表格列渲染。
+验收：后端 `go build`/`go test`/`golangci-lint`（0 issues）、前端 lint 0 告警 + 76 单测 + build、相关 E2E 分组全绿。
 
 ---
 
-## 12. 已知限制与待补
-
-### 11.3 第三批：冗余清理与守卫落地（2026-10-18）
-
-**守卫落地（安全承诺兑现）**：文档 §3.1 一直写「删除前统一过 `isE2EName()`」，但实测 24 个
-`DELETE` 调用点**零调用**——`isE2EName` 从未被任何用例引用，承诺落空。已改为在
-`helpers/api.js` 的 `api()` 里统一拦截（所有 DELETE 必经此处，无法绕过），非 `e2e-` 前缀
-直接抛错不发请求；数字型主键必须显式传 `guard`，并新增 `e2eGuardOf()` 从任务标题
-（形如「创建虚拟机 e2e-xxx」）抽出名称。
-
-守卫上线后立即拦到一个真实误删风险：`task-center.spec.js` 原取「最新一条 success 任务」
-直接删——那可能是用户的真实建机/备份记录。已改为只删本轮 `RUN_ID` 产生的任务。
-
-**冗余清理**：
-
-| 项 | 处置 |
-|---|---|
-| 13 个未使用导出（knip） | 内部使用的改为非导出；完全未用的删除（clearSession/getToken/logout/listPools/listNetworks/listImages/deleteVM 等薄封装） |
-| `lighthouse` 依赖 | 移除（体积大、仅基线时用一次、knip 判未使用）；改为按需 `npx --yes lighthouse` 临时调用，不进 devDependencies |
-| `VMCredentialHandler.UpsertForVM` | 删（零调用；tasks 包有自己的 upsertVMCredential，禁反向 import） |
-| `ansible.ValidDirName` | 删（零调用；handler 直接用 `dirNameRe`） |
-| `ansible.ForceReloadKeyPair` | 删（注释自认无调用方，测试也未调） |
-| `ansible.SyntaxCheckDir` | 删（零调用；实际用 `SyntaxCheckContentInDir`） |
-
-**保留不删**（有测试覆盖，非真死代码）：`handler.itoa`（terminal_test 断言其行为）、
-`vmGrantActive`（单测）、`vmssh.Options.Host/Port/User`（字段刻意不可导出的安全设计，
-getter 供本包与测试读取）。
-
-清理后：knip 零输出、ESLint 零告警、deadcode 从 8 处降到 5 处（均为测试专用）。
-
----
 
 ## 12. 已知限制与待补
 1. **需要管理员口令**才能跑 L5；无口令只跑登录页与 L1–L3。
