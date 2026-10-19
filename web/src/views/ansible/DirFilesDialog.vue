@@ -16,7 +16,7 @@
           <input ref="uploadInput" type="file" style="display: none" @change="doUpload" />
         </div>
         <el-table :data="files" size="small" height="420" @row-click="openFile">
-          <template #empty><el-empty description="空目录" :image-size="50" /></template>
+          <template #empty><el-empty description="空目录" :image-size="60" /></template>
           <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
           <el-table-column label="大小" width="90"><template #default="{ row }">{{ fmtSize(row.size) }}</template></el-table-column>
           <el-table-column label="" width="50">

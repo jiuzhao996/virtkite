@@ -36,14 +36,14 @@
         <div class="chart-cell">
           <div class="chart-title">宿主机资源（CPU / 内存占用 %）</div>
           <div v-show="hostSource === 'unavailable'" class="chart-empty">
-            <el-empty description="Prometheus 历史不可用（监控栈未启动或暂无采样）" :image-size="56" />
+            <el-empty description="Prometheus 历史不可用（监控栈未启动或暂无采样）" :image-size="60" />
           </div>
           <div v-show="hostSource !== 'unavailable'" :ref="hostHandle.chartRef" class="chart-box" />
         </div>
         <div class="chart-cell">
           <div class="chart-title">存储池使用率（%）</div>
           <div v-if="poolSource === 'unavailable' || !poolNames.length" class="chart-empty">
-            <el-empty :description="poolSource === 'unavailable' ? 'Prometheus 历史不可用' : '暂无存储池采样数据'" :image-size="56" />
+            <el-empty :description="poolSource === 'unavailable' ? 'Prometheus 历史不可用' : '暂无存储池采样数据'" :image-size="60" />
           </div>
           <div v-show="poolSource !== 'unavailable' && poolNames.length" :ref="poolHandle.chartRef" class="chart-box" />
         </div>

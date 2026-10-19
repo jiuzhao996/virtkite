@@ -18,7 +18,7 @@
         <template #default="{ row: net }">
           <div class="ipam-expand">
             <el-table :data="net.rows" size="small" row-key="_key">
-              <template #empty><el-empty description="该网段暂无地址记录" :image-size="50" /></template>
+              <template #empty><el-empty description="该网段暂无地址记录" :image-size="60" /></template>
               <el-table-column label="" width="72">
                 <template #default="{ row: r }">
                   <el-tag :type="r.kind === 'free' ? 'success' : 'info'" effect="plain" size="small">

@@ -14,7 +14,7 @@
         本池 {{ poolInCount }} 卷 ｜ 虚拟 {{ poolVirtualText }} / 实际 {{ poolActualText }}
         <template v-if="poolBoundaryCount"> ｜ 跨池链对端 {{ poolBoundaryCount }}</template>
       </div>
-      <el-empty v-if="!poolGraphLoading && !poolGraphNodes.length" description="该池暂无存储卷" :image-size="48" />
+      <el-empty v-if="!poolGraphLoading && !poolGraphNodes.length" description="该池暂无存储卷" :image-size="60" />
     </el-card>
     <div class="toolbar">
       <div>

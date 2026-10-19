@@ -4,7 +4,7 @@
       <h3 class="panel-title">性能</h3>
     </div>
     <div v-if="!isRunning" class="panel-empty">
-      <el-empty description="虚拟机未运行，无实时性能指标" :image-size="90" />
+      <el-empty description="虚拟机未运行，无实时性能指标" :image-size="80" />
     </div>
     <template v-else>
       <div class="metric-grid">

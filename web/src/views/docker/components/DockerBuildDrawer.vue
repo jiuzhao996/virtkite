@@ -12,7 +12,7 @@
     </div>
 
     <div v-if="!ctxName" class="bd-empty">
-      <el-empty description="还没有构建上下文。构建上下文是一个目录，放 Dockerfile 和需要 COPY 进镜像的文件。" :image-size="70">
+      <el-empty description="还没有构建上下文。构建上下文是一个目录，放 Dockerfile 和需要 COPY 进镜像的文件。" :image-size="80">
         <el-button type="primary" :icon="Plus" @click="createCtx">新建上下文</el-button>
       </el-empty>
     </div>
@@ -34,7 +34,7 @@
           </template>
         </div>
         <el-table :data="files" size="small" height="330" @row-click="openFile">
-          <template #empty><el-empty description="空目录，先建一个 Dockerfile" :image-size="50" /></template>
+          <template #empty><el-empty description="空目录，先建一个 Dockerfile" :image-size="60" /></template>
           <el-table-column label="文件" min-width="200" show-overflow-tooltip>
             <template #default="{ row }">
               <el-icon v-if="row.path.endsWith('/')"><Folder /></el-icon>

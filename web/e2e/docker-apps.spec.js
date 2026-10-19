@@ -138,6 +138,50 @@ test.describe('容器 @docker', () => {
     }
   })
 
+  test('容器终端：WS 可输入命令并回显输出', async ({ page }) => {
+    await login(page)
+    const probe = await api(page, 'GET', '/api/docker/containers')
+    test.skip(probe.status !== 200, 'Docker 不可用')
+
+    // 运行中的 alpine（sleep 保证 exec 时容器还活着）
+    const name = e2eName('term')
+    const created = await api(page, 'POST', '/api/docker/containers', {
+      name,
+      image: 'alpine:3.24',
+      command: 'sleep 60',
+    })
+    expect(created.status, `创建容器失败：${created.message || ''}`).toBe(200)
+    const id = created.data?.id
+    expect(id).toBeTruthy()
+
+    try {
+      await page.goto('/#/containers')
+      const card = page.locator('.ct-card', { hasText: name }).first()
+      await expect(card).toBeVisible({ timeout: 30_000 })
+
+      // 卡片操作区「终端」→ 打开终端抽屉（WS + 一次性票据）
+      await card.getByRole('button', { name: '终端' }).click()
+      const drawer = page.locator('.el-drawer:visible .cterm')
+      await expect(drawer).toBeVisible({ timeout: 15_000 })
+      // 状态条：连接中 → 已连接（WS 建连成功）
+      await expect(page.locator('.el-drawer:visible .cterm-status-text')).toContainText(/已连接/, {
+        timeout: 20_000,
+      })
+
+      // xterm 聚焦后键入：点击终端区（xterm 内部会聚焦 helper textarea）
+      await page.locator('.el-drawer:visible .cterm-body').click()
+      await page.keyboard.type('echo E2E_TERM_MARKER')
+      await page.keyboard.press('Enter')
+
+      // 输出渲染在 xterm 的 DOM 行里（xterm 默认 DOM renderer）
+      await expect(page.locator('.el-drawer:visible .xterm-rows')).toContainText('E2E_TERM_MARKER', {
+        timeout: 20_000,
+      })
+    } finally {
+      await api(page, 'DELETE', `/api/docker/containers/${id}?force=true`, undefined, { guard: name }).catch(() => {})
+    }
+  })
+
   test('容器日志 tab：输出可读，容器退出后流正常结束（不无限重连）', async ({ page }) => {
     await login(page)
     const probe = await api(page, 'GET', '/api/docker/containers')

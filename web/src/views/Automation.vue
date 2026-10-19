@@ -243,7 +243,7 @@
         <el-button v-if="canWrite" type="primary" size="small" :icon="Plus" @click="openGroupForm(null)">新建主机组</el-button>
         <span class="auto-hint">点击上方组标签即可一键选中组成员</span>
       </div>
-      <el-empty v-if="!hostGroups.length" description="还没有主机组" :image-size="70" />
+      <el-empty v-if="!hostGroups.length" description="还没有主机组" :image-size="80" />
       <div v-for="g in hostGroups" :key="g.id" class="auto-group-row">
         <div class="auto-group-info">
           <b>{{ g.name }}</b>

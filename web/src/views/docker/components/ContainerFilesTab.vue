@@ -28,7 +28,7 @@
         </span>
       </div>
       <div v-loading="loading" class="cf-body">
-        <el-empty v-if="!running" description="容器未运行，无法浏览文件" :image-size="70" />
+        <el-empty v-if="!running" description="容器未运行，无法浏览文件" :image-size="80" />
         <el-alert v-else-if="error" :title="error" type="error" :closable="false" show-icon />
         <el-table v-else :data="entries" size="small" stripe @row-click="onRowClick" class="cf-table">
           <el-table-column label="名称" min-width="220">

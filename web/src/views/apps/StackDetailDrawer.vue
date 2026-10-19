@@ -19,7 +19,7 @@
 
       <el-tabs v-model="tab">
         <el-tab-pane label="服务" name="services">
-          <el-empty v-if="!services.length" description="未部署或服务列表为空" :image-size="70" />
+          <el-empty v-if="!services.length" description="未部署或服务列表为空" :image-size="80" />
           <template v-else>
             <!-- 服务卡片矩阵：点击密度主体（状态描边 + 行内按钮） -->
             <div class="sd-svc-grid">
@@ -84,7 +84,7 @@
             <el-button size="small" :icon="Refresh" :loading="versionsLoading" @click="loadVersions">刷新</el-button>
             <span class="sd-file-hint">每次成功部署/升级/回滚后自动记录 compose 快照，最多保留最近 10 个版本</span>
           </div>
-          <el-empty v-if="!versions.length" description="暂无历史版本（部署或升级后自动生成）" :image-size="70" />
+          <el-empty v-if="!versions.length" description="暂无历史版本（部署或升级后自动生成）" :image-size="80" />
           <el-table v-else :data="versions" size="small" stripe class="sd-table">
             <el-table-column label="版本" width="90">
               <template #default="{ row }"><span class="mono">v{{ row.version }}</span></template>

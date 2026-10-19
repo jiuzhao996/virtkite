@@ -77,7 +77,7 @@
         </el-col>
       </el-row>
 
-      <el-empty v-else-if="!loading && !loadError" description="镜像市场清单为空" :image-size="90" />
+      <el-empty v-else-if="!loading && !loadError" description="镜像市场清单为空" :image-size="80" />
     </el-card>
   </div>
 </template>
