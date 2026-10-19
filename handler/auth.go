@@ -207,7 +207,7 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 
 	var user model.User
 	if err := h.DB.First(&user, userID).Error; err != nil {
-		Fail(c, http.StatusNotFound, "用户不存在")
+		lookupError(c, err, "用户不存在")
 		return
 	}
 

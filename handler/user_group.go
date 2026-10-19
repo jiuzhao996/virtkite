@@ -178,7 +178,7 @@ func (h *UserGroupHandler) SetMembers(c *gin.Context) {
 	}
 	var g model.UserGroup
 	if err := h.DB.First(&g, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "用户组不存在")
+		lookupError(c, err, "用户组不存在")
 		return
 	}
 	var req struct {

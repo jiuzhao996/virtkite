@@ -74,7 +74,7 @@ func (h *SessionHandler) DisconnectSession(c *gin.Context) {
 	}
 	var sess model.ConsoleSession
 	if err := h.DB.First(&sess, uint(id64)).Error; err != nil {
-		ErrorWithMessage(c, http.StatusNotFound, "会话不存在", err)
+		lookupError(c, err, "会话不存在")
 		return
 	}
 	if sess.Status != "active" {

@@ -161,7 +161,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 
 	var user model.User
 	if err := h.DB.First(&user, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "用户不存在")
+		lookupError(c, err, "用户不存在")
 		return
 	}
 
@@ -221,7 +221,7 @@ func (h *UserHandler) ChangeMyPassword(c *gin.Context) {
 	}
 	var me model.User
 	if err := h.DB.First(&me, uid).Error; err != nil {
-		Fail(c, http.StatusNotFound, "用户不存在")
+		lookupError(c, err, "用户不存在")
 		return
 	}
 
@@ -285,7 +285,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 
 	var user model.User
 	if err := h.DB.First(&user, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "用户不存在")
+		lookupError(c, err, "用户不存在")
 		return
 	}
 

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"log"
 	"net/http"
 	"runtime/debug"
@@ -15,17 +14,6 @@ import (
 	"github.com/jiuzhao/vmops/service/wsticket"
 	"gorm.io/gorm"
 )
-
-// taskLookupError 任务查询失败的统一响应：记录不存在 → 404；数据库故障 → 500。
-// 此前一律 404「任务不存在」——DB 不可用时用户会误以为任务被删，
-// 排查方向被带偏（实际去回收站/审计里找，其实服务端连不上库）。
-func taskLookupError(c *gin.Context, err error) {
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		Fail(c, http.StatusNotFound, "任务不存在")
-		return
-	}
-	ErrorWithMessage(c, http.StatusInternalServerError, "查询任务失败", err)
-}
 
 // TaskHandler 异步任务查询处理器（对应契约 GET/DELETE /api/tasks）。
 type TaskHandler struct {
@@ -77,7 +65,7 @@ func (h *TaskHandler) GetTask(c *gin.Context) {
 	}
 	task, err := h.Tasks.Get(uint(id))
 	if err != nil {
-		taskLookupError(c, err)
+		lookupError(c, err, "任务不存在")
 		return
 	}
 	Success(c, task)
@@ -93,7 +81,7 @@ func (h *TaskHandler) CancelTask(c *gin.Context) {
 	}
 	cancelled, err := h.Tasks.Cancel(id)
 	if err != nil {
-		taskLookupError(c, err)
+		lookupError(c, err, "任务不存在")
 		return
 	}
 	if !cancelled {
@@ -116,7 +104,7 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 	}
 	task, err := h.Tasks.Get(uint(id))
 	if err != nil {
-		taskLookupError(c, err)
+		lookupError(c, err, "任务不存在")
 		return
 	}
 	// cancelled 也是终态：允许清理，否则取消过的任务永久占着列表
@@ -165,7 +153,7 @@ func (h *TaskHandler) GetTaskLogs(c *gin.Context) {
 	}
 	task, err := h.Tasks.Get(id)
 	if err != nil {
-		ErrorWithMessage(c, http.StatusNotFound, "任务不存在", err)
+		lookupError(c, err, "任务不存在")
 		return
 	}
 	entries, structured := tasks.ParseLogEntries(task.LogEntries)
@@ -191,7 +179,7 @@ func (h *TaskHandler) MintLogWSTicket(c *gin.Context) {
 		return
 	}
 	if _, err := h.Tasks.Get(id); err != nil {
-		Fail(c, http.StatusNotFound, "任务不存在")
+		lookupError(c, err, "任务不存在")
 		return
 	}
 	if h.Tickets == nil {

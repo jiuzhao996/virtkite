@@ -162,7 +162,7 @@ func (h *HostGroupHandler) Update(c *gin.Context) {
 	}
 	var g model.HostGroup
 	if err := h.DB.First(&g, id).Error; err != nil {
-		ErrorWithMessage(c, http.StatusNotFound, "主机组不存在", err)
+		lookupError(c, err, "主机组不存在")
 		return
 	}
 	var req hostGroupReq

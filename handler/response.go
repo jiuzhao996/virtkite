@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jiuzhao/vmops/service/tasks"
+	"gorm.io/gorm"
 )
 
 // Success 返回成功响应，HTTP 200，统一格式 {"code":200,"message":"success","data":data}
@@ -59,6 +60,22 @@ func ErrorResponse(c *gin.Context, status int, err error) {
 func ErrorWithMessage(c *gin.Context, status int, message string, err error) {
 	LogError(c, err)
 	Fail(c, status, message)
+}
+
+// lookupError 单条记录查询失败的统一响应：NotFound → 404 + notFound 文案；
+// 其它错误（DB 故障 / 连接池耗尽）→ 500 + 中文兜底，完整错误进日志。
+//
+// 为什么需要：此前大量 handler 把 `DB.First` 的**任何**错误都写成 404「X 不存在」，
+// 数据库不可用时用户会以为记录被删，去回收站/审计里白找一圈，排查方向被带偏。
+//
+// ⚠️ 资产查询（虚拟机 / 镜像 / 宿主机）不要用本函数：它们要求「查无此项」与
+// 「无权访问」同响应（一律 404），区分 500 会泄露记录是否存在。
+func lookupError(c *gin.Context, err error, notFound string) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		Fail(c, http.StatusNotFound, notFound)
+		return
+	}
+	ErrorWithMessage(c, http.StatusInternalServerError, "查询失败", err)
 }
 
 // SubmitTaskError 任务提交失败的统一响应。

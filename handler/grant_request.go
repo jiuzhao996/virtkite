@@ -156,7 +156,7 @@ func (h *GrantRequestHandler) Approve(c *gin.Context) {
 
 	var gr model.GrantRequest
 	if err := h.DB.First(&gr, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "申请不存在")
+		lookupError(c, err, "申请不存在")
 		return
 	}
 	if gr.Status != model.GrantRequestPending {
@@ -220,7 +220,7 @@ func (h *GrantRequestHandler) Reject(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 	var gr model.GrantRequest
 	if err := h.DB.First(&gr, id).Error; err != nil {
-		Fail(c, http.StatusNotFound, "申请不存在")
+		lookupError(c, err, "申请不存在")
 		return
 	}
 	if gr.Status != model.GrantRequestPending {

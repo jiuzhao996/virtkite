@@ -154,7 +154,7 @@ func (h *CronsHandler) Duplicate(c *gin.Context) {
 	}
 	var src model.ScheduledTask
 	if err := h.DB.First(&src, id).Error; err != nil {
-		ErrorWithMessage(c, http.StatusNotFound, "计划任务不存在", err)
+		lookupError(c, err, "计划任务不存在")
 		return
 	}
 	dup := src
@@ -267,7 +267,7 @@ func (h *CronsHandler) Update(c *gin.Context) {
 	}
 	var st model.ScheduledTask
 	if err := h.DB.First(&st, id).Error; err != nil {
-		ErrorWithMessage(c, http.StatusNotFound, "计划任务不存在", err)
+		lookupError(c, err, "计划任务不存在")
 		return
 	}
 	var req cronTaskReq
@@ -335,7 +335,7 @@ func (h *CronsHandler) Toggle(c *gin.Context) {
 	}
 	var st model.ScheduledTask
 	if err := h.DB.First(&st, id).Error; err != nil {
-		ErrorWithMessage(c, http.StatusNotFound, "计划任务不存在", err)
+		lookupError(c, err, "计划任务不存在")
 		return
 	}
 	if err := h.DB.Model(&st).Update("enabled", !st.Enabled).Error; err != nil {
@@ -359,7 +359,7 @@ func (h *CronsHandler) RunNow(c *gin.Context) {
 	}
 	var st model.ScheduledTask
 	if err := h.DB.First(&st, id).Error; err != nil {
-		ErrorWithMessage(c, http.StatusNotFound, "计划任务不存在", err)
+		lookupError(c, err, "计划任务不存在")
 		return
 	}
 	if err := h.Scheduler.ExecuteNow(st); err != nil {
