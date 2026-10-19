@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -36,6 +37,15 @@ func StartOfflineMountGuard() {
 // 服务变成「杀不死」；重发则保留原有退出语义（退出码 130/143），且不会抢占将来可能加入的
 // 优雅停机逻辑。只处理一次即 signal.Stop，避免重发的信号又被自己接住。
 func watchOfflineMountSignals() {
+	// 后台 goroutine 的 panic 会终止进程；退出钩子异常时仍须把信号重发出去，
+	// 否则服务会变成「杀不死」。
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[vm-files] 退出钩子 panic（已兜底）: %v\n%s", r, debug.Stack())
+			signal.Reset(syscall.SIGINT, syscall.SIGTERM)
+			_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+		}
+	}()
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-ch

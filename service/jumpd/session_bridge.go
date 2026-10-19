@@ -177,6 +177,15 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 	}
 	forwardDone := make(chan struct{})
 	go func() {
+		// forwardDone 必须无条件关闭：panic 被 recover 后函数直接返回，
+		// 其后的普通语句不会执行，主流程会永远卡在 <-forwardDone。
+		// 后台 goroutine 的 panic 会直接终止整个进程（gin Recovery 不覆盖）。
+		defer close(forwardDone)
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[jumpd] 会话 %d 命令转发 panic（已兜底）: %v\n%s", sid, r, debug.Stack())
+			}
+		}()
 		onLine := func(line string, blocked bool) {
 			// 全量命令审计（JumpServer 核心能力的教学版）：放行行也落审计——
 			// 事后可查「谁在这台机器上跑过什么」；黑名单只是事前护栏（防误操作），
@@ -204,7 +213,6 @@ func (s *Server) bridgeSession(ch ssh.Channel, ks *keyStream, user *model.User, 
 			}
 		}
 		forwardKeys(ks, stdin, waitDone, onLine)
-		close(forwardDone)
 	}()
 
 	select {

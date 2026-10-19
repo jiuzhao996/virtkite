@@ -80,6 +80,16 @@ func (h *VMHandler) ConnectSerial(c *gin.Context) {
 	// pipe 上，浏览器输入一帧就永久卡死整个 handler（连接 + goroutine 泄漏）；
 	// 它也兜住 select-default 竞态：检查瞬间错误尚未写入 errCh、随后才到的首错。
 	go func() {
+		// 后台 goroutine 的 panic 不会被 gin Recovery 拦截，会直接终止进程；
+		// 清理放在 defer 里，保证 panic 路径也能关 pipe/WS，避免主循环永久阻塞。
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[serial] watchdog panic vm=%s: %v\n%s", name, r, debug.Stack())
+			}
+			_ = outW.Close()
+			_ = inW.Close()
+			_ = conn.Close()
+		}()
 		err := <-errCh
 		if err != nil {
 			log.Printf("[serial] 串口中断 vm=%s err=%v", name, err)
@@ -87,9 +97,6 @@ func (h *VMHandler) ConnectSerial(c *gin.Context) {
 		}
 		// 关 pipe 让两个桥接循环退出（读写返回 ErrClosedPipe），再关 WS 通知浏览器；
 		// 与主流程末尾的 Close 幂等，谁先退都成立
-		_ = outW.Close()
-		_ = inW.Close()
-		_ = conn.Close()
 	}()
 
 	var wg sync.WaitGroup

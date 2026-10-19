@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -84,6 +86,12 @@ func (d *Dockerx) Build(ctx context.Context, contextDir string, opts BuildOpts) 
 	)
 	scan := func(rc io.Reader) {
 		defer wg.Done()
+		// 后台 goroutine 的 panic 会带走整个进程；OnLine 是调用方回调，不可信。
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[dockerx] 构建输出读取 panic: %v\n%s", r, debug.Stack())
+			}
+		}()
 		sc := bufio.NewScanner(rc)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {

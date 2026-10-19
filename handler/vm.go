@@ -7,8 +7,10 @@ package handler
 // （vm_devices.go / vm_grant.go / vm_xml.go / vm_snapshot.go 等）。
 
 import (
+	"log"
 	"net/http"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"sync"
 
@@ -187,6 +189,13 @@ func (h *VMHandler) ListVMs(c *gin.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// 后台 goroutine 的 panic 不会被 gin Recovery 拦截，会直接终止进程；
+			// 单台 VM 的统计异常不应拖垮整个列表接口。
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[handler] 性能采样 panic vm=%s: %v\n%s", vm.Name, r, debug.Stack())
+				}
+			}()
 			st, err := h.Virt.GetDomainStats(vm.Name)
 			if err != nil || st == nil {
 				return

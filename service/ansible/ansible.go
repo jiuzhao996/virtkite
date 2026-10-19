@@ -18,10 +18,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -296,8 +298,25 @@ func (e *Engine) Run(ctx context.Context, opts RunOpts) (string, error) {
 	lines := make(chan string, 256)
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); scanInto(stdout, lines) }()
-	go func() { defer wg.Done(); scanInto(stderr, lines) }()
+	go func() {
+		defer wg.Done()
+		// 后台 goroutine 的 panic 会直接终止整个进程（gin Recovery 不覆盖）。
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[ansible] stdout 读取 panic: %v\n%s", r, debug.Stack())
+			}
+		}()
+		scanInto(stdout, lines)
+	}()
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[ansible] stderr 读取 panic: %v\n%s", r, debug.Stack())
+			}
+		}()
+		scanInto(stderr, lines)
+	}()
 	go func() { wg.Wait(); close(lines) }()
 
 	var recap []string

@@ -15,8 +15,10 @@ package handler
 
 import (
 	"bufio"
+	"log"
 	"net"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -268,8 +270,26 @@ func (h *NetworkFlowHandler) Flows(c *gin.Context) {
 	var rates map[string][2]int64
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); edges = sampleSS(cidrs) }()
-	go func() { defer wg.Done(); rates = sampleDevRates() }()
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[handler] 连接采样 panic: %v\n%s", r, debug.Stack())
+				edges = []FlowEdge{}
+			}
+		}()
+		edges = sampleSS(cidrs)
+	}()
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[handler] 接口速率采样 panic: %v\n%s", r, debug.Stack())
+				rates = map[string][2]int64{}
+			}
+		}()
+		rates = sampleDevRates()
+	}()
 	wg.Wait()
 
 	// 接口挂靠：virbr* → 同名 bridge 的 libvirt 网络；docker0/br-* → docker 段（逐口，

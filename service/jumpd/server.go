@@ -114,6 +114,13 @@ func enableKeepAlive(conn net.Conn) {
 // 用户键盘输入解析 IP/主机名的任何通道（计划代码评审硬项）。
 func (s *Server) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 	defer conn.Close()
+	// 每个 SSH 连接一个后台 goroutine，panic 会直接终止整个进程（无 gin Recovery）。
+	// 连接处理由远端输入驱动，一个畸形请求不应带走所有人的会话。
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[jumpd] 连接处理 panic from %s（已兜底）: %v\n%s", conn.RemoteAddr(), r, debug.Stack())
+		}
+	}()
 	enableKeepAlive(conn)
 	sconn, chans, reqs, err := ssh.NewServerConn(conn, config)
 	if err != nil {

@@ -12,7 +12,9 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -116,6 +118,12 @@ func run(ctx context.Context, timeout time.Duration, bin string, args []string, 
 	var wg sync.WaitGroup
 	scan := func(rc io.Reader) {
 		defer wg.Done()
+		// 后台 goroutine 的 panic 会带走整个进程；OnLine 是调用方回调，不可信。
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[guestfs] 输出读取 panic: %v\n%s", r, debug.Stack())
+			}
+		}()
 		sc := bufio.NewScanner(rc)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
