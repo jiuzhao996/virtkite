@@ -22,6 +22,9 @@ export function useLogStream() {
   let retryTimer = null
   let pingTimer = null
   let manualClose = false
+  // ended：服务端已发 eof（容器停止/日志跟进结束）。必须与「异常断开」区分——
+  // 此前 eof 后 onclose 仍会走重连，导致日志流在容器停止后无限重连并重复回放。
+  let ended = false
 
   function url(id, tail, timestamps, ticket) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -52,6 +55,7 @@ export function useLogStream() {
     const timestamps = !!(opts && opts.timestamps)
     stop()
     manualClose = false
+    ended = false
     lines.value = [] // 新会话不残留上一次的行（换容器/重连时旧内容必须清掉）
     retries = 0
     fallback.value = false
@@ -59,6 +63,9 @@ export function useLogStream() {
     status.value = 'connecting'
 
     const connect = async () => {
+      // 重连必须清空已收行：服务端每次连接都重放 tail 行（协议无 since 游标），
+      // 不清空会让整段日志重复一遍。首次连接时 lines 已由 start() 清空。
+      if (retries > 0) lines.value = []
       // 票据一次性：每次（含退避重连）都必须重新取，不能缓存复用
       let ticket = ''
       try {
@@ -95,6 +102,7 @@ export function useLogStream() {
         } else if (msg.type === 'log') {
           push(msg.stream === 'stderr' ? 'stderr' : 'stdout', String(msg.data || ''))
         } else if (msg.type === 'eof') {
+          ended = true
           status.value = 'closed'
         } else if (msg.type === 'error') {
           status.value = 'error'
@@ -106,13 +114,15 @@ export function useLogStream() {
         clearTimeout(openTimer)
         if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
         if (manualClose) return
-        // 未就绪即关闭 = 流不可用，退避重连；重试用尽降级 HTTP
-        if (status.value !== 'live') {
-          status.value = 'connecting'
-          scheduleRetry(connect)
-        } else {
+        if (ended) {
+          // 正常结束（容器停止 / 日志跟进到 EOF）：不重连
           status.value = 'closed'
+          return
         }
+        // 异常断开（未就绪，或已 live 后网络抖动）都退避重连；重试用尽降级 HTTP。
+        // 已 live 的情况此前直接置 closed 不重连，网络一闪断就得手动刷新。
+        status.value = 'connecting'
+        scheduleRetry(connect)
       }
       ws.onerror = () => { clearTimeout(openTimer) }
     }
