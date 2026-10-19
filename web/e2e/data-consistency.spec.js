@@ -10,6 +10,7 @@ import { test, expect } from '@playwright/test'
 import { ACCOUNTS } from './helpers/env.js'
 import { login } from './helpers/auth.js'
 import { api, listVMs } from './helpers/api.js'
+import { fmtSizeBytes } from '../src/utils/format.js'
 
 const PASS = ACCOUNTS.admin.pass
 
@@ -123,6 +124,31 @@ test.describe('数据一致性 @data-consistency', () => {
     expect(bodyText, `运行数应为 ${running}`).toContain(`运行 ${running}`)
     if (autostart) expect(bodyText).toContain(`自启 ${autostart}`)
     console.log(`网络：共 ${items.length}、运行 ${running}、自启 ${autostart}`)
+  })
+
+  test('存储池：物理容量/可用空间的计算与接口一致', async ({ page }) => {
+    await login(page)
+    const r = await api(page, 'GET', '/api/storage/pools')
+    const items = r.data?.items || []
+    test.skip(!items.length, '平台没有存储池')
+
+    // 页面口径（StorageList.physCap）：取 capacity 最大的池，展示其 capacity 与 available。
+    // 这里直接 import 前端同一个 fmtSizeBytes，避免在测试里复刻格式化逻辑后两边漂移。
+    let best = { capacity: 0, available: 0 }
+    for (const p of items) {
+      if ((p.capacity || 0) > best.capacity) {
+        best = { capacity: p.capacity || 0, available: p.available || 0 }
+      }
+    }
+
+    await page.goto('/#/storage')
+    await page.locator('.el-main .el-tabs__item', { hasText: '存储池' }).click()
+    await page.waitForTimeout(1500)
+    const body = await page.locator('.el-main').innerText()
+
+    expect(body, `页面未显示物理容量 ${fmtSizeBytes(best.capacity)}`).toContain(fmtSizeBytes(best.capacity))
+    expect(body, `页面未显示可用空间 ${fmtSizeBytes(best.available)}`).toContain(fmtSizeBytes(best.available))
+    console.log(`存储池容量：物理 ${fmtSizeBytes(best.capacity)} / 可用 ${fmtSizeBytes(best.available)}`)
   })
 
   test('镜像：页数/total 与接口一致', async ({ page }) => {

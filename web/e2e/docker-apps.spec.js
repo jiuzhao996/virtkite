@@ -137,4 +137,48 @@ test.describe('容器 @docker', () => {
       expect([200, 404]).toContain(del.status)
     }
   })
+
+  test('容器日志 tab：输出可读，容器退出后流正常结束（不无限重连）', async ({ page }) => {
+    await login(page)
+    const probe = await api(page, 'GET', '/api/docker/containers')
+    test.skip(probe.status !== 200, 'Docker 不可用')
+
+    // 造一个「输出一行就退出」的容器：天然覆盖 eof 路径——
+    // 服务端 logs follow 到容器退出会发 {"type":"eof"} 后关闭连接。
+    // 修复前 onclose 会把 eof 当异常断开重连，日志流永远停不下来（单测已锁，这里做端到端）。
+    const name = e2eName('log')
+    const created = await api(page, 'POST', '/api/docker/containers', {
+      name,
+      image: 'alpine:3.24',
+      command: 'echo E2E_LOG_MARKER',
+    })
+    expect(created.status, `创建容器失败：${created.message || ''}`).toBe(200)
+    const id = created.data?.id
+    expect(id).toBeTruthy()
+
+    try {
+      await page.goto('/#/containers')
+      const card = page.locator('.ct-card', { hasText: name }).first()
+      await expect(card).toBeVisible({ timeout: 30_000 })
+      await card.click()
+
+      // 日志 tab 是 lazy，切过去才挂载
+      const logsTab = page.locator('.el-drawer:visible .el-tabs__item', { hasText: '日志' }).first()
+      await expect(logsTab).toBeVisible({ timeout: 15_000 })
+      await logsTab.click()
+
+      // 日志正文必须出现容器输出（WS 首帧重放 tail 或 HTTP 降级文本均可）
+      const pre = page.locator('.el-drawer:visible .lv-pre')
+      await expect(pre).toContainText('E2E_LOG_MARKER', { timeout: 30_000 })
+
+      // 容器已退出：流应在 eof 后结束，状态条不得一直显示「实时」。
+      // 给 4 秒观察窗（eof 一般在最后一帧日志后立即到达）。
+      await page.waitForTimeout(4000)
+      const barText = await page.locator('.el-drawer:visible .ls-bar').innerText().catch(() => '')
+      console.log(`日志流状态条：${barText.replace(/\s+/g, ' ').trim()}`)
+      expect(barText, '容器已退出，日志流不应仍报「实时」（eof 后重连 bug）').not.toContain('实时')
+    } finally {
+      await api(page, 'DELETE', `/api/docker/containers/${id}?force=true`, undefined, { guard: name }).catch(() => {})
+    }
+  })
 })
