@@ -70,6 +70,17 @@ describe('pollTask 状态机', () => {
     await expect(pollTask(1, { interval: 0 })).rejects.toThrow('任务失败')
   })
 
+  it('cancelled 立即停止轮询并抛「任务已取消」', async () => {
+    getTask.mockResolvedValue({ data: { status: 'cancelled' } })
+    await expect(pollTask(1, { interval: 0, timeout: 60_000 })).rejects.toThrow('任务已取消')
+    expect(getTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancelled 带 error 时优先透出 error', async () => {
+    getTask.mockResolvedValueOnce({ data: { status: 'cancelled', error: '管理员已取消' } })
+    await expect(pollTask(1, { interval: 0 })).rejects.toThrow('管理员已取消')
+  })
+
   it('非终态回调 onProgress，终态后停止轮询', async () => {
     getTask
       .mockResolvedValueOnce({ data: { status: 'pending' } })

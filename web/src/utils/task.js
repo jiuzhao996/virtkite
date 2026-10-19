@@ -1,8 +1,9 @@
 import { api } from '../api/index.js'
 
-// 终态：后端任务 status 只有 pending / running / success / failed
+// 终态：后端任务 status 只有 pending / running / success / failed / cancelled
 const SUCCESS = 'success'
 const FAILED = 'failed'
+const CANCELLED = 'cancelled'
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -40,8 +41,12 @@ export function taskErrorMessage(e, fallback = '操作失败') {
 
 /**
  * 轮询 GET /api/tasks/:id 直到终态。
- * success → resolve(task)；failed → reject(Error(task.error || '任务失败'))；超时 → reject(Error('任务超时'))。
+ * success → resolve(task)；failed → reject(Error(task.error || '任务失败'))；
+ * cancelled → reject(Error(task.error || '任务已取消'))；超时 → reject(Error('任务超时'))。
  * 非终态每次返回后调用 onProgress(task)，调用方可据此更新进度条 / 按钮文字。
+ *
+ * cancelled 必须当终态：管理员在任务中心取消后，后端不会再推进状态；
+ * 此前漏判会让调用方继续轮询到超时（建机 15min / 镜像下载 30min）才报错。
  *
  * @param {number|string} taskId 任务 ID
  * @param {{interval?: number, timeout?: number, onProgress?: (task: object) => void}} opts
@@ -61,6 +66,9 @@ export async function pollTask(taskId, opts = {}) {
     }
     if (task.status === FAILED) {
       throw new Error(task.error || '任务失败')
+    }
+    if (task.status === CANCELLED) {
+      throw new Error(task.error || '任务已取消')
     }
     if (Date.now() >= deadline) {
       throw new Error('任务超时')
