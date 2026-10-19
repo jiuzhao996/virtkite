@@ -21,6 +21,40 @@ import (
 	"github.com/jiuzhao/vmops/service/dockerx"
 )
 
+// dockerCLIError 把 docker CLI 的常见英文错误映射成中文 + 合适状态码。
+// docker 原始报错是英文（"No such container" / "is already running"...），
+// 经 ErrorResponse 的 friendlyMessage 因不含中文会统一变成「操作失败」——
+// 用户点「启动」一个已删除的容器时完全看不出原因。命中已知模式给明确文案，
+// 未命中仍回落 ErrorResponse（完整错误进日志）。
+func dockerCLIError(c *gin.Context, err error) {
+	if status, text, ok := classifyDockerError(err.Error()); ok {
+		Fail(c, status, text)
+		return
+	}
+	ErrorResponse(c, http.StatusInternalServerError, err)
+}
+
+// classifyDockerError 纯函数：docker CLI 英文错误 → (状态码, 中文文案, 是否命中)。
+// 抽出来是为了能单测（handler 里的响应函数需要 gin.Context，不便断言）。
+func classifyDockerError(errMsg string) (status int, text string, ok bool) {
+	msg := strings.ToLower(errMsg)
+	switch {
+	case strings.Contains(msg, "no such container"):
+		return http.StatusNotFound, "容器不存在（可能已被删除，请刷新列表）", true
+	case strings.Contains(msg, "is already running"):
+		return http.StatusConflict, "容器已在运行中", true
+	case strings.Contains(msg, "is not paused"):
+		return http.StatusConflict, "容器未暂停", true
+	case strings.Contains(msg, "is paused"):
+		return http.StatusConflict, "容器已暂停，请先恢复", true
+	case strings.Contains(msg, "is not running"):
+		return http.StatusConflict, "容器未在运行", true
+	case strings.Contains(msg, "already in use"), strings.Contains(msg, "conflict"):
+		return http.StatusConflict, "名称已被占用", true
+	}
+	return 0, "", false
+}
+
 // ListContainers GET /api/docker/containers
 // 返回全部容器（含已停止），排序/字段由 dockerx.Containers 决定；前端列表页
 // 直接消费，total 与 items 同源，避免前端再算一次长度。
@@ -114,7 +148,7 @@ func (h *DockerHandler) ContainerAction(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
+		dockerCLIError(c, err)
 		return
 	}
 	Success(c, gin.H{"id": id, "message": "已" + label})
@@ -133,7 +167,7 @@ func (h *DockerHandler) RemoveContainer(c *gin.Context) {
 		return
 	}
 	if err := h.Docker.Remove(id, c.Query("force") == "true"); err != nil {
-		ErrorResponse(c, http.StatusInternalServerError, err)
+		dockerCLIError(c, err)
 		return
 	}
 	Success(c, gin.H{"id": id, "message": "已删除"})
