@@ -555,7 +555,7 @@ CHROME_PATH=/usr/bin/google-chrome npx --yes lighthouse "http://127.0.0.1:8080/#
 22. **镜像克隆忽略请求的 `storage_pool`**：实际落在镜像所在池（R-07）。
 23. **静态 IP 掩码固定 /24、不查 IPAM 冲突**（R-08）。
 24. **审计 `status` 只反映 HTTP 提交**，后台任务 failed 时审计仍 success（R-11）。
-25. **`pollTask` 不识别 `cancelled`**：取消后前端轮询到超时才停（R-10）。
+25. ~~**`pollTask` 不识别 `cancelled`**：取消后前端轮询到超时才停（R-10）。~~ **已修复（2026-10-19）**：`cancelled` 当终态，立即 reject「任务已取消」，补两例单测。
 
 ### 11.1 首轮验收发现并修复的缺陷（2026-10-17）
 
@@ -708,6 +708,8 @@ getter 供本包与测试读取）。
 | DB 错误不再伪装成 404 | 新增 `handler/lookupError`：`gorm.ErrRecordNotFound` → 404 + 业务文案，其余（DB 故障/连接池耗尽）→ 500「查询失败」并把完整错误写日志。收口 13 处配置/管理类查询（用户、计划任务、主机组、用户组、会话、资产申请）与 `task.go` 两处漏网；**资产类（VM/镜像/宿主机）刻意保持一律 404**——「查无此项」与「无权访问」必须同响应，否则泄露记录是否存在 |
 | 空态尺寸收敛 | 原有 48/50/56/60/70/80/90 七种取值，统一为两档：60（表格插槽/抽屉/卡片内小面板）×22、80（页面/面板级，`EmptyState` 默认）×15 |
 | 容器终端 E2E | 新增 `@docker` 用例：运行中 alpine → 卡片「终端」→ 断言「已连接」→ xterm 键入 `echo` → 断言 `.xterm-rows` 回显。此前只有单测，无端到端覆盖 |
+| `pollTask` 终态 | 补认 `cancelled`：取消后立即 reject「任务已取消」，不再空转到超时（R-10）；补两例单测 |
+| goroutine 兜底 | 全仓库扫描后补 8 处缺失的 `defer recover()`（jumpd 连接处理、性能/流量采样、ansible/dockerx/guestfs 输出读取、串口 watchdog、离线挂载退出钩子）；jumpd `forwardDone` 改 `defer close` 防恢复后卡死 |
 
 验收：后端 `go build`/`go test`/`golangci-lint`（0 issues）、前端 lint 0 告警 + 76 单测 + build、相关 E2E 分组全绿。
 
