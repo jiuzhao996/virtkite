@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/jiuzhao/vmops/service/tasks"
+	"gorm.io/gorm"
 )
 
 // TestFriendlyMessage 覆盖「错误脱敏」的核心提取逻辑。
@@ -264,4 +267,91 @@ func TestLogErrorNilSafe(t *testing.T) {
 	if logBuf.Len() != 0 {
 		t.Errorf("LogError(nil) 不应写日志，实际写入：%q", logBuf.String())
 	}
+}
+
+// TestLookupError 钉住「单条查询失败」的两种语义。
+//
+// 风险点：此前所有 handler 把 DB.First 的任何错误都写成 404「X 不存在」，
+// 数据库故障时用户会以为记录被删、去别处白找。反向风险同样存在——
+// 若把 NotFound 也改成 500，前端所有「资源不存在」分支会失效。
+func TestLookupError(t *testing.T) {
+	t.Run("ErrRecordNotFound → 404 + 业务文案", func(t *testing.T) {
+		c, rec := newTestContext("/api/tasks/1", nil)
+		lookupError(c, gorm.ErrRecordNotFound, "任务不存在")
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("HTTP 状态码错误：期望 404，实际 %d", rec.Code)
+		}
+		if got := decodeBody(t, rec)["message"]; got != "任务不存在" {
+			t.Errorf("message 错误：期望「任务不存在」，实际 %v", got)
+		}
+	})
+
+	t.Run("%w 包裹的 ErrRecordNotFound 仍判 404", func(t *testing.T) {
+		c, rec := newTestContext("/api/tasks/1", nil)
+		lookupError(c, fmt.Errorf("查询用户: %w", gorm.ErrRecordNotFound), "用户不存在")
+
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("HTTP 状态码错误：期望 404（errors.Is 应穿透 %%w），实际 %d", rec.Code)
+		}
+	})
+
+	t.Run("DB 故障 → 500 + 中文兜底，且不泄漏内部细节", func(t *testing.T) {
+		const internal = "Error 1045: Access denied for user 'vmops'@'localhost'"
+		var logBuf bytes.Buffer
+		log.SetOutput(&logBuf)
+		defer log.SetOutput(io.Discard)
+
+		c, rec := newTestContext("/api/tasks/1", nil)
+		lookupError(c, errors.New(internal), "任务不存在")
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("HTTP 状态码错误：期望 500，实际 %d", rec.Code)
+		}
+		body := decodeBody(t, rec)
+		if got := body["message"]; got != "查询失败" {
+			t.Errorf("message 错误：期望「查询失败」，实际 %v", got)
+		}
+		if strings.Contains(rec.Body.String(), "Access denied") || strings.Contains(rec.Body.String(), "vmops") {
+			t.Errorf("响应体泄漏了数据库错误：%s", rec.Body.String())
+		}
+		if !strings.Contains(logBuf.String(), internal) {
+			t.Errorf("服务端日志缺少完整错误：日志=%q", logBuf.String())
+		}
+	})
+}
+
+// TestSubmitTaskError 队列繁忙是「可稍后重试」的暂时状态，必须与普通失败区分。
+// 风险点：曾统一回 500「提交任务失败」，把 manager 的明确提示吞掉，用户只能干等。
+func TestSubmitTaskError(t *testing.T) {
+	t.Run("ErrQueueBusy → 503 + 明确文案", func(t *testing.T) {
+		c, rec := newTestContext("/api/vms", nil)
+		SubmitTaskError(c, tasks.ErrQueueBusy)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("HTTP 状态码错误：期望 503，实际 %d", rec.Code)
+		}
+		if got := decodeBody(t, rec)["message"]; got != "任务队列繁忙，请稍后重试" {
+			t.Errorf("message 错误：实际 %v", got)
+		}
+	})
+
+	t.Run("其它错误 → 500 + 中文兜底", func(t *testing.T) {
+		var logBuf bytes.Buffer
+		log.SetOutput(&logBuf)
+		defer log.SetOutput(io.Discard)
+
+		c, rec := newTestContext("/api/vms", nil)
+		SubmitTaskError(c, errors.New("dial unix: connection refused"))
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("HTTP 状态码错误：期望 500，实际 %d", rec.Code)
+		}
+		if got := decodeBody(t, rec)["message"]; got != "提交任务失败" {
+			t.Errorf("message 错误：实际 %v", got)
+		}
+		if strings.Contains(rec.Body.String(), "dial unix") {
+			t.Errorf("响应体泄漏内部细节：%s", rec.Body.String())
+		}
+	})
 }
