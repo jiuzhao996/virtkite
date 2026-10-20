@@ -411,7 +411,9 @@ async function rollbackTo(row) {
   try {
     const res = await api.rollbackStack(stackId.value, row.id)
     const taskId = (res.data && res.data.task_id) || (res && res.task_id)
-    await pollTask(taskId)
+    await pollTask(taskId, {
+      timeout: 35 * 60 * 1000 // stack_rollback 后端上限 30min（compose pull 大栈）
+    })
     ElMessage.success(`已回滚到 v${row.version}`)
     await loadDetail()
     await loadVersions()

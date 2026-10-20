@@ -318,7 +318,7 @@ async function startBuild() {
     if (Object.keys(ba).length) payload.build_args = ba
     ElMessage.info('构建任务已提交，日志将实时显示…')
     const done = await pollTask(extractTaskId(await api.dockerBuildRun(ctxName.value, payload)), {
-      timeout: 30 * 60 * 1000, // 拉基础镜像 + 装包是分钟级，5 分钟默认超时不够
+      timeout: 35 * 60 * 1000, // image_build 后端上限 30min（含拉基础镜像），前端必须留缓冲
       onProgress: (t) => {
         buildLog.value = taskLogText(t.result).slice(-6000)
       }

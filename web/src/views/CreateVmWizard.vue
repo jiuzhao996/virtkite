@@ -478,6 +478,7 @@ async function submit() {
       : await api.createVM(buildPayload())
     // 后端返回 202 {task_id}，轮询到终态：成功跳转列表，失败留在汇总页展示 error
     await pollTask(extractTaskId(res), {
+      timeout: 35 * 60 * 1000, // clone_vm 后端上限 30min（全盘拷贝大磁盘），建机 15min
       onProgress: (t) => {
         createProgress.value = Math.max(0, Math.min(100, Number(t.progress) || 0))
       }

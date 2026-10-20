@@ -234,7 +234,7 @@ async function submitInstall() {
     // 与日志 WS 并行轮询终态：用于卡片状态机与最终提示
     const task = await pollTask(taskId, {
       interval: 2000,
-      timeout: 600000,
+      timeout: 20 * 60 * 1000, // app_install 后端上限 15min（compose pull 不可控），前端必须 ≥ 它
       onProgress: (t) => {
         logRef.value?.setProgress(clampPct(t.progress))
       }

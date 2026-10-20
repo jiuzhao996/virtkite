@@ -77,7 +77,9 @@ async function submit() {
   busy.value = true
   try {
     ElMessage.info('固化任务已提交，正在执行（清洗耗时较长，可离开去任务中心查看）…')
-    await pollTask(extractTaskId(await api.finalizeVMImage(props.vmId, { ...form })))
+    await pollTask(extractTaskId(await api.finalizeVMImage(props.vmId, { ...form })), {
+      timeout: 50 * 60 * 1000 // image_finalize 后端上限 45min（sysprep + customize + sparsify），必须留缓冲
+    })
     ElMessage.success('已固化为模板，可在镜像管理查看')
     open.value = false
     emit('done')

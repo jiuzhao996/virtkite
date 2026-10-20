@@ -179,7 +179,7 @@ async function resumePolling(taskId, key, name) {
   try {
     await pollTask(taskId, {
       interval: 2000,
-      timeout: 30 * 60 * 1000,
+      timeout: 65 * 60 * 1000, // image_download 后端上限 60min，前端必须留缓冲
       onProgress: (task) => {
         if (disposed || st.phase !== 'downloading') return
         st.percent = clampPct(task.progress)
@@ -218,7 +218,7 @@ const res = await api.imageMarketDownload({ key: item.key, pool: item.pool || ''
     st.percent = 0
     await pollTask(taskId, {
       interval: 2000,
-      timeout: 30 * 60 * 1000,
+      timeout: 65 * 60 * 1000, // image_download 后端上限 60min，前端必须留缓冲
       onProgress: (task) => {
         if (disposed) return
         st.percent = clampPct(task.progress)

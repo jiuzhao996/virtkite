@@ -48,6 +48,12 @@ export function taskErrorMessage(e, fallback = '操作失败') {
  * cancelled 必须当终态：管理员在任务中心取消后，后端不会再推进状态；
  * 此前漏判会让调用方继续轮询到超时（建机 15min / 镜像下载 30min）才报错。
  *
+ * 默认超时 20 分钟，与后端 taskTimeouts 对齐：未单独指定 timeout 的调用方
+ * 覆盖 create_vm / delete_vm / cleanup_volumes / app_install（15min）、
+ * ansible_run（20min）。超过 20 分钟的任务（clone_vm 30、image_build 30、
+ * stack_* 30、image_finalize 45、image_download 60）必须在调用点显式放宽——
+ * 前端先于后端超时会让用户看到「失败」而后台仍在跑，进而重复提交。
+ *
  * @param {number|string} taskId 任务 ID
  * @param {{interval?: number, timeout?: number, onProgress?: (task: object) => void}} opts
  * @returns {Promise<object>} 终态为 success 的任务对象
@@ -56,7 +62,7 @@ export async function pollTask(taskId, opts = {}) {
   if (taskId === undefined || taskId === null || taskId === '') {
     throw new Error('缺少任务 ID')
   }
-  const { interval = 2000, timeout = 300000, onProgress = null } = opts
+  const { interval = 2000, timeout = 20 * 60 * 1000, onProgress = null } = opts
   const deadline = Date.now() + timeout
   for (;;) {
     const res = await api.getTask(taskId)

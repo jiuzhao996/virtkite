@@ -113,7 +113,7 @@ async function download(item) {
     st.percent = 0
     await pollTask(taskId, {
       interval: 2000,
-      timeout: 60 * 60 * 1000, // ISO 4~10GB，放宽到 1 小时
+      timeout: 65 * 60 * 1000, // ISO 4~10GB；后端 image_download 上限 60min，前端留缓冲
       onProgress: (task) => {
         if (disposed.value) return
         st.percent = clampPct(task.progress)
