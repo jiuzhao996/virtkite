@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -269,6 +270,14 @@ func (h *VMFilesHandler) OfflineDownload(c *gin.Context) {
 	m, clean, ok := offlineTarget(c, vm.ID, p, false)
 	if !ok {
 		return
+	}
+	// 与 SSH 通道同口径：sudoRun 的 CombinedOutput 会把整个文件读进内存，
+	// 超限文件在 cat 之前拦截，避免一次请求打爆进程。
+	if out, serr := sudoRun(30*time.Second, "stat", "-c", "%s", clean); serr == nil {
+		if n, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64); perr == nil && n > maxVMFileDownload {
+			Fail(c, http.StatusBadRequest, "文件超过下载上限（16MB），大文件请改用其他通道传输")
+			return
+		}
 	}
 	// 读文件同样经 sudo（FUSE 权限）；空内容校验 sudoRun 区分不出——cat 失败时 err 已带 stderr
 	data, err := sudoRun(60*time.Second, "cat", clean)
