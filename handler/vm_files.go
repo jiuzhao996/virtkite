@@ -42,9 +42,10 @@ func (h *VMFilesHandler) SetVMCredentialHandler(ch *VMCredentialHandler) { h.VMC
 // 大文件/二进制应走离线挂载通道（guestmount，见 OfflineCapability，后续接入）。
 const maxVMFileUpload = 16 << 20 // 16MB
 
-// maxVMFileDownload 单文件下载的大小上限。
-// 上传侧一直有 16MB 限制，下载侧却没有：两个 Download 都把整个文件 `[]byte(...)`
+// maxVMFileDownload SSH 通道单文件下载的大小上限。
+// 上传侧一直有 16MB 限制，下载侧却没有：SSH 通道把整个文件 `[]byte(...)`
 // 摊进内存，一次大文件请求即可把进程内存打爆。与上传同口径，先 stat 再 cat。
+// 大文件走离线挂载通道（vm_files_offline_ops.go）——那条是流式输出，不受此限制。
 const maxVMFileDownload = maxVMFileUpload
 
 // vmFilesReq 文件操作统一请求体（各端点按需取用字段）。
@@ -192,7 +193,7 @@ func (h *VMFilesHandler) Download(c *gin.Context) {
 	// stat 失败（文件不存在/无权限）不在此报错，交给随后的 cat 给出准确信息。
 	if out, _, serr := vmssh.Run(opts, "stat -c %s -- "+vmssh.ShellQuote(req.Path), vmssh.DefaultTimeout); serr == nil {
 		if n, perr := strconv.ParseInt(strings.TrimSpace(out), 10, 64); perr == nil && n > maxVMFileDownload {
-			Fail(c, http.StatusBadRequest, "文件超过下载上限（16MB），大文件请改用其他通道传输")
+			Fail(c, http.StatusBadRequest, "文件超过下载上限（16MB），大文件请改用离线挂载通道下载")
 			return
 		}
 	}
