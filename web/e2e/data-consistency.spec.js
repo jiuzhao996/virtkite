@@ -14,6 +14,14 @@ import { fmtSizeBytes } from '../src/utils/format.js'
 
 const PASS = ACCOUNTS.admin.pass
 
+/** 从「可用 788.8 GB」这类文案解析出 GB 数值（fmtSizeBytes 只输出 GB/TB 两种单位）。 */
+function parseCapacityGB(text) {
+  const m = String(text).match(/([\d.]+)\s*(TB|GB)/)
+  if (!m) return NaN
+  const v = parseFloat(m[1])
+  return m[2] === 'TB' ? v * 1024 : v
+}
+
 test.describe('数据一致性 @data-consistency', () => {
   test.skip(!PASS, '未提供 ADMIN_PASS')
   test.setTimeout(180_000)
@@ -144,11 +152,26 @@ test.describe('数据一致性 @data-consistency', () => {
     await page.goto('/#/storage')
     await page.locator('.el-main .el-tabs__item', { hasText: '存储池' }).click()
     await page.waitForTimeout(1500)
-    const body = await page.locator('.el-main').innerText()
 
-    expect(body, `页面未显示物理容量 ${fmtSizeBytes(best.capacity)}`).toContain(fmtSizeBytes(best.capacity))
-    expect(body, `页面未显示可用空间 ${fmtSizeBytes(best.available)}`).toContain(fmtSizeBytes(best.available))
-    console.log(`存储池容量：物理 ${fmtSizeBytes(best.capacity)} / 可用 ${fmtSizeBytes(best.available)}`)
+    // 物理容量几乎不变（只有扩池才变），要求精确一致。
+    const capText = await page.locator('.summary-cap .summary-value').innerText()
+    expect(capText, `物理容量应为 ${fmtSizeBytes(best.capacity)}`).toContain(fmtSizeBytes(best.capacity))
+
+    // 可用空间是活值：全量串行跑时，前后用例仍在写盘/删卷，1.5s 窗口内就可能变。
+    // 精确比对会把「真实写入」误判成缺陷，因此改为按 GB 数值比较并留 2%/5GB 容差
+    // （仍能抓住取错池、单位错误这类真问题）。
+    const subText = await page.locator('.summary-cap .summary-sub').innerText()
+    const pageAvailGB = parseCapacityGB(subText)
+    const apiAvailGB = best.available / 1024 ** 3
+    expect(Number.isFinite(pageAvailGB), `页面可用空间无法解析：${subText}`).toBe(true)
+    const tolerance = Math.max(apiAvailGB * 0.02, 5)
+    expect(
+      Math.abs(pageAvailGB - apiAvailGB),
+      `可用空间偏差过大：页面 ${pageAvailGB.toFixed(1)} GB，接口 ${apiAvailGB.toFixed(1)} GB`
+    ).toBeLessThanOrEqual(tolerance)
+    console.log(
+      `存储池容量：物理 ${fmtSizeBytes(best.capacity)} / 可用 ${fmtSizeBytes(best.available)}（页面 ${subText.trim()}）`
+    )
   })
 
   test('镜像：页数/total 与接口一致', async ({ page }) => {
