@@ -723,4 +723,5 @@ getter 供本包与测试读取）。
 4. 容器/应用依赖 Docker；Ansible 依赖引擎；缺失整域 BLOCKED。
 5. 监控曲线依赖 Prometheus；未配置只验证「未配置」降级文案。
 6. 破坏性用例默认关闭；开启前必须确认目标全部为 `e2e-` 前缀。
-7. **当前尚未覆盖**（下一批补）：自动重试（image_build/image_download/stop_vm）、设计器 reconcile 删除分支与重复 Apply、栈回滚版本冲突、应用商店真实安装、Docker 全链路。WS 票据一次性/跨资源/过期、任务取消、回收站恢复已由 `ws-ticket.spec.js`、`task-center.spec.js`、`recycle-bin.spec.js` 覆盖。
+7. **当前尚未覆盖**（下一批补）：自动重试（image_build/image_download/stop_vm）、设计器 reconcile 删除分支、栈回滚版本冲突、应用商店真实安装、Docker 健康检查/构建上下文/compose 服务级操作。
+   已覆盖：WS 票据一次性/跨资源/过期（`ws-ticket.spec.js`）、任务取消（`task-center.spec.js`）、回收站恢复（`recycle-bin.spec.js`）、设计器重复 Apply 幂等（`designer.spec.js`）、容器终端 WS / 日志 eof / 参数校验 / 暂停恢复重启重命名（`docker-apps.spec.js`）。
