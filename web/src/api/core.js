@@ -41,6 +41,9 @@ export const core = {
   setVcpu: (id, vcpu) => unwrap(http.put('/vms/' + id + '/cpu', { vcpu })),
   setMemory: (id, memory_mb) => unwrap(http.put('/vms/' + id + '/memory', { memory_mb })),
   setAutostart: (id, enabled) => unwrap(http.put('/vms/' + id + '/autostart', { enabled })),
+  // 引导：启动顺序（数组顺序即优先级）/ 弹出光驱介质（装完系统后释放安装 ISO）
+  setBootOrder: (id, devices) => unwrap(http.put('/vms/' + id + '/boot-order', { devices })),
+  ejectCdrom: (id, target) => unwrap(http.post('/vms/' + id + '/devices/cdrom/' + encodeURIComponent(target) + '/eject')),
   attachDisk: (id, disk) => unwrap(http.post('/vms/' + id + '/devices/disks', { disk })),
   // 域定义健康检查：磁盘源文件缺失（幽灵盘）会让 libvirt 拒绝启动整个域
   domainHealth: (id) => unwrap(http.get('/vms/' + id + '/domain-health')),

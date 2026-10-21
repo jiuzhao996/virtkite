@@ -226,6 +226,9 @@ func RegisterAll(api *gin.RouterGroup, deps Deps) {
 		vms.PUT("/:id/cpu", vmHandler.SetVcpu)
 		vms.PUT("/:id/memory", vmHandler.SetMemory)
 		vms.PUT("/:id/autostart", vmHandler.SetAutostart)
+		// 引导：调整启动顺序 / 弹出安装介质（ISO 装完不弹会重启再进安装程序）
+		vms.PUT("/:id/boot-order", vmHandler.SetBootOrder)
+		vms.POST("/:id/devices/cdrom/:target/eject", vmHandler.EjectCDROM)
 		vms.POST("/:id/devices/disks", vmHandler.AttachDisk)
 		vms.POST("/:id/devices/disks/quick", vmHandler.QuickAttachDisk)
 		vms.DELETE("/:id/devices/disks/:target", vmHandler.DetachDisk)

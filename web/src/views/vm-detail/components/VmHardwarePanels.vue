@@ -46,6 +46,16 @@
         <div class="dev-card-head">
           <span class="dev-name mono">{{ disk.target || '—' }}</span>
           <el-tag :type="disk.device === 'cdrom' ? 'warning' : 'info'" size="small" effect="light">{{ disk.device }}</el-tag>
+          <!-- 弹出安装介质：装完系统后释放 ISO，避免重启再次进入安装程序（空光驱会被 BIOS 跳过） -->
+          <el-button
+            v-if="canOperate && disk.device === 'cdrom' && disk.source"
+            size="small"
+            type="warning"
+            text
+            class="dev-eject"
+            :loading="busy === 'eject-' + disk.target"
+            @click="ejectMedia(disk)"
+          >弹出介质</el-button>
           <!-- 移除：打开确认弹窗（可选择是否同时删除存储卷），替代原先的 popconfirm -->
           <el-button v-if="canOperate" size="small" type="danger" text class="dev-remove" :icon="Delete" @click="openRemoveDisk(disk)">移除</el-button>
         </div>
@@ -263,6 +273,22 @@ async function removeNic(nic) {
     await props.reload()
   } catch (e) {
     ElMessage.error(taskErrorMessage(e, '移除网卡失败'))
+  }
+}
+
+// 弹出光驱介质：只释放 ISO、保留空光驱；空光驱会被 BIOS 跳过，
+// 因此不必先调启动顺序也能避免重启再进安装程序。
+async function ejectMedia(disk) {
+  if (!disk || !disk.target) return
+  busy.value = 'eject-' + disk.target
+  try {
+    await api.ejectCdrom(props.vmId, disk.target)
+    ElMessage.success('安装介质已弹出，下次重启将从硬盘启动')
+    await props.reload()
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '弹出介质失败'))
+  } finally {
+    busy.value = ''
   }
 }
 

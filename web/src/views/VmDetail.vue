@@ -70,6 +70,7 @@
           :busy="busy"
           :can-operate="canOperate"
           @autostart-change="onAutostartChange"
+          @boot-order-change="onBootOrderChange"
         />
 
         <!-- 性能（曲线 echarts / 60 采样拼装 / Prometheus 预填内聚在 VmPerfCard，壳只编排轮询） -->
@@ -403,6 +404,22 @@ async function onAutostartChange(val) {
     await loadSpec()
   } catch (e) {
     ElMessage.error(taskErrorMessage(e, '设置自启失败'))
+    await loadSpec()
+  } finally {
+    busy.value = ''
+  }
+}
+
+/* ---------- 概览：启动顺序 ---------- */
+// 只写持久配置，下次启动生效；运行中的 VM 不会被重启。
+async function onBootOrderChange(devices) {
+  busy.value = 'boot'
+  try {
+    await api.setBootOrder(id, devices)
+    ElMessage.success('启动顺序已更新（下次启动生效）')
+    await loadSpec()
+  } catch (e) {
+    ElMessage.error(taskErrorMessage(e, '修改启动顺序失败'))
     await loadSpec()
   } finally {
     busy.value = ''
