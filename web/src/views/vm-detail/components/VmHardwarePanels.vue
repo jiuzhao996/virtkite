@@ -283,7 +283,9 @@ async function ejectMedia(disk) {
   busy.value = 'eject-' + disk.target
   try {
     await api.ejectCdrom(props.vmId, disk.target)
-    ElMessage.success('安装介质已弹出，下次重启将从硬盘启动')
+    // 只解除挂载，ISO 文件本身保留在原目录（可继续做软件源或再挂载）
+    const isoName = (disk.source || '').split('/').pop() || '安装介质'
+    ElMessage.success(`${isoName} 已弹出（文件仍保留在存储目录），下次重启将从硬盘启动`)
     await props.reload()
   } catch (e) {
     ElMessage.error(taskErrorMessage(e, '弹出介质失败'))
