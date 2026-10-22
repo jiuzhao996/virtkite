@@ -69,6 +69,14 @@
         </div>
       </el-form-item>
       <el-alert type="info" :closable="false" show-icon title="安装介质将挂载为只读光驱，系统安装到新建的系统盘中。列表覆盖全部激活存储池中的 ISO。" />
+      <!-- 用户实际踩过的坑：装完重启又进安装程序，误以为装失败 -->
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        class="install-done-tip"
+        title="系统安装完成后，请到虚拟机详情「磁盘」页弹出安装介质（或在「概览」把硬盘调为第一启动项）。否则重启会再次从 ISO 进入安装程序。ISO 文件不会删除，可继续用作软件源。"
+      />
     </el-form>
 
     <el-form v-if="installMode === 'cloudimage'" label-width="110px" class="step-form">
@@ -439,6 +447,9 @@ async function saveAsTemplate() {
 <style scoped>
 .step-pane {
   padding: var(--space-lg);
+}
+.install-done-tip {
+  margin-top: 12px;
 }
 
 .step-head {
