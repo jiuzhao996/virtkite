@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -75,7 +76,8 @@ func (h *StorageHandler) loadPoolMeta() map[string]model.PoolMeta {
 func (h *StorageHandler) seedDirInfo() gin.H {
 	dir := config.GlobalConfig.SeedDir
 	if dir == "" {
-		dir = "/home/jiuzhao/vmops/data/seed"
+		// 兜底跟随 DATA_DIR（配置初始化后通常已有值，这里只防极端情况）
+		dir = filepath.Join("data", "seed")
 	}
 	count := 0
 	if entries, err := os.ReadDir(dir); err == nil {

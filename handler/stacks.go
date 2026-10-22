@@ -440,7 +440,13 @@ func (h *StackHandler) Docs(c *gin.Context) {
 	}
 	root := os.Getenv("NOTES_DIR")
 	if root == "" {
-		root = "/home/jiuzhao/data/Firefly-6.16.5/src/content/posts"
+		// 可选功能：默认跟随 DATA_DIR 下的 notes 目录，不再指向某个人的工作路径。
+		// 需要指向已有文档站时设置 NOTES_DIR（如 /srv/posts）。
+		dataDir := "data"
+		if config.GlobalConfig != nil && config.GlobalConfig.DataDir != "" {
+			dataDir = config.GlobalConfig.DataDir
+		}
+		root = filepath.Join(dataDir, "notes")
 	}
 	full := filepath.Join(root, filepath.Clean("/"+rel)) // Clean("/"+rel) 归一并压掉 ..
 	raw, err := os.ReadFile(full)

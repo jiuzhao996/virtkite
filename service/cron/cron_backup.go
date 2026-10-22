@@ -22,8 +22,6 @@ import (
 )
 
 const (
-	// defaultBackupDir 数据库备份默认输出目录（Scheduler.BackupDir 为空时使用）。
-	defaultBackupDir = "/home/jiuzhao/vmops/data/backup"
 	// dbContainerName 备份目标容器：mysqldump 在 MySQL 容器内执行（宿主机不装 mysql 客户端）。
 	dbContainerName = "vmops-mysql"
 	// defaultDBUser / defaultDBName：配置缺失或 config 未初始化（如单测）时的兜底，与 config 默认值一致。
@@ -37,6 +35,17 @@ const (
 	// snapshotPrefix 定时快照的命名前缀；保留份数清理只针对该前缀，手工快照不受影响。
 	snapshotPrefix = "cron-"
 )
+
+// defaultBackupDir 数据库备份默认输出目录（Scheduler.BackupDir 为空时使用）。
+// 跟随 DATA_DIR（默认 data），不再写死某个人的绝对路径；需要独立磁盘时显式
+// 配置 Scheduler.BackupDir。
+func defaultBackupDir() string {
+	dataDir := "data"
+	if config.GlobalConfig != nil && config.GlobalConfig.DataDir != "" {
+		dataDir = config.GlobalConfig.DataDir
+	}
+	return filepath.Join(dataDir, "backup")
+}
 
 // runVMSnapshot 执行定时快照：params JSON 形如 {"vm_id":14}，快照名 cron-<时间戳>。
 func (s *Scheduler) runVMSnapshot(st model.ScheduledTask) (string, error) {
@@ -114,7 +123,7 @@ func (s *Scheduler) pruneVMSnapshots(vmName string, keep int) int {
 func (s *Scheduler) runDBBackup(st model.ScheduledTask) (string, error) {
 	dir := s.BackupDir
 	if dir == "" {
-		dir = defaultBackupDir
+		dir = defaultBackupDir()
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("创建备份目录失败: %w", err)
