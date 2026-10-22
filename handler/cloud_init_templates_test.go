@@ -38,7 +38,7 @@ func TestBuildTemplateRow(t *testing.T) {
 			Name:        "  教学实验室模板  ",
 			Spec:        ciSpecJSON(t, full),
 			Description: " ubuntu 24.04 专用 ",
-		})
+		}, "test-master-secret")
 		if err != nil {
 			t.Fatalf("期望成功，得到错误: %v", err)
 		}
@@ -51,20 +51,36 @@ func TestBuildTemplateRow(t *testing.T) {
 		if spec.Hostname != "lab-vm" {
 			t.Errorf("hostname 应去首尾空白，得到 %q", spec.Hostname)
 		}
-		// 落库的 Spec 必须能无损还原为对象（对外契约：出库即对象）
-		var back virt.CloudInitSpec
-		if err := json.Unmarshal([]byte(row.Spec), &back); err != nil {
-			t.Fatalf("落库 Spec 应为合法 JSON: %v", err)
+		// 口令不得明文落库
+		if strings.Contains(row.Spec, "secret123") {
+			t.Fatalf("落库 Spec 泄漏明文口令: %s", row.Spec)
 		}
-		if len(back.DNS) != 2 || back.IP != "192.168.122.10" {
-			t.Errorf("落库 Spec 字段不完整: %+v", back)
+		// 读取路径必须能还原完整对象（对外契约：出库即对象，含口令）
+		back, err := openTemplateSpec(row.Spec, "test-master-secret")
+		if err != nil {
+			t.Fatalf("落库 Spec 应可解密还原: %v", err)
+		}
+		if len(back.DNS) != 2 || back.IP != "192.168.122.10" || back.Password != "secret123" {
+			t.Errorf("还原的 Spec 不完整: %+v", back)
+		}
+	})
+	t.Run("含口令但主密钥为空：fail-closed", func(t *testing.T) {
+		_, _, err := buildTemplateRow(model.CloudInitTemplate{}, cloudInitTemplateReq{
+			Name: "t",
+			Spec: ciSpecJSON(t, full),
+		}, "")
+		if err == nil {
+			t.Fatal("空主密钥不得把明文口令写进 DB")
+		}
+		if !strings.Contains(err.Error(), "主密钥") {
+			t.Errorf("错误文案应指明主密钥未配置，实际 %v", err)
 		}
 	})
 	t.Run("net_mode 空归一化为 dhcp", func(t *testing.T) {
 		_, spec, err := buildTemplateRow(model.CloudInitTemplate{}, cloudInitTemplateReq{
 			Name: "t",
 			Spec: ciSpecJSON(t, map[string]interface{}{}),
-		})
+		}, "")
 		if err != nil {
 			t.Fatalf("空 spec（全默认）应合法: %v", err)
 		}
@@ -85,7 +101,7 @@ func TestBuildTemplateRow(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := buildTemplateRow(model.CloudInitTemplate{}, tc.req); err == nil {
+			if _, _, err := buildTemplateRow(model.CloudInitTemplate{}, tc.req, ""); err == nil {
 				t.Errorf("期望校验失败，实际通过")
 			}
 		})

@@ -94,12 +94,14 @@ func (h *CloudInitTemplateHandler) List(c *gin.Context) {
 		return
 	}
 	items := make([]cloudInitTemplateItem, 0, len(rows))
+	master := CredentialMasterSecret() // 循环外取一次：未配置时该函数会打警告日志
 	for _, row := range rows {
-		var spec virt.CloudInitSpec
-		if err := json.Unmarshal([]byte(row.Spec), &spec); err != nil {
-			// 存量数据理论上都经校验写入；万一损坏，降级为空配置并留日志，不拖垮整个列表
-			log.Printf("[cloud-init-templates] 模板 %d(%s) Spec 解析失败，按空配置返回: %v", row.ID, row.Name, err)
+		spec, err := openTemplateSpec(row.Spec, master)
+		if err != nil {
+			// 存量数据理论上都经校验写入；损坏或主密钥不可用时降级返回其余字段，不拖垮列表
+			log.Printf("[cloud-init-templates] 模板 %d(%s) 解析/解密失败，口令按空返回: %v", row.ID, row.Name, err)
 		}
+		h.migratePlaintextTemplate(row) // 存量明文口令顺带加密
 		items = append(items, newTemplateItem(row, spec))
 	}
 	Success(c, gin.H{"total": len(items), "items": items})
@@ -120,11 +122,12 @@ func (h *CloudInitTemplateHandler) Get(c *gin.Context) {
 		ErrorResponse(c, http.StatusInternalServerError, err)
 		return
 	}
-	var spec virt.CloudInitSpec
-	if err := json.Unmarshal([]byte(row.Spec), &spec); err != nil {
-		ErrorWithMessage(c, http.StatusInternalServerError, "模板配置数据损坏，请删除后重建", err)
+	spec, err := openTemplateSpec(row.Spec, CredentialMasterSecret())
+	if err != nil {
+		ErrorWithMessage(c, http.StatusInternalServerError, "模板配置数据损坏或口令无法解密，请检查主密钥后重试", err)
 		return
 	}
+	h.migratePlaintextTemplate(*row)
 	Success(c, newTemplateItem(*row, spec))
 }
 
@@ -135,7 +138,7 @@ func (h *CloudInitTemplateHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
-	row, spec, err := buildTemplateRow(model.CloudInitTemplate{}, req)
+	row, spec, err := buildTemplateRow(model.CloudInitTemplate{}, req, CredentialMasterSecret())
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error()) // 校验错误为固定中文文案，可直接回显
 		return
@@ -176,7 +179,7 @@ func (h *CloudInitTemplateHandler) Update(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "参数错误")
 		return
 	}
-	updated, spec, err := buildTemplateRow(*row, req)
+	updated, spec, err := buildTemplateRow(*row, req, CredentialMasterSecret())
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return
@@ -227,7 +230,8 @@ func (h *CloudInitTemplateHandler) getTemplateRow(id uint) (*model.CloudInitTemp
 
 // buildTemplateRow 把请求体规整为模型行（纯校验逻辑，DB 无关，可单测）。
 // 同时返回规整后的 spec 对象，供响应 DTO 直接使用，免去回读再解析。
-func buildTemplateRow(row model.CloudInitTemplate, req cloudInitTemplateReq) (model.CloudInitTemplate, virt.CloudInitSpec, error) {
+// master 为凭据主密钥：spec 含口令时用它加密后再落库（空且有口令 → fail-closed）。
+func buildTemplateRow(row model.CloudInitTemplate, req cloudInitTemplateReq, master string) (model.CloudInitTemplate, virt.CloudInitSpec, error) {
 	name, err := validateTemplateName(req.Name)
 	if err != nil {
 		return row, virt.CloudInitSpec{}, err
@@ -243,12 +247,12 @@ func buildTemplateRow(row model.CloudInitTemplate, req cloudInitTemplateReq) (mo
 	if err := validateTemplateSpec(&spec); err != nil {
 		return row, virt.CloudInitSpec{}, err
 	}
-	b, err := json.Marshal(spec)
+	sealed, err := sealTemplateSpec(spec, master)
 	if err != nil {
-		return row, virt.CloudInitSpec{}, errors.New("模板配置序列化失败")
+		return row, virt.CloudInitSpec{}, err
 	}
 	row.Name = name
-	row.Spec = string(b)
+	row.Spec = sealed
 	row.Description = desc
 	return row, spec, nil
 }
