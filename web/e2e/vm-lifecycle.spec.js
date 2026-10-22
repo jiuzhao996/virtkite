@@ -43,6 +43,16 @@ async function expectStatus(page, id, status) {
     .toBe(status)
 }
 
+/** 兜底清理：软删 + 回收站彻底清除（只针对本轮 e2e 资源） */
+async function purgeFixture(page, id, name) {
+  const leftover = await findVMByName(page, name)
+  if (leftover) {
+    const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`, undefined, { guard: name })
+    if (del.data?.task_id) await waitTask(page, del.data.task_id, { timeout: 180_000 }).catch(() => {})
+  }
+  await api(page, 'DELETE', `/api/vms-recycle/${id}/purge?purge_volumes=true`, undefined, { guard: name }).catch(() => {})
+}
+
 test.describe('虚拟机生命周期 @vm-life', () => {
   test.skip(!PASS, '未提供 ADMIN_PASS')
   test.skip(!ALLOW_DESTRUCTIVE, '未开启 E2E_ALLOW_DESTRUCTIVE')
@@ -109,12 +119,53 @@ test.describe('虚拟机生命周期 @vm-life', () => {
       expect(errors, `生命周期操作出现 JS 异常：\n${errors.join('\n')}`).toHaveLength(0)
     } finally {
       // 兜底：软删 + 回收站彻底清除（只针对本轮 e2e 资源）
-      const leftover = await findVMByName(page, name)
-      if (leftover) {
-        const del = await api(page, 'DELETE', `/api/vms/${leftover.id}`, undefined, { guard: name })
-        if (del.data?.task_id) await waitTask(page, del.data.task_id, { timeout: 180_000 }).catch(() => {})
-      }
-      await api(page, 'DELETE', `/api/vms-recycle/${id}/purge?purge_volumes=true`, undefined, { guard: name }).catch(() => {})
+      await purgeFixture(page, id, name)
+    }
+  })
+
+  // ISO 建机后 cdrom 排在 hd 前面，装完重启会再次进入安装程序（用户实际踩坑）。
+  // 本用例覆盖「概览页调整启动顺序」的 UI 全链路与两个负例。
+  test('启动顺序：概览页调整并持久化；非法值与空光驱给明确拒绝', async ({ page }) => {
+    await login(page)
+    const fixture = await createFixtureVM(page)
+    test.skip(!fixture, '没有云镜像，无法造 fixture VM')
+    const { id, name } = fixture
+    const errors = collectPageErrors(page)
+
+    try {
+      // 前置数据走 API：云镜像 VM 默认只有 hd，先把 cdrom 排到前面制造「可调整」状态
+      const preset = await api(page, 'PUT', `/api/vms/${id}/boot-order`, { devices: ['cdrom', 'hd'] })
+      expect(preset.status, `预设启动顺序失败：${preset.message || ''}`).toBe(200)
+
+      // 被验收的动作全部走 UI
+      await page.goto(`/#/vms/${id}`)
+      const bootCell = page.locator('.el-descriptions__cell', { hasText: '启动顺序' })
+      await expect(bootCell).toContainText('光驱 → 硬盘', { timeout: 20_000 })
+
+      await bootCell.getByRole('button', { name: '调整' }).click()
+      const dialog = page.locator('.el-dialog:visible')
+      await expect(dialog.locator('.boot-row')).toHaveCount(2)
+      // 第二行是「硬盘」，上移后变成硬盘优先
+      await dialog.locator('.boot-row').nth(1).getByRole('button', { name: '上移' }).click()
+      await dialog.getByRole('button', { name: '保存' }).click()
+      await expect(page.locator('.el-message').last()).toContainText(/启动顺序已更新/, { timeout: 20_000 })
+
+      // 持久化：接口读回真实顺序
+      await expect
+        .poll(async () => ((await getVMSpec(page, id))?.spec?.boot?.devices || []).join(','), { timeout: 20_000 })
+        .toBe('hd,cdrom')
+
+      // 负例：非法启动设备必须 400（此前无校验会写进 XML 让 libvirt 报 500）
+      const bad = await api(page, 'PUT', `/api/vms/${id}/boot-order`, { devices: ['usb'] })
+      expect(bad.status, '非法启动设备应返回 400').toBe(400)
+
+      // 负例：不存在的光驱弹介质 → 409（可纠正状态，不是 500）
+      const noMedia = await api(page, 'POST', `/api/vms/${id}/devices/cdrom/hdz/eject`)
+      expect(noMedia.status, '不存在的光驱应返回 409').toBe(409)
+
+      expect(errors, `启动顺序操作出现 JS 异常：\n${errors.join('\n')}`).toHaveLength(0)
+    } finally {
+      await purgeFixture(page, id, name)
     }
   })
 })
