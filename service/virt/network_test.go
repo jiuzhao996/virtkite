@@ -249,9 +249,10 @@ func TestNetworkXMLFromParamsStructure(t *testing.T) {
 // encoding/xml 换回字符串拼接（那会重新打开闭合标签注入），字符串形态必变，
 // 而纯结构化断言可能仍然全过——这条精确比对是最后一道形态锁。
 func TestNetworkXMLFromParamsExactWireFormat(t *testing.T) {
-	const want = `<network><name>vmops-net</name>` +
+	// 网桥名由 hashNetwork 派生，跟随算法变化；这里用同一函数计算，避免硬编码后失同步
+	want := `<network><name>vmops-net</name>` +
 		`<forward mode="nat"><nat><port start="1024" end="65535"></port></nat></forward>` +
-		`<bridge name="virbr147" stp="on" delay="0"></bridge>` +
+		`<bridge name="virbr` + strconv.Itoa(hashNetwork("vmops-net")) + `" stp="on" delay="0"></bridge>` +
 		`<ip address="192.168.100.1" netmask="255.255.255.0">` +
 		`<dhcp><range start="192.168.100.2" end="192.168.100.254"></range></dhcp></ip></network>`
 
@@ -408,18 +409,12 @@ func TestNetworkXMLFromParamsBlocksInjection(t *testing.T) {
 
 // TestNetworkXMLFromParamsBridgeNameCollision 记录网桥命名策略的两个性质：
 // 同名必得同网桥（幂等，重复定义同一网络不会换网桥），
-// 以及字符和取模的做法必然存在碰撞——字母重排后的名字会算出同一个网桥名。
+// 以及异位词不再碰撞。
 //
 // 风险点：libvirt 不允许两个网络用同一个 <bridge name>，第二个 net-define
-// 会直接失败。hashNetwork 只有 200 个桶（sum%200+10），而且用的是字符和，
-// 因此不仅是概率碰撞，而是「异位词一定碰撞」这种可预期的碰撞。
-// 用户建两个名字互为重排的网络（net-a1 / net-1a）就会撞上，
-// 而报错信息来自 libvirt，界面上看不出根因。
-//
-// TODO(改进): 网桥名应改为「取网络名的哈希后取更长的十六进制」或直接按
-//
-//	现存网桥列表递增分配（virbr0..virbrN 找空位），彻底消除可预期碰撞。
-//	发现于毕业设计测试阶段，非阻塞问题，故用例先固化现状。
+// 会直接失败。旧实现用「字符码求和 %200」，对顺序不敏感——net-a1 与 net-1a
+// 这类异位词必定撞名，且报错来自 libvirt、界面上看不出根因。
+// 现已改为 FNV-1a 取模 90000（[10000,99999]），顺序敏感、桶数大两个数量级。
 func TestNetworkXMLFromParamsBridgeNameCollision(t *testing.T) {
 	// bridgeOf 从生成的 XML 里取出网桥名
 	bridgeOf := func(netName string) string {
@@ -441,7 +436,7 @@ func TestNetworkXMLFromParamsBridgeNameCollision(t *testing.T) {
 		}
 	})
 
-	t.Run("网桥编号落在 hashNetwork 约定的 10..209 区间内", func(t *testing.T) {
+	t.Run("网桥编号落在 hashNetwork 约定的 10000..99999 区间内", func(t *testing.T) {
 		for _, netName := range []string{"", "a", "vmops-net", "生产网络", strings.Repeat("z", 300)} {
 			br := bridgeOf(netName)
 			if !bridgeNameFormat.MatchString(br) {
@@ -452,13 +447,15 @@ func TestNetworkXMLFromParamsBridgeNameCollision(t *testing.T) {
 			if h := hashNetwork(netName); num != strconv.Itoa(h) {
 				t.Errorf("网络名 %q 的网桥编号期望 %d（hashNetwork 结果），实际 %s", netName, h, num)
 			}
-			if h := hashNetwork(netName); h < 10 || h > 209 {
-				t.Errorf("网络名 %q 的网桥编号 %d 越出约定区间 [10,209]", netName, h)
+			if h := hashNetwork(netName); h < 10000 || h > 99999 {
+				t.Errorf("网络名 %q 的网桥编号 %d 越出约定区间 [10000,99999]", netName, h)
 			}
 		}
 	})
 
-	t.Run("异位词必定碰撞（现状缺陷，libvirt 会拒绝定义第二个网络）", func(t *testing.T) {
+	t.Run("异位词不再碰撞", func(t *testing.T) {
+		// 字符和取模的旧实现里这些名字两两同桥（异位词必碰撞），
+		// 第二个网络会被 libvirt 以 bridge name 冲突拒绝。FNV-1a 后必须不同。
 		pairs := [][2]string{
 			{"net-a1", "net-1a"},
 			{"ab", "ba"},
@@ -466,9 +463,9 @@ func TestNetworkXMLFromParamsBridgeNameCollision(t *testing.T) {
 		}
 		for _, p := range pairs {
 			b1, b2 := bridgeOf(p[0]), bridgeOf(p[1])
-			if b1 != b2 {
-				t.Errorf("网络名 %q 与 %q 是异位词，按 hashNetwork（字符和取模）应算出同一网桥名，实际 %q vs %q",
-					p[0], p[1], b1, b2)
+			if b1 == b2 {
+				t.Errorf("网络名 %q 与 %q 是异位词，网桥名仍然碰撞（%s），libvirt 将拒绝第二个网络",
+					p[0], p[1], b1)
 			}
 		}
 	})

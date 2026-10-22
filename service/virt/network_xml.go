@@ -8,6 +8,7 @@ package virt
 import (
 	"encoding/xml"
 	"fmt"
+	"hash/fnv"
 	"strings"
 )
 
@@ -166,15 +167,17 @@ func NetworkXMLForMode(name, mode, gateway, hostBridge string) (string, error) {
 	return string(out), nil
 }
 
-// hashNetwork 由网络名派生一个稳定的网桥后缀：字符码求和后 %200 + 10，
-// 落在 [10,209]，拼成 virbr<N>。取 10 起步是避开 libvirt 默认桥 virbr0，
-// 且同一网络名恒得同一 N（重复定义时桥名不变）。
+// hashNetwork 由网络名派生一个稳定的网桥后缀：FNV-1a 32 位取模 90000 + 10000，
+// 落在 [10000,99999]，拼成 virbr<N>（最长 10 字符，远低于 IFNAMSIZ 上限）。
+//
+// 为什么不用「字符码求和」：求和对字符顺序不敏感，net-a1 与 net-1a 这类异位词
+// 必然算出同一个网桥名，libvirt 会拒绝定义第二个网络（bridge name 冲突），
+// 且报错来自 libvirt、界面上看不出根因。FNV-1a 打乱了顺序敏感性，
+// 同时保持「同一网络名恒得同一 N」的幂等性（重复定义不换网桥）。
 func hashNetwork(name string) int {
-	sum := 0
-	for _, r := range name {
-		sum += int(r)
-	}
-	return sum%200 + 10
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(name))
+	return int(h.Sum32()%90000) + 10000
 }
 
 // dhcpStart / dhcpEnd 基于网关生成 DHCP 范围：起点 .2、终点 .254，
