@@ -9,8 +9,26 @@ cd "$(dirname "$0")"
 NOVNC_PORT="${NOVNC_PORT:-6080}"
 BACKEND="${VMOPS_BACKEND:-http://127.0.0.1:8080}"
 
+start_infra() {
+  # 依赖容器按需启动：compose 里 restart=unless-stopped，一旦被手动 stop，
+  # 开机/Docker 重启都不会自动拉起（这正是「只在启动项目时才起」的语义），
+  # 这里在启动项目时统一恢复。已运行的容器 docker start 是幂等的。
+  local containers="vmops-mysql vmops-prometheus vmops-alertmanager vmops-victoria-logs vmops-vector"
+  local missing=""
+  for c in $containers; do
+    if docker inspect "$c" >/dev/null 2>&1; then
+      docker start "$c" >/dev/null 2>&1 || true
+    else
+      missing="$missing $c"
+    fi
+  done
+  [ -n "$missing" ] && echo "   未创建的容器:$missing（首次部署请先执行 docker compose up -d）"
+  return 0
+}
+
 start_backend() {
   echo "▶ 启动 vmops 后端 (:8080)..."
+  start_infra
   # 原生直跑也加载 .env（METRICS_TOKEN/ALERT_WEBHOOK_TOKEN 等此前只在 compose 形态生效）
   if [ -f .env ]; then set -a; . ./.env; set +a; fi
   # 本地开发默认 debug 模式（config 默认已改为 release；release 要求强随机 JWT_SECRET_KEY 才能启动）

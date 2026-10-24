@@ -179,6 +179,11 @@ docker compose up -d prometheus alertmanager victoria-logs vector
 # 日志 UI（绑回环，远程看走 SSH 隧道）http://127.0.0.1:9428/select/vmui
 ```
 
+> **按需启动（避免开机空转占 CPU/内存）**：这些容器使用 `restart: unless-stopped`，手动
+> `docker stop` 后开机/Docker 重启都不会自动拉起；`./start.sh` 会在启动项目时统一
+> `docker start vmops-mysql vmops-prometheus vmops-alertmanager vmops-victoria-logs vmops-vector`
+> 再拉起后端。首次部署仍需先 `docker compose up -d` 创建容器。
+
 ### 5. 测试账号
 
 | 账号 | 角色 | 权限 |
