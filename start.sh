@@ -1,10 +1,17 @@
 #!/bin/bash
 # vmops 一键启动脚本：后端 + noVNC/websockify
-# 用法: ./start.sh            # 前台启动（Ctrl+C 停止）
-#       ./start.sh --service  # 用 systemd-run 后台启动（推荐无人值守）
+# 用法: ./start.sh                      # 前台启动（Ctrl+C 停止），只起 MySQL
+#       ./start.sh --service            # 用 systemd-run 后台启动（推荐无人值守）
+#       ./start.sh --with-monitoring    # 同时启动 Prometheus/Alertmanager/VictoriaLogs/Vector
+#       ./start.sh --stop               # 停止后端与 noVNC（容器保持当前状态）
 set -e
 
 cd "$(dirname "$0")"
+
+WITH_MONITORING=0
+for arg in "$@"; do
+  [ "$arg" = "--with-monitoring" ] && WITH_MONITORING=1
+done
 
 NOVNC_PORT="${NOVNC_PORT:-6080}"
 BACKEND="${VMOPS_BACKEND:-http://127.0.0.1:8080}"
@@ -12,8 +19,13 @@ BACKEND="${VMOPS_BACKEND:-http://127.0.0.1:8080}"
 start_infra() {
   # 依赖容器按需启动：compose 里 restart=unless-stopped，一旦被手动 stop，
   # 开机/Docker 重启都不会自动拉起（这正是「只在启动项目时才起」的语义），
-  # 这里在启动项目时统一恢复。已运行的容器 docker start 是幂等的。
-  local containers="vmops-mysql vmops-prometheus vmops-alertmanager vmops-victoria-logs vmops-vector"
+  # 这里在启动项目时恢复。已运行的容器 docker start 是幂等的。
+  #
+  # 默认只起 MySQL（平台硬依赖）；监控/日志栈较吃内存，用 --with-monitoring 显式开启。
+  local containers="vmops-mysql"
+  if [ "$WITH_MONITORING" = "1" ]; then
+    containers="$containers vmops-prometheus vmops-alertmanager vmops-victoria-logs vmops-vector"
+  fi
   local missing=""
   for c in $containers; do
     if docker inspect "$c" >/dev/null 2>&1; then
@@ -35,8 +47,12 @@ start_backend() {
   export SERVER_MODE="${SERVER_MODE:-debug}"
   # 等 MySQL 就绪（docker start 后 InnoDB 初始化需数秒，抢跑会导致 vmops 连库失败退出、8080 无响应）
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^vmops-mysql$'; then
+    # 口令只从 .env 读取，不再内置弱口令兜底（AGENTS.md 禁止硬编码口令）；
+    # 未配置时用容器内免密 ping，失败也只是等满 15s 后继续。
+    PING=(docker exec vmops-mysql mysqladmin ping --silent)
+    [ -n "${DB_PASSWORD:-}" ] && PING=(docker exec vmops-mysql mysqladmin ping -uvmops -p"$DB_PASSWORD" --silent)
     for i in $(seq 1 15); do
-      docker exec vmops-mysql mysqladmin ping -uvmops -p"${DB_PASSWORD:-vmops123}" --silent 2>/dev/null && break
+      "${PING[@]}" 2>/dev/null && break
       [ "$i" = 1 ] && echo "   等待 MySQL 就绪…"
       sleep 1
     done
