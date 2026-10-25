@@ -303,7 +303,7 @@ func (h *VMFilesHandler) OfflineDownload(c *gin.Context) {
 		ErrorWithMessage(c, http.StatusInternalServerError, "读取文件失败", err)
 		return
 	}
-	c.Header("Content-Disposition", "attachment; filename="+filepath.Base(clean))
+	setAttachmentHeader(c, filepath.Base(clean))
 	c.Header("Content-Type", "application/octet-stream")
 	c.Header("Content-Length", strconv.FormatInt(size, 10))
 	c.Status(http.StatusOK)

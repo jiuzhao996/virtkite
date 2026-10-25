@@ -111,6 +111,7 @@ func main() {
 	// 不再有「把 query JWT 升格进 Header 以免落日志」的诉求，故无需前置中间件。
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(middleware.SecurityHeadersMiddleware())
 	// 只信任本机回环代理（frp 客户端在宿主机本机转发云 nginx 的回源流量）：
 	// gin 默认信任所有代理，客户端伪造 X-Forwarded-For 最左值即可绕过登录限流并污染审计 IP
 	if err := r.SetTrustedProxies([]string{"127.0.0.1"}); err != nil {

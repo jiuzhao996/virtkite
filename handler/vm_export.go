@@ -140,14 +140,8 @@ func (h *VMExportHandler) Export(c *gin.Context) {
 
 	// 响应头先于任何字节写出；此后再出错已无法改状态码，只能留日志（客户端表现为流截断）。
 	// 文件名进 HTTP 头，替换引号/换行/反斜杠防响应头被破坏（同 vm_files.go Download）。
-	exportName := strings.Map(func(r rune) rune {
-		if r == '"' || r == '\\' || r == '\r' || r == '\n' {
-			return '_'
-		}
-		return r
-	}, vm.Name+"-export.tar.gz")
 	c.Header("Content-Type", "application/gzip")
-	c.Header("Content-Disposition", `attachment; filename="`+exportName+`"`)
+	setAttachmentHeader(c, vm.Name+"-export.tar.gz")
 
 	if err := streamExportTarGz(c.Writer, spec, diskPath); err != nil {
 		LogError(c, fmt.Errorf("导出流写入中断 vm=%s(%d) disk=%s: %w", vm.Name, vm.ID, diskPath, err))

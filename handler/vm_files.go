@@ -207,9 +207,7 @@ func (h *VMFilesHandler) Download(c *gin.Context) {
 	if name == "/" || name == "." || name == "" {
 		name = "download"
 	}
-	// 文件名进 HTTP 头，替换引号防响应头被破坏
-	name = strings.ReplaceAll(name, `"`, `_`)
-	c.Header("Content-Disposition", `attachment; filename="`+name+`"`)
+	setAttachmentHeader(c, name)
 	c.Data(http.StatusOK, "application/octet-stream", []byte(stdout))
 }
 
