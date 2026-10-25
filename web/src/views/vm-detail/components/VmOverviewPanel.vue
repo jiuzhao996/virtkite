@@ -45,11 +45,12 @@
 
     <!-- 启动顺序调整：只影响下次启动，运行中的虚拟机不被踢下线 -->
     <el-dialog v-model="bootDialog" title="调整启动顺序" width="420px" append-to-body>
-      <p class="boot-tip">从上到下依次尝试启动。系统安装完成后应把「硬盘」放在第一位，否则会再次从安装 ISO 启动。</p>
+      <p class="boot-tip">从上到下依次尝试启动。系统安装完成后应把「硬盘」放在第一位，否则会再次从安装 ISO 启动。标「未挂载」的项当前没有对应设备，BIOS 会自动跳过。</p>
       <div v-for="(dev, i) in bootDraft" :key="dev" class="boot-row">
         <span class="boot-idx">{{ i + 1 }}</span>
         <span class="boot-name">{{ bootLabel(dev) }}</span>
         <span class="boot-code mono">{{ dev }}</span>
+        <el-tag v-if="!deviceAvailable(dev)" size="small" type="info" effect="plain">未挂载</el-tag>
         <el-button :icon="ArrowUp" circle size="small" :disabled="i === 0" aria-label="上移" @click="moveBoot(i, -1)" />
         <el-button :icon="ArrowDown" circle size="small" :disabled="i === bootDraft.length - 1" aria-label="下移" @click="moveBoot(i, 1)" />
       </div>
@@ -97,6 +98,16 @@ const bootDevices = () => {
   return Array.isArray(ds) && ds.length ? ds.slice() : ['hd']
 }
 const bootOrderText = computed(() => bootDevices().map(bootLabel).join(' → '))
+
+// 引导项与当前设备的对应关系：libvirt 允许 boot 里列一个不存在的设备，
+// BIOS 会直接跳过。标注出来，避免用户以为「排在第一位就一定会从它启动」。
+function deviceAvailable(dev) {
+  const s = props.spec || {}
+  if (dev === 'hd') return (s.disks || []).some((d) => d.device === 'disk')
+  if (dev === 'cdrom') return (s.disks || []).some((d) => d.device === 'cdrom' && !!d.source)
+  if (dev === 'network') return (s.interfaces || []).length > 0
+  return true
+}
 
 const bootDialog = ref(false)
 const bootDraft = ref([])
