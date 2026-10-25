@@ -9,6 +9,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"hash/fnv"
+	"net"
 	"strings"
 )
 
@@ -130,6 +131,14 @@ const (
 //
 // hostBridge 仅 bridge 模式需要（须是宿主机上已存在的网桥，如 br0）。
 func NetworkXMLForMode(name, mode, gateway, hostBridge string) (string, error) {
+	// 生成侧兜底：handler 已用 validIPv4 校验过，但直接调 virt 的路径没有防线。
+	// 非法网关会生成 <dhcp><range start="nodot".../> 这类 XML，libvirt 的报错
+	// 对用户没有指导性。空串表示使用内置默认网关。
+	if gateway != "" {
+		if ip := net.ParseIP(gateway); ip == nil || ip.To4() == nil {
+			return "", fmt.Errorf("网关地址不合法: %s", gateway)
+		}
+	}
 	nx := networkXML{Name: name}
 	switch mode {
 	case "", NetModeNAT:

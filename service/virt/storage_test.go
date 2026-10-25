@@ -172,21 +172,6 @@ func TestBuildVolumeXMLStructure(t *testing.T) {
 			wantUnit: "B", wantCap: "21474836480", wantFmt: "qcow2",
 		},
 		{
-			name:    "容量 0（handler 兜底前的极端值，生成侧原样输出不报错）",
-			volName: "zero.qcow2", format: volFormatQcow2, unit: volUnitGiB, capacity: 0,
-			wantUnit: "G", wantCap: "0", wantFmt: "qcow2",
-		},
-		{
-			name:    "容量为负（生成侧不校验，交由 libvirt 拒绝）",
-			volName: "neg.qcow2", format: volFormatQcow2, unit: volUnitGiB, capacity: -1,
-			// TODO(疑似缺陷): buildVolumeXML 不校验 capacity。当前唯一的防线在
-			//  handler/storage.go（Capacity <= 0 时兜成 20），virt 层自身没有兜底。
-			//  若将来新增一条不经 handler 的调用路径（比如内部任务直接调 virt），
-			//  就会把 <capacity unit="G">-1</capacity> 送进 libvirt。
-			//  纵深防御的做法是在这里就拒绝 capacity <= 0。
-			wantUnit: "G", wantCap: "-1", wantFmt: "qcow2",
-		},
-		{
 			name:    "中文卷名（合法 UTF-8，不应被转义或截断）",
 			volName: "系统盘.qcow2", format: volFormatQcow2, unit: volUnitGiB, capacity: 40,
 			wantUnit: "G", wantCap: "40", wantFmt: "qcow2",
@@ -197,6 +182,14 @@ func TestBuildVolumeXMLStructure(t *testing.T) {
 			wantUnit: "G", wantCap: "1", wantFmt: "",
 		},
 	}
+
+	t.Run("容量 <= 0 必须在生成侧拒绝", func(t *testing.T) {
+		for _, cap := range []int64{0, -1} {
+			if _, err := buildVolumeXML("x.qcow2", volFormatQcow2, volUnitGiB, cap); err == nil {
+				t.Errorf("capacity=%d 应被拒绝，不能把非法容量送进 libvirt", cap)
+			}
+		}
+	})
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

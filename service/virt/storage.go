@@ -107,6 +107,11 @@ func buildVolumeXML(name, format, unit string, capacity int64) (string, error) {
 // 新卷即成为该父盘的 qcow2 增量子卷（linked clone），只存写入差异。
 // 父盘格式固定按 qcow2 声明：本项目所有池卷均为 qcow2。
 func buildVolumeXMLWithBacking(name, format, unit string, capacity int64, backingPath string) (string, error) {
+	// 生成侧兜底：handler 虽已把 <=0 的容量兜成 20，但内部任务可能直接调 virt。
+	// 把 <capacity>-1</capacity> 送进 libvirt 只会得到一条与用户无关的底层报错。
+	if capacity <= 0 {
+		return "", fmt.Errorf("卷容量必须大于 0（当前 %d %s）", capacity, unit)
+	}
 	v := volumeXML{
 		Name:     name,
 		Capacity: volCapacityXML{Unit: unit, Value: capacity},

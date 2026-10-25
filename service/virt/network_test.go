@@ -517,6 +517,13 @@ func TestNetworkXMLForMode(t *testing.T) {
 	if _, err := NetworkXMLForMode("n5", "bogus", "", ""); err == nil {
 		t.Error("未知模式应报错")
 	}
+	// 生成侧兜底：非法网关必须在 virt 层就被拒绝（不能依赖 handler 的 validIPv4）
+	if _, err := NetworkXMLForMode("n7", "nat", "not-an-ip", ""); err == nil {
+		t.Error("非法网关应报错")
+	}
+	if _, err := NetworkXMLForMode("n8", "nat", "::1", ""); err == nil {
+		t.Error("IPv6 网关应被拒绝（DHCP 范围只支持 IPv4）")
+	}
 
 	// 空模式回落 nat（保持旧调用方行为）
 	def, err := NetworkXMLForMode("n6", "", "", "")
