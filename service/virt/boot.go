@@ -59,6 +59,51 @@ func normalizeBootDevices(devices []string) ([]string, error) {
 	return out, nil
 }
 
+// BootOrder 读取虚拟机当前的引导顺序（等价 `virsh dumpxml <domain> | grep '<boot dev='`）。
+// 返回按 XML 中出现顺序排列的设备名；域里没写 <boot> 时返回空切片（BIOS 走默认探测）。
+// 供「固化为模板」等场景判断"光驱是否仍排在硬盘前面"。
+func (v *Virt) BootOrder(domain string) ([]string, error) {
+	raw, err := v.GetDomainXML(domain)
+	if err != nil {
+		return nil, err
+	}
+	return parseBootOrderXML(raw), nil
+}
+
+// parseBootOrderXML 抽取 <os> 下按出现顺序排列的 <boot dev="..."/>。纯函数便于单测。
+func parseBootOrderXML(raw string) []string {
+	out := []string{}
+	dec := xml.NewDecoder(strings.NewReader(raw))
+	inOS := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break // EOF 或解析失败都按"已收集到的"返回，不阻断能力探测
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "os" {
+				inOS = true
+				continue
+			}
+			if !inOS || t.Name.Local != "boot" {
+				continue
+			}
+			for _, a := range t.Attr {
+				if a.Name.Local == "dev" && a.Value != "" {
+					out = append(out, strings.ToLower(a.Value))
+					break
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "os" {
+				inOS = false
+			}
+		}
+	}
+	return out
+}
+
 // setBootOrderXML 用给定顺序替换 <os> 内的全部 <boot> 元素，其余 XML 原样保留。
 // 纯函数便于单测。
 func setBootOrderXML(raw string, devices []string) (string, error) {

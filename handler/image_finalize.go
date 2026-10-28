@@ -71,7 +71,10 @@ func (h *VMHandler) FinalizeImage(c *gin.Context) {
 }
 
 // FinalizeCapability GET /api/vms/:id/finalize-capability
-// 供前端判断「固化为模板」按钮是否可用：工具链是否就绪（真自检）+ VM 是否关机。
+// 供前端判断「固化为模板」按钮是否可用，并在弹窗里给出两条前置提醒：
+//   - guestfs_available / vm_shutoff：硬性前提（工具链就绪 + 已关机）
+//   - has_snapshot：固化是原地清洗原盘，快照保留的是清洗前旧状态，模板不该带制作机历史
+//   - boot_cdrom_first：ISO 建机默认 cdrom→hd，装完系统不切回来，重启会重复进安装程序
 func (h *VMHandler) FinalizeCapability(c *gin.Context) {
 	vm, ok := h.findVM(c)
 	if !ok {
@@ -82,12 +85,33 @@ func (h *VMHandler) FinalizeCapability(c *gin.Context) {
 		"version":           "",
 		"reason":            "",
 		"vm_shutoff":        vm.Status == model.VMStatusShutOff,
+		"has_snapshot":      false,
+		"snapshot_count":    0,
+		"boot_cdrom_first":  false,
 	}
 	if t, err := guestfs.Detect(); err != nil {
 		resp["reason"] = err.Error()
 	} else {
 		resp["guestfs_available"] = true
 		resp["version"] = t.Version
+	}
+	// 快照探测：查不到（如域不存在）不阻断，按"无快照"处理
+	if snaps, err := h.Virt.ListSnapshots(vm.Name); err == nil {
+		resp["has_snapshot"] = len(snaps) > 0
+		resp["snapshot_count"] = len(snaps)
+	}
+	// 启动顺序探测：光驱排在硬盘前面才算"光驱优先"
+	if order, err := h.Virt.BootOrder(vm.Name); err == nil && len(order) > 0 {
+		resp["boot_order"] = order
+		for _, d := range order {
+			if d == "hd" {
+				break
+			}
+			if d == "cdrom" {
+				resp["boot_cdrom_first"] = true
+				break
+			}
+		}
 	}
 	Success(c, resp)
 }

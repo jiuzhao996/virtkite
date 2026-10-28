@@ -5,6 +5,16 @@
       type="info" :closable="false" show-icon style="margin-bottom: 14px"
       title="清洗镜像（virt-sysprep：去 SSH 主机密钥 / bash 历史 / machine-id / udev 持久网卡等），并注入平台公钥与基础优化，随后移除本制作机并把系统盘登记为模板。清洗不可逆。"
     />
+    <el-alert
+      v-if="cap.has_snapshot"
+      type="warning" :closable="false" show-icon style="margin-bottom: 10px"
+      :title="`该虚拟机有 ${cap.snapshot_count || 1} 个快照。固化是原地清洗原盘，快照保留的是清洗前的旧状态，模板也会带上制作机历史——建议先删除快照再固化。`"
+    />
+    <el-alert
+      v-if="cap.boot_cdrom_first"
+      type="warning" :closable="false" show-icon style="margin-bottom: 10px"
+      title="启动顺序是「光驱优先」且光驱里挂着 ISO：这台制作机重启会再次进入安装程序。建议先在详情页把 hd 调到首位（或弹出 ISO）再固化。"
+    />
     <el-form label-width="96px">
       <el-form-item label="模板名称" required>
         <el-input v-model="form.name" placeholder="如 Rocky10-base" />
@@ -54,9 +64,17 @@ const open = defineModel({ type: Boolean, default: false })
 const busy = ref(false)
 const form = reactive({ name: '', description: '', os_version: '', custom_script: '', optimize: true, sparsify: false })
 
-// 打开前由父组件调用，预填模板名称
-function prepare() {
+// 打开前由父组件调用，预填模板名称并拉取前置提醒（快照 / 启动顺序）
+const cap = ref({ has_snapshot: false, snapshot_count: 0, boot_cdrom_first: false })
+async function prepare() {
   Object.assign(form, { name: props.vmName || '', description: '', os_version: '', custom_script: '', optimize: true, sparsify: false })
+  cap.value = { has_snapshot: false, snapshot_count: 0, boot_cdrom_first: false }
+  if (!props.vmId) return
+  try {
+    cap.value = { ...cap.value, ...((await api.finalizeVMCapability(props.vmId)).data || {}) }
+  } catch {
+    /* 能力探测失败不阻断弹窗：后端 FinalizeImage 仍会做硬校验 */
+  }
 }
 defineExpose({ prepare })
 

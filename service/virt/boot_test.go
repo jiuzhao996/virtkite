@@ -32,6 +32,37 @@ func TestSetBootOrderXML(t *testing.T) {
 	}
 }
 
+// TestParseBootOrderXML 覆盖「读取当前启动顺序」——固化前提示"光驱优先"靠它。
+//
+// 风险点：顺序必须保持 XML 里的**出现顺序**（读成集合就判断不出谁在前）；
+// 且与 setBootOrderXML 互为逆操作（改完能读回新顺序）。
+func TestParseBootOrderXML(t *testing.T) {
+	got := parseBootOrderXML(kylinDomainXML)
+	want := []string{"cdrom", "hd"}
+	if len(got) != len(want) {
+		t.Fatalf("引导项数量 = %d，期望 %d：%v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("第 %d 项 = %q，期望 %q（必须保持出现顺序）", i, got[i], want[i])
+		}
+	}
+
+	// 与 SetBootOrder 互为逆操作
+	adj, err := setBootOrderXML(kylinDomainXML, []string{"hd", "cdrom"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := parseBootOrderXML(adj); len(g) != 2 || g[0] != "hd" || g[1] != "cdrom" {
+		t.Errorf("调整后读取 = %v，期望 [hd cdrom]", g)
+	}
+
+	// 没写 <boot> 时返回空切片（BIOS 默认探测，不该被当成"光驱优先"）
+	if g := parseBootOrderXML("<domain><os><type arch='x86_64'>hvm</type></os></domain>"); len(g) != 0 {
+		t.Errorf("无 <boot> 时应返回空，实际 %v", g)
+	}
+}
+
 func TestSetBootOrderXMLSingleDevice(t *testing.T) {
 	got, err := setBootOrderXML(kylinDomainXML, []string{"hd"})
 	if err != nil {
