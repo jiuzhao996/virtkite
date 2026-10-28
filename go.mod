@@ -1,6 +1,6 @@
 module github.com/jiuzhao/vmops
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/digitalocean/go-libvirt v0.0.0-20260814190004-1a83157e1858
