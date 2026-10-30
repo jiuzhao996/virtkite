@@ -78,7 +78,12 @@ stop_all() {
   [ -f vmops.pid ] && kill "$(cat vmops.pid)" 2>/dev/null || true
   [ -f novnc.pid ] && kill "$(cat novnc.pid)" 2>/dev/null || true
   rm -f vmops.pid novnc.pid
-  echo "   已停止（依赖容器保持当前状态；需要一并停止用 --stop-containers）"
+  # --stop-containers 会紧跟着停容器，此时不再提示「容器仍保持运行」
+  if [ "${1:-}" = "keep-containers" ]; then
+    echo "   已停止（依赖容器保持当前状态；需要一并停止用 --stop-containers）"
+  else
+    echo "   已停止"
+  fi
 }
 
 stop_containers() {
@@ -88,7 +93,7 @@ stop_containers() {
 }
 
 if [ "$1" = "--stop" ]; then
-  stop_all
+  stop_all keep-containers
   exit 0
 fi
 
