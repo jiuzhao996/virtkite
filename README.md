@@ -182,8 +182,9 @@ docker compose up -d prometheus alertmanager victoria-logs vector
 > **按需启动（避免开机空转占 CPU/内存）**：这些容器使用 `restart: unless-stopped`，手动
 > `docker stop` 后开机/Docker 重启都不会自动拉起。`./start.sh` 默认只启动平台硬依赖的
 > `vmops-mysql`；需要监控/日志栈时加参数：`./start.sh --with-monitoring`
-> （同时启动 Prometheus/Alertmanager/VictoriaLogs/Vector）。首次部署仍需先
-> `docker compose up -d` 创建容器。
+> （同时启动 Prometheus/Alertmanager/VictoriaLogs/Vector）。收尾用
+> `./start.sh --stop`（只停后端）或 `./start.sh --stop-containers`（连同容器一起停）。
+> 首次部署仍需先 `docker compose up -d` 创建容器。
 
 ### 5. 测试账号
 

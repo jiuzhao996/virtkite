@@ -4,6 +4,7 @@
 #       ./start.sh --service            # 用 systemd-run 后台启动（推荐无人值守）
 #       ./start.sh --with-monitoring    # 同时启动 Prometheus/Alertmanager/VictoriaLogs/Vector
 #       ./start.sh --stop               # 停止后端与 noVNC（容器保持当前状态）
+#       ./start.sh --stop-containers    # 一并停止 MySQL/监控/日志容器
 set -e
 
 cd "$(dirname "$0")"
@@ -77,11 +78,23 @@ stop_all() {
   [ -f vmops.pid ] && kill "$(cat vmops.pid)" 2>/dev/null || true
   [ -f novnc.pid ] && kill "$(cat novnc.pid)" 2>/dev/null || true
   rm -f vmops.pid novnc.pid
-  echo "   已停止"
+  echo "   已停止（依赖容器保持当前状态；需要一并停止用 --stop-containers）"
+}
+
+stop_containers() {
+  echo "■ 停止依赖容器..."
+  docker stop vmops-mysql vmops-prometheus vmops-alertmanager vmops-victoria-logs vmops-vector 2>/dev/null || true
+  echo "   已停止（手动 stop 后，开机/Docker 重启不会自动拉起）"
 }
 
 if [ "$1" = "--stop" ]; then
   stop_all
+  exit 0
+fi
+
+if [ "$1" = "--stop-containers" ]; then
+  stop_all
+  stop_containers
   exit 0
 fi
 
